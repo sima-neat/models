@@ -40,6 +40,7 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
     )
     assert workflow["jobs"]["publish"]["with"]["artifact_folder"] == "."
     assert workflow["jobs"]["publish"]["with"]["publish_manifest"] == "true"
+    assert workflow["jobs"]["publish"]["with"]["cleanup_github_artifacts"] == "false"
     assert (
         workflow["jobs"]["promote-latest"]["uses"]
         == "sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main"
@@ -52,6 +53,11 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
     assert workflow["jobs"]["promote-latest"]["needs"] == [
         "select", "publish-latest-index", "resolve-vulcan-config"
     ]
+    cleanup = workflow["jobs"]["cleanup-github-artifacts"]
+    assert cleanup["needs"] == ["publish", "publish-latest-index", "promote-latest"]
+    assert cleanup["if"] == "always() && needs.publish.result == 'success'"
+    assert "actions: write" in WORKFLOW.read_text(encoding="utf-8")
+    assert "actions/artifacts/${artifact_ids[0]}" in cleanup["steps"][0]["run"]
     upload_script = workflow["jobs"]["publish-latest-index"]["steps"][2]["run"]
     assert "dist/latest.json" in upload_script
     assert "--cache-control no-store" in upload_script

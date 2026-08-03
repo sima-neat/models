@@ -329,6 +329,7 @@ jobs:
       artifact_glob: "**/*"
       min_artifact_count: 6
       publish_manifest: true
+      cleanup_github_artifacts: false
 
   publish-latest-index:
     name: Publish model-aware latest.json
@@ -391,3 +392,28 @@ jobs:
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."
       validate_manifest: true
+
+  cleanup-github-artifacts:
+    name: Clean up packaged GitHub artifacts
+    needs: [publish, publish-latest-index, promote-latest]
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete the package artifact after all consumers finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t artifact_ids < <(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "models-dist") | .id'
+          )
+          if (( ${#artifact_ids[@]} != 1 )); then
+            echo "Expected exactly one models-dist artifact, found ${#artifact_ids[@]}" >&2
+            exit 1
+          fi
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/${artifact_ids[0]}"
