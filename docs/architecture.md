@@ -28,6 +28,7 @@ by URI, byte size, and SHA-256.
 
 ```text
 .github/workflows/       Validation, compilation, DevKit, and publication workflows
+deps/                    Repository-wide toolchain dependency pins
 docs/                    Architecture, contribution, benchmark, and release policy
 schemas/                 Versioned model and result JSON Schemas
 tools/model_registry/    Shared host-side CLI and lifecycle implementation
@@ -65,9 +66,11 @@ model.yaml
 Pull requests run catalog discovery and schema validation on GitHub-hosted
 runners only. The Vulcan job is restricted to trusted pushes and explicit
 maintainer dispatches. Production is manual and uses the protected GitHub
-`production` environment. Every matrix entry carries one exact Model Compiler
-label; the runner's `/etc/vulcan/model-compiler-artifact.json` version must also
-match before any model code executes.
+`production` environment. Before requesting any self-hosted runner, the select
+job validates `deps/manifest.json`, resolves its exact Model Compiler version,
+and derives the `model-compiler-<version>` runner label. The selected runner's
+`/etc/vulcan/model-compiler-artifact.json` version must also match before any
+model code executes. Model variants do not carry independent compiler pins.
 
 ## Artifact publication contract
 

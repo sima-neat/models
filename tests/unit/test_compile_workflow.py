@@ -15,7 +15,7 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     compile_job = workflow["jobs"]["compile"]
     assert "github.event_name != 'pull_request'" in compile_job["if"]
     assert "model-compiler" in compile_job["runs-on"]
-    assert "${{ matrix.compiler_label }}" in compile_job["runs-on"]
+    assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
@@ -24,6 +24,22 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
     assert "branches" not in push_trigger
     assert "branches-ignore" not in push_trigger
     assert "models/**" in push_trigger["paths"]
+    assert "deps/**" in push_trigger["paths"]
+
+
+def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    select = workflow["jobs"]["select"]
+    compile_job = workflow["jobs"]["compile"]
+    compiler_step = next(step for step in select["steps"] if step.get("id") == "compiler")
+
+    assert "model-registry resolve-compiler --repository ." in compiler_step["run"]
+    assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
+    assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
+    assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == (
+        "${{ needs.select.outputs.model_compiler_version }}"
+    )
+    assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
 
 def test_production_is_an_explicit_dispatch_choice() -> None:

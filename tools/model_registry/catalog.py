@@ -9,6 +9,7 @@ from .model import load_and_validate_model
 
 SHARED_BUILD_PATHS = (
     ".github/workflows/Vulcan-Model-Compile.yml",
+    "deps/",
     "pyproject.toml",
     "schemas/",
     "tools/model_registry/",
@@ -82,8 +83,6 @@ def build_matrix(catalog: dict[str, dict[str, Any]], model_ids: list[str]) -> di
         for variant in sorted(model["compile_variants"], key=lambda item: item["id"]):
             include.append(
                 {
-                    "compiler_label": variant["compiler"]["artifact_label"],
-                    "compiler_version": variant["compiler"]["version"],
                     "model_dir": f"models/{model_id}",
                     "model_id": model_id,
                     "recipe": variant["recipe"],

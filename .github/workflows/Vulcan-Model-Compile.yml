@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/Vulcan-Model-Compile.yml"
+      - "deps/**"
       - "models/**"
       - "schemas/**"
       - "tools/model_registry/**"
@@ -12,6 +13,7 @@ on:
   push:
     paths:
       - ".github/workflows/Vulcan-Model-Compile.yml"
+      - "deps/**"
       - "models/**"
       - "schemas/**"
       - "tools/model_registry/**"
@@ -49,6 +51,8 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       vulcan_environment: ${{ steps.environment.outputs.vulcan_environment }}
       runner_environment: ${{ steps.environment.outputs.runner_environment }}
+      model_compiler_version: ${{ steps.compiler.outputs.version }}
+      model_compiler_label: ${{ steps.compiler.outputs.label }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v6
@@ -78,6 +82,17 @@ jobs:
           esac
           echo "vulcan_environment=$environment" >> "$GITHUB_OUTPUT"
           echo "runner_environment=$runner_environment" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Model Compiler dependency
+        id: compiler
+        run: |
+          set -euo pipefail
+          resolution="$(model-registry resolve-compiler --repository .)"
+          version="$(jq -er '.version' <<< "$resolution")"
+          label="$(jq -er '.label' <<< "$resolution")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "Model Compiler dependency: \`$version\` (\`$label\`)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build deterministic matrix
         id: matrix
@@ -126,7 +141,7 @@ jobs:
       - arm64
       - ${{ needs.select.outputs.runner_environment }}
       - model-compiler
-      - ${{ matrix.compiler_label }}
+      - ${{ needs.select.outputs.model_compiler_label }}
       - default
     timeout-minutes: 90
     env:
@@ -135,7 +150,8 @@ jobs:
       MODEL_DIR: ${{ matrix.model_dir }}
       VARIANT_ID: ${{ matrix.variant_id }}
       RECIPE: ${{ matrix.recipe }}
-      EXPECTED_COMPILER_VERSION: ${{ matrix.compiler_version }}
+      EXPECTED_COMPILER_VERSION: ${{ needs.select.outputs.model_compiler_version }}
+      MODEL_COMPILER_LABEL: ${{ needs.select.outputs.model_compiler_label }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
@@ -218,7 +234,7 @@ jobs:
             --variant-id "$VARIANT_ID" \
             --target "${{ matrix.target }}" \
             --compiler-version "$EXPECTED_COMPILER_VERSION" \
-            --compiler-label "${{ matrix.compiler_label }}" \
+            --compiler-label "$MODEL_COMPILER_LABEL" \
             --source-sha256 "${{ steps.source.outputs.sha256 }}" \
             --git-sha "$GITHUB_SHA" \
             --environment "${{ needs.select.outputs.vulcan_environment }}" \

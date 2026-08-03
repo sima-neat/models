@@ -36,9 +36,6 @@ surgery:
   type: none
 compile_variants:
   - id: fixture
-    compiler:
-      version: 2.1.3
-      artifact_label: model-compiler-2.1.3-develop
     target: modalix
     recipe: compile.py
     parameters: {}

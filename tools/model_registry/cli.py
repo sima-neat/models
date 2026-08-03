@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .artifact import verify_mpk
 from .catalog import build_matrix, discover_catalog, git_changed_paths, select_model_ids
+from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model
@@ -38,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
     matrix.add_argument("--changed-path", action="append", default=[])
     matrix.add_argument("--base")
     matrix.add_argument("--head")
+
+    compiler = subcommands.add_parser(
+        "resolve-compiler", help="resolve the repository-wide Model Compiler dependency"
+    )
+    compiler.add_argument("--repository", type=Path, default=Path.cwd())
 
     mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
     mpk.add_argument("output_dir", type=Path)
@@ -121,6 +127,11 @@ def _matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_compiler(args: argparse.Namespace) -> int:
+    print(json.dumps(resolve_model_compiler(args.repository), sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
@@ -175,6 +186,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _fetch(args)
         if args.command == "matrix":
             return _matrix(args)
+        if args.command == "resolve-compiler":
+            return _resolve_compiler(args)
         if args.command == "verify-mpk":
             return _verify_mpk(args)
         if args.command == "package":

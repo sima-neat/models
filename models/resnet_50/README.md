@@ -9,8 +9,8 @@ model-registry validate models/resnet_50
 model-registry fetch models/resnet_50
 ```
 
-The `modalix_bf16` and `modalix_int8` variants use the pinned Model Compiler
-2.1.3 develop snapshot. `compile.py` loads the verified ONNX, applies the
+The `modalix_bf16` and `modalix_int8` variants use the repository-wide Model
+Compiler version pinned in `deps/manifest.json`. `compile.py` loads the verified ONNX, applies the
 variant's quantization scheme and direct-MLA tessellation, and emits one
 directly consumable MPK archive per variant.
 

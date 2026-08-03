@@ -68,9 +68,6 @@ surgery:
   type: none
 compile_variants:
   - id: modalix_bf16
-    compiler:
-      version: 2.1.3
-      artifact_label: model-compiler-2.1.3-develop
     target: modalix
     recipe: compile.py
     parameters:
@@ -79,9 +76,6 @@ compile_variants:
       input_shape: [1, 3, 224, 224]
       mla_tessellation: true
   - id: modalix_int8
-    compiler:
-      version: 2.1.3
-      artifact_label: model-compiler-2.1.3-develop
     target: modalix
     recipe: compile.py
     parameters:

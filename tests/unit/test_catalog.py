@@ -36,7 +36,8 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
     matrix = build_matrix(catalog, ["bravo", "alpha", "alpha"])
     assert [entry["model_id"] for entry in matrix["include"]] == ["alpha", "bravo"]
-    assert matrix["include"][0]["compiler_label"] == "model-compiler-2.1.3-develop"
+    assert "compiler_label" not in matrix["include"][0]
+    assert "compiler_version" not in matrix["include"][0]
     assert matrix["include"][0]["recipe"] == "compile.py"
 
 
@@ -61,6 +62,7 @@ def test_model_local_added_modified_and_deleted_paths(catalog_repository: Path, 
         "tools/runtime/execute.py",
         "pyproject.toml",
         ".github/workflows/Vulcan-Model-Compile.yml",
+        "deps/manifest.json",
     ],
 )
 def test_shared_build_paths_select_every_model(catalog_repository: Path, path: str) -> None:

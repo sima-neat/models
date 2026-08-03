@@ -36,7 +36,7 @@ def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
                 "target": "modalix",
                 "environment": "staging",
                 "compiler_version": "2.1.3",
-                "compiler_label": "model-compiler-2.1.3-develop",
+                "compiler_label": "model-compiler-2.1.3",
                 "source_sha256": "c" * 64,
             },
         )

@@ -28,15 +28,17 @@
    The recipe may perform model-specific surgery, quantization, and compilation,
    and must leave exactly one `*_mpk.tar.gz` in the output directory. It must not
    download an unpinned model or silently select a different compiler.
-6. Declare compiler versions, exact Vulcan artifact labels, targets, and recipe
-   parameters explicitly. Unknown fields are rejected so misspellings cannot
-   silently change a build.
+6. Declare targets and recipe parameters explicitly. Do not add a compiler pin
+   to a model variant: all variants use the repository-wide Model Compiler
+   version in `deps/manifest.json`. Unknown fields are rejected so misspellings
+   cannot silently change a build.
 7. Validate, fetch, and inspect the resulting CI matrix:
 
    ```bash
    model-registry validate models/<model-id>
    model-registry fetch models/<model-id>
    model-registry matrix --repository . --changed-path models/<model-id>/model.yaml
+   model-registry resolve-compiler --repository .
    ```
 
 The fetch command translates `hf://` identifiers to the Hugging Face resolve

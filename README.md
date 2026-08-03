@@ -32,8 +32,9 @@ only changed models on staging. A maintainer can run the workflow manually,
 choose `staging` or protected `production`, and optionally provide a
 comma-separated model list; an empty list builds the full catalog.
 
-Each build requests the environment label, `model-compiler`, and the one exact
-compiler artifact label declared by its variant. Successful matrix outputs are
+The workflow first resolves the repository-wide Model Compiler pin from
+[`deps/manifest.json`](deps/manifest.json), then requests the environment label,
+`model-compiler`, and the derived `model-compiler-<version>` label. Successful matrix outputs are
 assembled and published with the standard Vulcan branch layout:
 
 ```text
