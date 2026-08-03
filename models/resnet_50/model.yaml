@@ -62,8 +62,8 @@ postprocessing:
       parameters:
         k: 5
 calibration:
-  status: not_required
-  reason: The initial Modalix variant uses BF16 weights and activations; representative INT8 calibration is not used.
+  status: pending
+  reason: The INT8 compile smoke uses deterministic synthetic inputs; an immutable representative ImageNet calibration set is still required before accuracy promotion.
 surgery:
   type: none
 compile_variants:
@@ -77,6 +77,18 @@ compile_variants:
       precision: bf16
       input_name: pixel_values
       input_shape: [1, 3, 224, 224]
+      mla_tessellation: true
+  - id: modalix_int8
+    compiler:
+      version: 2.1.3
+      artifact_label: model-compiler-2.1.3-develop
+    target: modalix
+    recipe: compile.py
+    parameters:
+      precision: int8
+      input_name: pixel_values
+      input_shape: [1, 3, 224, 224]
+      calibration_samples: 8
       mla_tessellation: true
 tests:
   correctness:

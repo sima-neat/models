@@ -166,7 +166,8 @@ jobs:
         run: |
           set -euo pipefail
           tooling="$RUNNER_TEMP/model-registry-tools"
-          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check --target "$tooling" .
+          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check --no-deps --target "$tooling" .
+          "$MODEL_COMPILER_PYTHON" -c 'import certifi, jsonschema, yaml'
           echo "PYTHONPATH=$tooling" >> "$GITHUB_ENV"
 
       - name: Fetch and verify the immutable model source
@@ -185,12 +186,25 @@ jobs:
           SOURCE_PATH: ${{ steps.source.outputs.path }}
         run: |
           set -euo pipefail
-          recipe_path="$MODEL_DIR/$RECIPE"
-          test -f "$recipe_path"
-          "$MODEL_COMPILER_PYTHON" "$recipe_path" \
+          test -f "$MODEL_DIR/$RECIPE"
+          bash --noprofile --rcfile "${HOME}/.bashrc" -i <<'BASH'
+          set -euo pipefail
+          type activate-model-compiler
+          activate-model-compiler
+          command -v mla-masm
+          python "$MODEL_DIR/$RECIPE" \
             --model "$SOURCE_PATH" \
             --output-dir "$OUTPUT_DIR" \
             --variant "$VARIANT_ID"
+
+          shopt -s nullglob
+          archives=("$OUTPUT_DIR"/*_mpk.tar.gz)
+          if (( ${#archives[@]} != 1 )); then
+            echo "Expected exactly one MPK archive, found ${#archives[@]} in $OUTPUT_DIR" >&2
+            find "$OUTPUT_DIR" -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          BASH
 
       - name: Validate and checksum the MPK
         id: mpk

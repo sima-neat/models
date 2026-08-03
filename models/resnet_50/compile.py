@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the pinned ResNet-50 ONNX source into a Modalix BF16 MPK."""
+"""Compile the pinned ResNet-50 ONNX source into a Modalix MPK."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from afe.apis.defines import (
     TensorTessellateParameters,
     bfloat16_scheme,
     gen2_target,
+    quantization_scheme,
 )
 from afe.apis.loaded_net import load_model
 from afe.core.utils import convert_data_generator_to_iterable
@@ -55,8 +56,9 @@ def _tessellation(quantized_model: Any) -> dict[str, TensorTessellateParameters]
 def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     variant = _variant(variant_id)
     parameters = variant["parameters"]
-    if variant["target"] != "modalix" or parameters.get("precision") != "bf16":
-        raise ValueError("this recipe supports only the declared Modalix BF16 variant")
+    precision = str(parameters.get("precision"))
+    if variant["target"] != "modalix" or precision not in {"bf16", "int8"}:
+        raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
 
     input_name = str(parameters["input_name"])
     input_shape = tuple(int(value) for value in parameters["input_shape"])
@@ -67,21 +69,35 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     importer = onnx_source(str(source), {input_name: input_shape}, {input_name: ScalarType.float32})
     loaded = load_model(importer, target=gen2_target)
 
-    # BF16 does not derive quantization ranges from representative data. The
-    # API still requires an iterable, so provide a deterministic single sample.
-    sample = np.zeros((1, 224, 224, 3), dtype=np.float32)
-    data = convert_data_generator_to_iterable(DataGenerator({input_name: sample}))
-    scheme = bfloat16_scheme()
+    if precision == "int8":
+        # This deterministic input exercises the INT8 compile path, but is not
+        # representative calibration data and does not qualify model accuracy.
+        sample_count = int(parameters.get("calibration_samples", 1))
+        if sample_count < 1:
+            raise ValueError("calibration_samples must be at least 1")
+        samples = np.random.default_rng(1).normal(
+            0.0, 1.0, (sample_count, 224, 224, 3)
+        ).astype(np.float32)
+        activation_scheme = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
+        weight_scheme = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+    else:
+        # BF16 does not derive quantization ranges from representative data.
+        # The API still requires an iterable, so provide one deterministic sample.
+        samples = np.zeros((1, 224, 224, 3), dtype=np.float32)
+        activation_scheme = weight_scheme = bfloat16_scheme()
+
+    data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
+    model_name = f"resnet_50_{variant_id}"
     quantized = loaded.quantize(
         data,
         QuantizationParams(
             calibration_method=CalibrationMethod.from_str("mse"),
-            activation_quantization_scheme=scheme,
-            weight_quantization_scheme=scheme,
+            activation_quantization_scheme=activation_scheme,
+            weight_quantization_scheme=weight_scheme,
         ),
-        model_name="resnet_50_modalix_bf16",
+        model_name=model_name,
     )
-    quantized.save(model_name="resnet_50_modalix_bf16", output_directory=str(output_dir))
+    quantized.save(model_name=model_name, output_directory=str(output_dir))
     tessellation = _tessellation(quantized) if parameters["mla_tessellation"] else None
     quantized.compile(output_path=str(output_dir), tessellate_parameters=tessellation)
 

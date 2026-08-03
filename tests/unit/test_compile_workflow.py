@@ -68,3 +68,28 @@ def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
         if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("--")
     }
     assert {"--model", "--output-dir", "--variant"} <= option_strings
+
+
+def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    compile_script = next(
+        step["run"] for step in steps
+        if step.get("name") == "Run model-specific surgery and compilation recipe"
+    )
+    assert 'bash --noprofile --rcfile "${HOME}/.bashrc" -i' in compile_script
+    assert "type activate-model-compiler" in compile_script
+    assert "activate-model-compiler" in compile_script
+    assert "command -v mla-masm" in compile_script
+    assert 'archives=("$OUTPUT_DIR"/*_mpk.tar.gz)' in compile_script
+
+
+def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    install_script = next(
+        step["run"] for step in steps
+        if step.get("name") == "Install shared registry tooling outside the read-only compiler image"
+    )
+    assert "--no-deps" in install_script
+    assert "import certifi, jsonschema, yaml" in install_script

@@ -16,30 +16,31 @@ GIT_SHA = "a" * 40
 
 
 def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
-    output = root / "resnet_50" / "modalix_bf16"
-    output.mkdir(parents=True)
-    archive = output / "resnet_50_modalix_bf16_mpk.tar.gz"
-    with tarfile.open(archive, "w:gz") as stream:
-        for name in ("resnet/model.elf", "resnet/resnet_mpk.json"):
-            content = b"fixture"
-            info = tarfile.TarInfo(name)
-            info.size = len(content)
-            stream.addfile(info, io.BytesIO(content))
-    verify_mpk(
-        output,
-        write_manifest=True,
-        provenance={
-            "model_id": "resnet_50",
-            "variant_id": "modalix_bf16",
-            "git_sha": git_sha,
-            "target": "modalix",
-            "environment": "staging",
-            "compiler_version": "2.1.3",
-            "compiler_label": "model-compiler-2.1.3-develop",
-            "source_sha256": "c" * 64,
-        },
-    )
-    return output
+    for variant_id in ("modalix_bf16", "modalix_int8"):
+        output = root / "resnet_50" / variant_id
+        output.mkdir(parents=True)
+        archive = output / f"resnet_50_{variant_id}_mpk.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for name in ("resnet/model.elf", "resnet/resnet_mpk.json"):
+                content = b"fixture"
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                stream.addfile(info, io.BytesIO(content))
+        verify_mpk(
+            output,
+            write_manifest=True,
+            provenance={
+                "model_id": "resnet_50",
+                "variant_id": variant_id,
+                "git_sha": git_sha,
+                "target": "modalix",
+                "environment": "staging",
+                "compiler_version": "2.1.3",
+                "compiler_label": "model-compiler-2.1.3-develop",
+                "source_sha256": "c" * 64,
+            },
+        )
+    return root / "resnet_50"
 
 
 def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> None:
@@ -69,10 +70,15 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
 
     model_metadata = json.loads((destination / "resnet_50" / "metadata.json").read_text(encoding="utf-8"))
     assert model_metadata["name"] == "gh:sima-neat/models/resnet_50"
-    assert model_metadata["resources"] == ["modalix_bf16/resnet_50_modalix_bf16_mpk.tar.gz"]
+    assert model_metadata["resources"] == [
+        "modalix_bf16/resnet_50_modalix_bf16_mpk.tar.gz",
+        "modalix_int8/resnet_50_modalix_int8_mpk.tar.gz",
+    ]
     assert set(model_metadata["resources"]) == set(model_metadata["resources-checksum"])
     assert (destination / "resnet_50" / "modalix_bf16" / "compile-result.json").is_file()
     assert (destination / "resnet_50" / "modalix_bf16" / "SHA256SUMS").is_file()
+    assert (destination / "resnet_50" / "modalix_int8" / "compile-result.json").is_file()
+    assert (destination / "resnet_50" / "modalix_int8" / "SHA256SUMS").is_file()
 
 
 def test_package_rejects_mismatched_compile_provenance(tmp_path: Path) -> None:

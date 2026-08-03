@@ -9,15 +9,21 @@ model-registry validate models/resnet_50
 model-registry fetch models/resnet_50
 ```
 
-The first compile variant targets Modalix BF16 with the pinned Model Compiler
-2.1.3 develop snapshot. BF16 does not use representative INT8 calibration; the
-Model Compiler API is given a deterministic zero-valued sample only because its
-quantization entrypoint requires an iterable. `compile.py` loads the verified
-ONNX, applies BF16 quantization and direct-MLA tessellation, and emits one
-directly consumable MPK archive.
+The `modalix_bf16` and `modalix_int8` variants use the pinned Model Compiler
+2.1.3 develop snapshot. `compile.py` loads the verified ONNX, applies the
+variant's quantization scheme and direct-MLA tessellation, and emits one
+directly consumable MPK archive per variant.
 
-An INT8 variant should be added only after an immutable,
-redistribution-approved representative calibration set has been pinned.
+BF16 uses one zero-valued sample because the quantization entrypoint requires
+an iterable. INT8 currently uses eight deterministic synthetic samples to
+exercise compilation. Those samples are not representative calibration data,
+so the INT8 MPK is a compile smoke artifact and is not accuracy-qualified. An
+immutable, redistribution-approved ImageNet calibration set must be pinned
+before the model can be promoted beyond experimental maturity.
+
+The Vulcan runner recipe must execute after `activate-model-compiler`; the
+workflow does this in the same interactive shell so compiler executables such
+as `mla-masm` and their runtime libraries are available.
 
 The preprocessing values are pinned from the upstream conversion's
 `preprocessor_config.json`. No model-specific download script is needed.
