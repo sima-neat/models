@@ -77,7 +77,8 @@ def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
         step["run"] for step in steps
         if step.get("name") == "Run model-specific surgery and compilation recipe"
     )
-    assert 'bash --noprofile --rcfile "${HOME}/.bashrc" -i' in compile_script
+    assert "bash --noprofile --norc" in compile_script
+    assert "source /etc/profile.d/vulcan-model-compiler.sh" in compile_script
     assert "type activate-model-compiler" in compile_script
     assert "activate-model-compiler" in compile_script
     assert "command -v mla-masm" in compile_script

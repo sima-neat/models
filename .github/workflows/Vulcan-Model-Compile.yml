@@ -187,8 +187,9 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$MODEL_DIR/$RECIPE"
-          bash --noprofile --rcfile "${HOME}/.bashrc" -i <<'BASH'
+          bash --noprofile --norc <<'BASH'
           set -euo pipefail
+          source /etc/profile.d/vulcan-model-compiler.sh
           type activate-model-compiler
           activate-model-compiler
           command -v mla-masm
