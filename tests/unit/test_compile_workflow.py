@@ -18,6 +18,14 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert "${{ matrix.compiler_label }}" in compile_job["runs-on"]
 
 
+def test_changed_models_compile_on_pushes_to_every_branch() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    push_trigger = workflow["on"]["push"]
+    assert "branches" not in push_trigger
+    assert "branches-ignore" not in push_trigger
+    assert "models/**" in push_trigger["paths"]
+
+
 def test_production_is_an_explicit_dispatch_choice() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     options = workflow["on"]["workflow_dispatch"]["inputs"]["environment"]["options"]

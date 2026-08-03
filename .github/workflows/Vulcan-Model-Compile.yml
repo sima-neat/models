@@ -10,7 +10,6 @@ on:
       - "tools/runtime/**"
       - "pyproject.toml"
   push:
-    branches: [main, develop]
     paths:
       - ".github/workflows/Vulcan-Model-Compile.yml"
       - "models/**"
