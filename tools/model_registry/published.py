@@ -82,6 +82,21 @@ def fetch_previous_index(
     except HTTPError as exc:
         if exc.code == 404:
             return None
+        if exc.code == 403:
+            # A private S3 origin reports a missing object as AccessDenied.
+            # Confirm that the public models prefix itself is reachable before
+            # interpreting this as a clean first build; otherwise retain the
+            # hard failure so an OAC or distribution outage cannot erase
+            # carry-forward entries from latest.json.
+            marker_url = _url(ENVIRONMENT_BASE_URLS[environment], "models") + "/"
+            try:
+                _read(opener, marker_url)
+            except (HTTPError, OSError, URLError, TimeoutError) as marker_error:
+                raise ModelRegistryError(
+                    f"could not read previous latest.json: HTTP {exc.code}; "
+                    "models prefix is also unavailable"
+                ) from marker_error
+            return None
         raise ModelRegistryError(f"could not read previous latest.json: HTTP {exc.code}") from exc
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, URLError) as exc:
         raise ModelRegistryError(f"could not read previous latest.json: {exc}") from exc
