@@ -115,6 +115,27 @@ def test_matrix_excludes_explicitly_unsupported_variants(catalog_repository: Pat
     assert [entry["variant_id"] for entry in matrix["include"]] == ["fixture"]
 
 
+def test_explicit_unsupported_variant_fails_with_evidence(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    catalog["alpha"]["compile_variants"][0].update(
+        {"status": "unsupported", "reason": "compiler zeroed weights"}
+    )
+    with pytest.raises(
+        ValidationError,
+        match=r"requested variant id\(s\) are unsupported: fixture \(alpha: compiler zeroed weights\)",
+    ):
+        build_matrix(catalog, ["alpha"], ["fixture"])
+
+
+def test_requested_variant_builds_supported_models_and_skips_unsupported_models(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    catalog["alpha"]["compile_variants"][0].update(
+        {"status": "unsupported", "reason": "compiler limitation"}
+    )
+    matrix = build_matrix(catalog, ["alpha", "bravo"], ["fixture"])
+    assert [(entry["model_id"], entry["variant_id"]) for entry in matrix["include"]] == [("bravo", "fixture")]
+
+
 def test_unknown_requested_variant_fails(catalog_repository: Path) -> None:
     with pytest.raises(ValidationError, match="unknown variant id"):
         build_matrix(discover_catalog(catalog_repository), ["alpha"], ["missing"])

@@ -89,6 +89,20 @@ def build_matrix(
     if unknown_variants:
         raise ValidationError(f"unknown variant id(s): {', '.join(unknown_variants)}")
 
+    unsupported_only: list[str] = []
+    for variant_id in sorted(requested_variants):
+        matches = [
+            (model_id, variant)
+            for model_id in sorted(set(model_ids))
+            for variant in catalog[model_id]["compile_variants"]
+            if variant["id"] == variant_id
+        ]
+        if matches and all(variant.get("status", "supported") == "unsupported" for _, variant in matches):
+            evidence = "; ".join(f"{model_id}: {variant['reason']}" for model_id, variant in matches)
+            unsupported_only.append(f"{variant_id} ({evidence})")
+    if unsupported_only:
+        raise ValidationError(f"requested variant id(s) are unsupported: {', '.join(unsupported_only)}")
+
     include: list[dict[str, str]] = []
     for model_id in sorted(set(model_ids)):
         model = catalog[model_id]

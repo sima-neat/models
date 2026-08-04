@@ -102,6 +102,17 @@ def test_package_rejects_existing_output_directory(tmp_path: Path) -> None:
         package_compiled_models(ROOT, compiled, destination, GIT_SHA)
 
 
+def test_package_rejects_unsupported_compiled_variant_with_evidence(tmp_path: Path) -> None:
+    result = tmp_path / "compiled" / "ssd_mobilenet_v3" / "modalix_int8_tess_mla" / "compile-result.json"
+    result.parent.mkdir(parents=True)
+    result.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        ValidationError,
+        match="compiled output references unsupported variant.*zeroes 35 convolution weight sets",
+    ):
+        package_compiled_models(ROOT, tmp_path / "compiled", tmp_path / "dist", GIT_SHA)
+
+
 def test_package_carries_forward_pointers_without_copying_unchanged_mpk(tmp_path: Path) -> None:
     first_compiled = tmp_path / "first-compiled"
     _compiled_fixture(first_compiled)

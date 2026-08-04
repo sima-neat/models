@@ -68,13 +68,14 @@ def package_compiled_models(repository: str | Path, compiled_dir: str | Path, ou
         model_id, variant_id = result_path.relative_to(compiled).parts[:2]
         if model_id not in catalog:
             raise ValidationError(f"compiled output references unknown model: {model_id}")
-        variants = {
-            item["id"]: item
-            for item in catalog[model_id]["compile_variants"]
-            if item.get("status", "supported") == "supported"
-        }
+        variants = {item["id"]: item for item in catalog[model_id]["compile_variants"]}
         if variant_id not in variants:
             raise ValidationError(f"compiled output references unknown variant: {model_id}/{variant_id}")
+        if variants[variant_id].get("status", "supported") == "unsupported":
+            raise ValidationError(
+                f"compiled output references unsupported variant: {model_id}/{variant_id}: "
+                f"{variants[variant_id]['reason']}"
+            )
         result = json.loads(result_path.read_text(encoding="utf-8"))
         provenance = result.get("provenance", {})
         expected_provenance = {
