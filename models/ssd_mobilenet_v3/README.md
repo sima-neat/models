@@ -21,10 +21,12 @@ compiler. Only internal precision and tessellation placement vary.
 
 INT8 was tested with min/max calibration over all 128 representative images.
 Model Compiler 2.1.3 zeroed 35 convolution weight sets to avoid accumulator
-saturation; MSE also zeroed 33. Both INT8 placements are therefore retained as
-explicit unsupported contracts but excluded from compilation and publication.
-BF16 uses the compiler's MSE calibration over the same 128-image set and SiMa
-requantization.
+saturation; MSE zeroed 33. A documented channel-equalization pass over all 128
+images followed by all 128 min/max calibration images zeroed 36 weight sets, so
+it does not repair this model/compiler pairing. Both INT8 placements are
+therefore retained as explicit unsupported contracts but excluded from
+compilation and publication. BF16 uses the compiler's MSE calibration over the
+same 128-image set and SiMa requantization.
 
 The audit proves the resulting behavior from two independent compiler outputs.
 The serialized quantized topology checks all 98 MLA convolutions and verifies
@@ -40,13 +42,18 @@ never accepted as evidence of precision.
 Every compiler run also executes the floating and quantized raw-head models on
 all 32 held-out, category-balanced COCO samples. The audit records per-head
 cosine similarity, normalized RMSE, mean absolute error, and maximum absolute
-error; calibration and validation image IDs are disjoint. Until the first
-Vulcan matrix provides model-specific evidence, the recipe rejects malformed,
-non-finite, and zero-energy results but records numeric measurements without
-inventing an acceptance threshold. The recipe replaces its quantize/compile
-process and reloads the saved model in a clean process before executing held-out
-samples. Validation uses Model Compiler 2.1.3's JAX executor because its
-standard executor segfaults on the saved V3 graph for both precision types.
+error; calibration and validation image IDs are disjoint. The compiler gate
+rejects malformed, non-finite, and zero-energy results. Qualified BF16 variants
+additionally require minimum raw-head cosine similarity 0.999 and maximum
+normalized RMSE 0.05. The first pinned 2.1.3 BF16 qualification measured
+0.99965453 minimum cosine similarity and 0.02665781 maximum normalized RMSE.
+The recipe replaces its quantize/compile process and
+reloads the saved model in a clean process before executing held-out samples.
+The compiler's TVM floating executor segfaults on this V3 graph, so validation
+uses the prepared ONNX directly as an independent FP32 reference and the
+compiler's MLA-matching JAX executor for the serialized quantized graph. Output
+layouts are normalized explicitly before comparison. Numeric qualification and
+the independent serialized-graph/MPK audits must both pass.
 The independent zero-weight warning audit runs before model serialization, so
 changing executors cannot mask a structurally invalid INT8 quantization.
 
@@ -99,6 +106,7 @@ The annotations file must have SHA-256
 ## Run on Vulcan
 
 Dispatch `Vulcan Model Compile` in staging with model
-`ssd_mobilenet_v3`. Leaving `variants` empty builds all four combinations. A
-single variant can be selected for compiler diagnosis without changing the
-recipe or metadata.
+`ssd_mobilenet_v3`. Leaving `variants` empty builds every supported combination
+and skips cells with recorded compiler evidence. An explicit request for an
+unsupported cell fails with that evidence. A single supported variant can be
+selected for compiler diagnosis without changing the recipe or metadata.

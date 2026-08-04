@@ -30,7 +30,8 @@ python -m pytest
 pull requests without granting them a self-hosted runner. Trusted pushes build
 only changed models on staging. A maintainer can run the workflow manually,
 choose `staging` or protected `production`, and optionally provide a
-comma-separated model list; an empty list builds the full catalog.
+comma-separated model list and variant list; empty lists build the full catalog.
+A targeted variant run is compile-only and never advances the published catalog.
 
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
@@ -77,5 +78,7 @@ catalog metadata uses immutable URLs from that index, while a direct
 Unchanged MPKs are not copied into every catalog commit. A new branch inherits
 unchanged pointers from `main` until those models are rebuilt on the branch.
 
-See [the architecture](docs/architecture.md) and
-[adding a model](docs/adding-a-model.md) for repository conventions.
+See [the architecture](docs/architecture.md),
+[adding a model](docs/adding-a-model.md), and the
+[SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)
+for repository conventions.

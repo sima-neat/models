@@ -263,6 +263,28 @@ def test_quantization_quality_report_rejects_non_finite_output() -> None:
         compile_module.quantization_quality_report([reference], [candidate])
 
 
+def test_validation_output_normalization_handles_compiler_layouts() -> None:
+    compile_module = load_module("compile")
+    expected_shape = (1, 2, 3, 4)
+    nchw = np.arange(np.prod(expected_shape), dtype=np.float32).reshape(expected_shape)
+    nhwc = nchw.transpose(0, 2, 3, 1)
+    nwch = nchw.transpose(0, 3, 1, 2)
+    assert np.array_equal(compile_module._normalize_validation_output(nhwc, "head", expected_shape), nchw)
+    assert np.array_equal(compile_module._normalize_validation_output(nwch, "head", expected_shape), nchw)
+
+
+def test_quantization_quality_gate_passes_and_rejects_regression() -> None:
+    compile_module = load_module("compile")
+    report = {
+        "minimum_cosine_similarity": 0.9995,
+        "maximum_normalized_root_mean_square_error": 0.04,
+    }
+    assert compile_module.enforce_quantization_quality(report, "bf16")["gate"]["passed"] is True
+    report["minimum_cosine_similarity"] = 0.998
+    with pytest.raises(RuntimeError, match="BF16 quantization quality failed"):
+        compile_module.enforce_quantization_quality(report, "bf16")
+
+
 def test_quantization_warning_audit_rejects_zeroed_weights() -> None:
     compile_module = load_module("compile")
     audit = compile_module.QuantizationWarningAudit()
@@ -284,6 +306,15 @@ def test_quantization_warning_audit_rejects_zeroed_weights() -> None:
 def test_quantization_validation_selects_executor_explicitly() -> None:
     compile_module = load_module("compile")
 
+    class Reference:
+        def __init__(self) -> None:
+            self.shapes: list[tuple[int, ...]] = []
+
+        def run(self, outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            assert outputs is None
+            self.shapes.append(inputs[compile_module.INPUT_NAME].shape)
+            return [np.ones(shape, dtype=np.float32) for _, shape in compile_module.OUTPUTS]
+
     class Executor:
         def __init__(self) -> None:
             self.use_jax: list[bool | None] = []
@@ -293,7 +324,7 @@ def test_quantization_validation_selects_executor_explicitly() -> None:
             self.use_jax.append(use_jax)
             return [np.ones(shape, dtype=np.float32) for _, shape in compile_module.OUTPUTS]
 
-    floating = Executor()
+    floating = Reference()
     quantized = Executor()
     validation = np.zeros((2, 320, 320, 3), dtype=np.float32)
     report = compile_module.validate_quantization(
@@ -301,10 +332,9 @@ def test_quantization_validation_selects_executor_explicitly() -> None:
         quantized,
         validation,
         lambda name: name,
-        use_jax=True,
     )
-    assert report["executor"] == "jax"
-    assert floating.use_jax == [None, None]
+    assert report["executor"] == "onnx_reference_and_jax_quantized"
+    assert floating.shapes == [(1, 3, 320, 320), (1, 3, 320, 320)]
     assert quantized.use_jax == [True, True]
 
 

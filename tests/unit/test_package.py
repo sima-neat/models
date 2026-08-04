@@ -108,7 +108,7 @@ def test_package_rejects_unsupported_compiled_variant_with_evidence(tmp_path: Pa
     result.write_text("{}\n", encoding="utf-8")
     with pytest.raises(
         ValidationError,
-        match="compiled output references unsupported variant.*zeroes 35 convolution weight sets",
+        match="compiled output references unsupported variant.*zeroes 35 weight sets.*36 with channel equalization",
     ):
         package_compiled_models(ROOT, tmp_path / "compiled", tmp_path / "dist", GIT_SHA)
 

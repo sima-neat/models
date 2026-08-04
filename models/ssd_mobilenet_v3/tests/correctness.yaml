@@ -7,7 +7,11 @@ validation_samples: 32
 split: category_balanced_and_disjoint
 metrics:
   - raw_head_cosine_similarity
+  - raw_head_normalized_root_mean_square_error
   - decoded_detection_recall_at_0_5_iou
   - decoded_detection_mean_matched_iou
-qualification_policy: Record all held-out raw-head measurements and reject malformed, non-finite, or zero-energy outputs.
-note: Numeric thresholds, decoded accuracy, and performance remain pending first Vulcan measurements and Modalix hardware qualification.
+compiler_raw_head_thresholds:
+  bf16:
+    minimum_cosine_similarity: 0.999
+    maximum_normalized_root_mean_square_error: 0.05
+note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.

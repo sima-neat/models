@@ -142,7 +142,7 @@ compile_variants:
     target: modalix
     recipe: compile.py
     status: unsupported
-    reason: Model Compiler 2.1.3 zeroes 35 convolution weight sets after 128-image min/max calibration.
+    reason: Model Compiler 2.1.3 zeroes 35 weight sets after 128-image min/max calibration and 36 with channel equalization.
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -155,7 +155,7 @@ compile_variants:
     target: modalix
     recipe: compile.py
     status: unsupported
-    reason: Model Compiler 2.1.3 zeroes 35 convolution weight sets after 128-image min/max calibration.
+    reason: Model Compiler 2.1.3 zeroes 35 weight sets after 128-image min/max calibration and 36 with channel equalization.
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
