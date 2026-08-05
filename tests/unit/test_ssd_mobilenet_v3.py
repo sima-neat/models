@@ -173,6 +173,19 @@ def test_surgery_rejects_unqualified_source_bundle(tmp_path: Path) -> None:
         surgery.prepare_int8_model(source, tmp_path / "rejected.onnx")
 
 
+def test_int8_reference_evaluator_adapts_opset17_qdq_dispatch(tmp_path: Path) -> None:
+    compile_module = load_module("compile")
+    contract = load_qat_module("contract")
+    source = synthetic_source(tmp_path / "int8.onnx", contract, qat=True)
+    evaluator = compile_module.build_reference_evaluator(source, "int8")
+    outputs = evaluator.run(
+        None,
+        {contract.INPUT_NAME: np.zeros(contract.INPUT_SHAPE, dtype=np.float32)},
+    )
+    assert [output.shape for output in outputs] == [shape for _name, shape in contract.OUTPUTS]
+    assert all(np.isfinite(output).all() for output in outputs)
+
+
 def test_model_sources_match_pinned_v3_assets() -> None:
     calibration = load_module("calibration")
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))

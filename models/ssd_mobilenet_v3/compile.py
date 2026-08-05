@@ -45,6 +45,52 @@ def imagenet_normalize(samples: np.ndarray) -> np.ndarray:
     return (rgb_unit - IMAGENET_MEAN) / IMAGENET_STD
 
 
+def build_reference_evaluator(path: Path, precision: str) -> Any:
+    """Build an ONNX reference executor, adapting QDQ dispatch in SDK 2.1.3."""
+
+    from onnx.reference import ReferenceEvaluator
+
+    if precision not in {"int8", "bf16"}:
+        raise ValueError(f"unsupported SSD reference precision: {precision}")
+    if precision != "int8":
+        return ReferenceEvaluator(str(path))
+
+    # The ONNX package in ModelSDK 2.1.3 exposes Q/DQ implementations for
+    # opset 19, but its dispatcher has no entries for the identical scalar and
+    # per-axis behavior used by this opset-17 QAT graph. Register the shipped
+    # implementations under their canonical operator names and ignore only
+    # newer optional schema attributes that cannot occur in the audited graph.
+    from onnx.reference.ops.op_dequantize_linear import DequantizeLinear_19
+    from onnx.reference.ops.op_quantize_linear import QuantizeLinear_19
+
+    class DequantizeLinear(DequantizeLinear_19):
+        op_domain = ""
+
+        def _run(self, x: Any, x_scale: Any, x_zero_point: Any = None, axis: Any = None, block_size: Any = None) -> Any:
+            if block_size not in {None, 0}:
+                raise ValueError("opset-17 DequantizeLinear cannot use blocked quantization")
+            return super()._run(x, x_scale, x_zero_point, axis)
+
+    class QuantizeLinear(QuantizeLinear_19):
+        op_domain = ""
+
+        def _run(
+            self,
+            x: Any,
+            y_scale: Any,
+            zero_point: Any = None,
+            axis: Any = None,
+            saturate: Any = None,
+            block_size: Any = None,
+            output_dtype: Any = None,
+        ) -> Any:
+            if block_size not in {None, 0} or output_dtype not in {None, 0}:
+                raise ValueError("opset-17 QuantizeLinear cannot use blocked quantization or output_dtype")
+            return super()._run(x, y_scale, zero_point, axis, saturate)
+
+    return ReferenceEvaluator(str(path), new_ops=[DequantizeLinear, QuantizeLinear])
+
+
 def variant_config(variant_id: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     matches = [item for item in metadata["compile_variants"] if item["id"] == variant_id]
@@ -482,7 +528,6 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Pat
 
     from afe.apis.defines import InputName
     from afe.apis.model import Model
-    from onnx.reference import ReferenceEvaluator
 
     LOG.info("Fresh validation process: fetching calibration asset")
     calibration_path, _ = Fetcher().fetch(calibration_source())
@@ -497,7 +542,7 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Pat
         prepare = prepare_int8_model if precision == "int8" else prepare_model
         prepared = prepare(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
         LOG.info("Fresh validation process: creating independent ONNX precision-source reference")
-        reference = ReferenceEvaluator(str(prepared))
+        reference = build_reference_evaluator(prepared, precision)
         LOG.info("Fresh validation process: loading serialized quantized graph")
         quantized = Model.load(model_name, str(output_dir))
         LOG.info("Fresh validation process: executing %d held-out samples", validation.shape[0])
