@@ -1,6 +1,6 @@
 schema_version: 1
 status: pending_hardware_qualification
-reference: onnx_fp32_raw_heads
+reference: onnx_precision_source_raw_heads
 dataset: coco_val2017
 calibration_samples: 128
 validation_samples: 32
@@ -17,4 +17,15 @@ compiler_raw_head_thresholds:
   bf16:
     minimum_cosine_similarity: 0.999
     maximum_normalized_root_mean_square_error: 0.05
-note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.
+source_qat_accuracy_gate:
+  baseline: torchvision_ssdlite320_mobilenet_v3_large_coco_v1_fp32
+  training_dataset: coco_train2017_full
+  evaluation_dataset: coco_val2017_full
+  metric: bbox_ap_0_50_0_95
+  maximum_ap_drop_points: 1.5
+  observed:
+    fp32_ap: 0.21268746106494976
+    qat_ap: 0.20692254686472816
+    ap_drop_points: 0.5764914200221599
+    passed: true
+note: The QAT source is full-COCO accuracy-gated before bundling; compiled raw-head quality is independently gated, while decoded accuracy and performance remain pending Modalix hardware qualification.

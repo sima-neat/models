@@ -102,13 +102,22 @@ def test_package_rejects_existing_output_directory(tmp_path: Path) -> None:
         package_compiled_models(ROOT, compiled, destination, GIT_SHA)
 
 
-def test_package_rejects_unsupported_compiled_variant_with_evidence(tmp_path: Path) -> None:
+def test_package_rejects_unsupported_compiled_variant_with_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog = discover_catalog(ROOT)
+    variant = next(
+        item for item in catalog["ssd_mobilenet_v3"]["compile_variants"] if item["id"] == "modalix_int8_tess_mla"
+    )
+    variant["status"] = "unsupported"
+    variant["reason"] = "fixture compiler evidence"
+    monkeypatch.setattr("model_registry.package.discover_catalog", lambda _root: catalog)
     result = tmp_path / "compiled" / "ssd_mobilenet_v3" / "modalix_int8_tess_mla" / "compile-result.json"
     result.parent.mkdir(parents=True)
     result.write_text("{}\n", encoding="utf-8")
     with pytest.raises(
         ValidationError,
-        match="compiled output references unsupported variant.*pure W8A8 PTQ misses the shared quality gate",
+        match="compiled output references unsupported variant.*fixture compiler evidence",
     ):
         package_compiled_models(ROOT, tmp_path / "compiled", tmp_path / "dist", GIT_SHA)
 

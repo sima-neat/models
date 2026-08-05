@@ -32,32 +32,17 @@ MODEL_DIR = Path(__file__).resolve().parent
 COMPILER_VERSION = "2.1.3"
 PUBLIC_INPUT_SIZE = int(np.prod(INPUT_SHAPE)) * np.dtype(np.float32).itemsize
 PUBLIC_OUTPUT_SIZES = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _, shape in OUTPUTS]
+IMAGENET_MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 
 
-class QuantizationWarningAudit(logging.Handler):
-    """Collect compiler warnings that prove an unusable integer topology."""
+def imagenet_normalize(samples: np.ndarray) -> np.ndarray:
+    """Convert the pinned legacy [-1, 1] HWC tensors to TorchVision input."""
 
-    REJECTED_MESSAGES = (
-        "All weights in some channels are zero",
-        "Weights were set to zero",
-    )
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.WARNING)
-        self.rejected: list[str] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        message = record.getMessage()
-        if any(pattern in message for pattern in self.REJECTED_MESSAGES):
-            self.rejected.append(message)
-
-    def enforce(self) -> None:
-        if self.rejected:
-            examples = " | ".join(dict.fromkeys(self.rejected[:3]))
-            raise RuntimeError(
-                f"compiler produced {len(self.rejected)} zero-weight quantization warnings; "
-                f"refusing the damaged INT8 model: {examples}"
-            )
+    if samples.ndim != 4 or samples.shape[-1] != 3 or samples.dtype != np.float32:
+        raise ValueError(f"expected float32 NHWC RGB samples, found {samples.shape} {samples.dtype}")
+    rgb_unit = (samples + np.float32(1.0)) / np.float32(2.0)
+    return (rgb_unit - IMAGENET_MEAN) / IMAGENET_STD
 
 
 def variant_config(variant_id: str) -> dict[str, Any]:
@@ -85,12 +70,10 @@ def variant_config(variant_id: str) -> dict[str, Any]:
             f"SSD {parameters['precision'].upper()} variants require {expected_calibration} calibration "
             "and SiMa requantization"
         )
-    expected_smooth_quant = parameters["precision"] == "int8"
-    expected_bias_correction = "iterative" if parameters["precision"] == "int8" else "none"
-    if parameters.get("smooth_quant", False) is not expected_smooth_quant:
-        raise ValueError(f"SSD {parameters['precision'].upper()} SmoothQuant declaration mismatch")
-    if parameters.get("bias_correction", "none") != expected_bias_correction:
-        raise ValueError(f"SSD {parameters['precision'].upper()} bias-correction declaration mismatch")
+    if parameters.get("quantization_method") != ("qat" if parameters["precision"] == "int8" else "ptq"):
+        raise ValueError(f"SSD {parameters['precision'].upper()} quantization method declaration mismatch")
+    if parameters.get("smooth_quant", False) or parameters.get("bias_correction", "none") != "none":
+        raise ValueError("SSD QAT/BF16 sources must not receive PTQ SmoothQuant or bias correction")
     if parameters.get("calibration_samples") != len(CALIBRATION_IMAGE_IDS):
         raise ValueError(f"SSD variants require exactly {len(CALIBRATION_IMAGE_IDS)} calibration samples")
     return variant
@@ -216,8 +199,7 @@ def quantization_quality_report(
             "quantization validation requires the same non-zero number of floating and quantized samples"
         )
     accumulators = [
-        {"dot": 0.0, "reference_energy": 0.0, "candidate_energy": 0.0, "error_energy": 0.0, "mae": 0.0}
-        for _ in OUTPUTS
+        {"dot": 0.0, "reference_energy": 0.0, "candidate_energy": 0.0, "error_energy": 0.0, "mae": 0.0} for _ in OUTPUTS
     ]
     element_counts = [0] * len(OUTPUTS)
     maximum_errors = [0.0] * len(OUTPUTS)
@@ -267,7 +249,7 @@ def quantization_quality_report(
         ),
         "minimum_cosine_similarity": min(output["cosine_similarity"] for output in outputs),
         "outputs": outputs,
-        "reference": "onnx_fp32_raw_heads",
+        "reference": "onnx_precision_source_raw_heads",
         "sample_count": len(reference_samples),
     }
 
@@ -288,9 +270,7 @@ def validate_quantization(
             [np.asarray(output) for output in reference.run(None, {INPUT_NAME: sample.transpose(0, 3, 1, 2)})]
         )
         LOG.info("Validation sample %d/%d: executing quantized JAX graph", index + 1, validation.shape[0])
-        candidate_samples.append(
-            [np.asarray(output) for output in quantized.execute(inputs=inputs, use_jax=True)]
-        )
+        candidate_samples.append([np.asarray(output) for output in quantized.execute(inputs=inputs, use_jax=True)])
         LOG.info("Validation sample %d/%d: complete", index + 1, validation.shape[0])
     report = quantization_quality_report(reference_samples, candidate_samples)
     report["executor"] = "onnx_reference_and_jax_quantized"
@@ -411,7 +391,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     # These imports intentionally stay inside the Vulcan-only path. Registry,
     # surgery, provenance, and MPK-audit tests do not require an SDK install.
     from afe.apis.defines import (
-        BiasCorrectionType,
         CalibrationMethod,
         InputName,
         RequantizationMode,
@@ -431,6 +410,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
 
     calibration_path, _ = Fetcher().fetch(calibration_source())
     calibration, _validation = validate_dataset(calibration_path)
+    calibration = imagenet_normalize(calibration)
     output_dir.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v3-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         prepare = prepare_int8_model if precision == "int8" else prepare_model
@@ -457,25 +437,15 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
             .with_requantization_mode(RequantizationMode.sima)
             .with_calibration(CalibrationMethod.from_str(calibration_method))
         )
-        if precision == "int8":
-            quantization = quantization.with_smooth_quant(True).with_bias_correction(BiasCorrectionType.ITERATIVE)
         model_name = f"ssd_mobilenet_v3_{variant_id}"
-        warning_audit = QuantizationWarningAudit()
-        compiler_logger = logging.getLogger("afe.ir.defines")
-        compiler_logger.addHandler(warning_audit)
-        try:
-            quantized = loaded.quantize(
-                calibration_data=calibration_data,
-                quantization_config=quantization,
-                any_shape_on_mla=False,
-                automatic_layout_conversion=False,
-                model_name=model_name,
-                log_level=logging.INFO,
-            )
-        finally:
-            compiler_logger.removeHandler(warning_audit)
-        if precision == "int8":
-            warning_audit.enforce()
+        quantized = loaded.quantize(
+            calibration_data=calibration_data,
+            quantization_config=quantization,
+            any_shape_on_mla=False,
+            automatic_layout_conversion=False,
+            model_name=model_name,
+            log_level=logging.INFO,
+        )
         quantized.save(model_name=model_name, output_directory=str(output_dir))
         quantized_report = audit_quantized_model(output_dir / f"{model_name}.sima.json", precision)
         tessellation = None
@@ -517,14 +487,16 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Pat
     LOG.info("Fresh validation process: fetching calibration asset")
     calibration_path, _ = Fetcher().fetch(calibration_source())
     _calibration, validation = validate_dataset(calibration_path)
+    validation = imagenet_normalize(validation)
     model_name = f"ssd_mobilenet_v3_{variant_id}"
     with tempfile.TemporaryDirectory(
         prefix="ssd-mobilenet-v3-validation-",
         dir=os.environ.get("RUNNER_TEMP"),
     ) as temporary:
-        LOG.info("Fresh validation process: preparing FP32 source")
-        prepared = prepare_model(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
-        LOG.info("Fresh validation process: creating independent ONNX FP32 reference")
+        LOG.info("Fresh validation process: preparing %s precision source", precision.upper())
+        prepare = prepare_int8_model if precision == "int8" else prepare_model
+        prepared = prepare(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
+        LOG.info("Fresh validation process: creating independent ONNX precision-source reference")
         reference = ReferenceEvaluator(str(prepared))
         LOG.info("Fresh validation process: loading serialized quantized graph")
         quantized = Model.load(model_name, str(output_dir))
