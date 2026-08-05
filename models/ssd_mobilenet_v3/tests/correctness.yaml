@@ -11,6 +11,9 @@ metrics:
   - decoded_detection_recall_at_0_5_iou
   - decoded_detection_mean_matched_iou
 compiler_raw_head_thresholds:
+  int8:
+    minimum_cosine_similarity: 0.98
+    maximum_normalized_root_mean_square_error: 0.20
   bf16:
     minimum_cosine_similarity: 0.999
     maximum_normalized_root_mean_square_error: 0.05

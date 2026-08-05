@@ -137,12 +137,14 @@ surgery:
     input_shape: [1, 3, 320, 320]
     output_order: "loc[0..5],confidence[0..5]"
     source_archive_sha256: 8dade970d957ae5cb8b47e9fcefbe124e40b38c8641e484d2ab15b81d9b5126f
+    int8_negligible_weight_floor: 0.0001
+    int8_stabilized_weight_channels: 865
 compile_variants:
   - id: modalix_int8_tess_mla
     target: modalix
     recipe: compile.py
     status: unsupported
-    reason: Model Compiler 2.1.3 zeroes 35 weight sets after 128-image min/max calibration and 36 with channel equalization.
+    reason: Model Compiler 2.1.3 pure W8A8 PTQ misses the shared quality gate after 128-image SmoothQuant and iterative bias correction (cosine 0.94209 < 0.98; normalized RMSE 0.33537 > 0.20).
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -150,12 +152,14 @@ compile_variants:
       calibration_method: min_max
       calibration_samples: 128
       requantization: sima
+      smooth_quant: true
+      bias_correction: iterative
       tessellation_mla: true
   - id: modalix_int8_tess_off_mla
     target: modalix
     recipe: compile.py
     status: unsupported
-    reason: Model Compiler 2.1.3 zeroes 35 weight sets after 128-image min/max calibration and 36 with channel equalization.
+    reason: Model Compiler 2.1.3 pure W8A8 PTQ misses the shared quality gate after 128-image SmoothQuant and iterative bias correction (cosine 0.94209 < 0.98; normalized RMSE 0.33537 > 0.20).
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -163,6 +167,8 @@ compile_variants:
       calibration_method: min_max
       calibration_samples: 128
       requantization: sima
+      smooth_quant: true
+      bias_correction: iterative
       tessellation_mla: false
   - id: modalix_bf16_tess_mla
     target: modalix

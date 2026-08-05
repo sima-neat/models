@@ -19,14 +19,24 @@ The recipe does not use `quantization_mla`, `public_input_types`, or
 `public_output_types`, because those APIs are not available in the qualified
 compiler. Only internal precision and tessellation placement vary.
 
-INT8 was tested with min/max calibration over all 128 representative images.
-Model Compiler 2.1.3 zeroed 35 convolution weight sets to avoid accumulator
-saturation; MSE zeroed 33. A documented channel-equalization pass over all 128
-images followed by all 128 min/max calibration images zeroed 36 weight sets, so
-it does not repair this model/compiler pairing. Both INT8 placements are
-therefore retained as explicit unsupported contracts but excluded from
-compilation and publication. BF16 uses the compiler's MSE calibration over the
-same 128-image set and SiMa requantization.
+The strongest pure-W8A8 recipe found for INT8 uses asymmetric per-tensor
+activations, symmetric per-channel weights, min/max calibration over all 128
+representative images, SmoothQuant, iterative bias correction, and SiMa
+requantization. Before calibration, the INT8-only preparation raises one
+already-nonzero coefficient in each of 865 negligible output channels to a
+signed `1e-4` floor. It leaves truly zero channels untouched, adds no operators,
+and produced bit-identical FP32 raw heads on all 160 calibration and held-out
+samples. This prevents Model Compiler 2.1.3 from zeroing trained channels
+during PTQ.
+
+Removing that structural failure is not enough to qualify the result. Across
+all 32 held-out samples, the recipe measured `0.94209` minimum raw-head cosine
+similarity and `0.33537` maximum normalized RMSE. The same small diagnostic
+split measured COCO AP `0.18420`, versus `0.23034` for FP32. It therefore fails
+the same INT8 gate used by V1 and V2 (`0.98` minimum cosine and `0.20` maximum
+normalized RMSE). Both INT8 placements remain explicit unsupported contracts
+and are excluded from compilation and publication. BF16 uses the compiler's
+MSE calibration over the same 128-image set and SiMa requantization.
 
 The audit proves the resulting behavior from two independent compiler outputs.
 The serialized quantized topology checks all 98 MLA convolutions and verifies
@@ -43,9 +53,9 @@ Every compiler run also executes the floating and quantized raw-head models on
 all 32 held-out, category-balanced COCO samples. The audit records per-head
 cosine similarity, normalized RMSE, mean absolute error, and maximum absolute
 error; calibration and validation image IDs are disjoint. The compiler gate
-rejects malformed, non-finite, and zero-energy results. Qualified BF16 variants
-additionally require minimum raw-head cosine similarity 0.999 and maximum
-normalized RMSE 0.05. The first pinned 2.1.3 BF16 qualification measured
+rejects malformed, non-finite, and zero-energy results. INT8 requires minimum
+raw-head cosine similarity `0.98` and maximum normalized RMSE `0.20`; BF16
+requires `0.999` and `0.05`. The first pinned 2.1.3 BF16 qualification measured
 0.99965453 minimum cosine similarity and 0.02665781 maximum normalized RMSE.
 The recipe replaces its quantize/compile process and
 reloads the saved model in a clean process before executing held-out samples.
@@ -57,7 +67,7 @@ the independent serialized-graph/MPK audits must both pass.
 The independent zero-weight warning audit runs before model serialization, so
 changing executors cannot mask a structurally invalid INT8 quantization.
 
-## Source and zero-cost surgery
+## Source and precision-specific preparation
 
 The immutable ONNX source is private release asset `500803387`, with SHA-256
 `3b8a49dae52f4053e9197755aaa11fc227af8e234c7df19c7fe42ac847eed1c5`.
@@ -69,9 +79,12 @@ The source preserves the six predictor levels at 20, 10, 5, 3, 2, and 1.
 The offline finalization folds four resized BatchNorm paths into their
 convolutions and selects the NCHW predictor tensors without adding naming
 Identity nodes. The registry `surgery.py` then proves the exact source hash,
-FP32 signature, 98-convolution topology, upstream archive provenance, absence
-of Identity/BatchNorm runtime stages, and publishes a byte-for-byte copy. This
-makes the build boundary deterministic and prevents twelve A65 output copies.
+FP32 signature, 98-convolution topology, upstream archive provenance, and
+absence of Identity/BatchNorm runtime stages. BF16 receives a byte-for-byte
+copy. INT8 receives the deterministic negligible-channel stabilization
+described above, with the floor and exact changed-channel count embedded in
+ONNX metadata and checked again after serialization. Both paths preserve the
+public graph contract and prevent twelve A65 output copies.
 
 ## Representative calibration
 

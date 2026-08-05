@@ -25,7 +25,7 @@ from calibration import (
 )
 from model_registry.fetch import Fetcher
 from model_registry.source import SourceSpec
-from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_model
+from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_int8_model, prepare_model
 
 LOG = logging.getLogger("ssd_mobilenet_v3.compile")
 MODEL_DIR = Path(__file__).resolve().parent
@@ -85,6 +85,12 @@ def variant_config(variant_id: str) -> dict[str, Any]:
             f"SSD {parameters['precision'].upper()} variants require {expected_calibration} calibration "
             "and SiMa requantization"
         )
+    expected_smooth_quant = parameters["precision"] == "int8"
+    expected_bias_correction = "iterative" if parameters["precision"] == "int8" else "none"
+    if parameters.get("smooth_quant", False) is not expected_smooth_quant:
+        raise ValueError(f"SSD {parameters['precision'].upper()} SmoothQuant declaration mismatch")
+    if parameters.get("bias_correction", "none") != expected_bias_correction:
+        raise ValueError(f"SSD {parameters['precision'].upper()} bias-correction declaration mismatch")
     if parameters.get("calibration_samples") != len(CALIBRATION_IMAGE_IDS):
         raise ValueError(f"SSD variants require exactly {len(CALIBRATION_IMAGE_IDS)} calibration samples")
     return variant
@@ -405,6 +411,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     # These imports intentionally stay inside the Vulcan-only path. Registry,
     # surgery, provenance, and MPK-audit tests do not require an SDK install.
     from afe.apis.defines import (
+        BiasCorrectionType,
         CalibrationMethod,
         InputName,
         RequantizationMode,
@@ -426,7 +433,8 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     calibration, _validation = validate_dataset(calibration_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v3-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
-        prepared = prepare_model(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
+        prepare = prepare_int8_model if precision == "int8" else prepare_model
+        prepared = prepare(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
         importer = ImporterParams(
             format=ModelFormat.onnx,
             file_paths=[str(prepared)],
@@ -449,6 +457,8 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
             .with_requantization_mode(RequantizationMode.sima)
             .with_calibration(CalibrationMethod.from_str(calibration_method))
         )
+        if precision == "int8":
+            quantization = quantization.with_smooth_quant(True).with_bias_correction(BiasCorrectionType.ITERATIVE)
         model_name = f"ssd_mobilenet_v3_{variant_id}"
         warning_audit = QuantizationWarningAudit()
         compiler_logger = logging.getLogger("afe.ir.defines")
