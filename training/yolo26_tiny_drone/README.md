@@ -47,6 +47,26 @@ Image and label paths are relative to the manifest directory and may not
 escape it. Labels must follow Ultralytics' `images/...` to `labels/...` path
 mapping, and every normalized box must lie fully inside its source image.
 
+The published Anti-UAV Track 3 archive assigns frames rather than source
+sequences to train and validation; all 200 source sequences consequently
+cross that boundary. Prepare it with whole-sequence 80/10/10 splits before
+training. The preparation verifies the published archive digest, validates
+every label, retains negative frames with explicit empty labels, balances
+sequence/frame/object totals, uses hard links rather than duplicating the
+corpus, and records the CC-BY-4.0 source lineage in the manifest:
+
+```bash
+python training/yolo26_tiny_drone/prepare_multiuav.py \
+  --source-archive /data/AntiUAV_train_val.zip \
+  --source-root /data/extracted/AntiUAV_train_val \
+  --output-dir /data/AntiUAV-sequence-safe
+```
+
+`MultiUAV-003`, the source of the reference tracker clip, is absent from this
+training/validation archive and remains a fully external acceptance sequence.
+Use repeatable `--test-sequence` arguments to force any included acceptance
+sequences into the internal test partition.
+
 Production QAT refuses fewer than 128 distinct representative training
 images. Use hundreds or thousands where available; 128 is a hard floor, not a
 quality target. Put the exact evaluation video and near-miss negatives in the
@@ -79,15 +99,27 @@ Supply the local file explicitly; the scripts do not silently change it.
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_fp32.py \
   --manifest /data/drone/manifest.json \
   --base-weights /data/checkpoints/yolo26n.pt \
+  --teacher-init-weights /data/checkpoints/rgb-drone-teacher.pt \
   --output-dir build/yolo26-drone-fp32 \
+  --image-size 1600 \
   --teacher-epochs 100 --recovery-epochs 30 --batch-size 16 --device 0
 ```
+
+`--image-size` is a static deployment contract, not a training-only resize.
+It must be divisible by 32 and is recorded in FP32 lineage, QAT checkpoints,
+the ONNX tensor ABI, compiler calibration evidence, and the MPK audit. Larger
+inputs such as 1600 are useful for single-digit-pixel targets, but they must
+pass compiler and board memory/performance qualification before promotion.
 
 The first stage fine-tunes the official attention-based P2 model as an FP32
 teacher. The second stage transfers its compatible backbone, neck, and head
 weights into the INT8-safe graph and recovers the two surgically replaced
 blocks. Only the recovered student proceeds to QAT. Both stages use
 Ultralytics MuSGD, and the lineage records both checkpoint digests.
+`--teacher-init-weights` optionally starts that first stage from an existing
+YOLO26-P2 detector (for example, the sequence-safe single-drone teacher); its
+digest is recorded independently while the official architectural base stays
+pinned. Omit it to initialize directly from the official base.
 
 ## Target-exact QAT
 
@@ -96,7 +128,9 @@ Ultralytics MuSGD, and the lineage records both checkpoint digests.
   --manifest /data/drone/manifest.json \
   --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
   --output-dir build/yolo26-drone-qat \
-  --observer-warmup-images 128 \
+  --image-size 1600 \
+  --observer-warmup-images 1024 \
+  --max-train-images 32768 \
   --epochs 10 --batch-size 1 --accumulation-steps 32 --device cuda
 ```
 
@@ -116,6 +150,13 @@ refinement. Set `--freeze-observers-fraction 0` to retain only the ranges from
 the representative warm-up. Each fresh run records its fake-quantized accuracy
 before the first optimizer step, separating initialization loss from training
 regressions.
+
+For very large video corpora, `--max-train-images` bounds each QAT epoch while
+keeping at least one temporally distributed sample from every training
+sequence. Quotas are proportional to sequence length, sampled from uniform
+temporal bins, and the exact selection digest and per-sequence counts are
+stored in the checkpoint. Observer warm-up remains an independent sample from
+the full training split; validation still runs on the complete held-out split.
 
 A frozen production checkpoint can be refined at a lower learning rate without
 recalibrating or exposing observers to validation data. `--epochs` is the
@@ -168,7 +209,8 @@ Export fails when:
 - validation has fewer than 100 tiny instances, QAT AP50 is below 0.30, or
   QAT tiny-object recall is below 0.50;
 - AP50 drops more than 2 points or tiny-object recall drops more than 5 points;
-- the input is not `1x3x640x640` or the eight P2–P5 outputs differ;
+- the input or eight P2–P5 outputs differ from the checkpoint's recorded
+  static deployment contract;
 - BatchNorm, MatMul, Einsum, or Softmax remains;
 - any convolution weight lacks signed symmetric per-channel INT8 QDQ.
 
@@ -177,7 +219,7 @@ Export fails when:
 Run the compiler in a ModelSDK 2.1 environment with `mla-masm`, `mla-msim`,
 and CUDA `libdevice.10.bc` installed. Compilation independently selects a
 seeded sample of at least 128 training images and reuses the
-exact 640-square RGB letterbox preprocessing from training:
+exact checkpoint-recorded square RGB letterbox preprocessing from training:
 
 ```bash
 python training/yolo26_tiny_drone/compile.py \

@@ -7,12 +7,12 @@ from typing import Any
 
 import numpy as np
 import torch
-from contract import MODEL_SIZE
+from contract import DEFAULT_MODEL_SIZE
 from torch import Tensor, nn
 from torchvision.ops import box_iou, nms
 
 
-def _targets_for_image(batch: dict[str, Any], image_index: int) -> Tensor:
+def _targets_for_image(batch: dict[str, Any], image_index: int, model_size: int) -> Tensor:
     mask = batch["batch_idx"].long() == image_index
     normalized = batch["bboxes"][mask]
     if not normalized.numel():
@@ -20,10 +20,10 @@ def _targets_for_image(batch: dict[str, Any], image_index: int) -> Tensor:
     center_x, center_y, width, height = normalized.unbind(1)
     return torch.stack(
         (
-            (center_x - width * 0.5) * MODEL_SIZE,
-            (center_y - height * 0.5) * MODEL_SIZE,
-            (center_x + width * 0.5) * MODEL_SIZE,
-            (center_y + height * 0.5) * MODEL_SIZE,
+            (center_x - width * 0.5) * model_size,
+            (center_y - height * 0.5) * model_size,
+            (center_x + width * 0.5) * model_size,
+            (center_y + height * 0.5) * model_size,
         ),
         dim=1,
     )
@@ -98,6 +98,7 @@ def evaluate_model(
     *,
     score_threshold: float = 0.05,
     nms_iou: float = 0.60,
+    model_size: int = DEFAULT_MODEL_SIZE,
 ) -> dict[str, float]:
     model.eval()
     scores: list[float] = []
@@ -115,7 +116,7 @@ def evaluate_model(
         for image_index, (predicted_boxes, predicted_scores) in enumerate(
             decoded[: int(batch.get("valid_count", len(decoded)))]
         ):
-            truth = _targets_for_image(batch, image_index)
+            truth = _targets_for_image(batch, image_index, model_size)
             order = predicted_scores.argsort(descending=True)
             predicted_boxes = predicted_boxes[order]
             predicted_scores = predicted_scores[order]

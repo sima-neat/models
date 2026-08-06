@@ -6,7 +6,7 @@ import copy
 from typing import Any
 
 import torch
-from contract import FEATURE_SIZES, output_shapes
+from contract import DEFAULT_CONTRACT, DeploymentContract
 from torch import Tensor, nn
 
 
@@ -108,14 +108,18 @@ class DeployOutputs(nn.Module):
         return self.wrapped(images)["deploy"]
 
 
-def validate_deploy_outputs(outputs: tuple[Tensor, ...], batch_size: int) -> None:
-    expected = output_shapes(batch_size)
+def validate_deploy_outputs(
+    outputs: tuple[Tensor, ...],
+    batch_size: int,
+    contract: DeploymentContract = DEFAULT_CONTRACT,
+) -> None:
+    expected = contract.output_shapes(batch_size)
     actual = [tuple(value.shape) for value in outputs]
     if actual != expected:
         raise RuntimeError(f"raw-head output contract mismatch: expected {expected}, got {actual}")
     spatial = tuple(shape[-1] for shape in actual[:4])
-    if spatial != FEATURE_SIZES:
-        raise RuntimeError(f"expected P2-P5 feature sizes {FEATURE_SIZES}, got {spatial}")
+    if spatial != contract.feature_sizes:
+        raise RuntimeError(f"expected P2-P5 feature sizes {contract.feature_sizes}, got {spatial}")
 
 
 def select_deploy_graph(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:

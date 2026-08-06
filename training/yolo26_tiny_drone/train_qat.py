@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import math
@@ -17,7 +18,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from contract import INPUT_SHAPE
+from contract import DEFAULT_MODEL_SIZE, DeploymentContract
 from dataset import DroneDataset, FixedBatchCollator, FrameRecord, load_manifest, sha256_file
 from evaluate import evaluate_model
 from model import Yolo26TrainingDeployWrapper, fuse_batch_norm_for_qat, validate_deploy_outputs
@@ -37,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--image-size", type=int, default=DEFAULT_MODEL_SIZE)
     parser.add_argument("--accumulation-steps", type=int, default=32)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -44,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trainable-scope", choices=("all", "head", "classification"), default="all")
     parser.add_argument("--class-distillation-weight", type=float, default=0.0)
     parser.add_argument("--observer-warmup-images", type=int, default=128)
+    parser.add_argument("--max-train-images", type=int)
     parser.add_argument("--freeze-observers-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260806)
     parser.add_argument("--smoke", action="store_true")
@@ -60,8 +63,14 @@ def parse_args() -> argparse.Namespace:
         parser.error("freeze-observers-fraction must be in [0, 1)")
     if args.observer_warmup_images < 128 and not args.smoke:
         parser.error("production QAT requires at least 128 representative observer images")
+    if args.max_train_images is not None and args.max_train_images < (1 if args.smoke else 128):
+        parser.error("max-train-images must be at least 128 for production QAT")
     if args.batch_size != 1:
         parser.error("target-exact YOLO26 QAT requires batch size 1; use accumulation steps")
+    try:
+        DeploymentContract(args.image_size)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.epochs < 2 and not args.smoke:
         parser.error("production QAT needs at least two epochs so frozen observers receive refinement")
     if not args.manifest.is_file() or not args.fp32_checkpoint.is_file():
@@ -118,6 +127,65 @@ def representative_observer_records(records: list[FrameRecord], required: int, s
     return random.Random(seed).sample(train_records, required)
 
 
+def select_qat_training_records(
+    records: list[FrameRecord], maximum: int | None
+) -> tuple[list[FrameRecord], dict[str, Any]]:
+    """Select temporal coverage from every train sequence without frame leakage."""
+    train_records = sorted(
+        (record for record in records if record.split == "train"),
+        key=lambda record: (record.sequence, record.image.name),
+    )
+    if not train_records:
+        raise RuntimeError("manifest has no QAT training frames")
+    grouped: dict[str, list[FrameRecord]] = {}
+    for record in train_records:
+        grouped.setdefault(record.sequence, []).append(record)
+    if maximum is None or maximum >= len(train_records):
+        selected = train_records
+        method = "full_train_split"
+    else:
+        if maximum < len(grouped):
+            raise RuntimeError(f"max-train-images={maximum} cannot cover all {len(grouped)} training sequences")
+        quotas = {sequence: 1 for sequence in grouped}
+        remaining = maximum - len(grouped)
+        capacities = {sequence: len(items) - 1 for sequence, items in grouped.items()}
+        total_capacity = sum(capacities.values())
+        ideals = {sequence: remaining * capacity / total_capacity for sequence, capacity in capacities.items()}
+        for sequence, ideal in ideals.items():
+            quotas[sequence] += math.floor(ideal)
+        leftover = maximum - sum(quotas.values())
+        remainder_order = sorted(
+            grouped,
+            key=lambda sequence: (
+                -(ideals[sequence] - math.floor(ideals[sequence])),
+                sequence,
+            ),
+        )
+        for sequence in remainder_order[:leftover]:
+            quotas[sequence] += 1
+        selected = []
+        for sequence, items in sorted(grouped.items()):
+            quota = quotas[sequence]
+            indices = [(2 * index + 1) * len(items) // (2 * quota) for index in range(quota)]
+            selected.extend(items[index] for index in indices)
+        method = "proportional_per_sequence_temporal_bins"
+    digest = hashlib.sha256()
+    per_sequence: dict[str, int] = {}
+    for record in selected:
+        digest.update(f"{record.sequence}\0{record.image.name}\n".encode())
+        per_sequence[record.sequence] = per_sequence.get(record.sequence, 0) + 1
+    evidence = {
+        "method": method,
+        "requested_maximum": maximum,
+        "source_train_images": len(train_records),
+        "selected_images": len(selected),
+        "selected_sequences": len(per_sequence),
+        "selection_sha256": digest.hexdigest(),
+        "per_sequence_images": per_sequence,
+    }
+    return selected, evidence
+
+
 def atomic_save(document: dict[str, Any], destination: Path) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=destination.name, suffix=".tmp", dir=destination.parent)
     os.close(descriptor)
@@ -129,12 +197,27 @@ def atomic_save(document: dict[str, Any], destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def validate_resume_checkpoint(checkpoint: dict[str, Any], manifest: Path, fp32_checkpoint: Path) -> None:
+def validate_resume_checkpoint(
+    checkpoint: dict[str, Any],
+    manifest: Path,
+    fp32_checkpoint: Path,
+    contract: DeploymentContract,
+    training_selection: dict[str, Any],
+) -> None:
     """Reject a resume source that is not the same frozen production contract."""
     if checkpoint.get("schema_version") != 1:
         raise RuntimeError("resume checkpoint has an unsupported schema")
     if checkpoint.get("architecture") != "yolo26n-p2-int8-conv-one-class":
         raise RuntimeError("resume checkpoint has the wrong architecture")
+    try:
+        resume_contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("resume checkpoint has an invalid deployment contract") from exc
+    if resume_contract != contract:
+        raise RuntimeError(
+            "resume checkpoint deployment shape does not match: "
+            f"checkpoint={resume_contract.input_shape}, requested={contract.input_shape}"
+        )
     if not checkpoint.get("observers_frozen"):
         raise RuntimeError("resume checkpoint must have frozen observers")
     if int(checkpoint.get("observer_images", 0)) < 128:
@@ -154,6 +237,11 @@ def validate_resume_checkpoint(checkpoint: dict[str, Any], manifest: Path, fp32_
         raise RuntimeError("resume checkpoint has incomplete observer evidence")
     if len(observer_selection["images"]) != int(checkpoint["observer_images"]):
         raise RuntimeError("resume checkpoint observer count does not match its evidence")
+    recorded_selection = checkpoint.get("training_selection")
+    if recorded_selection is None and training_selection["method"] == "full_train_split":
+        return
+    if recorded_selection != training_selection:
+        raise RuntimeError("resume checkpoint QAT training selection does not match")
 
 
 def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
@@ -202,12 +290,13 @@ def evaluate_without_observer_updates(
     device: torch.device,
     *,
     observers_frozen: bool,
+    model_size: int,
 ) -> dict[str, float]:
     """Keep held-out validation data out of the QAT observer state."""
     if not observers_frozen:
         model.apply(disable_observer)
     try:
-        return evaluate_model(model, head, data, device)
+        return evaluate_model(model, head, data, device, model_size=model_size)
     finally:
         if not observers_frozen:
             model.apply(enable_observer)
@@ -215,26 +304,64 @@ def evaluate_without_observer_updates(
 
 def main() -> int:
     args = parse_args()
+    contract = DeploymentContract(args.image_size)
     seed_everything(args.seed)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     records = load_manifest(args.manifest)
+    training_records, training_selection = select_qat_training_records(records, args.max_train_images)
     resume = None
     if args.resume_checkpoint is not None:
         resume = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
-        validate_resume_checkpoint(resume, args.manifest, args.fp32_checkpoint)
+        validate_resume_checkpoint(
+            resume,
+            args.manifest,
+            args.fp32_checkpoint,
+            contract,
+            training_selection,
+        )
     observer_records = (
         representative_observer_records(records, args.observer_warmup_images, args.seed) if resume is None else []
     )
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    train_data = loader(DroneDataset(records, "train", augment=True, seed=args.seed), args, True)
+    train_data = loader(
+        DroneDataset(
+            training_records,
+            "train",
+            augment=True,
+            seed=args.seed,
+            model_size=contract.model_size,
+        ),
+        args,
+        True,
+    )
     observer_data = (
-        loader(DroneDataset(observer_records, "train", augment=False, seed=args.seed), args, False)
+        loader(
+            DroneDataset(
+                observer_records,
+                "train",
+                augment=False,
+                seed=args.seed,
+                model_size=contract.model_size,
+            ),
+            args,
+            False,
+        )
         if resume is None
         else None
     )
-    val_data = loader(DroneDataset(records, "val", augment=False, seed=args.seed), args, False)
+    val_data = loader(
+        DroneDataset(
+            records,
+            "val",
+            augment=False,
+            seed=args.seed,
+            model_size=contract.model_size,
+        ),
+        args,
+        False,
+    )
 
     import ultralytics
     from sima_qat.qat_api import sima_prepare_qat_model
@@ -251,8 +378,23 @@ def main() -> int:
     detector.to(device).requires_grad_(True).train()
     criterion = detector.init_criterion()
     wrapped = Yolo26TrainingDeployWrapper(detector).to(device).train()
-    baseline = evaluate_model(wrapped, detector.model[-1], val_data, device) if resume is None else resume["baseline"]
-    example = (torch.rand((args.batch_size, *INPUT_SHAPE[1:]), device=device),)
+    baseline = (
+        evaluate_model(
+            wrapped,
+            detector.model[-1],
+            val_data,
+            device,
+            model_size=contract.model_size,
+        )
+        if resume is None
+        else resume["baseline"]
+    )
+    example = (
+        torch.rand(
+            (args.batch_size, *contract.input_shape[1:]),
+            device=device,
+        ),
+    )
     qat_model = sima_prepare_qat_model(wrapped, example, device)
     if resume is None:
         if observer_data is None:
@@ -270,6 +412,7 @@ def main() -> int:
             val_data,
             device,
             observers_frozen=False,
+            model_size=contract.model_size,
         )
         start_epoch = 0
         history: list[dict[str, Any]] = []
@@ -332,7 +475,7 @@ def main() -> int:
             for key in ("batch_idx", "cls", "bboxes"):
                 batch[key] = batch[key].to(device, non_blocking=True)
             outputs = qat_model(images)
-            validate_deploy_outputs(outputs["deploy"], images.shape[0])
+            validate_deploy_outputs(outputs["deploy"], images.shape[0], contract)
             loss, components = criterion(outputs["predictions"], batch)
             detection_loss = loss.sum()
             distillation_loss = torch.zeros((), device=device)
@@ -368,6 +511,7 @@ def main() -> int:
             val_data,
             device,
             observers_frozen=observers_frozen,
+            model_size=contract.model_size,
         )
         entry = {
             "epoch": epoch,
@@ -383,6 +527,7 @@ def main() -> int:
         checkpoint = {
             "schema_version": 1,
             "architecture": "yolo26n-p2-int8-conv-one-class",
+            "deployment": contract.to_dict(),
             "qat_state_dict": qat_model.state_dict(),
             "epoch": epoch,
             "arguments": vars(args),
@@ -394,6 +539,7 @@ def main() -> int:
             "observers_frozen": observers_frozen,
             "observer_images": len(observed_paths),
             "observer_selection": observer_evidence,
+            "training_selection": training_selection,
             "manifest_sha256": sha256_file(args.manifest),
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
             "resume_checkpoint_sha256": resume_digest,

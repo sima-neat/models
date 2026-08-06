@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import onnx
-from contract import INPUT_NAME, INPUT_SHAPE, OUTPUTS
+from contract import DEFAULT_CONTRACT, INPUT_NAME, DeploymentContract
 from onnx import numpy_helper
 
 
@@ -51,15 +51,15 @@ def _constant_array(
     return None
 
 
-def audit_onnx(path: Path) -> dict[str, Any]:
+def audit_onnx(path: Path, contract: DeploymentContract = DEFAULT_CONTRACT) -> dict[str, Any]:
     model = onnx.load(path)
     onnx.checker.check_model(model)
     if len(model.graph.input) != 1 or model.graph.input[0].name != INPUT_NAME:
         raise RuntimeError("YOLO26 QAT graph must have exactly the public images input")
-    if _shape(model.graph.input[0]) != INPUT_SHAPE:
+    if _shape(model.graph.input[0]) != contract.input_shape:
         raise RuntimeError(f"input shape mismatch: {_shape(model.graph.input[0])}")
     actual_outputs = [(value.name, _shape(value)) for value in model.graph.output]
-    if actual_outputs != list(OUTPUTS):
+    if actual_outputs != list(contract.outputs):
         raise RuntimeError(f"raw-head output contract mismatch: {actual_outputs}")
 
     operators = Counter(node.op_type for node in model.graph.node)

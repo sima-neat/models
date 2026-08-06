@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-from contract import INPUT_NAME, INPUT_SHAPE, MODEL_SIZE, OUTPUTS, output_names
+from contract import INPUT_NAME, DeploymentContract
 from dataset import FrameRecord, load_manifest
 from onnx_audit import audit_onnx, sha256_file
 from PIL import Image
@@ -24,17 +24,21 @@ ARCHITECTURE = "yolo26n-p2-int8-conv-one-class"
 MODEL_NAME = "yolo26n_p2_tiny_drone_int8_qat_b1"
 MINIMUM_CALIBRATION_IMAGES = 128
 EXPECTED_CONVOLUTIONS = 131
-PUBLIC_INPUT_SIZE = int(np.prod(INPUT_SHAPE)) * np.dtype(np.float32).itemsize
-PUBLIC_OUTPUT_SIZES = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _name, shape in OUTPUTS]
 
 
-def validate_export(export_dir: Path, manifest: Path, *, allow_smoke: bool) -> tuple[Path, dict[str, Any]]:
+def validate_export(
+    export_dir: Path, manifest: Path, *, allow_smoke: bool
+) -> tuple[Path, dict[str, Any], DeploymentContract]:
     report_path = export_dir / "export-report.json"
     if not report_path.is_file():
         raise ValueError(f"missing export report: {report_path}")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("schema_version") != 1 or report.get("architecture") != ARCHITECTURE:
         raise ValueError("export report is not the YOLO26-P2 tiny-drone QAT contract")
+    try:
+        contract = DeploymentContract.from_dict(report.get("deployment"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("export report has an invalid deployment contract") from exc
     if report.get("manifest_sha256") != sha256_file(manifest):
         raise ValueError("compile manifest does not match the QAT/export lineage")
     if int(report.get("observer_images", 0)) < MINIMUM_CALIBRATION_IMAGES and not allow_smoke:
@@ -46,7 +50,7 @@ def validate_export(export_dir: Path, manifest: Path, *, allow_smoke: bool) -> t
     source = (export_dir / declaration["file"]).resolve()
     if source.parent != export_dir.resolve() or not source.is_file():
         raise ValueError("export report references an invalid ONNX source")
-    audit = audit_onnx(source)
+    audit = audit_onnx(source, contract)
     declared_audit = declaration.get("audit")
     if not isinstance(declared_audit, dict) or audit.get("sha256") != declared_audit.get("sha256"):
         raise ValueError("ONNX source digest does not match the export report")
@@ -78,7 +82,7 @@ def validate_export(export_dir: Path, manifest: Path, *, allow_smoke: bool) -> t
             raise ValueError("export is below the 0.50 QAT tiny-recall gate")
         if values["tiny_ground_truth_count"] < required["tiny_ground_truth_count"]:
             raise ValueError("export has fewer than 100 held-out tiny objects")
-    return source, report
+    return source, report, contract
 
 
 def select_calibration_records(
@@ -98,24 +102,33 @@ def select_calibration_records(
     return sorted(selected, key=lambda record: str(record.image))
 
 
-def preprocess_image(path: Path) -> np.ndarray:
+def preprocess_image(path: Path, contract: DeploymentContract) -> np.ndarray:
     with Image.open(path) as source:
         image = source.convert("RGB")
     width, height = image.size
-    scale = min(MODEL_SIZE / width, MODEL_SIZE / height)
+    scale = min(contract.model_size / width, contract.model_size / height)
     resized_width = max(1, round(width * scale))
     resized_height = max(1, round(height * scale))
-    left = (MODEL_SIZE - resized_width) // 2
-    top = (MODEL_SIZE - resized_height) // 2
+    left = (contract.model_size - resized_width) // 2
+    top = (contract.model_size - resized_height) // 2
     resized = image.resize((resized_width, resized_height), Image.Resampling.BILINEAR)
-    canvas = Image.new("RGB", (MODEL_SIZE, MODEL_SIZE), (114, 114, 114))
+    canvas = Image.new("RGB", (contract.model_size, contract.model_size), (114, 114, 114))
     canvas.paste(resized, (left, top))
     return np.asarray(canvas, dtype=np.float32) / np.float32(255.0)
 
 
-def build_calibration(records: list[FrameRecord]) -> tuple[np.ndarray, dict[str, Any]]:
-    samples = np.stack([preprocess_image(record.image) for record in records])
-    if samples.shape != (len(records), MODEL_SIZE, MODEL_SIZE, 3) or samples.dtype != np.float32:
+def build_calibration(records: list[FrameRecord], contract: DeploymentContract) -> tuple[np.ndarray, dict[str, Any]]:
+    samples = np.stack([preprocess_image(record.image, contract) for record in records])
+    if (
+        samples.shape
+        != (
+            len(records),
+            contract.model_size,
+            contract.model_size,
+            3,
+        )
+        or samples.dtype != np.float32
+    ):
         raise RuntimeError(f"invalid calibration tensor: shape={samples.shape}, dtype={samples.dtype}")
     digest = hashlib.sha256(np.ascontiguousarray(samples).tobytes()).hexdigest()
     evidence = {
@@ -128,7 +141,7 @@ def build_calibration(records: list[FrameRecord]) -> tuple[np.ndarray, dict[str,
             }
             for record in records
         ],
-        "preprocessing": "rgb_letterbox_640_fill_114_divide_255_nhwc_float32",
+        "preprocessing": (f"rgb_letterbox_{contract.model_size}_fill_114_divide_255_nhwc_float32"),
         "tensor_sha256": digest,
     }
     return samples, evidence
@@ -183,7 +196,7 @@ def _kernel(plugin: dict[str, Any]) -> str:
     return str(plugin.get("config_params", {}).get("kernel", ""))
 
 
-def audit_mpk(archive: Path) -> dict[str, Any]:
+def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
     names, manifest = _safe_mpk(archive)
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
     mla = [plugin for plugin in plugins if str(plugin.get("processor", "")).upper() == "MLA"]
@@ -195,11 +208,13 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
             f"invalid MPK placement: MLA={len(mla)}, ELF={len(elfs)}, A65={len(a65)}, SO={shared_objects}"
         )
     inputs = manifest.get("input_nodes", [])
-    if len(inputs) != 1 or inputs[0].get("name") != INPUT_NAME or inputs[0].get("size") != PUBLIC_INPUT_SIZE:
+    public_input_size = int(np.prod(contract.input_shape)) * np.dtype(np.float32).itemsize
+    public_output_sizes = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _name, shape in contract.outputs]
+    if len(inputs) != 1 or inputs[0].get("name") != INPUT_NAME or inputs[0].get("size") != public_input_size:
         raise RuntimeError(f"MPK public input ABI mismatch: {inputs}")
     terminal = plugins[-1] if plugins else {}
     output_sizes = [node.get("size") for node in terminal.get("output_nodes", [])]
-    if _kernel(terminal) != "pass_through" or output_sizes != PUBLIC_OUTPUT_SIZES:
+    if _kernel(terminal) != "pass_through" or output_sizes != public_output_sizes:
         raise RuntimeError(f"MPK public output ABI mismatch: {output_sizes}")
     unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
     tensor_types = (
@@ -212,9 +227,9 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
         plugin.get("config_params", {}).get("params", {}).get("input_data_type") for plugin in dequantize
     ]
     if (
-        tensor_types != ["int8"] * len(OUTPUTS)
+        tensor_types != ["int8"] * len(contract.outputs)
         or quantized_types != ["int8"]
-        or dequantized_types != ["int8"] * len(OUTPUTS)
+        or dequantized_types != ["int8"] * len(contract.outputs)
     ):
         raise RuntimeError(
             "MPK INT8 transport mismatch: "
@@ -228,7 +243,11 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
         "mla_plugin_count": len(mla),
         "a65_plugin_count": len(a65),
         "ev74_plugin_count": sum(str(plugin.get("processor", "")).upper() == "EV74" for plugin in plugins),
-        "public_input": {"dtype": "float32", "name": INPUT_NAME, "shape": list(INPUT_SHAPE)},
+        "public_input": {
+            "dtype": "float32",
+            "name": INPUT_NAME,
+            "shape": list(contract.input_shape),
+        },
         "public_output_dtype": "float32",
         "public_output_sizes": output_sizes,
         "output_transport_types": tensor_types,
@@ -238,7 +257,11 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
 
 
 def compile_model(
-    source: Path, calibration: np.ndarray, output_dir: Path, model_name: str
+    source: Path,
+    calibration: np.ndarray,
+    output_dir: Path,
+    model_name: str,
+    contract: DeploymentContract,
 ) -> tuple[Path, dict[str, Any]]:
     # Keep SDK imports out of source-validation and unit-test paths.
     from afe.apis.defines import (
@@ -259,10 +282,10 @@ def compile_model(
         format=ModelFormat.onnx,
         file_paths=[str(source)],
         input_names=[INPUT_NAME],
-        input_shapes=[INPUT_SHAPE],
+        input_shapes=[contract.input_shape],
         input_types=[ScalarType.float32],
         layout="NCHW",
-        output_names=output_names(),
+        output_names=contract.output_names(),
     )
     loaded = load_model(importer, target=gen2_target)
     calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT_NAME): calibration}))
@@ -318,7 +341,7 @@ def main() -> int:
         parser.error(f"manifest does not exist: {manifest}")
     if re.fullmatch(r"[a-z0-9_]{1,80}", args.model_name) is None:
         parser.error("model-name must contain only lowercase letters, digits, and underscores")
-    source, export_report = validate_export(export_dir, manifest, allow_smoke=args.allow_smoke)
+    source, export_report, contract = validate_export(export_dir, manifest, allow_smoke=args.allow_smoke)
     records = load_manifest(manifest)
     selected = select_calibration_records(
         records,
@@ -326,12 +349,13 @@ def main() -> int:
         seed=args.calibration_seed,
         allow_smoke=args.allow_smoke,
     )
-    calibration, calibration_report = build_calibration(selected)
+    calibration, calibration_report = build_calibration(selected, contract)
     output_dir.mkdir(parents=True, exist_ok=False)
-    archive, quantized_report = compile_model(source, calibration, output_dir, args.model_name)
+    archive, quantized_report = compile_model(source, calibration, output_dir, args.model_name, contract)
     report = {
         "schema_version": 1,
         "architecture": ARCHITECTURE,
+        "deployment": contract.to_dict(),
         "qualification_eligible": not args.allow_smoke,
         "source": {
             "export_report_sha256": sha256_file(export_dir / "export-report.json"),
@@ -339,7 +363,7 @@ def main() -> int:
         },
         "calibration": calibration_report,
         "quantized_model": quantized_report,
-        "mpk": audit_mpk(archive),
+        "mpk": audit_mpk(archive, contract),
     }
     (output_dir / "compile-report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

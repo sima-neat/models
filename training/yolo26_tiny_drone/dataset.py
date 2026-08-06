@@ -11,13 +11,14 @@ from typing import Any
 
 import numpy as np
 import torch
-from contract import MODEL_SIZE
+from contract import DEFAULT_MODEL_SIZE
 from paths import ultralytics_label_path
 from PIL import Image, ImageEnhance
 from torch import Tensor
 from torch.utils.data import Dataset
 
 VALID_SPLITS = ("train", "val", "test")
+LABEL_BOUNDARY_EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
@@ -128,13 +129,22 @@ def read_yolo_label(path: Path) -> Tensor:
             raise ValueError(f"{path}:{line_number}: normalized xywh must be in [0, 1]")
         if width <= 0.0 or height <= 0.0:
             raise ValueError(f"{path}:{line_number}: width and height must be positive")
-        if x - width * 0.5 < 0.0 or x + width * 0.5 > 1.0 or y - height * 0.5 < 0.0 or y + height * 0.5 > 1.0:
+        if (
+            x - width * 0.5 < -LABEL_BOUNDARY_EPSILON
+            or x + width * 0.5 > 1.0 + LABEL_BOUNDARY_EPSILON
+            or y - height * 0.5 < -LABEL_BOUNDARY_EPSILON
+            or y + height * 0.5 > 1.0 + LABEL_BOUNDARY_EPSILON
+        ):
             raise ValueError(f"{path}:{line_number}: normalized box must remain inside the image")
+        # Six-decimal dataset exports can exceed an edge by half a quantization
+        # unit. Canonicalize only that rounding noise before augmentation.
+        x = min(max(x, width * 0.5), 1.0 - width * 0.5)
+        y = min(max(y, height * 0.5), 1.0 - height * 0.5)
         labels.append([class_id, x, y, width, height])
     return torch.tensor(labels, dtype=torch.float32).reshape(-1, 5)
 
 
-def letterbox(image: Image.Image, labels: Tensor, size: int = MODEL_SIZE) -> tuple[Tensor, Tensor]:
+def letterbox(image: Image.Image, labels: Tensor, size: int = DEFAULT_MODEL_SIZE) -> tuple[Tensor, Tensor]:
     source_width, source_height = image.size
     scale = min(size / source_width, size / source_height)
     resized_width = max(1, round(source_width * scale))
@@ -156,12 +166,21 @@ def letterbox(image: Image.Image, labels: Tensor, size: int = MODEL_SIZE) -> tup
 
 
 class DroneDataset(Dataset[dict[str, Any]]):
-    def __init__(self, records: list[FrameRecord], split: str, *, augment: bool, seed: int) -> None:
+    def __init__(
+        self,
+        records: list[FrameRecord],
+        split: str,
+        *,
+        augment: bool,
+        seed: int,
+        model_size: int = DEFAULT_MODEL_SIZE,
+    ) -> None:
         self.records = [record for record in records if record.split == split]
         if not self.records:
             raise ValueError(f"no records for split {split!r}")
         self.augment = augment
         self.seed = seed
+        self.model_size = model_size
 
     def __len__(self) -> int:
         return len(self.records)
@@ -179,7 +198,7 @@ class DroneDataset(Dataset[dict[str, Any]]):
                 image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
                 if labels.numel():
                     labels[:, 1] = 1.0 - labels[:, 1]
-        tensor, labels = letterbox(image, labels)
+        tensor, labels = letterbox(image, labels, self.model_size)
         return {
             "img": tensor,
             "cls": labels[:, :1],

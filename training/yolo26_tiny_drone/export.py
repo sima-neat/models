@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from contract import INPUT_NAME, INPUT_SHAPE, output_names
+from contract import INPUT_NAME, DeploymentContract
 from model import (
     Yolo26TrainingDeployWrapper,
     fuse_batch_norm_for_qat,
@@ -26,6 +26,10 @@ def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) ->
         raise RuntimeError("unsupported QAT checkpoint schema")
     if checkpoint.get("architecture") != "yolo26n-p2-int8-conv-one-class":
         raise RuntimeError("checkpoint architecture is not the deployment YOLO26-P2 variant")
+    try:
+        DeploymentContract.from_dict(checkpoint.get("deployment"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("checkpoint deployment contract is invalid") from exc
     if int(checkpoint.get("observer_images", 0)) < 128 and not args.allow_smoke:
         raise RuntimeError("QAT checkpoint did not observe 128 representative images")
     if not checkpoint.get("observers_frozen") and not args.allow_smoke:
@@ -107,6 +111,7 @@ def main() -> int:
     device = torch.device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     accuracy = validate_checkpoint(checkpoint, args)
+    contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
     if int(checkpoint["arguments"]["batch_size"]) != 1:
         raise RuntimeError("QAT checkpoint was not captured for the batch-1 deployment contract")
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -132,25 +137,26 @@ def main() -> int:
     fuse_batch_norm_for_qat(detector)
     detector.to(device).requires_grad_(True).train()
     wrapped = Yolo26TrainingDeployWrapper(detector).to(device).train()
-    example = (torch.rand(INPUT_SHAPE, device=device),)
+    example = (torch.rand(contract.input_shape, device=device),)
     qat_model = sima_prepare_qat_model(wrapped, example, device)
     qat_model.load_state_dict(checkpoint["qat_state_dict"], strict=True)
     finalized = sima_finalize_qat_model(qat_model)
     deploy_graph = select_deploy_graph(finalized)
-    validate_deploy_outputs(deploy_graph(*example), 1)
-    onnx_path = args.output_dir / "yolo26n_p2_tiny_drone_qat_int8.onnx"
+    validate_deploy_outputs(deploy_graph(*example), 1, contract)
+    onnx_path = args.output_dir / f"yolo26n_p2_tiny_drone_qat_int8_{contract.model_size}.onnx"
     sima_export_onnx(
         deploy_graph,
         example,
         str(onnx_path),
         input_names=[INPUT_NAME],
-        output_names=output_names(),
+        output_names=contract.output_names(),
         device=device,
     )
-    audit = audit_onnx(onnx_path)
+    audit = audit_onnx(onnx_path, contract)
     report = {
         "schema_version": 1,
         "architecture": "yolo26n-p2-int8-conv-one-class",
+        "deployment": contract.to_dict(),
         "accuracy": accuracy,
         "checkpoint_sha256": sha256_file(args.checkpoint),
         "fp32_checkpoint_sha256": fp32_digest,

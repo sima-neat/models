@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+from contract import DEFAULT_MODEL_SIZE, DeploymentContract
 from dataset import load_manifest, sha256_file, write_ultralytics_dataset
 from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision
 
@@ -15,10 +16,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--base-weights", type=Path, required=True)
+    parser.add_argument("--teacher-init-weights", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--teacher-epochs", type=int, default=100)
     parser.add_argument("--recovery-epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--image-size", type=int, default=DEFAULT_MODEL_SIZE)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--device", default="0")
     parser.add_argument("--seed", type=int, default=20260806)
@@ -28,10 +31,16 @@ def main() -> int:
         parser.error("teacher epochs, recovery epochs, and batch size must be positive")
     if args.workers < 0:
         parser.error("workers must be >= 0")
+    try:
+        contract = DeploymentContract(args.image_size)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not args.manifest.is_file():
         parser.error(f"manifest does not exist: {args.manifest}")
     if not args.base_weights.is_file():
         parser.error(f"base weights do not exist: {args.base_weights}")
+    if args.teacher_init_weights is not None and not args.teacher_init_weights.is_file():
+        parser.error(f"teacher initialization does not exist: {args.teacher_init_weights}")
     digest = sha256_file(args.base_weights)
     if digest != YOLO26N_SHA256 and not args.smoke:
         parser.error(f"base weight SHA-256 mismatch: expected {YOLO26N_SHA256}, got {digest}")
@@ -59,7 +68,7 @@ def main() -> int:
 
     common = {
         "data": str(data_yaml),
-        "imgsz": 640,
+        "imgsz": contract.model_size,
         "batch": args.batch_size,
         "workers": args.workers,
         "device": args.device,
@@ -71,7 +80,19 @@ def main() -> int:
         "project": str(args.output_dir),
         "exist_ok": False,
     }
-    teacher = YOLO(str(teacher_architecture)).load(str(args.base_weights))
+    teacher_initialization = args.teacher_init_weights or args.base_weights
+    if args.teacher_init_weights is None:
+        teacher = YOLO(str(teacher_architecture)).load(str(teacher_initialization))
+    else:
+        teacher = YOLO(str(teacher_initialization))
+        head = teacher.model.model[-1]
+        checkpoint_classes = int(teacher.model.yaml.get("nc", -1))
+        feature_heads = len(getattr(head, "cv2", ()))
+        if checkpoint_classes != 1 or feature_heads != 4:
+            raise RuntimeError(
+                "teacher initialization must be a one-class YOLO26-P2 checkpoint: "
+                f"classes={checkpoint_classes}, feature_heads={feature_heads}"
+            )
     teacher_results = teacher.train(
         **common,
         epochs=args.teacher_epochs,
@@ -96,7 +117,13 @@ def main() -> int:
     lineage = {
         "schema_version": 1,
         "architecture": "yolo26n-p2-int8-conv-one-class",
+        "deployment": contract.to_dict(),
         "base_weights_sha256": digest,
+        "teacher_initialization": {
+            "file": teacher_initialization.name,
+            "sha256": sha256_file(teacher_initialization),
+            "warm_started": args.teacher_init_weights is not None,
+        },
         "teacher_weights_sha256": sha256_file(teacher_best),
         "best_weights_sha256": sha256_file(best),
         "manifest_sha256": sha256_file(args.manifest),
