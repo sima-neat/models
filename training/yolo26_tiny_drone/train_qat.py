@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--fp32-checkpoint", type=Path, required=True)
+    parser.add_argument("--resume-checkpoint", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=10)
@@ -39,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--observer-warmup-images", type=int, default=128)
-    parser.add_argument("--freeze-observers-fraction", type=float, default=0.8)
+    parser.add_argument("--freeze-observers-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260806)
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
@@ -49,8 +50,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("workers must be >= 0")
     if args.learning_rate <= 0.0 or args.weight_decay < 0.0:
         parser.error("learning rate must be positive and weight decay must be >= 0")
-    if not 0.0 < args.freeze_observers_fraction < 1.0:
-        parser.error("freeze-observers-fraction must be in (0, 1)")
+    if not 0.0 <= args.freeze_observers_fraction < 1.0:
+        parser.error("freeze-observers-fraction must be in [0, 1)")
     if args.observer_warmup_images < 128 and not args.smoke:
         parser.error("production QAT requires at least 128 representative observer images")
     if args.batch_size != 1:
@@ -59,6 +60,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("production QAT needs at least two epochs so frozen observers receive refinement")
     if not args.manifest.is_file() or not args.fp32_checkpoint.is_file():
         parser.error("manifest and FP32 checkpoint must exist")
+    if args.resume_checkpoint is not None and not args.resume_checkpoint.is_file():
+        parser.error("resume checkpoint must exist")
     return args
 
 
@@ -116,6 +119,33 @@ def atomic_save(document: dict[str, Any], destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def validate_resume_checkpoint(checkpoint: dict[str, Any], manifest: Path, fp32_checkpoint: Path) -> None:
+    """Reject a resume source that is not the same frozen production contract."""
+    if checkpoint.get("schema_version") != 1:
+        raise RuntimeError("resume checkpoint has an unsupported schema")
+    if checkpoint.get("architecture") != "yolo26n-p2-int8-conv-one-class":
+        raise RuntimeError("resume checkpoint has the wrong architecture")
+    if not checkpoint.get("observers_frozen"):
+        raise RuntimeError("resume checkpoint must have frozen observers")
+    if int(checkpoint.get("observer_images", 0)) < 128:
+        raise RuntimeError("resume checkpoint did not observe 128 representative images")
+    if not checkpoint.get("qualification_eligible"):
+        raise RuntimeError("resume checkpoint is not eligible for production qualification")
+    if checkpoint.get("manifest_sha256") != sha256_file(manifest):
+        raise RuntimeError("resume checkpoint manifest digest does not match")
+    if checkpoint.get("fp32_checkpoint_sha256") != sha256_file(fp32_checkpoint):
+        raise RuntimeError("resume checkpoint FP32 digest does not match")
+    if not isinstance(checkpoint.get("qat_state_dict"), dict):
+        raise RuntimeError("resume checkpoint has no QAT state dictionary")
+    if not isinstance(checkpoint.get("baseline"), dict) or not isinstance(checkpoint.get("final_metrics"), dict):
+        raise RuntimeError("resume checkpoint has incomplete accuracy evidence")
+    observer_selection = checkpoint.get("observer_selection")
+    if not isinstance(observer_selection, dict) or not isinstance(observer_selection.get("images"), list):
+        raise RuntimeError("resume checkpoint has incomplete observer evidence")
+    if len(observer_selection["images"]) != int(checkpoint["observer_images"]):
+        raise RuntimeError("resume checkpoint observer count does not match its evidence")
+
+
 @torch.inference_mode()
 def warm_observers(model: nn.Module, data: DataLoader[Any], device: torch.device, required: int) -> list[str]:
     model.eval()
@@ -161,10 +191,20 @@ def main() -> int:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     records = load_manifest(args.manifest)
-    observer_records = representative_observer_records(records, args.observer_warmup_images, args.seed)
+    resume = None
+    if args.resume_checkpoint is not None:
+        resume = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
+        validate_resume_checkpoint(resume, args.manifest, args.fp32_checkpoint)
+    observer_records = (
+        representative_observer_records(records, args.observer_warmup_images, args.seed) if resume is None else []
+    )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     train_data = loader(DroneDataset(records, "train", augment=True, seed=args.seed), args, True)
-    observer_data = loader(DroneDataset(observer_records, "train", augment=False, seed=args.seed), args, False)
+    observer_data = (
+        loader(DroneDataset(observer_records, "train", augment=False, seed=args.seed), args, False)
+        if resume is None
+        else None
+    )
     val_data = loader(DroneDataset(records, "val", augment=False, seed=args.seed), args, False)
 
     import ultralytics
@@ -173,6 +213,8 @@ def main() -> int:
     from ultralytics.cfg import get_cfg
 
     ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
+    if resume is not None and resume.get("versions", {}).get("ultralytics_revision") != ultralytics_revision:
+        raise RuntimeError("resume checkpoint Ultralytics revision does not match the environment")
 
     detector = YOLO(str(args.fp32_checkpoint)).model
     detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
@@ -180,16 +222,42 @@ def main() -> int:
     detector.to(device).requires_grad_(True).train()
     criterion = detector.init_criterion()
     wrapped = Yolo26TrainingDeployWrapper(detector).to(device).train()
-    baseline = evaluate_model(wrapped, detector.model[-1], val_data, device)
+    baseline = evaluate_model(wrapped, detector.model[-1], val_data, device) if resume is None else resume["baseline"]
     example = (torch.rand((args.batch_size, *INPUT_SHAPE[1:]), device=device),)
     qat_model = sima_prepare_qat_model(wrapped, example, device)
-    observed_paths = warm_observers(qat_model, observer_data, device, args.observer_warmup_images)
-    observer_evidence = {
-        "count": len(observed_paths),
-        "images": [{"path": path, "sha256": sha256_file(Path(path))} for path in observed_paths],
-        "method": "seeded_random_without_replacement",
-        "seed": args.seed,
-    }
+    if resume is None:
+        if observer_data is None:
+            raise RuntimeError("fresh QAT has no observer data")
+        observed_paths = warm_observers(qat_model, observer_data, device, args.observer_warmup_images)
+        observer_evidence = {
+            "count": len(observed_paths),
+            "images": [{"path": path, "sha256": sha256_file(Path(path))} for path in observed_paths],
+            "method": "seeded_random_without_replacement",
+            "seed": args.seed,
+        }
+        initial_qat_metrics = evaluate_without_observer_updates(
+            qat_model,
+            detector.model[-1],
+            val_data,
+            device,
+            observers_frozen=False,
+        )
+        start_epoch = 0
+        history: list[dict[str, Any]] = []
+        observers_frozen = False
+        resume_digest = None
+        resume_start_metrics = None
+    else:
+        qat_model.load_state_dict(resume["qat_state_dict"], strict=True)
+        qat_model.apply(disable_observer)
+        observed_paths = [str(image["path"]) for image in resume["observer_selection"]["images"]]
+        observer_evidence = resume["observer_selection"]
+        initial_qat_metrics = resume.get("initial_qat_metrics", resume["final_metrics"])
+        resume_start_metrics = resume["final_metrics"]
+        start_epoch = int(resume["epoch"])
+        history = list(resume.get("history", []))
+        observers_frozen = True
+        resume_digest = sha256_file(args.resume_checkpoint)
 
     optimizer = torch.optim.SGD(
         qat_model.parameters(),
@@ -199,13 +267,12 @@ def main() -> int:
         nesterov=True,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    freeze_after = max(1, math.floor(args.epochs * args.freeze_observers_fraction))
-    observers_frozen = False
+    freeze_after = math.floor(args.epochs * args.freeze_observers_fraction)
     best_frozen_priority: tuple[float, float] | None = None
-    history = []
     final_metrics: dict[str, float] = {}
-    for epoch in range(1, args.epochs + 1):
-        if epoch > freeze_after and not observers_frozen:
+    for local_epoch in range(1, args.epochs + 1):
+        epoch = start_epoch + local_epoch
+        if local_epoch > freeze_after and not observers_frozen:
             qat_model.apply(disable_observer)
             observers_frozen = True
         qat_model.train()
@@ -254,6 +321,8 @@ def main() -> int:
             "epoch": epoch,
             "arguments": vars(args),
             "baseline": baseline,
+            "initial_qat_metrics": initial_qat_metrics,
+            "resume_start_metrics": resume_start_metrics,
             "final_metrics": final_metrics,
             "history": history,
             "observers_frozen": observers_frozen,
@@ -261,6 +330,7 @@ def main() -> int:
             "observer_selection": observer_evidence,
             "manifest_sha256": sha256_file(args.manifest),
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
+            "resume_checkpoint_sha256": resume_digest,
             "qualification_eligible": not args.smoke and observers_frozen,
             "versions": {
                 "torch": torch.__version__,

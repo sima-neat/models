@@ -111,7 +111,27 @@ unaugmented images selected reproducibly without replacement across the full
 training split, and the checkpoint records every selected path and digest.
 Observer updates are temporarily disabled for every held-out validation pass,
 so validation images cannot influence quantization ranges, and are permanently
-frozen before the final low-rate refinement epochs.
+frozen after the first 20% of epochs by default, before the remaining low-rate
+refinement. Set `--freeze-observers-fraction 0` to retain only the ranges from
+the representative warm-up. Each fresh run records its fake-quantized accuracy
+before the first optimizer step, separating initialization loss from training
+regressions.
+
+A frozen production checkpoint can be refined at a lower learning rate without
+recalibrating or exposing observers to validation data. `--epochs` is the
+number of additional epochs for a resumed invocation, and the new checkpoint
+records the immutable resume digest and starting metrics:
+
+```bash
+.venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_qat.py \
+  --manifest /data/drone/manifest.json \
+  --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
+  --resume-checkpoint build/yolo26-drone-qat/checkpoint-best-frozen.pt \
+  --output-dir build/yolo26-drone-qat-refined \
+  --epochs 10 --learning-rate 2e-5 \
+  --observer-warmup-images 128 --batch-size 1 \
+  --accumulation-steps 32 --device cuda
+```
 
 ## Export gates
 
