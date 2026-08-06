@@ -22,7 +22,7 @@ from evaluate import evaluate_model
 from model import Yolo26TrainingDeployWrapper, fuse_batch_norm_for_qat, validate_deploy_outputs
 from provenance import require_ultralytics_revision
 from torch import nn
-from torch.ao.quantization import disable_observer
+from torch.ao.quantization import disable_observer, enable_observer
 from torch.utils.data import DataLoader
 
 
@@ -136,6 +136,24 @@ def warm_observers(model: nn.Module, data: DataLoader[Any], device: torch.device
     return observed
 
 
+def evaluate_without_observer_updates(
+    model: nn.Module,
+    head: nn.Module,
+    data: DataLoader[Any],
+    device: torch.device,
+    *,
+    observers_frozen: bool,
+) -> dict[str, float]:
+    """Keep held-out validation data out of the QAT observer state."""
+    if not observers_frozen:
+        model.apply(disable_observer)
+    try:
+        return evaluate_model(model, head, data, device)
+    finally:
+        if not observers_frozen:
+            model.apply(enable_observer)
+
+
 def main() -> int:
     args = parse_args()
     seed_everything(args.seed)
@@ -213,7 +231,13 @@ def main() -> int:
                 optimizer.zero_grad(set_to_none=True)
             loss_total += float(scalar_loss.detach())
         scheduler.step()
-        final_metrics = evaluate_model(qat_model, detector.model[-1], val_data, device)
+        final_metrics = evaluate_without_observer_updates(
+            qat_model,
+            detector.model[-1],
+            val_data,
+            device,
+            observers_frozen=observers_frozen,
+        )
         entry = {
             "epoch": epoch,
             "loss": loss_total / len(train_data),
