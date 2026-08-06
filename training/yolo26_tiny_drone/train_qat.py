@@ -183,6 +183,7 @@ def main() -> int:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     freeze_after = max(1, math.floor(args.epochs * args.freeze_observers_fraction))
     observers_frozen = False
+    best_frozen_priority: tuple[float, float] | None = None
     history = []
     final_metrics: dict[str, float] = {}
     for epoch in range(1, args.epochs + 1):
@@ -222,31 +223,38 @@ def main() -> int:
         }
         history.append(entry)
         print(json.dumps(entry, sort_keys=True), flush=True)
-        atomic_save(
-            {
-                "schema_version": 1,
-                "architecture": "yolo26n-p2-int8-conv-one-class",
-                "qat_state_dict": qat_model.state_dict(),
-                "epoch": epoch,
-                "arguments": vars(args),
-                "baseline": baseline,
-                "final_metrics": final_metrics,
-                "history": history,
-                "observers_frozen": observers_frozen,
-                "observer_images": len(observed_paths),
-                "observer_selection": observer_evidence,
-                "manifest_sha256": sha256_file(args.manifest),
-                "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
-                "qualification_eligible": not args.smoke and observers_frozen,
-                "versions": {
-                    "torch": torch.__version__,
-                    "ultralytics": ultralytics.__version__,
-                    "ultralytics_revision": ultralytics_revision,
-                    "swml_qat": qat_package_version(),
-                },
+        checkpoint = {
+            "schema_version": 1,
+            "architecture": "yolo26n-p2-int8-conv-one-class",
+            "qat_state_dict": qat_model.state_dict(),
+            "epoch": epoch,
+            "arguments": vars(args),
+            "baseline": baseline,
+            "final_metrics": final_metrics,
+            "history": history,
+            "observers_frozen": observers_frozen,
+            "observer_images": len(observed_paths),
+            "observer_selection": observer_evidence,
+            "manifest_sha256": sha256_file(args.manifest),
+            "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
+            "qualification_eligible": not args.smoke and observers_frozen,
+            "versions": {
+                "torch": torch.__version__,
+                "ultralytics": ultralytics.__version__,
+                "ultralytics_revision": ultralytics_revision,
+                "swml_qat": qat_package_version(),
             },
-            args.output_dir / "checkpoint-latest.pt",
-        )
+        }
+        atomic_save(checkpoint, args.output_dir / "checkpoint-latest.pt")
+        if observers_frozen:
+            priority = (float(final_metrics["ap50"]), float(final_metrics["tiny_recall50"]))
+            if best_frozen_priority is None or priority > best_frozen_priority:
+                best_frozen_priority = priority
+                checkpoint["selection"] = {
+                    "policy": "maximum_frozen_ap50_then_tiny_recall50",
+                    "selected_epoch": epoch,
+                }
+                atomic_save(checkpoint, args.output_dir / "checkpoint-best-frozen.pt")
     if not observers_frozen and not args.smoke:
         raise RuntimeError("production QAT completed without a frozen-observer refinement epoch")
     return 0

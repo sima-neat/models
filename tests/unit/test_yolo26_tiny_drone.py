@@ -51,6 +51,8 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert "random.Random(seed).sample(train_records, required)" in source
     assert '"method": "seeded_random_without_replacement"' in source
     assert "scalar_loss / window_size" in source
+    assert 'args.output_dir / "checkpoint-best-frozen.pt"' in source
+    assert '"maximum_frozen_ap50_then_tiny_recall50"' in source
 
 
 def test_export_audits_full_int8_operator_boundary() -> None:

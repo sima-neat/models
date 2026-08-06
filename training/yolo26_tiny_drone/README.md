@@ -115,10 +115,15 @@ Observers are frozen before the final low-rate refinement epochs.
 
 ```bash
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/export.py \
-  --checkpoint build/yolo26-drone-qat/checkpoint-latest.pt \
+  --checkpoint build/yolo26-drone-qat/checkpoint-best-frozen.pt \
   --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
   --output-dir build/yolo26-drone-source
 ```
+
+Training writes `checkpoint-latest.pt` after every epoch for recovery and
+retains `checkpoint-best-frozen.pt` using frozen-observer AP50 first and tiny
+recall as the tie-breaker. Export the latter so a final-epoch regression cannot
+silently replace a better publishable candidate.
 
 Export fails when:
 
