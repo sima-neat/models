@@ -9,6 +9,7 @@ import json
 import math
 import os
 import random
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -247,6 +248,7 @@ def main() -> int:
         observers_frozen = False
         resume_digest = None
         resume_start_metrics = None
+        resume_priority = None
     else:
         qat_model.load_state_dict(resume["qat_state_dict"], strict=True)
         qat_model.apply(disable_observer)
@@ -258,6 +260,14 @@ def main() -> int:
         history = list(resume.get("history", []))
         observers_frozen = True
         resume_digest = sha256_file(args.resume_checkpoint)
+        resume_priority = (
+            float(resume["final_metrics"]["ap50"]),
+            float(resume["final_metrics"]["tiny_recall50"]),
+        )
+        shutil.copy2(
+            args.resume_checkpoint,
+            args.output_dir / "checkpoint-best-frozen.pt",
+        )
 
     optimizer = torch.optim.SGD(
         qat_model.parameters(),
@@ -268,7 +278,7 @@ def main() -> int:
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     freeze_after = math.floor(args.epochs * args.freeze_observers_fraction)
-    best_frozen_priority: tuple[float, float] | None = None
+    best_frozen_priority: tuple[float, float] | None = resume_priority
     final_metrics: dict[str, float] = {}
     for local_epoch in range(1, args.epochs + 1):
         epoch = start_epoch + local_epoch

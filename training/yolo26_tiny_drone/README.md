@@ -120,7 +120,9 @@ regressions.
 A frozen production checkpoint can be refined at a lower learning rate without
 recalibrating or exposing observers to validation data. `--epochs` is the
 number of additional epochs for a resumed invocation, and the new checkpoint
-records the immutable resume digest and starting metrics:
+records the immutable resume digest and starting metrics. The exact resume
+checkpoint remains the best candidate unless a new frozen epoch improves the
+AP50/tiny-recall ordering:
 
 ```bash
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_qat.py \
