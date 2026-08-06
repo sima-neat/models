@@ -58,6 +58,9 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
     assert "shutil.copy2" in source
+    assert "select_trainable_parameters" in source
+    assert 'name.startswith("detector_model_29_")' in source
+    assert '"trainable_parameter_count": trainable_parameter_count' in source
     assert "initial_qat_metrics" in source
     assert "default=0.2" in source
     assert 'args.output_dir / "checkpoint-best-frozen.pt"' in source

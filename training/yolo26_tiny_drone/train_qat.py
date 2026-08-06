@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--trainable-scope", choices=("all", "head"), default="all")
     parser.add_argument("--observer-warmup-images", type=int, default=128)
     parser.add_argument("--freeze-observers-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260806)
@@ -63,6 +64,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("manifest and FP32 checkpoint must exist")
     if args.resume_checkpoint is not None and not args.resume_checkpoint.is_file():
         parser.error("resume checkpoint must exist")
+    if args.trainable_scope == "head" and args.resume_checkpoint is None:
+        parser.error("head-only recovery requires --resume-checkpoint")
     return args
 
 
@@ -145,6 +148,23 @@ def validate_resume_checkpoint(checkpoint: dict[str, Any], manifest: Path, fp32_
         raise RuntimeError("resume checkpoint has incomplete observer evidence")
     if len(observer_selection["images"]) != int(checkpoint["observer_images"]):
         raise RuntimeError("resume checkpoint observer count does not match its evidence")
+
+
+def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
+    """Freeze everything outside the YOLO26 Detect module for head recovery."""
+    if scope not in {"all", "head"}:
+        raise ValueError(f"unsupported trainable scope: {scope}")
+    selected = []
+    selected_elements = 0
+    for name, parameter in model.named_parameters():
+        trainable = scope == "all" or name.startswith("detector_model_29_")
+        parameter.requires_grad_(trainable)
+        if trainable:
+            selected.append(parameter)
+            selected_elements += parameter.numel()
+    if not selected:
+        raise RuntimeError(f"trainable scope {scope} selected no parameters")
+    return selected, selected_elements
 
 
 @torch.inference_mode()
@@ -269,8 +289,9 @@ def main() -> int:
             args.output_dir / "checkpoint-best-frozen.pt",
         )
 
+    trainable_parameters, trainable_parameter_count = select_trainable_parameters(qat_model, args.trainable_scope)
     optimizer = torch.optim.SGD(
-        qat_model.parameters(),
+        trainable_parameters,
         lr=args.learning_rate,
         momentum=0.937,
         weight_decay=args.weight_decay,
@@ -341,6 +362,8 @@ def main() -> int:
             "manifest_sha256": sha256_file(args.manifest),
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
             "resume_checkpoint_sha256": resume_digest,
+            "trainable_scope": args.trainable_scope,
+            "trainable_parameter_count": trainable_parameter_count,
             "qualification_eligible": not args.smoke and observers_frozen,
             "versions": {
                 "torch": torch.__version__,

@@ -130,10 +130,15 @@ AP50/tiny-recall ordering:
   --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
   --resume-checkpoint build/yolo26-drone-qat/checkpoint-best-frozen.pt \
   --output-dir build/yolo26-drone-qat-refined \
-  --epochs 10 --learning-rate 2e-5 \
+  --epochs 10 --learning-rate 2e-5 --trainable-scope head \
   --observer-warmup-images 128 --batch-size 1 \
   --accumulation-steps 32 --device cuda
 ```
+
+`--trainable-scope head` freezes the quantized backbone and neck and updates
+only the one-to-many and one-to-one YOLO26 detection-head parameters. This is
+useful when full-network recovery leaves a sharp frozen-observer optimum; the
+checkpoint records both the scope and exact number of trainable parameters.
 
 ## Export gates
 
