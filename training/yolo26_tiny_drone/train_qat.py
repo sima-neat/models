@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
-    parser.add_argument("--trainable-scope", choices=("all", "head"), default="all")
+    parser.add_argument("--trainable-scope", choices=("all", "head", "classification"), default="all")
     parser.add_argument("--observer-warmup-images", type=int, default=128)
     parser.add_argument("--freeze-observers-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260806)
@@ -64,8 +64,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("manifest and FP32 checkpoint must exist")
     if args.resume_checkpoint is not None and not args.resume_checkpoint.is_file():
         parser.error("resume checkpoint must exist")
-    if args.trainable_scope == "head" and args.resume_checkpoint is None:
-        parser.error("head-only recovery requires --resume-checkpoint")
+    if args.trainable_scope != "all" and args.resume_checkpoint is None:
+        parser.error("restricted-scope recovery requires --resume-checkpoint")
     return args
 
 
@@ -151,13 +151,15 @@ def validate_resume_checkpoint(checkpoint: dict[str, Any], manifest: Path, fp32_
 
 
 def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
-    """Freeze everything outside the YOLO26 Detect module for head recovery."""
-    if scope not in {"all", "head"}:
+    """Select full, detection-head, or class-head-only recovery parameters."""
+    if scope not in {"all", "head", "classification"}:
         raise ValueError(f"unsupported trainable scope: {scope}")
     selected = []
     selected_elements = 0
     for name, parameter in model.named_parameters():
-        trainable = scope == "all" or name.startswith("detector_model_29_")
+        in_head = name.startswith("detector_model_29_")
+        in_class_head = in_head and ("_cv3_" in name or "_one2one_cv3_" in name)
+        trainable = scope == "all" or (scope == "head" and in_head) or (scope == "classification" and in_class_head)
         parameter.requires_grad_(trainable)
         if trainable:
             selected.append(parameter)

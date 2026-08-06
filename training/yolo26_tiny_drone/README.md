@@ -139,6 +139,9 @@ AP50/tiny-recall ordering:
 only the one-to-many and one-to-one YOLO26 detection-head parameters. This is
 useful when full-network recovery leaves a sharp frozen-observer optimum; the
 checkpoint records both the scope and exact number of trainable parameters.
+Use `--trainable-scope classification` to freeze the box branches as well and
+recover only one-to-many and one-to-one class-score heads when localization
+metrics are already acceptable but INT8 confidence ranking remains degraded.
 
 ## Export gates
 
