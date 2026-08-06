@@ -24,6 +24,7 @@ from model import Yolo26TrainingDeployWrapper, fuse_batch_norm_for_qat, validate
 from provenance import require_ultralytics_revision
 from torch import nn
 from torch.ao.quantization import disable_observer, enable_observer
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--trainable-scope", choices=("all", "head", "classification"), default="all")
+    parser.add_argument("--class-distillation-weight", type=float, default=0.0)
     parser.add_argument("--observer-warmup-images", type=int, default=128)
     parser.add_argument("--freeze-observers-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260806)
@@ -52,6 +54,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("workers must be >= 0")
     if args.learning_rate <= 0.0 or args.weight_decay < 0.0:
         parser.error("learning rate must be positive and weight decay must be >= 0")
+    if args.class_distillation_weight < 0.0:
+        parser.error("class-distillation-weight must be >= 0")
     if not 0.0 <= args.freeze_observers_fraction < 1.0:
         parser.error("freeze-observers-fraction must be in [0, 1)")
     if args.observer_warmup_images < 128 and not args.smoke:
@@ -66,6 +70,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("resume checkpoint must exist")
     if args.trainable_scope != "all" and args.resume_checkpoint is None:
         parser.error("restricted-scope recovery requires --resume-checkpoint")
+    if args.class_distillation_weight > 0.0 and args.trainable_scope != "classification":
+        parser.error("class distillation requires --trainable-scope classification")
     return args
 
 
@@ -291,6 +297,14 @@ def main() -> int:
             args.output_dir / "checkpoint-best-frozen.pt",
         )
 
+    teacher = None
+    if args.class_distillation_weight > 0.0:
+        teacher_detector = YOLO(str(args.fp32_checkpoint)).model
+        teacher_detector.args = get_cfg(overrides=dict(getattr(teacher_detector, "args", {})))
+        fuse_batch_norm_for_qat(teacher_detector)
+        teacher_detector.to(device).requires_grad_(False).eval()
+        teacher = Yolo26TrainingDeployWrapper(teacher_detector).to(device).eval()
+
     trainable_parameters, trainable_parameter_count = select_trainable_parameters(qat_model, args.trainable_scope)
     optimizer = torch.optim.SGD(
         trainable_parameters,
@@ -311,6 +325,7 @@ def main() -> int:
         qat_model.train()
         optimizer.zero_grad(set_to_none=True)
         loss_total = 0.0
+        distillation_total = 0.0
         started = time.monotonic()
         for step, batch in enumerate(train_data, start=1):
             images = batch["img"].to(device, non_blocking=True)
@@ -319,17 +334,33 @@ def main() -> int:
             outputs = qat_model(images)
             validate_deploy_outputs(outputs["deploy"], images.shape[0])
             loss, components = criterion(outputs["predictions"], batch)
-            scalar_loss = loss.sum()
+            detection_loss = loss.sum()
+            distillation_loss = torch.zeros((), device=device)
+            if teacher is not None:
+                with torch.no_grad():
+                    teacher_predictions = teacher(images)["predictions"]
+                student_predictions = outputs["predictions"]
+                distillation_loss = torch.stack(
+                    [
+                        F.smooth_l1_loss(
+                            student_predictions[branch]["scores"],
+                            teacher_predictions[branch]["scores"],
+                        )
+                        for branch in ("one2many", "one2one")
+                    ]
+                ).mean()
+            scalar_loss = detection_loss + args.class_distillation_weight * distillation_loss
             if not torch.isfinite(scalar_loss):
                 raise RuntimeError(f"non-finite loss at epoch {epoch}, step {step}")
             window_start = ((step - 1) // args.accumulation_steps) * args.accumulation_steps
             window_size = min(args.accumulation_steps, len(train_data) - window_start)
             (scalar_loss / window_size).backward()
             if step % args.accumulation_steps == 0 or step == len(train_data):
-                torch.nn.utils.clip_grad_norm_(qat_model.parameters(), 10.0)
+                torch.nn.utils.clip_grad_norm_(trainable_parameters, 10.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-            loss_total += float(scalar_loss.detach())
+            loss_total += float(detection_loss.detach())
+            distillation_total += float(distillation_loss.detach())
         scheduler.step()
         final_metrics = evaluate_without_observer_updates(
             qat_model,
@@ -341,6 +372,8 @@ def main() -> int:
         entry = {
             "epoch": epoch,
             "loss": loss_total / len(train_data),
+            "class_distillation_loss": distillation_total / len(train_data),
+            "class_distillation_weight": args.class_distillation_weight,
             "metrics": final_metrics,
             "observers_frozen": observers_frozen,
             "seconds": time.monotonic() - started,

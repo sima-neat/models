@@ -142,6 +142,11 @@ checkpoint records both the scope and exact number of trainable parameters.
 Use `--trainable-scope classification` to freeze the box branches as well and
 recover only one-to-many and one-to-one class-score heads when localization
 metrics are already acceptable but INT8 confidence ranking remains degraded.
+Add `--class-distillation-weight 1.0` to preserve those raw class logits with a
+frozen copy of the fused FP32 student. Smooth-L1 distillation covers both the
+one-to-many loss branch and the one-to-one deployment branch, while the normal
+ground-truth detection loss remains active. The weight and measured
+distillation loss are retained in every checkpoint history entry.
 
 ## Export gates
 
