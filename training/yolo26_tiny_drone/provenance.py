@@ -40,7 +40,11 @@ def _distribution_revision() -> str | None:
 
 
 def require_ultralytics_revision(package_root: Path) -> str:
-    actual = _git_revision(package_root) or _distribution_revision()
+    # Prefer the installed distribution's PEP 610 provenance. A project-local
+    # virtual environment can live below an unrelated Git worktree, and using
+    # that enclosing repository first would incorrectly report its revision as
+    # the Ultralytics revision.
+    actual = _distribution_revision() or _git_revision(package_root)
     if actual is None:
         raise RuntimeError("cannot prove the installed Ultralytics source revision")
     if actual != ULTRALYTICS_REVISION:

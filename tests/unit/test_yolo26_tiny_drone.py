@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RECIPE = ROOT / "training" / "yolo26_tiny_drone"
 sys.path.insert(0, str(RECIPE))
 
+import provenance  # noqa: E402
 from paths import ultralytics_label_path  # noqa: E402
 
 
@@ -47,6 +48,9 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert "observer_warmup_images < 128" in source
     assert "args.batch_size != 1" in source
     assert "requires_grad_(True)" in source
+    assert "random.Random(seed).sample(train_records, required)" in source
+    assert '"method": "seeded_random_without_replacement"' in source
+    assert "scalar_loss / window_size" in source
 
 
 def test_export_audits_full_int8_operator_boundary() -> None:
@@ -74,3 +78,10 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
 def test_ultralytics_label_path_matches_training_loader_convention() -> None:
     image = Path("/dataset/images/sequence/frame.jpg")
     assert ultralytics_label_path(image) == Path("/dataset/labels/sequence/frame.txt")
+
+
+def test_ultralytics_revision_prefers_distribution_provenance(monkeypatch) -> None:
+    monkeypatch.setattr(provenance, "_distribution_revision", lambda: provenance.ULTRALYTICS_REVISION)
+    monkeypatch.setattr(provenance, "_git_revision", lambda _package_root: "unrelated-project-revision")
+
+    assert provenance.require_ultralytics_revision(RECIPE) == provenance.ULTRALYTICS_REVISION

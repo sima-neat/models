@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import torch
 from contract import INPUT_SHAPE
-from dataset import DroneDataset, FixedBatchCollator, load_manifest, sha256_file
+from dataset import DroneDataset, FixedBatchCollator, FrameRecord, load_manifest, sha256_file
 from evaluate import evaluate_model
 from model import Yolo26TrainingDeployWrapper, fuse_batch_norm_for_qat, validate_deploy_outputs
 from provenance import require_ultralytics_revision
@@ -92,6 +92,19 @@ def loader(dataset: DroneDataset, args: argparse.Namespace, shuffle: bool) -> Da
     )
 
 
+def representative_observer_records(records: list[FrameRecord], required: int, seed: int) -> list[FrameRecord]:
+    """Select a reproducible, non-contiguous observer sample without replacement."""
+    train_records = sorted(
+        (record for record in records if record.split == "train"),
+        key=lambda record: str(record.image),
+    )
+    if len(train_records) < required:
+        raise RuntimeError(
+            f"manifest has {len(train_records)} distinct train frames; observer warm-up requires {required}"
+        )
+    return random.Random(seed).sample(train_records, required)
+
+
 def atomic_save(document: dict[str, Any], destination: Path) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=destination.name, suffix=".tmp", dir=destination.parent)
     os.close(descriptor)
@@ -104,16 +117,22 @@ def atomic_save(document: dict[str, Any], destination: Path) -> None:
 
 
 @torch.inference_mode()
-def warm_observers(model: nn.Module, data: DataLoader[Any], device: torch.device, required: int) -> int:
+def warm_observers(model: nn.Module, data: DataLoader[Any], device: torch.device, required: int) -> list[str]:
     model.eval()
-    observed = 0
+    observed: list[str] = []
+    seen: set[str] = set()
     for batch in data:
         model(batch["img"].to(device, non_blocking=True))
-        observed += int(batch["valid_count"])
-        if observed >= required:
+        valid_count = int(batch["valid_count"])
+        for image in batch["images"][:valid_count]:
+            if image in seen:
+                raise RuntimeError(f"observer warm-up repeated representative image: {image}")
+            seen.add(image)
+            observed.append(image)
+        if len(observed) >= required:
             break
-    if observed < required:
-        raise RuntimeError(f"observer warm-up saw {observed} distinct images; required {required}")
+    if len(observed) != required:
+        raise RuntimeError(f"observer warm-up saw {len(observed)} distinct images; required exactly {required}")
     return observed
 
 
@@ -124,15 +143,10 @@ def main() -> int:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     records = load_manifest(args.manifest)
-    train_records = [record for record in records if record.split == "train"]
-    if len(train_records) < args.observer_warmup_images:
-        raise RuntimeError(
-            f"manifest has {len(train_records)} distinct train frames; "
-            f"observer warm-up requires {args.observer_warmup_images}"
-        )
+    observer_records = representative_observer_records(records, args.observer_warmup_images, args.seed)
     args.output_dir.mkdir(parents=True, exist_ok=False)
     train_data = loader(DroneDataset(records, "train", augment=True, seed=args.seed), args, True)
-    observer_data = loader(DroneDataset(records, "train", augment=False, seed=args.seed), args, False)
+    observer_data = loader(DroneDataset(observer_records, "train", augment=False, seed=args.seed), args, False)
     val_data = loader(DroneDataset(records, "val", augment=False, seed=args.seed), args, False)
 
     import ultralytics
@@ -151,7 +165,13 @@ def main() -> int:
     baseline = evaluate_model(wrapped, detector.model[-1], val_data, device)
     example = (torch.rand((args.batch_size, *INPUT_SHAPE[1:]), device=device),)
     qat_model = sima_prepare_qat_model(wrapped, example, device)
-    observed = warm_observers(qat_model, observer_data, device, args.observer_warmup_images)
+    observed_paths = warm_observers(qat_model, observer_data, device, args.observer_warmup_images)
+    observer_evidence = {
+        "count": len(observed_paths),
+        "images": [{"path": path, "sha256": sha256_file(Path(path))} for path in observed_paths],
+        "method": "seeded_random_without_replacement",
+        "seed": args.seed,
+    }
 
     optimizer = torch.optim.SGD(
         qat_model.parameters(),
@@ -183,7 +203,9 @@ def main() -> int:
             scalar_loss = loss.sum()
             if not torch.isfinite(scalar_loss):
                 raise RuntimeError(f"non-finite loss at epoch {epoch}, step {step}")
-            (scalar_loss / args.accumulation_steps).backward()
+            window_start = ((step - 1) // args.accumulation_steps) * args.accumulation_steps
+            window_size = min(args.accumulation_steps, len(train_data) - window_start)
+            (scalar_loss / window_size).backward()
             if step % args.accumulation_steps == 0 or step == len(train_data):
                 torch.nn.utils.clip_grad_norm_(qat_model.parameters(), 10.0)
                 optimizer.step()
@@ -211,7 +233,8 @@ def main() -> int:
                 "final_metrics": final_metrics,
                 "history": history,
                 "observers_frozen": observers_frozen,
-                "observer_images": observed,
+                "observer_images": len(observed_paths),
+                "observer_selection": observer_evidence,
                 "manifest_sha256": sha256_file(args.manifest),
                 "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
                 "qualification_eligible": not args.smoke and observers_frozen,

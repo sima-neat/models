@@ -107,7 +107,9 @@ optimization batch without training a graph that cannot be deployed.
 All mature BatchNorm layers are folded while retaining both training heads.
 Activations use signed per-tensor INT8 fake quantization; convolution weights
 use signed symmetric axis-0 per-channel INT8. Observers see at least 128 unique
-unaugmented images and are frozen before the final low-rate refinement epochs.
+unaugmented images selected reproducibly without replacement across the full
+training split, and the checkpoint records every selected path and digest.
+Observers are frozen before the final low-rate refinement epochs.
 
 ## Export gates
 
