@@ -14,7 +14,12 @@ sys.path.insert(0, str(RECIPE))
 
 import provenance  # noqa: E402
 from contract import DeploymentContract  # noqa: E402
-from dataset import FrameRecord, dataset_content_sha256, read_yolo_label  # noqa: E402
+from dataset import (  # noqa: E402
+    FrameRecord,
+    dataset_content_sha256,
+    read_yolo_label,
+    require_unchanged_dataset,
+)
 from evaluate import AP_CANDIDATE_SCORE_THRESHOLD, _match_truth_indices  # noqa: E402
 from paths import ultralytics_label_path  # noqa: E402
 from prepare_multiuav import (  # noqa: E402
@@ -23,11 +28,7 @@ from prepare_multiuav import (  # noqa: E402
     _validate_label,
     split_sequences,
 )
-from train_qat import (  # noqa: E402
-    require_unchanged_dataset,
-    select_qat_training_records,
-    validate_fp32_lineage,
-)
+from train_qat import select_qat_training_records, validate_fp32_lineage  # noqa: E402
 
 
 def test_deployment_architecture_keeps_four_heads_and_original_attention() -> None:
@@ -187,6 +188,7 @@ def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
     lineage = {
         "schema_version": 2,
         "architecture": "yolo26n-p2-attention-one-class",
+        "architecture_sha256": hashlib.sha256((RECIPE / "yolo26n-p2-deploy.yaml").read_bytes()).hexdigest(),
         "deployment": contract.to_dict(),
         "best_weights_sha256": hashlib.sha256(b"fp32").hexdigest(),
         "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
@@ -202,6 +204,11 @@ def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="dataset contents do not match"):
         validate_fp32_lineage(lineage_path, checkpoint, manifest, contract, "changed-dataset")
+
+    lineage["architecture_sha256"] = "0" * 64
+    lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="architecture digest"):
+        validate_fp32_lineage(lineage_path, checkpoint, manifest, contract, "dataset-digest")
 
 
 def test_dataset_digest_binds_every_referenced_file(tmp_path: Path) -> None:
@@ -222,6 +229,7 @@ def test_dataset_digest_binds_every_referenced_file(tmp_path: Path) -> None:
         records,
         manifest_sha256=manifest_digest,
         dataset_sha256=original,
+        context="QAT",
     )
     image.write_bytes(b"image-v2")
     changed_image = dataset_content_sha256(manifest, records)
@@ -229,12 +237,13 @@ def test_dataset_digest_binds_every_referenced_file(tmp_path: Path) -> None:
     changed_label = dataset_content_sha256(manifest, records)
 
     assert len({original, changed_image, changed_label}) == 3
-    with pytest.raises(RuntimeError, match="dataset contents changed during QAT"):
+    with pytest.raises(RuntimeError, match="QAT dataset contents changed"):
         require_unchanged_dataset(
             manifest,
             records,
             manifest_sha256=manifest_digest,
             dataset_sha256=original,
+            context="QAT",
         )
 
 
@@ -244,12 +253,13 @@ def test_qat_eligibility_rejects_manifest_mutation(tmp_path: Path) -> None:
     digest = hashlib.sha256(b"{}").hexdigest()
     manifest.write_text('{"changed": true}', encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="manifest changed during QAT"):
+    with pytest.raises(RuntimeError, match="QAT manifest changed"):
         require_unchanged_dataset(
             manifest,
             [],
             manifest_sha256=digest,
             dataset_sha256=dataset_content_sha256(manifest, []),
+            context="QAT",
         )
 
 
@@ -427,6 +437,8 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert "any_shape_on_mla=True" in source
     assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
+    main = source[source.index("def main()") :]
+    assert main.index("build_calibration(selected, contract)") < main.index("require_unchanged_dataset(")
 
 
 def test_quantized_model_audit_reads_internal_int8_tensor_types(tmp_path: Path) -> None:

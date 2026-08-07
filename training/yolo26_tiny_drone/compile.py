@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 from contract import INPUT_NAME, DeploymentContract
-from dataset import FrameRecord, dataset_content_sha256, load_manifest
+from dataset import FrameRecord, dataset_content_sha256, load_manifest, require_unchanged_dataset
 from onnx_audit import audit_onnx, sha256_file
 from PIL import Image
 
@@ -420,6 +420,13 @@ def main() -> int:
         allow_smoke=args.allow_smoke,
     )
     calibration, calibration_report = build_calibration(selected, contract)
+    require_unchanged_dataset(
+        manifest,
+        records,
+        manifest_sha256=export_report["manifest_sha256"],
+        dataset_sha256=dataset_digest,
+        context="calibration",
+    )
     output_dir.mkdir(parents=True, exist_ok=False)
     archive, quantized_report = compile_model(
         source,

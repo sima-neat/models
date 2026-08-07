@@ -69,6 +69,21 @@ def dataset_content_sha256(manifest: Path, records: list[FrameRecord]) -> str:
     return digest.hexdigest()
 
 
+def require_unchanged_dataset(
+    manifest: Path,
+    records: list[FrameRecord],
+    *,
+    manifest_sha256: str,
+    dataset_sha256: str,
+    context: str,
+) -> None:
+    """Fail closed when a qualification input changes across a long stage."""
+    if sha256_file(manifest) != manifest_sha256:
+        raise RuntimeError(f"{context} manifest changed; refusing qualification")
+    if dataset_content_sha256(manifest, records) != dataset_sha256:
+        raise RuntimeError(f"{context} dataset contents changed; refusing qualification")
+
+
 def load_manifest(path: Path, *, require_files: bool = True) -> list[FrameRecord]:
     document = json.loads(path.read_text(encoding="utf-8"))
     if document.get("schema_version") != 1 or not isinstance(document.get("frames"), list):

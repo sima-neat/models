@@ -164,9 +164,10 @@ and the Modalix app is batch 1. Gradient accumulation supplies the effective
 optimization batch without training a graph that cannot be deployed.
 The FP32 lineage is mandatory and cryptographically binds the checkpoint,
 manifest, every referenced image and label, architecture, and deployment
-shape to QAT. A smoke/ineligible FP32 source remains ineligible through QAT,
-export, and compilation even if its numeric accuracy happens to pass later
-gates.
+shape to QAT. QAT verifies the recorded canonical YAML digest before loading
+the checkpoint. A smoke/ineligible FP32 source remains ineligible through
+QAT, export, and compilation even if its numeric accuracy happens to pass
+later gates.
 
 All mature BatchNorm layers are folded while retaining both training heads.
 Activations—including both operands and results of attention MatMul and both
@@ -279,7 +280,8 @@ The compiler refuses a manifest or referenced dataset content outside the
 checkpoint lineage, or an unqualified export. `--allow-smoke` can inspect an
 ineligible source but can never turn it into an eligible MPK. The report pins
 every selected image, the assembled calibration tensor, source ONNX,
-serialized INT8 graph, and MPK by SHA-256. It
+serialized INT8 graph, and MPK by SHA-256. Dataset contents are rehashed after
+the calibration tensor is assembled and before compilation starts. It
 also enables non-4D MLA tensors while preserving deployment batch one and
 verifies that every source convolution becomes a per-channel INT8 MLA
 convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8

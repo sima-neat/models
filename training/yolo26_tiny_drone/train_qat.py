@@ -19,7 +19,15 @@ from typing import Any
 import numpy as np
 import torch
 from contract import DEFAULT_MODEL_SIZE, DeploymentContract
-from dataset import DroneDataset, FixedBatchCollator, FrameRecord, dataset_content_sha256, load_manifest, sha256_file
+from dataset import (
+    DroneDataset,
+    FixedBatchCollator,
+    FrameRecord,
+    dataset_content_sha256,
+    load_manifest,
+    require_unchanged_dataset,
+    sha256_file,
+)
 from evaluate import evaluate_model
 from model import (
     EXPECTED_ATTENTION_MATMULS,
@@ -220,6 +228,9 @@ def validate_fp32_lineage(
         raise RuntimeError(f"cannot read FP32 lineage: {path}") from exc
     if lineage.get("schema_version") != 2 or lineage.get("architecture") != "yolo26n-p2-attention-one-class":
         raise RuntimeError("FP32 lineage has an unsupported schema or architecture")
+    architecture = Path(__file__).with_name("yolo26n-p2-deploy.yaml")
+    if lineage.get("architecture_sha256") != sha256_file(architecture):
+        raise RuntimeError("FP32 lineage architecture digest does not match the canonical QAT graph")
     try:
         recorded_contract = DeploymentContract.from_dict(lineage.get("deployment"))
     except (TypeError, ValueError) as exc:
@@ -294,20 +305,6 @@ def validate_resume_checkpoint(
         return
     if recorded_selection != training_selection:
         raise RuntimeError("resume checkpoint QAT training selection does not match")
-
-
-def require_unchanged_dataset(
-    manifest: Path,
-    records: list[FrameRecord],
-    *,
-    manifest_sha256: str,
-    dataset_sha256: str,
-) -> None:
-    """Fail closed before making a long-running QAT artifact eligible."""
-    if sha256_file(manifest) != manifest_sha256:
-        raise RuntimeError("manifest changed during QAT; refusing an eligible checkpoint")
-    if dataset_content_sha256(manifest, records) != dataset_sha256:
-        raise RuntimeError("dataset contents changed during QAT; refusing an eligible checkpoint")
 
 
 def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
@@ -611,6 +608,7 @@ def main() -> int:
                 records,
                 manifest_sha256=fp32_lineage["manifest_sha256"],
                 dataset_sha256=dataset_digest,
+                context="QAT",
             )
         checkpoint = {
             "schema_version": 1,
