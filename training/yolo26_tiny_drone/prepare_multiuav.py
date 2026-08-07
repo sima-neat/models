@@ -16,6 +16,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from dataset import sha256_file
+from provenance import snapshot_file
 
 DATASET_URL = "https://huggingface.co/datasets/wish44165/StrongBaseline_YOLOv12-BoT-SORT-ReID"
 ARCHIVE_SHA256 = "c98069bf37b60b2fdc35f12e3514d619e7e06e550c90575500c2087bb2077074"
@@ -438,6 +439,41 @@ def materialize_verified_archive(
     return manifest, statistics
 
 
+def prepare_verified_archive(
+    archive: Path,
+    source_root: Path,
+    destination: Path,
+    *,
+    expected_sha256: str,
+    seed: int,
+    fixed_assignments: dict[str, str],
+) -> tuple[Path, dict[str, int]]:
+    """Snapshot the verified archive once and use only that snapshot thereafter."""
+    if destination.exists():
+        raise ValueError(f"destination already exists: {destination}")
+    archive_digest = sha256_file(archive)
+    if archive_digest != expected_sha256:
+        raise ValueError(f"source archive SHA-256 mismatch: expected {expected_sha256}, got {archive_digest}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}.source-archive-",
+        dir=destination.parent,
+    ) as temporary:
+        archive_snapshot = snapshot_file(
+            archive,
+            Path(temporary) / archive.name,
+            archive_digest,
+        )
+        source_verification = verify_source_root(archive_snapshot, source_root)
+        return materialize_verified_archive(
+            archive_snapshot,
+            destination,
+            source_verification=source_verification,
+            seed=seed,
+            fixed_assignments=fixed_assignments,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -457,18 +493,18 @@ def main() -> int:
     destination = args.output_dir.expanduser().resolve()
     if not archive.is_file():
         parser.error(f"source archive does not exist: {archive}")
-    digest = sha256_file(archive)
-    if digest != ARCHIVE_SHA256:
-        parser.error(f"source archive SHA-256 mismatch: expected {ARCHIVE_SHA256}, got {digest}")
-    source_verification = verify_source_root(archive, source_root)
     fixed_assignments = {sequence: "test" for sequence in args.test_sequence}
-    manifest, statistics = materialize_verified_archive(
-        archive,
-        destination,
-        source_verification=source_verification,
-        seed=args.seed,
-        fixed_assignments=fixed_assignments,
-    )
+    try:
+        manifest, statistics = prepare_verified_archive(
+            archive,
+            source_root,
+            destination,
+            expected_sha256=ARCHIVE_SHA256,
+            seed=args.seed,
+            fixed_assignments=fixed_assignments,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     print(
         json.dumps(
             {

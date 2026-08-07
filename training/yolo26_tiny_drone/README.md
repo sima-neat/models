@@ -66,8 +66,9 @@ against its archive member before materialization. It validates every label,
 retains negative frames with explicit empty labels, balances
 sequence/frame/object totals, and records the CC-BY-4.0 source and verification
 evidence in the manifest. It materializes from a private extraction of the
-verified archive; hard links avoid a second copy during preparation, and
-removing the private extraction leaves no writable source aliases:
+single verified, read-only archive snapshot; hard links avoid a second copy
+during preparation, and removing the private extraction leaves no writable
+source aliases:
 
 ```bash
 python training/yolo26_tiny_drone/prepare_multiuav.py \

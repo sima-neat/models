@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RECIPE = ROOT / "training" / "yolo26_tiny_drone"
 sys.path.insert(0, str(RECIPE))
 
+import prepare_multiuav  # noqa: E402
 import provenance  # noqa: E402
 from contract import DeploymentContract  # noqa: E402
 from dataset import (  # noqa: E402
@@ -26,7 +27,7 @@ from prepare_multiuav import (  # noqa: E402
     SequenceStats,
     _canonical_label_text,
     _validate_label,
-    materialize_verified_archive,
+    prepare_verified_archive,
     split_sequences,
     verify_source_root,
 )
@@ -170,7 +171,7 @@ def test_multiuav_source_root_must_match_the_verified_archive(tmp_path: Path) ->
         verify_source_root(archive, source_root)
 
 
-def test_multiuav_materializes_from_an_unaliased_private_archive_extraction(tmp_path: Path) -> None:
+def test_multiuav_materializes_from_one_unaliased_private_archive_snapshot(tmp_path: Path, monkeypatch) -> None:
     from zipfile import ZipFile
 
     archive = tmp_path / "fixture.zip"
@@ -184,11 +185,23 @@ def test_multiuav_materializes_from_an_unaliased_private_archive_extraction(tmp_
             compressed.writestr(f"fixture/train/{name}.jpg", image)
             compressed.writestr(f"fixture/train/{name}.txt", "0 0.5 0.5 0.1 0.1\n")
 
+    source_parent = tmp_path / "publisher-extraction"
+    with ZipFile(archive) as compressed:
+        compressed.extractall(source_parent)
+    original_verify = prepare_multiuav.verify_source_root
+
+    def verify_then_replace_original(snapshot: Path, source_root: Path) -> dict[str, int | str]:
+        evidence = original_verify(snapshot, source_root)
+        archive.write_bytes(b"replacement-after-verification")
+        return evidence
+
+    monkeypatch.setattr(prepare_multiuav, "verify_source_root", verify_then_replace_original)
     destination = tmp_path / "prepared"
-    manifest, statistics = materialize_verified_archive(
+    manifest, statistics = prepare_verified_archive(
         archive,
+        source_parent / "fixture",
         destination,
-        source_verification={"method": "test", "member_count": 6, "uncompressed_bytes": 0},
+        expected_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
         seed=20260806,
         fixed_assignments={
             "MultiUAV-001": "train",
@@ -199,6 +212,7 @@ def test_multiuav_materializes_from_an_unaliased_private_archive_extraction(tmp_
 
     assert manifest.is_file()
     assert statistics == {"frames": 3, "boxes": 3, "sequences": 3}
+    assert archive.read_bytes() == b"replacement-after-verification"
     images = sorted(destination.glob("images/*/*.jpg"))
     assert {image.stem: image.read_bytes() for image in images} == expected_images
     assert all(image.stat().st_nlink == 1 for image in images)
