@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import sys
 from pathlib import Path
 
@@ -22,7 +23,11 @@ from prepare_multiuav import (  # noqa: E402
     _validate_label,
     split_sequences,
 )
-from train_qat import select_qat_training_records, validate_fp32_lineage  # noqa: E402
+from train_qat import (  # noqa: E402
+    require_unchanged_dataset,
+    select_qat_training_records,
+    validate_fp32_lineage,
+)
 
 
 def test_deployment_architecture_keeps_four_heads_and_original_attention() -> None:
@@ -171,7 +176,6 @@ def test_matching_tries_next_available_overlapping_truth() -> None:
 
 
 def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
-    import hashlib
     import json
 
     checkpoint = tmp_path / "best.pt"
@@ -212,12 +216,41 @@ def test_dataset_digest_binds_every_referenced_file(tmp_path: Path) -> None:
     records = [FrameRecord(image=image, label=label, sequence="one", split="train")]
 
     original = dataset_content_sha256(manifest, records)
+    manifest_digest = hashlib.sha256(b"{}").hexdigest()
+    require_unchanged_dataset(
+        manifest,
+        records,
+        manifest_sha256=manifest_digest,
+        dataset_sha256=original,
+    )
     image.write_bytes(b"image-v2")
     changed_image = dataset_content_sha256(manifest, records)
     label.write_text("", encoding="utf-8")
     changed_label = dataset_content_sha256(manifest, records)
 
     assert len({original, changed_image, changed_label}) == 3
+    with pytest.raises(RuntimeError, match="dataset contents changed during QAT"):
+        require_unchanged_dataset(
+            manifest,
+            records,
+            manifest_sha256=manifest_digest,
+            dataset_sha256=original,
+        )
+
+
+def test_qat_eligibility_rejects_manifest_mutation(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    digest = hashlib.sha256(b"{}").hexdigest()
+    manifest.write_text('{"changed": true}', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="manifest changed during QAT"):
+        require_unchanged_dataset(
+            manifest,
+            [],
+            manifest_sha256=digest,
+            dataset_sha256=dataset_content_sha256(manifest, []),
+        )
 
 
 def test_ap_uses_a_near_zero_candidate_threshold() -> None:
@@ -285,6 +318,8 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert 'parser.add_argument("--fp32-lineage", type=Path, required=True)' in source
     assert "validate_fp32_lineage" in source
     assert '"dataset_sha256": dataset_digest' in source
+    assert "require_unchanged_dataset" in source
+    assert '"qualification_eligible": qualification_eligible' in source
     assert 'fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen' in source
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source

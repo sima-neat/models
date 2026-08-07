@@ -53,8 +53,10 @@ escape it. Labels must follow Ultralytics' `images/...` to `labels/...` path
 mapping, and every normalized box must lie fully inside its source image.
 FP32 training records a deterministic dataset digest over the manifest
 metadata, relative paths, sizes, and bytes of every referenced image and
-label. QAT and compilation rehash those files and reject any content change,
-including mutation through the hard links created by dataset preparation.
+label. QAT rehashes the manifest and all referenced files before every
+eligible frozen checkpoint, and compilation rehashes them again. Any content
+change—including mutation through the hard links created by dataset
+preparation—fails closed.
 
 The published Anti-UAV Track 3 archive assigns frames rather than source
 sequences to train and validation; all 200 source sequences consequently

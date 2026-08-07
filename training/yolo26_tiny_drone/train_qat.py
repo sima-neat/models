@@ -296,6 +296,20 @@ def validate_resume_checkpoint(
         raise RuntimeError("resume checkpoint QAT training selection does not match")
 
 
+def require_unchanged_dataset(
+    manifest: Path,
+    records: list[FrameRecord],
+    *,
+    manifest_sha256: str,
+    dataset_sha256: str,
+) -> None:
+    """Fail closed before making a long-running QAT artifact eligible."""
+    if sha256_file(manifest) != manifest_sha256:
+        raise RuntimeError("manifest changed during QAT; refusing an eligible checkpoint")
+    if dataset_content_sha256(manifest, records) != dataset_sha256:
+        raise RuntimeError("dataset contents changed during QAT; refusing an eligible checkpoint")
+
+
 def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
     """Select full, detection-head, or class-head-only recovery parameters."""
     if scope not in {"all", "head", "classification"}:
@@ -590,6 +604,14 @@ def main() -> int:
         }
         history.append(entry)
         print(json.dumps(entry, sort_keys=True), flush=True)
+        qualification_eligible = fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen
+        if qualification_eligible:
+            require_unchanged_dataset(
+                args.manifest,
+                records,
+                manifest_sha256=fp32_lineage["manifest_sha256"],
+                dataset_sha256=dataset_digest,
+            )
         checkpoint = {
             "schema_version": 1,
             "architecture": "yolo26n-p2-attention-one-class",
@@ -607,7 +629,7 @@ def main() -> int:
             "observer_selection": observer_evidence,
             "training_selection": training_selection,
             "attention_scaffolding": attention_scaffolding,
-            "manifest_sha256": sha256_file(args.manifest),
+            "manifest_sha256": fp32_lineage["manifest_sha256"],
             "dataset_sha256": dataset_digest,
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
             "fp32_lineage_sha256": sha256_file(args.fp32_lineage),
@@ -615,7 +637,7 @@ def main() -> int:
             "resume_checkpoint_sha256": resume_digest,
             "trainable_scope": args.trainable_scope,
             "trainable_parameter_count": trainable_parameter_count,
-            "qualification_eligible": (fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen),
+            "qualification_eligible": qualification_eligible,
             "versions": {
                 "torch": torch.__version__,
                 "ultralytics": ultralytics.__version__,
