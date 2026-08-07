@@ -370,17 +370,36 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
     assert 'parser.add_argument("--initial-weights", type=Path)' in source
     assert 'Path(__file__).with_name("yolo26n-p2-deploy.yaml")' in source
     assert "initialization = args.initial_weights or args.base_weights" in source
-    assert "model = YOLO(str(architecture))" in source
-    assert "model.load(str(initialization))" in source
+    assert "model = YOLO(str(architecture_snapshot))" in source
+    assert "model.load(str(initialization_snapshot))" in source
+    assert "snapshot_file(" in source
+    assert 'with tempfile.TemporaryDirectory(prefix="yolo26-fp32-inputs-")' in source
     assert source.count(".train(") == 1
     assert "teacher_results" not in source
     assert "student_results" not in source
     assert 'feature_heads = len(getattr(head, "cv2", ()))' in source
     assert '"initialization": {' in source
     assert '"compatible_tensors": len(compatible)' in source
-    assert '"architecture_sha256": sha256_file(architecture)' in source
+    assert '"architecture_sha256": architecture_digest' in source
+    assert '"sha256": initialization_digest' in source
+    assert '"manifest_sha256": manifest_digest' in source
     assert '"dataset_sha256": dataset_digest' in source
-    assert "dataset contents changed during FP32 training" in source
+    assert 'context="FP32 training"' in source
+
+
+def test_fp32_loads_only_the_verified_read_only_snapshot(tmp_path: Path) -> None:
+    from train_fp32 import snapshot_file
+
+    source = tmp_path / "weights.pt"
+    destination = tmp_path / "snapshot.pt"
+    source.write_bytes(b"verified-weights")
+    digest = hashlib.sha256(b"verified-weights").hexdigest()
+
+    snapshot_file(source, destination, digest)
+    source.write_bytes(b"replacement-weights")
+
+    assert destination.read_bytes() == b"verified-weights"
+    assert destination.stat().st_mode & 0o777 == 0o400
 
 
 def test_qat_requires_complete_attention_scaffolding() -> None:

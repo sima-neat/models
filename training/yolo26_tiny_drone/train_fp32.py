@@ -5,11 +5,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 from contract import DEFAULT_MODEL_SIZE, DeploymentContract
-from dataset import dataset_content_sha256, load_manifest, sha256_file, write_ultralytics_dataset
+from dataset import (
+    dataset_content_sha256,
+    load_manifest,
+    require_unchanged_dataset,
+    sha256_file,
+    write_ultralytics_dataset,
+)
 from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision
+
+
+def snapshot_file(source: Path, destination: Path, expected_sha256: str) -> Path:
+    """Copy exactly the bytes that passed a provenance check and make them read-only."""
+    shutil.copyfile(source, destination)
+    actual = sha256_file(destination)
+    if actual != expected_sha256:
+        raise RuntimeError(
+            f"source changed while creating its private snapshot: expected {expected_sha256}, got {actual}"
+        )
+    destination.chmod(0o400)
+    return destination
 
 
 def main() -> int:
@@ -44,7 +64,10 @@ def main() -> int:
     if digest != YOLO26N_SHA256 and not args.smoke:
         parser.error(f"base weight SHA-256 mismatch: expected {YOLO26N_SHA256}, got {digest}")
 
+    manifest_digest = sha256_file(args.manifest)
     records = load_manifest(args.manifest)
+    if sha256_file(args.manifest) != manifest_digest:
+        raise RuntimeError("manifest changed while loading FP32 dataset records")
     dataset_digest = dataset_content_sha256(args.manifest, records)
     train_count = sum(record.split == "train" for record in records)
     val_count = sum(record.split == "val" for record in records)
@@ -62,6 +85,7 @@ def main() -> int:
     architecture = Path(__file__).with_name("yolo26n-p2-deploy.yaml")
     if not architecture.is_file():
         raise RuntimeError(f"canonical deployment architecture is missing: {architecture}")
+    architecture_digest = sha256_file(architecture)
 
     common = {
         "data": str(data_yaml),
@@ -78,27 +102,40 @@ def main() -> int:
         "exist_ok": False,
     }
     initialization = args.initial_weights or args.base_weights
-    source = YOLO(str(initialization))
-    if args.initial_weights is not None:
-        head = source.model.model[-1]
-        checkpoint_classes = int(source.model.yaml.get("nc", -1))
-        feature_heads = len(getattr(head, "cv2", ()))
-        if checkpoint_classes != 1 or feature_heads != 4:
-            raise RuntimeError(
-                "initial weights must be a one-class YOLO26-P2 checkpoint: "
-                f"classes={checkpoint_classes}, feature_heads={feature_heads}"
-            )
-    model = YOLO(str(architecture))
-    source_state = source.model.float().state_dict()
-    target_state = model.model.state_dict()
-    compatible = {
-        name
-        for name, tensor in source_state.items()
-        if name in target_state and tensor.shape == target_state[name].shape
-    }
-    if not compatible:
-        raise RuntimeError("initial weights contain no tensors compatible with the deployment graph")
-    model.load(str(initialization))
+    initialization_digest = digest if initialization == args.base_weights else sha256_file(initialization)
+    with tempfile.TemporaryDirectory(prefix="yolo26-fp32-inputs-") as temporary:
+        snapshot_dir = Path(temporary)
+        architecture_snapshot = snapshot_file(
+            architecture,
+            snapshot_dir / architecture.name,
+            architecture_digest,
+        )
+        initialization_snapshot = snapshot_file(
+            initialization,
+            snapshot_dir / initialization.name,
+            initialization_digest,
+        )
+        source = YOLO(str(initialization_snapshot))
+        if args.initial_weights is not None:
+            head = source.model.model[-1]
+            checkpoint_classes = int(source.model.yaml.get("nc", -1))
+            feature_heads = len(getattr(head, "cv2", ()))
+            if checkpoint_classes != 1 or feature_heads != 4:
+                raise RuntimeError(
+                    "initial weights must be a one-class YOLO26-P2 checkpoint: "
+                    f"classes={checkpoint_classes}, feature_heads={feature_heads}"
+                )
+        model = YOLO(str(architecture_snapshot))
+        source_state = source.model.float().state_dict()
+        target_state = model.model.state_dict()
+        compatible = {
+            name
+            for name, tensor in source_state.items()
+            if name in target_state and tensor.shape == target_state[name].shape
+        }
+        if not compatible:
+            raise RuntimeError("initial weights contain no tensors compatible with the deployment graph")
+        model.load(str(initialization_snapshot))
     results = model.train(
         **common,
         epochs=args.epochs,
@@ -107,23 +144,28 @@ def main() -> int:
     best = args.output_dir / "fp32" / "weights" / "best.pt"
     if not best.is_file():
         raise RuntimeError(f"FP32 training did not produce {best}")
-    if dataset_content_sha256(args.manifest, records) != dataset_digest:
-        raise RuntimeError("dataset contents changed during FP32 training; refusing qualification lineage")
+    require_unchanged_dataset(
+        args.manifest,
+        records,
+        manifest_sha256=manifest_digest,
+        dataset_sha256=dataset_digest,
+        context="FP32 training",
+    )
     lineage = {
         "schema_version": 2,
         "architecture": "yolo26n-p2-attention-one-class",
-        "architecture_sha256": sha256_file(architecture),
+        "architecture_sha256": architecture_digest,
         "deployment": contract.to_dict(),
         "base_weights_sha256": digest,
         "initialization": {
             "file": initialization.name,
-            "sha256": sha256_file(initialization),
+            "sha256": initialization_digest,
             "task_specific": args.initial_weights is not None,
             "compatible_tensors": len(compatible),
             "target_tensors": len(target_state),
         },
         "best_weights_sha256": sha256_file(best),
-        "manifest_sha256": sha256_file(args.manifest),
+        "manifest_sha256": manifest_digest,
         "dataset_sha256": dataset_digest,
         "qualification_eligible": not args.smoke,
         "split_counts": {split: sum(record.split == split for record in records) for split in ("train", "val", "test")},

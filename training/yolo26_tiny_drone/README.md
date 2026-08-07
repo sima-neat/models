@@ -165,9 +165,11 @@ optimization batch without training a graph that cannot be deployed.
 The FP32 lineage is mandatory and cryptographically binds the checkpoint,
 manifest, every referenced image and label, architecture, and deployment
 shape to QAT. QAT verifies the recorded canonical YAML digest before loading
-the checkpoint. A smoke/ineligible FP32 source remains ineligible through
-QAT, export, and compilation even if its numeric accuracy happens to pass
-later gates.
+the checkpoint. FP32 model construction and weight loading use private
+read-only snapshots whose digests are captured before either file is
+consumed; the manifest and dataset are revalidated after training. A
+smoke/ineligible FP32 source remains ineligible through QAT, export, and
+compilation even if its numeric accuracy happens to pass later gates.
 
 All mature BatchNorm layers are folded while retaining both training heads.
 Activations—including both operands and results of attention MatMul and both
