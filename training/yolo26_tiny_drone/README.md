@@ -93,8 +93,10 @@ The SiMa QAT API requires Python 3.10 and PyTorch 2.3.1. It must include the
 SiMa MatMul and Softmax PT2E annotators; the original `swml-qat` develop.20
 package does not. The dependency is implemented by internal `swml-qat` commit
 `dee0915` on `feat/int8-matmul-softmax-qat`; this Models change must not merge
-before that dependency. Bootstrap from an attention-capable QAT wheel or
-source installation:
+before that dependency. The recipe content-hashes the installed `sima_qat`
+runtime against that commit before bootstrap validation, QAT, resume, and
+export; a structurally similar or locally modified package cannot qualify.
+Bootstrap from the exact QAT wheel or source installation:
 
 ```bash
 SIMA_QAT_WHEEL=/path/to/swml_qat.whl \

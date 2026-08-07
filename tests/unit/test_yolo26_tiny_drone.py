@@ -427,6 +427,9 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
     assert "load_verified_qat_sources" in source
+    assert "swml_qat_digest = require_swml_qat_runtime()" in source
+    assert '"swml_qat_revision": SWML_QAT_REVISION' in source
+    assert '"swml_qat_package_sha256": swml_qat_digest' in source
     assert 'snapshot_file(args.fp32_checkpoint, snapshot_dir / "fp32.pt", fp32_digest)' in source
     assert "YOLO(str(fp32_snapshot))" in source
     assert "sha256_file(args.fp32_checkpoint)" not in source[source.index("def main()") :]
@@ -547,6 +550,8 @@ def test_export_consumes_only_verified_input_snapshots() -> None:
     assert 'with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-")' in loader
     assert "torch.load(checkpoint_snapshot" in loader
     assert "YOLO(str(fp32_snapshot))" in loader
+    assert loader.index("require_swml_qat_runtime()") < loader.index("torch.load(checkpoint_snapshot")
+    assert 'get("swml_qat_package_sha256") != swml_qat_digest' in loader
     assert "torch.load(args.checkpoint" not in main
     assert "YOLO(str(args.fp32_checkpoint))" not in main
     assert '"checkpoint_sha256": sources.checkpoint_sha256' in main
@@ -700,3 +705,23 @@ def test_ultralytics_revision_rejects_modified_installed_contents(monkeypatch) -
 
     with pytest.raises(RuntimeError, match="package content mismatch"):
         provenance.require_ultralytics_revision(RECIPE)
+
+
+def test_swml_qat_runtime_requires_the_pinned_package_contents(tmp_path: Path, monkeypatch) -> None:
+    package = tmp_path / "sima_qat"
+    package.mkdir()
+
+    class Specification:
+        submodule_search_locations = [str(package)]
+
+    monkeypatch.setattr(provenance.importlib.util, "find_spec", lambda _name: Specification())
+    monkeypatch.setattr(
+        provenance,
+        "runtime_package_sha256",
+        lambda _package_root: provenance.SWML_QAT_PACKAGE_SHA256,
+    )
+    assert provenance.require_swml_qat_runtime() == provenance.SWML_QAT_PACKAGE_SHA256
+
+    monkeypatch.setattr(provenance, "runtime_package_sha256", lambda _package_root: "modified")
+    with pytest.raises(RuntimeError, match="swml-qat package content mismatch"):
+        provenance.require_swml_qat_runtime()

@@ -33,6 +33,9 @@ import torch
 import torchvision
 import ultralytics
 from model import lower_attention_for_mla, validate_attention_qat_scaffolding
+from provenance import require_swml_qat_runtime
+
+swml_qat_digest = require_swml_qat_runtime()
 from sima_qat.qat_api import sima_prepare_qat_model
 from ultralytics.nn.modules.block import Attention
 
@@ -41,6 +44,7 @@ assert torchvision.__version__.split("+")[0] == "0.18.1", torchvision.__version_
 print("torch", torch.__version__)
 print("torchvision", torchvision.__version__)
 print("ultralytics", ultralytics.__version__)
+print("swml_qat_package_sha256", swml_qat_digest)
 print("sima_prepare_qat_model", sima_prepare_qat_model)
 
 attention = Attention(128, num_heads=2).train()

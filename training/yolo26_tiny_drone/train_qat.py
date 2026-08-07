@@ -41,9 +41,12 @@ from model import (
 )
 from paths import natural_path_key
 from provenance import (
+    SWML_QAT_PACKAGE_SHA256,
+    SWML_QAT_REVISION,
     ULTRALYTICS_PACKAGE_SHA256,
     ULTRALYTICS_REVISION,
     YOLO26N_SHA256,
+    require_swml_qat_runtime,
     require_ultralytics_revision,
     snapshot_file,
 )
@@ -385,6 +388,10 @@ def load_verified_qat_sources(
             and resume.get("versions", {}).get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256
         ):
             raise RuntimeError("resume checkpoint Ultralytics package contents do not match the environment")
+        if resume is not None and resume.get("versions", {}).get("swml_qat_revision") != SWML_QAT_REVISION:
+            raise RuntimeError("resume checkpoint swml-qat revision does not match the environment")
+        if resume is not None and resume.get("versions", {}).get("swml_qat_package_sha256") != SWML_QAT_PACKAGE_SHA256:
+            raise RuntimeError("resume checkpoint swml-qat package contents do not match the environment")
         detector = YOLO(str(fp32_snapshot)).model
         detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
         teacher_detector = None
@@ -465,6 +472,7 @@ def evaluate_without_observer_updates(
 def main() -> int:
     args = parse_args()
     contract = DeploymentContract(args.image_size)
+    swml_qat_digest = require_swml_qat_runtime()
     records = load_manifest(args.manifest)
     dataset_digest = dataset_content_sha256(args.manifest, records)
     seed_everything(args.seed)
@@ -713,6 +721,8 @@ def main() -> int:
                 "ultralytics_revision": ultralytics_revision,
                 "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
                 "swml_qat": qat_package_version(),
+                "swml_qat_revision": SWML_QAT_REVISION,
+                "swml_qat_package_sha256": swml_qat_digest,
             },
         }
         atomic_save(checkpoint, args.output_dir / "checkpoint-latest.pt")

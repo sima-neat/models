@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -11,6 +12,8 @@ from pathlib import Path
 
 ULTRALYTICS_REVISION = "1367566337fb8056223a1aeb469360747f1b1bcd"
 ULTRALYTICS_PACKAGE_SHA256 = "d3237e8acc6d57a64c709040a58233c53eae691a1ff6efebf1df56deccc759e5"
+SWML_QAT_REVISION = "dee091582acc7d776a4d4a582f8e25655f2ffd90"
+SWML_QAT_PACKAGE_SHA256 = "759d9507f7c42a3372d651b8ec4764e6fc18020bd64617fcfa203e95283e0c37"
 YOLO26N_SHA256 = "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
 
 
@@ -58,8 +61,8 @@ def _distribution_revision() -> str | None:
     return revision if isinstance(revision, str) else None
 
 
-def ultralytics_package_sha256(package_root: Path) -> str:
-    """Hash the installed runtime package independently of VCS metadata."""
+def runtime_package_sha256(package_root: Path) -> str:
+    """Hash an installed runtime package independently of VCS metadata."""
     digest = hashlib.sha256()
     files = sorted(
         path
@@ -75,6 +78,25 @@ def ultralytics_package_sha256(package_root: Path) -> str:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def ultralytics_package_sha256(package_root: Path) -> str:
+    return runtime_package_sha256(package_root)
+
+
+def require_swml_qat_runtime() -> str:
+    """Require the exact internal QAT implementation pinned by this recipe."""
+    specification = importlib.util.find_spec("sima_qat")
+    locations = None if specification is None else specification.submodule_search_locations
+    if not locations:
+        raise RuntimeError("cannot locate the installed sima_qat runtime package")
+    package_root = Path(next(iter(locations))).resolve()
+    package_digest = runtime_package_sha256(package_root)
+    if package_digest != SWML_QAT_PACKAGE_SHA256:
+        raise RuntimeError(
+            f"swml-qat package content mismatch: expected {SWML_QAT_PACKAGE_SHA256}, got {package_digest}"
+        )
+    return package_digest
 
 
 def require_ultralytics_revision(package_root: Path) -> str:
