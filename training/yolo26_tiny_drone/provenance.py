@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 ULTRALYTICS_REVISION = "1367566337fb8056223a1aeb469360747f1b1bcd"
 YOLO26N_SHA256 = "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
+
+
+def snapshot_file(source: Path, destination: Path, expected_sha256: str) -> Path:
+    """Copy verified bytes to a private read-only path for deterministic consumption."""
+    shutil.copyfile(source, destination)
+    digest = hashlib.sha256()
+    with destination.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected_sha256:
+        raise RuntimeError(
+            f"source changed while creating its private snapshot: expected {expected_sha256}, got {actual}"
+        )
+    destination.chmod(0o400)
+    return destination
 
 
 def _git_revision(package_root: Path) -> str | None:

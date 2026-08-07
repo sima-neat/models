@@ -7,6 +7,8 @@ import argparse
 import json
 import math
 import re
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ from model import (
     validate_deploy_outputs,
 )
 from onnx_audit import audit_onnx, canonicalize_attention_for_modelsdk, sha256_file
-from provenance import require_ultralytics_revision
+from provenance import require_ultralytics_revision, snapshot_file
 
 
 def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
@@ -101,6 +103,67 @@ def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) ->
     }
 
 
+@dataclass(frozen=True)
+class VerifiedExportSources:
+    checkpoint: dict[str, Any]
+    detector: torch.nn.Module
+    accuracy: dict[str, float]
+    contract: DeploymentContract
+    checkpoint_sha256: str
+    fp32_checkpoint_sha256: str
+    ultralytics_revision: str
+
+
+def load_verified_export_sources(
+    args: argparse.Namespace,
+    device: torch.device,
+) -> VerifiedExportSources:
+    """Snapshot, validate, and fully consume the two mutable export inputs."""
+    import ultralytics
+    from ultralytics import YOLO
+    from ultralytics.cfg import get_cfg
+
+    checkpoint_digest = sha256_file(args.checkpoint)
+    fp32_digest = sha256_file(args.fp32_checkpoint)
+    with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-") as temporary:
+        snapshot_dir = Path(temporary)
+        checkpoint_snapshot = snapshot_file(
+            args.checkpoint,
+            snapshot_dir / "qat-checkpoint.pt",
+            checkpoint_digest,
+        )
+        fp32_snapshot = snapshot_file(
+            args.fp32_checkpoint,
+            snapshot_dir / "fp32.pt",
+            fp32_digest,
+        )
+        checkpoint = torch.load(checkpoint_snapshot, map_location=device, weights_only=False)
+        accuracy = validate_checkpoint(checkpoint, args)
+        contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
+        if int(checkpoint["arguments"]["batch_size"]) != 1:
+            raise RuntimeError("QAT checkpoint was not captured for the batch-1 deployment contract")
+        ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
+        checkpoint_revision = checkpoint.get("versions", {}).get("ultralytics_revision")
+        if checkpoint_revision != ultralytics_revision:
+            raise RuntimeError(
+                "QAT checkpoint Ultralytics revision does not match the export environment: "
+                f"checkpoint={checkpoint_revision}, environment={ultralytics_revision}"
+            )
+        if fp32_digest != checkpoint.get("fp32_checkpoint_sha256"):
+            raise RuntimeError("FP32 checkpoint digest does not match the QAT lineage")
+        detector = YOLO(str(fp32_snapshot)).model
+        detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
+    return VerifiedExportSources(
+        checkpoint=checkpoint,
+        detector=detector,
+        accuracy=accuracy,
+        contract=contract,
+        checkpoint_sha256=checkpoint_digest,
+        fp32_checkpoint_sha256=fp32_digest,
+        ultralytics_revision=ultralytics_revision,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
@@ -125,31 +188,15 @@ def main() -> int:
     if not args.checkpoint.is_file() or not args.fp32_checkpoint.is_file():
         parser.error("QAT and FP32 checkpoints must exist")
     device = torch.device(args.device)
-    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    accuracy = validate_checkpoint(checkpoint, args)
-    contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
-    if int(checkpoint["arguments"]["batch_size"]) != 1:
-        raise RuntimeError("QAT checkpoint was not captured for the batch-1 deployment contract")
+    sources = load_verified_export_sources(args, device)
+    checkpoint = sources.checkpoint
+    accuracy = sources.accuracy
+    contract = sources.contract
     args.output_dir.mkdir(parents=True, exist_ok=False)
 
-    import ultralytics
     from sima_qat.qat_api import sima_export_onnx, sima_finalize_qat_model, sima_prepare_qat_model
-    from ultralytics import YOLO
-    from ultralytics.cfg import get_cfg
 
-    ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
-    checkpoint_revision = checkpoint.get("versions", {}).get("ultralytics_revision")
-    if checkpoint_revision != ultralytics_revision:
-        raise RuntimeError(
-            "QAT checkpoint Ultralytics revision does not match the export environment: "
-            f"checkpoint={checkpoint_revision}, environment={ultralytics_revision}"
-        )
-    fp32_digest = sha256_file(args.fp32_checkpoint)
-    if fp32_digest != checkpoint.get("fp32_checkpoint_sha256"):
-        raise RuntimeError("FP32 checkpoint digest does not match the QAT lineage")
-
-    detector = YOLO(str(args.fp32_checkpoint)).model
-    detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
+    detector = sources.detector
     fuse_batch_norm_for_qat(detector)
     detector, lowered_attention_count = lower_attention_for_mla(detector)
     if lowered_attention_count != 2:
@@ -181,8 +228,8 @@ def main() -> int:
         "architecture": "yolo26n-p2-attention-one-class",
         "deployment": contract.to_dict(),
         "accuracy": accuracy,
-        "checkpoint_sha256": sha256_file(args.checkpoint),
-        "fp32_checkpoint_sha256": fp32_digest,
+        "checkpoint_sha256": sources.checkpoint_sha256,
+        "fp32_checkpoint_sha256": sources.fp32_checkpoint_sha256,
         "fp32_lineage_sha256": checkpoint.get("fp32_lineage_sha256"),
         "fp32_qualification_eligible": checkpoint.get("fp32_qualification_eligible") is True,
         "manifest_sha256": checkpoint["manifest_sha256"],

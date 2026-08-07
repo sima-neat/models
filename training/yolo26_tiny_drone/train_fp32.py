@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -17,19 +16,7 @@ from dataset import (
     sha256_file,
     write_ultralytics_dataset,
 )
-from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision
-
-
-def snapshot_file(source: Path, destination: Path, expected_sha256: str) -> Path:
-    """Copy exactly the bytes that passed a provenance check and make them read-only."""
-    shutil.copyfile(source, destination)
-    actual = sha256_file(destination)
-    if actual != expected_sha256:
-        raise RuntimeError(
-            f"source changed while creating its private snapshot: expected {expected_sha256}, got {actual}"
-        )
-    destination.chmod(0o400)
-    return destination
+from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision, snapshot_file
 
 
 def main() -> int:

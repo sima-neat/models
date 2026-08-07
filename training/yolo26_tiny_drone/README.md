@@ -61,10 +61,13 @@ preparation—fails closed.
 The published Anti-UAV Track 3 archive assigns frames rather than source
 sequences to train and validation; all 200 source sequences consequently
 cross that boundary. Prepare it with whole-sequence 80/10/10 splits before
-training. The preparation verifies the published archive digest, validates
-every label, retains negative frames with explicit empty labels, balances
+training. The preparation verifies the published archive digest, then
+byte-compares every consumed image and label in the extracted source root
+against its archive member before materialization. It validates every label,
+retains negative frames with explicit empty labels, balances
 sequence/frame/object totals, uses hard links rather than duplicating the
-corpus, and records the CC-BY-4.0 source lineage in the manifest:
+corpus, and records the CC-BY-4.0 source and verification evidence in the
+manifest:
 
 ```bash
 python training/yolo26_tiny_drone/prepare_multiuav.py \
@@ -167,9 +170,12 @@ manifest, every referenced image and label, architecture, and deployment
 shape to QAT. QAT verifies the recorded canonical YAML digest before loading
 the checkpoint. FP32 model construction and weight loading use private
 read-only snapshots whose digests are captured before either file is
-consumed; the manifest and dataset are revalidated after training. A
-smoke/ineligible FP32 source remains ineligible through QAT, export, and
-compilation even if its numeric accuracy happens to pass later gates.
+consumed. QAT likewise snapshots its FP32 checkpoint, lineage, and optional
+resume checkpoint before validation or model loading; the validated FP32
+snapshot is also the distillation teacher. The manifest and dataset are
+revalidated after training. A smoke/ineligible FP32 source remains ineligible
+through QAT, export, and compilation even if its numeric accuracy happens to
+pass later gates.
 
 All mature BatchNorm layers are folded while retaining both training heads.
 Activations—including both operands and results of attention MatMul and both
@@ -247,7 +253,9 @@ checkpoint history entry.
 Training writes `checkpoint-latest.pt` after every epoch for recovery and
 retains `checkpoint-best-frozen.pt` using frozen-observer AP50 first and tiny
 recall as the tie-breaker. Export the latter so a final-epoch regression cannot
-silently replace a better publishable candidate.
+silently replace a better publishable candidate. Export snapshots both the QAT
+and FP32 checkpoints before validation and consumes only those verified,
+read-only bytes while rebuilding the deployment graph.
 
 Export fails when:
 

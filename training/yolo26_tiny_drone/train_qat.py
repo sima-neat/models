@@ -13,6 +13,7 @@ import random
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ from model import (
     validate_deploy_outputs,
 )
 from paths import natural_path_key
-from provenance import require_ultralytics_revision
+from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision, snapshot_file
 from torch import nn
 from torch.ao.quantization import disable_observer, enable_observer
 from torch.nn import functional as F
@@ -308,6 +309,88 @@ def validate_resume_checkpoint(
         raise RuntimeError("resume checkpoint QAT training selection does not match")
 
 
+@dataclass(frozen=True)
+class VerifiedQATSources:
+    fp32_lineage: dict[str, Any]
+    resume: dict[str, Any] | None
+    detector: nn.Module
+    teacher_detector: nn.Module | None
+    fp32_checkpoint_sha256: str
+    fp32_lineage_sha256: str
+    resume_checkpoint_sha256: str | None
+    ultralytics_version: str
+    ultralytics_revision: str
+
+
+def load_verified_qat_sources(
+    args: argparse.Namespace,
+    contract: DeploymentContract,
+    dataset_sha256: str,
+    training_selection: dict[str, Any],
+) -> VerifiedQATSources:
+    """Validate, snapshot, and fully consume every mutable QAT source."""
+    import ultralytics
+    from ultralytics import YOLO
+    from ultralytics.cfg import get_cfg
+
+    ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
+    fp32_digest = sha256_file(args.fp32_checkpoint)
+    lineage_digest = sha256_file(args.fp32_lineage)
+    resume_digest = sha256_file(args.resume_checkpoint) if args.resume_checkpoint is not None else None
+    with tempfile.TemporaryDirectory(prefix="yolo26-qat-inputs-") as temporary:
+        snapshot_dir = Path(temporary)
+        fp32_snapshot = snapshot_file(args.fp32_checkpoint, snapshot_dir / "fp32.pt", fp32_digest)
+        lineage_snapshot = snapshot_file(args.fp32_lineage, snapshot_dir / "lineage.json", lineage_digest)
+        fp32_lineage = validate_fp32_lineage(
+            lineage_snapshot,
+            fp32_snapshot,
+            args.manifest,
+            contract,
+            dataset_sha256,
+        )
+        if fp32_lineage.get("ultralytics_revision") != ULTRALYTICS_REVISION:
+            raise RuntimeError("FP32 lineage Ultralytics revision does not match the QAT environment")
+        if fp32_lineage["qualification_eligible"] and fp32_lineage.get("base_weights_sha256") != YOLO26N_SHA256:
+            raise RuntimeError("eligible FP32 lineage does not descend from the pinned YOLO26 base weights")
+        resume = None
+        if args.resume_checkpoint is not None and resume_digest is not None:
+            resume_snapshot = snapshot_file(
+                args.resume_checkpoint,
+                snapshot_dir / "resume.pt",
+                resume_digest,
+            )
+            resume = torch.load(resume_snapshot, map_location="cpu", weights_only=False)
+            validate_resume_checkpoint(
+                resume,
+                args.manifest,
+                fp32_snapshot,
+                lineage_snapshot,
+                dataset_sha256,
+                contract,
+                training_selection,
+            )
+            shutil.copyfile(resume_snapshot, args.output_dir / "checkpoint-best-frozen.pt")
+        if resume is not None and resume.get("versions", {}).get("ultralytics_revision") != ultralytics_revision:
+            raise RuntimeError("resume checkpoint Ultralytics revision does not match the environment")
+        detector = YOLO(str(fp32_snapshot)).model
+        detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
+        teacher_detector = None
+        if args.class_distillation_weight > 0.0:
+            teacher_detector = YOLO(str(fp32_snapshot)).model
+            teacher_detector.args = get_cfg(overrides=dict(getattr(teacher_detector, "args", {})))
+    return VerifiedQATSources(
+        fp32_lineage=fp32_lineage,
+        resume=resume,
+        detector=detector,
+        teacher_detector=teacher_detector,
+        fp32_checkpoint_sha256=fp32_digest,
+        fp32_lineage_sha256=lineage_digest,
+        resume_checkpoint_sha256=resume_digest,
+        ultralytics_version=ultralytics.__version__,
+        ultralytics_revision=ultralytics_revision,
+    )
+
+
 def select_trainable_parameters(model: nn.Module, scope: str) -> tuple[list[nn.Parameter], int]:
     """Select full, detection-head, or class-head-only recovery parameters."""
     if scope not in {"all", "head", "classification"}:
@@ -371,34 +454,18 @@ def main() -> int:
     contract = DeploymentContract(args.image_size)
     records = load_manifest(args.manifest)
     dataset_digest = dataset_content_sha256(args.manifest, records)
-    fp32_lineage = validate_fp32_lineage(
-        args.fp32_lineage,
-        args.fp32_checkpoint,
-        args.manifest,
-        contract,
-        dataset_digest,
-    )
     seed_everything(args.seed)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     training_records, training_selection = select_qat_training_records(records, args.max_train_images)
-    resume = None
-    if args.resume_checkpoint is not None:
-        resume = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
-        validate_resume_checkpoint(
-            resume,
-            args.manifest,
-            args.fp32_checkpoint,
-            args.fp32_lineage,
-            dataset_digest,
-            contract,
-            training_selection,
-        )
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    sources = load_verified_qat_sources(args, contract, dataset_digest, training_selection)
+    fp32_lineage = sources.fp32_lineage
+    resume = sources.resume
     observer_records = (
         representative_observer_records(records, args.observer_warmup_images, args.seed) if resume is None else []
     )
-    args.output_dir.mkdir(parents=True, exist_ok=False)
     train_data = loader(
         DroneDataset(
             training_records,
@@ -437,17 +504,10 @@ def main() -> int:
         False,
     )
 
-    import ultralytics
     from sima_qat.qat_api import sima_prepare_qat_model
-    from ultralytics import YOLO
-    from ultralytics.cfg import get_cfg
 
-    ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
-    if resume is not None and resume.get("versions", {}).get("ultralytics_revision") != ultralytics_revision:
-        raise RuntimeError("resume checkpoint Ultralytics revision does not match the environment")
-
-    detector = YOLO(str(args.fp32_checkpoint)).model
-    detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
+    ultralytics_revision = sources.ultralytics_revision
+    detector = sources.detector
     fuse_batch_norm_for_qat(detector)
     detector, lowered_attention_count = lower_attention_for_mla(detector)
     if lowered_attention_count != 2:
@@ -508,20 +568,17 @@ def main() -> int:
         start_epoch = int(resume["epoch"])
         history = list(resume.get("history", []))
         observers_frozen = True
-        resume_digest = sha256_file(args.resume_checkpoint)
+        resume_digest = sources.resume_checkpoint_sha256
         resume_priority = (
             float(resume["final_metrics"]["ap50"]),
             float(resume["final_metrics"]["tiny_recall50"]),
         )
-        shutil.copy2(
-            args.resume_checkpoint,
-            args.output_dir / "checkpoint-best-frozen.pt",
-        )
 
     teacher = None
     if args.class_distillation_weight > 0.0:
-        teacher_detector = YOLO(str(args.fp32_checkpoint)).model
-        teacher_detector.args = get_cfg(overrides=dict(getattr(teacher_detector, "args", {})))
+        teacher_detector = sources.teacher_detector
+        if teacher_detector is None:
+            raise RuntimeError("class distillation requested without a verified FP32 teacher")
         fuse_batch_norm_for_qat(teacher_detector)
         teacher_detector.to(device).requires_grad_(False).eval()
         teacher = Yolo26TrainingDeployWrapper(teacher_detector).to(device).eval()
@@ -630,8 +687,8 @@ def main() -> int:
             "attention_scaffolding": attention_scaffolding,
             "manifest_sha256": fp32_lineage["manifest_sha256"],
             "dataset_sha256": dataset_digest,
-            "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
-            "fp32_lineage_sha256": sha256_file(args.fp32_lineage),
+            "fp32_checkpoint_sha256": sources.fp32_checkpoint_sha256,
+            "fp32_lineage_sha256": sources.fp32_lineage_sha256,
             "fp32_qualification_eligible": fp32_lineage["qualification_eligible"],
             "resume_checkpoint_sha256": resume_digest,
             "trainable_scope": args.trainable_scope,
@@ -639,7 +696,7 @@ def main() -> int:
             "qualification_eligible": qualification_eligible,
             "versions": {
                 "torch": torch.__version__,
-                "ultralytics": ultralytics.__version__,
+                "ultralytics": sources.ultralytics_version,
                 "ultralytics_revision": ultralytics_revision,
                 "swml_qat": qat_package_version(),
             },

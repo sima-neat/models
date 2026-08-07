@@ -27,6 +27,7 @@ from prepare_multiuav import (  # noqa: E402
     _canonical_label_text,
     _validate_label,
     split_sequences,
+    verify_source_root,
 )
 from train_qat import select_qat_training_records, validate_fp32_lineage  # noqa: E402
 
@@ -142,6 +143,30 @@ def test_multiuav_split_keeps_sequences_whole_and_balances_objects() -> None:
     assert abs(split_boxes["train"] / total_boxes - 0.8) < 0.08
     assert abs(split_boxes["val"] / total_boxes - 0.1) < 0.05
     assert abs(split_boxes["test"] / total_boxes - 0.1) < 0.05
+
+
+def test_multiuav_source_root_must_match_the_verified_archive(tmp_path: Path) -> None:
+    from zipfile import ZipFile
+
+    source_root = tmp_path / "fixture"
+    for split in ("train", "val"):
+        directory = source_root / split
+        directory.mkdir(parents=True)
+        (directory / "frame.jpg").write_bytes(f"{split}-image".encode())
+        (directory / "frame.txt").write_text(f"{split}-label", encoding="utf-8")
+    archive = tmp_path / "fixture.zip"
+    with ZipFile(archive, "w") as compressed:
+        for path in sorted(source_root.rglob("*")):
+            if path.is_file():
+                compressed.write(path, path.relative_to(tmp_path).as_posix())
+
+    evidence = verify_source_root(archive, source_root)
+    assert evidence["member_count"] == 4
+    assert evidence["method"] == "byte_for_byte_verified_archive_members"
+
+    (source_root / "val" / "frame.txt").write_text("val-labeL", encoding="utf-8")
+    with pytest.raises(ValueError, match="bytes differ from archive"):
+        verify_source_root(archive, source_root)
 
 
 def test_qat_subset_covers_every_sequence_and_temporal_span(tmp_path: Path) -> None:
@@ -350,7 +375,10 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert 'fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen' in source
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
-    assert "shutil.copy2" in source
+    assert "load_verified_qat_sources" in source
+    assert 'snapshot_file(args.fp32_checkpoint, snapshot_dir / "fp32.pt", fp32_digest)' in source
+    assert "YOLO(str(fp32_snapshot))" in source
+    assert "sha256_file(args.fp32_checkpoint)" not in source[source.index("def main()") :]
     assert "select_trainable_parameters" in source
     assert 'name.startswith("detector_model_29_")' in source
     assert '"_cv3_" in name' in source
@@ -388,7 +416,7 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
 
 
 def test_fp32_loads_only_the_verified_read_only_snapshot(tmp_path: Path) -> None:
-    from train_fp32 import snapshot_file
+    from provenance import snapshot_file
 
     source = tmp_path / "weights.pt"
     destination = tmp_path / "snapshot.pt"
@@ -455,6 +483,19 @@ def test_export_requires_dataset_content_lineage() -> None:
 
     with pytest.raises(RuntimeError, match="no valid dataset content digest"):
         validate_checkpoint(checkpoint, argparse.Namespace(allow_smoke=False))
+
+
+def test_export_consumes_only_verified_input_snapshots() -> None:
+    source = (RECIPE / "export.py").read_text(encoding="utf-8")
+    ast.parse(source)
+    loader = source[source.index("def load_verified_export_sources") : source.index("def main()")]
+    main = source[source.index("def main()") :]
+    assert 'with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-")' in loader
+    assert "torch.load(checkpoint_snapshot" in loader
+    assert "YOLO(str(fp32_snapshot))" in loader
+    assert "torch.load(args.checkpoint" not in main
+    assert "YOLO(str(args.fp32_checkpoint))" not in main
+    assert '"checkpoint_sha256": sources.checkpoint_sha256' in main
 
 
 def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> None:

@@ -12,6 +12,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from zipfile import ZipFile
 
 from dataset import sha256_file
 
@@ -156,6 +157,55 @@ def discover_frames(source_root: Path) -> list[SourceFrame]:
     return sorted(by_name.values(), key=lambda frame: (frame.sequence, frame.frame_number))
 
 
+def verify_source_root(archive: Path, source_root: Path) -> dict[str, int | str]:
+    """Prove every consumed source byte is the extraction of the pinned archive."""
+    prefix = f"{archive.stem}/"
+    with ZipFile(archive) as compressed:
+        members = {}
+        for info in compressed.infolist():
+            if info.is_dir() or not info.filename.startswith(prefix):
+                continue
+            relative = Path(info.filename.removeprefix(prefix))
+            if len(relative.parts) != 2 or relative.parts[0] not in {"train", "val"}:
+                continue
+            if relative.suffix.lower() not in {".jpg", ".txt"}:
+                continue
+            if relative in members:
+                raise ValueError(f"duplicate source member in archive: {relative}")
+            members[relative] = info
+        extracted = {
+            path.relative_to(source_root)
+            for split in ("train", "val")
+            for path in (source_root / split).glob("*")
+            if path.is_file() and path.suffix.lower() in {".jpg", ".txt"}
+        }
+        missing = sorted(set(members) - extracted)
+        unexpected = sorted(extracted - set(members))
+        if missing or unexpected:
+            detail = missing[0] if missing else unexpected[0]
+            kind = "missing" if missing else "unexpected"
+            raise ValueError(f"source root has a {kind} archive member: {detail}")
+        total_bytes = 0
+        for relative, info in sorted(members.items()):
+            source = source_root / relative
+            if source.stat().st_size != info.file_size:
+                raise ValueError(f"source root file size differs from archive: {relative}")
+            total_bytes += info.file_size
+            with compressed.open(info) as archived, source.open("rb") as extracted_file:
+                while True:
+                    archived_chunk = archived.read(1024 * 1024)
+                    extracted_chunk = extracted_file.read(1024 * 1024)
+                    if archived_chunk != extracted_chunk:
+                        raise ValueError(f"source root bytes differ from archive: {relative}")
+                    if not archived_chunk:
+                        break
+    return {
+        "method": "byte_for_byte_verified_archive_members",
+        "member_count": len(members),
+        "uncompressed_bytes": total_bytes,
+    }
+
+
 def summarize_sequences(frames: list[SourceFrame]) -> list[SequenceStats]:
     totals: dict[str, list[int]] = {}
     for frame in frames:
@@ -240,6 +290,7 @@ def materialize(
     destination: Path,
     *,
     archive: Path,
+    source_verification: dict[str, int | str],
     seed: int,
     fixed_assignments: dict[str, str],
 ) -> Path:
@@ -314,6 +365,7 @@ def materialize(
                 "license": "CC-BY-4.0",
                 "archive": archive.name,
                 "archive_sha256": ARCHIVE_SHA256,
+                "source_root_verification": source_verification,
             },
             "split_policy": {
                 "method": "whole_sequence_greedy_balance",
@@ -363,6 +415,7 @@ def main() -> int:
     digest = sha256_file(archive)
     if digest != ARCHIVE_SHA256:
         parser.error(f"source archive SHA-256 mismatch: expected {ARCHIVE_SHA256}, got {digest}")
+    source_verification = verify_source_root(archive, source_root)
     frames = discover_frames(source_root)
     sequences = summarize_sequences(frames)
     fixed_assignments = {sequence: "test" for sequence in args.test_sequence}
@@ -372,6 +425,7 @@ def main() -> int:
         assignments,
         destination,
         archive=archive,
+        source_verification=source_verification,
         seed=args.seed,
         fixed_assignments=fixed_assignments,
     )
