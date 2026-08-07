@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 from contract import INPUT_NAME, DeploymentContract
-from dataset import FrameRecord, load_manifest
+from dataset import FrameRecord, dataset_content_sha256, load_manifest
 from onnx_audit import audit_onnx, sha256_file
 from PIL import Image
 
@@ -29,7 +29,7 @@ SERIALIZED_INT8_SCALAR_TYPE = 1
 
 
 def validate_export(
-    export_dir: Path, manifest: Path, *, allow_smoke: bool
+    export_dir: Path, manifest: Path, dataset_sha256: str, *, allow_smoke: bool
 ) -> tuple[Path, dict[str, Any], DeploymentContract]:
     report_path = export_dir / "export-report.json"
     if not report_path.is_file():
@@ -43,6 +43,8 @@ def validate_export(
         raise ValueError("export report has an invalid deployment contract") from exc
     if report.get("manifest_sha256") != sha256_file(manifest):
         raise ValueError("compile manifest does not match the QAT/export lineage")
+    if report.get("dataset_sha256") != dataset_sha256:
+        raise ValueError("compile dataset contents do not match the QAT/export lineage")
     if type(report.get("qualification_eligible")) is not bool:
         raise ValueError("export report has no explicit qualification eligibility")
     if not report["qualification_eligible"] and not allow_smoke:
@@ -403,8 +405,14 @@ def main() -> int:
         parser.error(f"manifest does not exist: {manifest}")
     if re.fullmatch(r"[a-z0-9_]{1,80}", args.model_name) is None:
         parser.error("model-name must contain only lowercase letters, digits, and underscores")
-    source, export_report, contract = validate_export(export_dir, manifest, allow_smoke=args.allow_smoke)
     records = load_manifest(manifest)
+    dataset_digest = dataset_content_sha256(manifest, records)
+    source, export_report, contract = validate_export(
+        export_dir,
+        manifest,
+        dataset_digest,
+        allow_smoke=args.allow_smoke,
+    )
     selected = select_calibration_records(
         records,
         args.calibration_images,

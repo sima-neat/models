@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import torch
 from contract import DEFAULT_MODEL_SIZE, DeploymentContract
-from dataset import DroneDataset, FixedBatchCollator, FrameRecord, load_manifest, sha256_file
+from dataset import DroneDataset, FixedBatchCollator, FrameRecord, dataset_content_sha256, load_manifest, sha256_file
 from evaluate import evaluate_model
 from model import (
     EXPECTED_ATTENTION_MATMULS,
@@ -211,6 +211,7 @@ def validate_fp32_lineage(
     fp32_checkpoint: Path,
     manifest: Path,
     contract: DeploymentContract,
+    dataset_sha256: str,
 ) -> dict[str, Any]:
     """Require the immutable training lineage and bind it to this QAT run."""
     try:
@@ -229,6 +230,8 @@ def validate_fp32_lineage(
         raise RuntimeError("FP32 checkpoint digest does not match its lineage")
     if lineage.get("manifest_sha256") != sha256_file(manifest):
         raise RuntimeError("QAT manifest digest does not match FP32 lineage")
+    if lineage.get("dataset_sha256") != dataset_sha256:
+        raise RuntimeError("dataset contents do not match FP32 lineage")
     if type(lineage.get("qualification_eligible")) is not bool:
         raise RuntimeError("FP32 lineage has no explicit qualification eligibility")
     return lineage
@@ -239,6 +242,7 @@ def validate_resume_checkpoint(
     manifest: Path,
     fp32_checkpoint: Path,
     fp32_lineage: Path,
+    dataset_sha256: str,
     contract: DeploymentContract,
     training_selection: dict[str, Any],
 ) -> None:
@@ -274,6 +278,8 @@ def validate_resume_checkpoint(
         raise RuntimeError("resume checkpoint FP32 digest does not match")
     if checkpoint.get("fp32_lineage_sha256") != sha256_file(fp32_lineage):
         raise RuntimeError("resume checkpoint FP32 lineage digest does not match")
+    if checkpoint.get("dataset_sha256") != dataset_sha256:
+        raise RuntimeError("resume checkpoint dataset digest does not match")
     if not isinstance(checkpoint.get("qat_state_dict"), dict):
         raise RuntimeError("resume checkpoint has no QAT state dictionary")
     if not isinstance(checkpoint.get("baseline"), dict) or not isinstance(checkpoint.get("final_metrics"), dict):
@@ -351,17 +357,19 @@ def evaluate_without_observer_updates(
 def main() -> int:
     args = parse_args()
     contract = DeploymentContract(args.image_size)
+    records = load_manifest(args.manifest)
+    dataset_digest = dataset_content_sha256(args.manifest, records)
     fp32_lineage = validate_fp32_lineage(
         args.fp32_lineage,
         args.fp32_checkpoint,
         args.manifest,
         contract,
+        dataset_digest,
     )
     seed_everything(args.seed)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
-    records = load_manifest(args.manifest)
     training_records, training_selection = select_qat_training_records(records, args.max_train_images)
     resume = None
     if args.resume_checkpoint is not None:
@@ -371,6 +379,7 @@ def main() -> int:
             args.manifest,
             args.fp32_checkpoint,
             args.fp32_lineage,
+            dataset_digest,
             contract,
             training_selection,
         )
@@ -599,6 +608,7 @@ def main() -> int:
             "training_selection": training_selection,
             "attention_scaffolding": attention_scaffolding,
             "manifest_sha256": sha256_file(args.manifest),
+            "dataset_sha256": dataset_digest,
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
             "fp32_lineage_sha256": sha256_file(args.fp32_lineage),
             "fp32_qualification_eligible": fp32_lineage["qualification_eligible"],

@@ -51,6 +51,10 @@ inflating validation accuracy.
 Image and label paths are relative to the manifest directory and may not
 escape it. Labels must follow Ultralytics' `images/...` to `labels/...` path
 mapping, and every normalized box must lie fully inside its source image.
+FP32 training records a deterministic dataset digest over the manifest
+metadata, relative paths, sizes, and bytes of every referenced image and
+label. QAT and compilation rehash those files and reject any content change,
+including mutation through the hard links created by dataset preparation.
 
 The published Anti-UAV Track 3 archive assigns frames rather than source
 sequences to train and validation; all 200 source sequences consequently
@@ -157,9 +161,10 @@ Batch 1 is mandatory. PT2E specializes YOLO26 reshapes to the example batch,
 and the Modalix app is batch 1. Gradient accumulation supplies the effective
 optimization batch without training a graph that cannot be deployed.
 The FP32 lineage is mandatory and cryptographically binds the checkpoint,
-manifest, architecture, and deployment shape to QAT. A smoke/ineligible FP32
-source remains ineligible through QAT, export, and compilation even if its
-numeric accuracy happens to pass later gates.
+manifest, every referenced image and label, architecture, and deployment
+shape to QAT. A smoke/ineligible FP32 source remains ineligible through QAT,
+export, and compilation even if its numeric accuracy happens to pass later
+gates.
 
 All mature BatchNorm layers are folded while retaining both training heads.
 Activations—including both operands and results of attention MatMul and both
@@ -177,6 +182,11 @@ refinement. Set `--freeze-observers-fraction 0` to retain only the ranges from
 the representative warm-up. Each fresh run records its fake-quantized accuracy
 before the first optimizer step, separating initialization loss from training
 regressions.
+
+Accuracy evaluation retains candidates down to score `0.001`, bounds NMS to
+the top 30,000 candidates, and reports at most 300 detections per image. This
+keeps AP50 independent of the application's normal confidence cutoff while
+bounding worst-case NMS cost.
 
 For very large video corpora, `--max-train-images` bounds each QAT epoch while
 keeping at least one temporally distributed sample from every training
@@ -263,10 +273,11 @@ python training/yolo26_tiny_drone/compile.py \
   --calibration-images 128
 ```
 
-The compiler refuses a manifest outside the checkpoint lineage or an
-unqualified export. `--allow-smoke` can inspect an ineligible source but can
-never turn it into an eligible MPK. The report pins every selected image, the assembled
-calibration tensor, source ONNX, serialized INT8 graph, and MPK by SHA-256. It
+The compiler refuses a manifest or referenced dataset content outside the
+checkpoint lineage, or an unqualified export. `--allow-smoke` can inspect an
+ineligible source but can never turn it into an eligible MPK. The report pins
+every selected image, the assembled calibration tensor, source ONNX,
+serialized INT8 graph, and MPK by SHA-256. It
 also enables non-4D MLA tensors while preserving deployment batch one and
 verifies that every source convolution becomes a per-channel INT8 MLA
 convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8

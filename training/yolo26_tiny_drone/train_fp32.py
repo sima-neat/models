@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from contract import DEFAULT_MODEL_SIZE, DeploymentContract
-from dataset import load_manifest, sha256_file, write_ultralytics_dataset
+from dataset import dataset_content_sha256, load_manifest, sha256_file, write_ultralytics_dataset
 from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision
 
 
@@ -45,6 +45,7 @@ def main() -> int:
         parser.error(f"base weight SHA-256 mismatch: expected {YOLO26N_SHA256}, got {digest}")
 
     records = load_manifest(args.manifest)
+    dataset_digest = dataset_content_sha256(args.manifest, records)
     train_count = sum(record.split == "train" for record in records)
     val_count = sum(record.split == "val" for record in records)
     if (train_count < 128 or val_count < 1) and not args.smoke:
@@ -106,6 +107,8 @@ def main() -> int:
     best = args.output_dir / "fp32" / "weights" / "best.pt"
     if not best.is_file():
         raise RuntimeError(f"FP32 training did not produce {best}")
+    if dataset_content_sha256(args.manifest, records) != dataset_digest:
+        raise RuntimeError("dataset contents changed during FP32 training; refusing qualification lineage")
     lineage = {
         "schema_version": 2,
         "architecture": "yolo26n-p2-attention-one-class",
@@ -121,6 +124,7 @@ def main() -> int:
         },
         "best_weights_sha256": sha256_file(best),
         "manifest_sha256": sha256_file(args.manifest),
+        "dataset_sha256": dataset_digest,
         "qualification_eligible": not args.smoke,
         "split_counts": {split: sum(record.split == split for record in records) for split in ("train", "val", "test")},
         "ultralytics_revision": ULTRALYTICS_REVISION,

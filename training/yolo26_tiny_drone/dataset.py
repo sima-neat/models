@@ -37,6 +37,38 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def dataset_content_sha256(manifest: Path, records: list[FrameRecord]) -> str:
+    """Bind manifest metadata to the bytes of every referenced image and label."""
+    root = manifest.parent.resolve()
+    digest = hashlib.sha256()
+
+    def update_field(value: str) -> None:
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+
+    update_field("yolo26-sequence-safe-dataset-v1")
+    for record in records:
+        update_field(record.sequence)
+        update_field(record.split)
+        for kind, path in (("image", record.image), ("label", record.label)):
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                raise RuntimeError(f"dataset {kind} is missing or outside the manifest root: {path}")
+            update_field(kind)
+            update_field(resolved.relative_to(root).as_posix())
+            with resolved.open("rb") as stream:
+                size = resolved.stat().st_size
+                digest.update(size.to_bytes(8, "big"))
+                read = 0
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    read += len(chunk)
+                    digest.update(chunk)
+            if read != size or resolved.stat().st_size != size:
+                raise RuntimeError(f"dataset {kind} changed while hashing: {path}")
+    return digest.hexdigest()
+
+
 def load_manifest(path: Path, *, require_files: bool = True) -> list[FrameRecord]:
     document = json.loads(path.read_text(encoding="utf-8"))
     if document.get("schema_version") != 1 or not isinstance(document.get("frames"), list):

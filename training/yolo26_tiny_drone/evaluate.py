@@ -11,6 +11,10 @@ from contract import DEFAULT_MODEL_SIZE
 from torch import Tensor, nn
 from torchvision.ops import box_iou, nms
 
+AP_CANDIDATE_SCORE_THRESHOLD = 0.001
+MAX_NMS_CANDIDATES = 30_000
+MAX_DETECTIONS_PER_IMAGE = 300
+
 
 def _targets_for_image(batch: dict[str, Any], image_index: int, model_size: int) -> Tensor:
     mask = batch["batch_idx"].long() == image_index
@@ -30,7 +34,12 @@ def _targets_for_image(batch: dict[str, Any], image_index: int, model_size: int)
 
 
 def decode(
-    predictions: dict[str, Any], head: nn.Module, score_threshold: float, nms_iou: float
+    predictions: dict[str, Any],
+    head: nn.Module,
+    score_threshold: float,
+    nms_iou: float,
+    max_nms_candidates: int,
+    max_detections: int,
 ) -> list[tuple[Tensor, Tensor]]:
     one2one = predictions["one2one"]
     # The Detect anchor cache is a plain tensor attribute. PT2E preparation can
@@ -46,9 +55,13 @@ def decode(
         image_boxes = image_boxes[keep]
         image_scores = image_scores[keep]
         if image_scores.numel():
+            if image_scores.numel() > max_nms_candidates:
+                candidates = image_scores.topk(max_nms_candidates).indices
+                image_boxes = image_boxes[candidates]
+                image_scores = image_scores[candidates]
             selected = nms(image_boxes, image_scores, nms_iou)
-            image_boxes = image_boxes[selected]
-            image_scores = image_scores[selected]
+            image_boxes = image_boxes[selected[:max_detections]]
+            image_scores = image_scores[selected[:max_detections]]
         decoded.append((image_boxes, image_scores))
     return decoded
 
@@ -100,8 +113,10 @@ def evaluate_model(
     loader: Iterable[dict[str, Any]],
     device: torch.device,
     *,
-    score_threshold: float = 0.05,
+    score_threshold: float = AP_CANDIDATE_SCORE_THRESHOLD,
     nms_iou: float = 0.60,
+    max_nms_candidates: int = MAX_NMS_CANDIDATES,
+    max_detections: int = MAX_DETECTIONS_PER_IMAGE,
     model_size: int = DEFAULT_MODEL_SIZE,
 ) -> dict[str, float]:
     model.eval()
@@ -116,7 +131,14 @@ def evaluate_model(
         for key in ("batch_idx", "cls", "bboxes"):
             batch[key] = batch[key].to(device, non_blocking=True)
         outputs = model(images)
-        decoded = decode(outputs["predictions"], head, score_threshold, nms_iou)
+        decoded = decode(
+            outputs["predictions"],
+            head,
+            score_threshold,
+            nms_iou,
+            max_nms_candidates,
+            max_detections,
+        )
         for image_index, (predicted_boxes, predicted_scores) in enumerate(
             decoded[: int(batch.get("valid_count", len(decoded)))]
         ):

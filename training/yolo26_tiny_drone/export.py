@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,9 @@ def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) ->
         raise RuntimeError("diagnostic QAT checkpoint cannot be published")
     if checkpoint.get("fp32_qualification_eligible") is not True and not args.allow_smoke:
         raise RuntimeError("QAT checkpoint descends from ineligible FP32 training")
+    dataset_digest = checkpoint.get("dataset_sha256")
+    if not isinstance(dataset_digest, str) or re.fullmatch(r"[0-9a-f]{64}", dataset_digest) is None:
+        raise RuntimeError("QAT checkpoint has no valid dataset content digest")
     baseline = checkpoint.get("baseline") or {}
     final = checkpoint.get("final_metrics") or {}
     if not baseline or not final:
@@ -182,6 +186,7 @@ def main() -> int:
         "fp32_lineage_sha256": checkpoint.get("fp32_lineage_sha256"),
         "fp32_qualification_eligible": checkpoint.get("fp32_qualification_eligible") is True,
         "manifest_sha256": checkpoint["manifest_sha256"],
+        "dataset_sha256": checkpoint["dataset_sha256"],
         "observer_images": checkpoint["observer_images"],
         "source_qualification_eligible": checkpoint.get("qualification_eligible") is True,
         "qualification_eligible": checkpoint.get("qualification_eligible") is True and not args.allow_smoke,

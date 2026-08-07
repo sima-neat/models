@@ -4,6 +4,7 @@ import ast
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,8 +13,8 @@ sys.path.insert(0, str(RECIPE))
 
 import provenance  # noqa: E402
 from contract import DeploymentContract  # noqa: E402
-from dataset import FrameRecord, read_yolo_label  # noqa: E402
-from evaluate import _match_truth_indices  # noqa: E402
+from dataset import FrameRecord, dataset_content_sha256, read_yolo_label  # noqa: E402
+from evaluate import AP_CANDIDATE_SCORE_THRESHOLD, _match_truth_indices  # noqa: E402
 from paths import ultralytics_label_path  # noqa: E402
 from prepare_multiuav import (  # noqa: E402
     SequenceStats,
@@ -185,11 +186,42 @@ def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
         "deployment": contract.to_dict(),
         "best_weights_sha256": hashlib.sha256(b"fp32").hexdigest(),
         "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
+        "dataset_sha256": "dataset-digest",
         "qualification_eligible": False,
     }
     lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
 
-    assert validate_fp32_lineage(lineage_path, checkpoint, manifest, contract)["qualification_eligible"] is False
+    assert (
+        validate_fp32_lineage(lineage_path, checkpoint, manifest, contract, "dataset-digest")["qualification_eligible"]
+        is False
+    )
+
+    with pytest.raises(RuntimeError, match="dataset contents do not match"):
+        validate_fp32_lineage(lineage_path, checkpoint, manifest, contract, "changed-dataset")
+
+
+def test_dataset_digest_binds_every_referenced_file(tmp_path: Path) -> None:
+    image = tmp_path / "images" / "frame.jpg"
+    label = tmp_path / "labels" / "frame.txt"
+    image.parent.mkdir()
+    label.parent.mkdir()
+    image.write_bytes(b"image-v1")
+    label.write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    records = [FrameRecord(image=image, label=label, sequence="one", split="train")]
+
+    original = dataset_content_sha256(manifest, records)
+    image.write_bytes(b"image-v2")
+    changed_image = dataset_content_sha256(manifest, records)
+    label.write_text("", encoding="utf-8")
+    changed_label = dataset_content_sha256(manifest, records)
+
+    assert len({original, changed_image, changed_label}) == 3
+
+
+def test_ap_uses_a_near_zero_candidate_threshold() -> None:
+    assert AP_CANDIDATE_SCORE_THRESHOLD == 0.001
 
 
 def test_label_reader_canonicalizes_six_decimal_edge_rounding(tmp_path: Path) -> None:
@@ -252,6 +284,7 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert "validate_resume_checkpoint" in source
     assert 'parser.add_argument("--fp32-lineage", type=Path, required=True)' in source
     assert "validate_fp32_lineage" in source
+    assert '"dataset_sha256": dataset_digest' in source
     assert 'fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen' in source
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
@@ -284,6 +317,8 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
     assert '"initialization": {' in source
     assert '"compatible_tensors": len(compatible)' in source
     assert '"architecture_sha256": sha256_file(architecture)' in source
+    assert '"dataset_sha256": dataset_digest' in source
+    assert "dataset contents changed during FP32 training" in source
 
 
 def test_qat_requires_complete_attention_scaffolding() -> None:
@@ -317,6 +352,30 @@ def test_export_audits_full_int8_operator_boundary() -> None:
     assert "head.strides = head.strides.to(device)" in evaluator
 
 
+def test_export_requires_dataset_content_lineage() -> None:
+    import argparse
+
+    from export import validate_checkpoint
+    from model import EXPECTED_ATTENTION_MATMULS, EXPECTED_ATTENTION_SOFTMAXES
+
+    checkpoint = {
+        "schema_version": 1,
+        "architecture": "yolo26n-p2-attention-one-class",
+        "attention_scaffolding": {
+            "matmul_count": EXPECTED_ATTENTION_MATMULS,
+            "softmax_count": EXPECTED_ATTENTION_SOFTMAXES,
+        },
+        "deployment": DeploymentContract().to_dict(),
+        "observer_images": 128,
+        "observers_frozen": True,
+        "qualification_eligible": True,
+        "fp32_qualification_eligible": True,
+    }
+
+    with pytest.raises(RuntimeError, match="no valid dataset content digest"):
+        validate_checkpoint(checkpoint, argparse.Namespace(allow_smoke=False))
+
+
 def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> None:
     source = (RECIPE / "compile.py").read_text(encoding="utf-8")
     ast.parse(source)
@@ -338,7 +397,6 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
 def test_quantized_model_audit_reads_internal_int8_tensor_types(tmp_path: Path) -> None:
     import json
 
-    import pytest
     from compile import audit_quantized_model
 
     def scalar(value: int) -> dict[str, object]:
@@ -374,7 +432,6 @@ def test_compile_rejects_ineligible_export_without_smoke_override(tmp_path: Path
     import hashlib
     import json
 
-    import pytest
     from compile import ARCHITECTURE, validate_export
 
     manifest = tmp_path / "manifest.json"
@@ -386,12 +443,16 @@ def test_compile_rejects_ineligible_export_without_smoke_override(tmp_path: Path
         "architecture": ARCHITECTURE,
         "deployment": DeploymentContract().to_dict(),
         "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
+        "dataset_sha256": "dataset-digest",
         "qualification_eligible": False,
     }
     (export_dir / "export-report.json").write_text(json.dumps(report), encoding="utf-8")
 
     with pytest.raises(ValueError, match="ineligible diagnostic export"):
-        validate_export(export_dir, manifest, allow_smoke=False)
+        validate_export(export_dir, manifest, "dataset-digest", allow_smoke=False)
+
+    with pytest.raises(ValueError, match="dataset contents do not match"):
+        validate_export(export_dir, manifest, "changed-dataset", allow_smoke=True)
 
 
 def test_ultralytics_label_path_matches_training_loader_convention() -> None:
