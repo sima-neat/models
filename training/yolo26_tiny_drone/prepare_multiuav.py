@@ -10,6 +10,7 @@ import os
 import random
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile
@@ -366,6 +367,10 @@ def materialize(
                 "archive": archive.name,
                 "archive_sha256": ARCHIVE_SHA256,
                 "source_root_verification": source_verification,
+                "materialization": {
+                    "method": "private_extraction_of_verified_archive",
+                    "source_aliases_retained": False,
+                },
             },
             "split_policy": {
                 "method": "whole_sequence_greedy_balance",
@@ -393,6 +398,46 @@ def materialize(
     return destination / "manifest.json"
 
 
+def materialize_verified_archive(
+    archive: Path,
+    destination: Path,
+    *,
+    source_verification: dict[str, int | str],
+    seed: int,
+    fixed_assignments: dict[str, str],
+) -> tuple[Path, dict[str, int]]:
+    """Materialize only bytes privately extracted from the verified archive."""
+    if destination.exists():
+        raise ValueError(f"destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}.archive-",
+        dir=destination.parent,
+    ) as temporary:
+        snapshot_dir = Path(temporary)
+        with ZipFile(archive) as compressed:
+            compressed.extractall(snapshot_dir)
+        private_source_root = snapshot_dir / archive.stem
+        frames = discover_frames(private_source_root)
+        sequences = summarize_sequences(frames)
+        assignments = split_sequences(sequences, seed, fixed_assignments)
+        manifest = materialize(
+            frames,
+            assignments,
+            destination,
+            archive=archive,
+            source_verification=source_verification,
+            seed=seed,
+            fixed_assignments=fixed_assignments,
+        )
+        statistics = {
+            "frames": len(frames),
+            "boxes": sum(frame.boxes for frame in frames),
+            "sequences": len(sequences),
+        }
+    return manifest, statistics
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -416,15 +461,10 @@ def main() -> int:
     if digest != ARCHIVE_SHA256:
         parser.error(f"source archive SHA-256 mismatch: expected {ARCHIVE_SHA256}, got {digest}")
     source_verification = verify_source_root(archive, source_root)
-    frames = discover_frames(source_root)
-    sequences = summarize_sequences(frames)
     fixed_assignments = {sequence: "test" for sequence in args.test_sequence}
-    assignments = split_sequences(sequences, args.seed, fixed_assignments)
-    manifest = materialize(
-        frames,
-        assignments,
+    manifest, statistics = materialize_verified_archive(
+        archive,
         destination,
-        archive=archive,
         source_verification=source_verification,
         seed=args.seed,
         fixed_assignments=fixed_assignments,
@@ -434,9 +474,7 @@ def main() -> int:
             {
                 "manifest": str(manifest),
                 "manifest_sha256": sha256_file(manifest),
-                "frames": len(frames),
-                "boxes": sum(frame.boxes for frame in frames),
-                "sequences": len(sequences),
+                **statistics,
             },
             sort_keys=True,
         )

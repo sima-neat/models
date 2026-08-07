@@ -16,7 +16,13 @@ from dataset import (
     sha256_file,
     write_ultralytics_dataset,
 )
-from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision, snapshot_file
+from provenance import (
+    ULTRALYTICS_PACKAGE_SHA256,
+    ULTRALYTICS_REVISION,
+    YOLO26N_SHA256,
+    require_ultralytics_revision,
+    snapshot_file,
+)
 
 
 def main() -> int:
@@ -154,9 +160,18 @@ def main() -> int:
         "best_weights_sha256": sha256_file(best),
         "manifest_sha256": manifest_digest,
         "dataset_sha256": dataset_digest,
-        "qualification_eligible": not args.smoke,
+        "qualification_eligible": not args.smoke and args.initial_weights is None,
+        "qualification_ineligibility_reasons": [
+            reason
+            for reason, applies in (
+                ("smoke_run", args.smoke),
+                ("task_specific_initialization_without_lineage", args.initial_weights is not None),
+            )
+            if applies
+        ],
         "split_counts": {split: sum(record.split == split for record in records) for split in ("train", "val", "test")},
         "ultralytics_revision": ULTRALYTICS_REVISION,
+        "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
         "fp32_results": getattr(results, "results_dict", {}),
     }
     (args.output_dir / "lineage.json").write_text(

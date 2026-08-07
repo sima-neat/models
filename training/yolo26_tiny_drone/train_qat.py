@@ -40,7 +40,13 @@ from model import (
     validate_deploy_outputs,
 )
 from paths import natural_path_key
-from provenance import ULTRALYTICS_REVISION, YOLO26N_SHA256, require_ultralytics_revision, snapshot_file
+from provenance import (
+    ULTRALYTICS_PACKAGE_SHA256,
+    ULTRALYTICS_REVISION,
+    YOLO26N_SHA256,
+    require_ultralytics_revision,
+    snapshot_file,
+)
 from torch import nn
 from torch.ao.quantization import disable_observer, enable_observer
 from torch.nn import functional as F
@@ -247,6 +253,12 @@ def validate_fp32_lineage(
         raise RuntimeError("dataset contents do not match FP32 lineage")
     if type(lineage.get("qualification_eligible")) is not bool:
         raise RuntimeError("FP32 lineage has no explicit qualification eligibility")
+    if lineage.get("ultralytics_revision") != ULTRALYTICS_REVISION:
+        raise RuntimeError("FP32 lineage Ultralytics revision does not match the QAT environment")
+    if lineage.get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256:
+        raise RuntimeError("FP32 lineage Ultralytics package contents do not match the QAT environment")
+    if lineage["qualification_eligible"] and lineage.get("base_weights_sha256") != YOLO26N_SHA256:
+        raise RuntimeError("eligible FP32 lineage does not descend from the pinned YOLO26 base weights")
     return lineage
 
 
@@ -348,10 +360,6 @@ def load_verified_qat_sources(
             contract,
             dataset_sha256,
         )
-        if fp32_lineage.get("ultralytics_revision") != ULTRALYTICS_REVISION:
-            raise RuntimeError("FP32 lineage Ultralytics revision does not match the QAT environment")
-        if fp32_lineage["qualification_eligible"] and fp32_lineage.get("base_weights_sha256") != YOLO26N_SHA256:
-            raise RuntimeError("eligible FP32 lineage does not descend from the pinned YOLO26 base weights")
         resume = None
         if args.resume_checkpoint is not None and resume_digest is not None:
             resume_snapshot = snapshot_file(
@@ -372,6 +380,11 @@ def load_verified_qat_sources(
             shutil.copyfile(resume_snapshot, args.output_dir / "checkpoint-best-frozen.pt")
         if resume is not None and resume.get("versions", {}).get("ultralytics_revision") != ultralytics_revision:
             raise RuntimeError("resume checkpoint Ultralytics revision does not match the environment")
+        if (
+            resume is not None
+            and resume.get("versions", {}).get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256
+        ):
+            raise RuntimeError("resume checkpoint Ultralytics package contents do not match the environment")
         detector = YOLO(str(fp32_snapshot)).model
         detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
         teacher_detector = None
@@ -698,6 +711,7 @@ def main() -> int:
                 "torch": torch.__version__,
                 "ultralytics": sources.ultralytics_version,
                 "ultralytics_revision": ultralytics_revision,
+                "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
                 "swml_qat": qat_package_version(),
             },
         }

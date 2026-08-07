@@ -25,7 +25,7 @@ from model import (
     validate_deploy_outputs,
 )
 from onnx_audit import audit_onnx, canonicalize_attention_for_modelsdk, sha256_file
-from provenance import require_ultralytics_revision, snapshot_file
+from provenance import ULTRALYTICS_PACKAGE_SHA256, require_ultralytics_revision, snapshot_file
 
 
 def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
@@ -149,6 +149,8 @@ def load_verified_export_sources(
                 "QAT checkpoint Ultralytics revision does not match the export environment: "
                 f"checkpoint={checkpoint_revision}, environment={ultralytics_revision}"
             )
+        if checkpoint.get("versions", {}).get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256:
+            raise RuntimeError("QAT checkpoint Ultralytics package contents do not match the export environment")
         if fp32_digest != checkpoint.get("fp32_checkpoint_sha256"):
             raise RuntimeError("FP32 checkpoint digest does not match the QAT lineage")
         detector = YOLO(str(fp32_snapshot)).model

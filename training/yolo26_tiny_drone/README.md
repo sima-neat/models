@@ -55,8 +55,7 @@ FP32 training records a deterministic dataset digest over the manifest
 metadata, relative paths, sizes, and bytes of every referenced image and
 label. QAT rehashes the manifest and all referenced files before every
 eligible frozen checkpoint, and compilation rehashes them again. Any content
-change—including mutation through the hard links created by dataset
-preparation—fails closed.
+change to the prepared dataset fails closed.
 
 The published Anti-UAV Track 3 archive assigns frames rather than source
 sequences to train and validation; all 200 source sequences consequently
@@ -65,9 +64,10 @@ training. The preparation verifies the published archive digest, then
 byte-compares every consumed image and label in the extracted source root
 against its archive member before materialization. It validates every label,
 retains negative frames with explicit empty labels, balances
-sequence/frame/object totals, uses hard links rather than duplicating the
-corpus, and records the CC-BY-4.0 source and verification evidence in the
-manifest:
+sequence/frame/object totals, and records the CC-BY-4.0 source and verification
+evidence in the manifest. It materializes from a private extraction of the
+verified archive; hard links avoid a second copy during preparation, and
+removing the private extraction leaves no writable source aliases:
 
 ```bash
 python training/yolo26_tiny_drone/prepare_multiuav.py \
@@ -112,6 +112,11 @@ unless all four per-head MatMul and two Softmax operators receive complete
 fake quantization. An import-only check is insufficient because older packages
 silently leave attention outside QAT.
 
+Ultralytics is pinned both by source revision and by a digest of every installed
+runtime package file. Qualification fails if editable or installed contents
+differ from the official pinned source, even when Git or PEP 610 metadata still
+names the expected commit.
+
 The public YOLO26n base weights are pinned to SHA-256
 `9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef`.
 Supply the local file explicitly; the scripts do not silently change it.
@@ -122,7 +127,6 @@ Supply the local file explicitly; the scripts do not silently change it.
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_fp32.py \
   --manifest /data/drone/manifest.json \
   --base-weights /data/checkpoints/yolo26n.pt \
-  --initial-weights /data/checkpoints/rgb-drone-p2.pt \
   --output-dir build/yolo26-drone-fp32 \
   --image-size 1600 \
   --epochs 100 --batch-size 16 --device 0
@@ -147,6 +151,12 @@ initialize from the pinned official YOLO26n base. The latter necessarily has
 lower transfer coverage because it has three heads and a different class
 count; either way, there is only one FP32 training stage and its output is
 `build/yolo26-drone-fp32/fp32/weights/best.pt`.
+
+A task-specific initializer without independently verified training lineage is
+diagnostic only: the run records the reason and cannot become qualification
+eligible. The first production-eligible run therefore omits
+`--initial-weights` and starts from the pinned upstream base; later QAT inherits
+that eligibility monotonically.
 
 ## Target-exact QAT
 

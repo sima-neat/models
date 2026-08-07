@@ -26,6 +26,7 @@ from prepare_multiuav import (  # noqa: E402
     SequenceStats,
     _canonical_label_text,
     _validate_label,
+    materialize_verified_archive,
     split_sequences,
     verify_source_root,
 )
@@ -169,6 +170,40 @@ def test_multiuav_source_root_must_match_the_verified_archive(tmp_path: Path) ->
         verify_source_root(archive, source_root)
 
 
+def test_multiuav_materializes_from_an_unaliased_private_archive_extraction(tmp_path: Path) -> None:
+    from zipfile import ZipFile
+
+    archive = tmp_path / "fixture.zip"
+    expected_images = {}
+    with ZipFile(archive, "w") as compressed:
+        compressed.writestr("fixture/val/", b"")
+        for index in range(1, 4):
+            name = f"MultiUAV-{index:03d}_1"
+            image = f"image-{index}".encode()
+            expected_images[name] = image
+            compressed.writestr(f"fixture/train/{name}.jpg", image)
+            compressed.writestr(f"fixture/train/{name}.txt", "0 0.5 0.5 0.1 0.1\n")
+
+    destination = tmp_path / "prepared"
+    manifest, statistics = materialize_verified_archive(
+        archive,
+        destination,
+        source_verification={"method": "test", "member_count": 6, "uncompressed_bytes": 0},
+        seed=20260806,
+        fixed_assignments={
+            "MultiUAV-001": "train",
+            "MultiUAV-002": "val",
+            "MultiUAV-003": "test",
+        },
+    )
+
+    assert manifest.is_file()
+    assert statistics == {"frames": 3, "boxes": 3, "sequences": 3}
+    images = sorted(destination.glob("images/*/*.jpg"))
+    assert {image.stem: image.read_bytes() for image in images} == expected_images
+    assert all(image.stat().st_nlink == 1 for image in images)
+
+
 def test_qat_subset_covers_every_sequence_and_temporal_span(tmp_path: Path) -> None:
     records = [
         FrameRecord(
@@ -236,6 +271,8 @@ def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
         "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
         "dataset_sha256": "dataset-digest",
         "qualification_eligible": False,
+        "ultralytics_revision": provenance.ULTRALYTICS_REVISION,
+        "ultralytics_package_sha256": provenance.ULTRALYTICS_PACKAGE_SHA256,
     }
     lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
 
@@ -412,6 +449,9 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
     assert '"sha256": initialization_digest' in source
     assert '"manifest_sha256": manifest_digest' in source
     assert '"dataset_sha256": dataset_digest' in source
+    assert "not args.smoke and args.initial_weights is None" in source
+    assert '"task_specific_initialization_without_lineage"' in source
+    assert '"ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256' in source
     assert 'context="FP32 training"' in source
 
 
@@ -614,5 +654,35 @@ def test_ultralytics_label_path_matches_training_loader_convention() -> None:
 def test_ultralytics_revision_prefers_distribution_provenance(monkeypatch) -> None:
     monkeypatch.setattr(provenance, "_distribution_revision", lambda: provenance.ULTRALYTICS_REVISION)
     monkeypatch.setattr(provenance, "_git_revision", lambda _package_root: "unrelated-project-revision")
+    monkeypatch.setattr(
+        provenance,
+        "ultralytics_package_sha256",
+        lambda _package_root: provenance.ULTRALYTICS_PACKAGE_SHA256,
+    )
 
     assert provenance.require_ultralytics_revision(RECIPE) == provenance.ULTRALYTICS_REVISION
+
+
+def test_ultralytics_package_digest_detects_runtime_source_changes(tmp_path: Path) -> None:
+    package = tmp_path / "ultralytics"
+    package.mkdir()
+    source = package / "model.py"
+    source.write_text("canonical = True\n", encoding="utf-8")
+    expected = provenance.ultralytics_package_sha256(package)
+
+    (package / "README.md").write_text("documentation does not execute", encoding="utf-8")
+    cache = package / "__pycache__"
+    cache.mkdir()
+    (cache / "model.pyc").write_bytes(b"runtime-cache")
+    assert provenance.ultralytics_package_sha256(package) == expected
+
+    source.write_text("canonical = None\n", encoding="utf-8")
+    assert provenance.ultralytics_package_sha256(package) != expected
+
+
+def test_ultralytics_revision_rejects_modified_installed_contents(monkeypatch) -> None:
+    monkeypatch.setattr(provenance, "_distribution_revision", lambda: provenance.ULTRALYTICS_REVISION)
+    monkeypatch.setattr(provenance, "ultralytics_package_sha256", lambda _package_root: "modified")
+
+    with pytest.raises(RuntimeError, match="package content mismatch"):
+        provenance.require_ultralytics_revision(RECIPE)
