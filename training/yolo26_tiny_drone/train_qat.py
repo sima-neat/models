@@ -38,6 +38,7 @@ from model import (
     validate_attention_qat_scaffolding,
     validate_deploy_outputs,
 )
+from paths import natural_path_key
 from provenance import require_ultralytics_revision
 from torch import nn
 from torch.ao.quantization import disable_observer, enable_observer
@@ -150,7 +151,7 @@ def select_qat_training_records(
     """Select temporal coverage from every train sequence without frame leakage."""
     train_records = sorted(
         (record for record in records if record.split == "train"),
-        key=lambda record: (record.sequence, record.image.name),
+        key=lambda record: (record.sequence, natural_path_key(record.image)),
     )
     if not train_records:
         raise RuntimeError("manifest has no QAT training frames")

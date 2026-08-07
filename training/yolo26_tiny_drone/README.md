@@ -194,7 +194,8 @@ bounding worst-case NMS cost.
 For very large video corpora, `--max-train-images` bounds each QAT epoch while
 keeping at least one temporally distributed sample from every training
 sequence. Quotas are proportional to sequence length, sampled from uniform
-temporal bins, and the exact selection digest and per-sequence counts are
+temporal bins after naturally sorting numeric frame components (zero padding
+is not required), and the exact selection digest and per-sequence counts are
 stored in the checkpoint. Observer warm-up remains an independent sample from
 the full training split; validation still runs on the complete held-out split.
 
@@ -281,7 +282,10 @@ checkpoint lineage, or an unqualified export. `--allow-smoke` can inspect an
 ineligible source but can never turn it into an eligible MPK. The report pins
 every selected image, the assembled calibration tensor, source ONNX,
 serialized INT8 graph, and MPK by SHA-256. Dataset contents are rehashed after
-the calibration tensor is assembled and before compilation starts. It
+the calibration tensor is assembled and before compilation starts. The
+validated export report and ONNX are copied to a private read-only snapshot;
+ModelSDK consumes only that snapshot, which is revalidated after compilation.
+It
 also enables non-4D MLA tensors while preserving deployment batch one and
 verifies that every source convolution becomes a per-channel INT8 MLA
 convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8

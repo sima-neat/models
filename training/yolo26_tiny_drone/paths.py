@@ -1,6 +1,14 @@
 """Path conventions shared by the tiny-drone training stages."""
 
+import re
 from pathlib import Path
+
+_NUMBER = re.compile(r"(\d+)")
+
+
+def natural_path_key(path: Path) -> tuple[str | int, ...]:
+    """Order numeric frame components chronologically without requiring zero padding."""
+    return tuple(int(part) if part.isdigit() else part.casefold() for part in _NUMBER.split(path.as_posix()))
 
 
 def ultralytics_label_path(image: Path) -> Path:

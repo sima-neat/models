@@ -9,7 +9,9 @@ import json
 import logging
 import random
 import re
+import shutil
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -26,6 +28,32 @@ MINIMUM_CALIBRATION_IMAGES = 128
 EXPECTED_ATTENTION_MATMULS = 8
 EXPECTED_ATTENTION_SOFTMAXES = 4
 SERIALIZED_INT8_SCALAR_TYPE = 1
+
+
+def snapshot_export(export_dir: Path, destination: Path) -> tuple[Path, Path]:
+    """Copy one self-consistent export into a private compilation snapshot."""
+    export_root = export_dir.resolve()
+    report_source = (export_root / "export-report.json").resolve()
+    if report_source.parent != export_root or not report_source.is_file():
+        raise ValueError(f"missing or invalid export report: {report_source}")
+    report_snapshot = destination / "export-report.json"
+    shutil.copyfile(report_source, report_snapshot)
+    try:
+        report = json.loads(report_snapshot.read_text(encoding="utf-8"))
+        declaration = report["onnx"]
+        filename = declaration["file"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError("export report has no readable ONNX declaration") from exc
+    if not isinstance(filename, str):
+        raise ValueError("export report ONNX filename must be a string")
+    source = (export_root / filename).resolve()
+    if source.parent != export_root or not source.is_file():
+        raise ValueError("export report references an invalid ONNX source")
+    source_snapshot = (destination / filename).resolve()
+    if source_snapshot.parent != destination.resolve():
+        raise ValueError("export report ONNX filename must not escape its directory")
+    shutil.copyfile(source, source_snapshot)
+    return report_snapshot, source_snapshot
 
 
 def validate_export(
@@ -407,49 +435,64 @@ def main() -> int:
         parser.error("model-name must contain only lowercase letters, digits, and underscores")
     records = load_manifest(manifest)
     dataset_digest = dataset_content_sha256(manifest, records)
-    source, export_report, contract = validate_export(
-        export_dir,
-        manifest,
-        dataset_digest,
-        allow_smoke=args.allow_smoke,
-    )
-    selected = select_calibration_records(
-        records,
-        args.calibration_images,
-        seed=args.calibration_seed,
-        allow_smoke=args.allow_smoke,
-    )
-    calibration, calibration_report = build_calibration(selected, contract)
-    require_unchanged_dataset(
-        manifest,
-        records,
-        manifest_sha256=export_report["manifest_sha256"],
-        dataset_sha256=dataset_digest,
-        context="calibration",
-    )
-    output_dir.mkdir(parents=True, exist_ok=False)
-    archive, quantized_report = compile_model(
-        source,
-        calibration,
-        output_dir,
-        args.model_name,
-        contract,
-        int(export_report["onnx"]["audit"]["convolution_count"]),
-    )
-    report = {
-        "schema_version": 1,
-        "architecture": ARCHITECTURE,
-        "deployment": contract.to_dict(),
-        "source_qualification_eligible": export_report["qualification_eligible"],
-        "qualification_eligible": export_report["qualification_eligible"] and not args.allow_smoke,
-        "source": {
-            "export_report_sha256": sha256_file(export_dir / "export-report.json"),
-            "onnx_sha256": export_report["onnx"]["audit"]["sha256"],
-        },
-        "calibration": calibration_report,
-        "quantized_model": quantized_report,
-        "mpk": audit_mpk(archive, contract),
-    }
+    with tempfile.TemporaryDirectory(prefix="yolo26-export-snapshot-") as temporary:
+        snapshot_dir = Path(temporary)
+        report_snapshot, source_snapshot = snapshot_export(export_dir, snapshot_dir)
+        source, export_report, contract = validate_export(
+            snapshot_dir,
+            manifest,
+            dataset_digest,
+            allow_smoke=args.allow_smoke,
+        )
+        report_digest = sha256_file(report_snapshot)
+        source_digest = sha256_file(source_snapshot)
+        report_snapshot.chmod(0o400)
+        source_snapshot.chmod(0o400)
+        selected = select_calibration_records(
+            records,
+            args.calibration_images,
+            seed=args.calibration_seed,
+            allow_smoke=args.allow_smoke,
+        )
+        calibration, calibration_report = build_calibration(selected, contract)
+        require_unchanged_dataset(
+            manifest,
+            records,
+            manifest_sha256=export_report["manifest_sha256"],
+            dataset_sha256=dataset_digest,
+            context="calibration",
+        )
+        output_dir.mkdir(parents=True, exist_ok=False)
+        archive, quantized_report = compile_model(
+            source,
+            calibration,
+            output_dir,
+            args.model_name,
+            contract,
+            int(export_report["onnx"]["audit"]["convolution_count"]),
+        )
+        validate_export(
+            snapshot_dir,
+            manifest,
+            dataset_digest,
+            allow_smoke=args.allow_smoke,
+        )
+        if sha256_file(report_snapshot) != report_digest or sha256_file(source_snapshot) != source_digest:
+            raise RuntimeError("private export snapshot changed during compilation")
+        report = {
+            "schema_version": 1,
+            "architecture": ARCHITECTURE,
+            "deployment": contract.to_dict(),
+            "source_qualification_eligible": export_report["qualification_eligible"],
+            "qualification_eligible": export_report["qualification_eligible"] and not args.allow_smoke,
+            "source": {
+                "export_report_sha256": report_digest,
+                "onnx_sha256": source_digest,
+            },
+            "calibration": calibration_report,
+            "quantized_model": quantized_report,
+            "mpk": audit_mpk(archive, contract),
+        }
     (output_dir / "compile-report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

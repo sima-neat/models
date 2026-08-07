@@ -21,7 +21,7 @@ from dataset import (  # noqa: E402
     require_unchanged_dataset,
 )
 from evaluate import AP_CANDIDATE_SCORE_THRESHOLD, _match_truth_indices  # noqa: E402
-from paths import ultralytics_label_path  # noqa: E402
+from paths import natural_path_key, ultralytics_label_path  # noqa: E402
 from prepare_multiuav import (  # noqa: E402
     SequenceStats,
     _canonical_label_text,
@@ -165,6 +165,23 @@ def test_qat_subset_covers_every_sequence_and_temporal_span(tmp_path: Path) -> N
         frame_numbers = [int(record.image.stem.rsplit("_", 1)[1]) for record in selected if record.sequence == sequence]
         assert min(frame_numbers) < 10
         assert max(frame_numbers) > 90
+
+
+def test_qat_temporal_bins_sort_non_padded_frame_numbers_naturally(tmp_path: Path) -> None:
+    records = [
+        FrameRecord(
+            image=tmp_path / f"frame_{frame}.jpg",
+            label=tmp_path / f"frame_{frame}.txt",
+            sequence="one",
+            split="train",
+        )
+        for frame in (1, 2, 3, 10)
+    ]
+
+    selected, _evidence = select_qat_training_records(records, 2)
+
+    assert [record.image.name for record in selected] == ["frame_2.jpg", "frame_10.jpg"]
+    assert natural_path_key(tmp_path / "frame_2.jpg") < natural_path_key(tmp_path / "frame_10.jpg")
 
 
 def test_matching_tries_next_available_overlapping_truth() -> None:
@@ -439,6 +456,30 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
     main = source[source.index("def main()") :]
     assert main.index("build_calibration(selected, contract)") < main.index("require_unchanged_dataset(")
+    assert "with tempfile.TemporaryDirectory" in main
+    assert main.count("validate_export(") == 2
+    assert main.index("compile_model(") < main.rindex("validate_export(")
+
+
+def test_compile_uses_a_private_export_snapshot(tmp_path: Path) -> None:
+    import json
+
+    from compile import snapshot_export
+
+    export_dir = tmp_path / "export"
+    snapshot_dir = tmp_path / "snapshot"
+    export_dir.mkdir()
+    snapshot_dir.mkdir()
+    report = {"onnx": {"file": "model.onnx"}}
+    (export_dir / "export-report.json").write_text(json.dumps(report), encoding="utf-8")
+    (export_dir / "model.onnx").write_bytes(b"validated-model")
+
+    report_snapshot, source_snapshot = snapshot_export(export_dir, snapshot_dir)
+    (export_dir / "export-report.json").write_text("{}", encoding="utf-8")
+    (export_dir / "model.onnx").write_bytes(b"mutated-model")
+
+    assert json.loads(report_snapshot.read_text(encoding="utf-8")) == report
+    assert source_snapshot.read_bytes() == b"validated-model"
 
 
 def test_quantized_model_audit_reads_internal_int8_tensor_types(tmp_path: Path) -> None:
