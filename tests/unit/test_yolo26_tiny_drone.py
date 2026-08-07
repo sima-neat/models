@@ -13,6 +13,7 @@ sys.path.insert(0, str(RECIPE))
 import provenance  # noqa: E402
 from contract import DeploymentContract  # noqa: E402
 from dataset import FrameRecord, read_yolo_label  # noqa: E402
+from evaluate import _match_truth_indices  # noqa: E402
 from paths import ultralytics_label_path  # noqa: E402
 from prepare_multiuav import (  # noqa: E402
     SequenceStats,
@@ -20,18 +21,65 @@ from prepare_multiuav import (  # noqa: E402
     _validate_label,
     split_sequences,
 )
-from train_qat import select_qat_training_records  # noqa: E402
+from train_qat import select_qat_training_records, validate_fp32_lineage  # noqa: E402
 
 
-def test_int8_architecture_keeps_four_heads_and_removes_attention() -> None:
-    architecture = yaml.safe_load((RECIPE / "yolo26n-p2-int8.yaml").read_text(encoding="utf-8"))
+def test_deployment_architecture_keeps_four_heads_and_original_attention() -> None:
+    architecture_path = RECIPE / "yolo26n-p2-deploy.yaml"
+    architecture = yaml.safe_load(architecture_path.read_text(encoding="utf-8"))
     assert architecture["nc"] == 1
     assert architecture["end2end"] is True
     assert architecture["reg_max"] == 1
-    serialized = (RECIPE / "yolo26n-p2-int8.yaml").read_text(encoding="utf-8")
-    assert "C2PSA" not in serialized
-    assert "[1024, true, 0.5, true]" not in serialized
+    serialized = architecture_path.read_text(encoding="utf-8")
+    assert "C2PSA" in serialized
+    assert "[1024, true, 0.5, true]" in serialized
+    assert architecture["backbone"][8] == [-1, 2, "C3k2", [1024, True]]
+    assert architecture["backbone"][9] == [-1, 1, "SPPF", [1024, 5, 3, True]]
+    assert architecture["backbone"][10] == [-1, 2, "C2PSA", [1024]]
     assert architecture["head"][-1][0] == [19, 22, 25, 28]
+
+
+def test_per_head_mla_attention_preserves_original_math_and_state_dict() -> None:
+    import copy
+
+    import torch
+    from model import lower_attention_for_mla
+    from ultralytics.nn.modules.block import Attention
+
+    original = Attention(128, num_heads=2).eval()
+    lowered, count = lower_attention_for_mla(copy.deepcopy(original))
+    assert count == 1
+    assert lowered.state_dict().keys() == original.state_dict().keys()
+    inputs = torch.randn(1, 128, 8, 8)
+    torch.testing.assert_close(lowered(inputs), original(inputs), rtol=1e-6, atol=1e-6)
+
+
+def test_export_canonicalizes_rank_four_matmul_to_modelsdk_einsum(tmp_path: Path) -> None:
+    import onnx
+    from onnx import TensorProto, helper
+    from onnx_audit import ATTENTION_EINSUM_EQUATION, canonicalize_attention_for_modelsdk
+
+    path = tmp_path / "attention.onnx"
+    graph = helper.make_graph(
+        [helper.make_node("MatMul", ["lhs", "rhs"], ["result"], name="attention/MatMul")],
+        "attention",
+        [
+            helper.make_tensor_value_info("lhs", TensorProto.FLOAT, [1, 1, 2, 3]),
+            helper.make_tensor_value_info("rhs", TensorProto.FLOAT, [1, 1, 3, 4]),
+        ],
+        [helper.make_tensor_value_info("result", TensorProto.FLOAT, [1, 1, 2, 4])],
+    )
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+
+    evidence = canonicalize_attention_for_modelsdk(path, expected_matmuls=1)
+    rewritten = onnx.load(path)
+
+    assert evidence["converted_matmuls"] == 1
+    assert [node.op_type for node in rewritten.graph.node] == ["Einsum"]
+    attributes = {
+        attribute.name: helper.get_attribute_value(attribute) for attribute in rewritten.graph.node[0].attribute
+    }
+    assert attributes["equation"].decode() == ATTENTION_EINSUM_EQUATION
 
 
 def test_contract_declares_grouped_p2_through_p5_outputs() -> None:
@@ -112,6 +160,38 @@ def test_qat_subset_covers_every_sequence_and_temporal_span(tmp_path: Path) -> N
         assert max(frame_numbers) > 90
 
 
+def test_matching_tries_next_available_overlapping_truth() -> None:
+    import torch
+
+    predicted = torch.tensor([[0.0, 0.0, 20.0, 20.0], [0.0, 0.0, 20.0, 20.0]])
+    truth = torch.tensor([[0.0, 0.0, 20.0, 20.0], [0.0, 0.0, 15.0, 15.0]])
+
+    assert _match_truth_indices(predicted, truth, 0.50) == [0, 1]
+
+
+def test_qat_propagates_fp32_lineage_eligibility(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    checkpoint = tmp_path / "best.pt"
+    checkpoint.write_bytes(b"fp32")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    contract = DeploymentContract(640)
+    lineage_path = tmp_path / "lineage.json"
+    lineage = {
+        "schema_version": 2,
+        "architecture": "yolo26n-p2-attention-one-class",
+        "deployment": contract.to_dict(),
+        "best_weights_sha256": hashlib.sha256(b"fp32").hexdigest(),
+        "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
+        "qualification_eligible": False,
+    }
+    lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
+
+    assert validate_fp32_lineage(lineage_path, checkpoint, manifest, contract)["qualification_eligible"] is False
+
+
 def test_label_reader_canonicalizes_six_decimal_edge_rounding(tmp_path: Path) -> None:
     label = tmp_path / "edge.txt"
     label.write_text("0 0.502883 0.992637 0.038172 0.014727\n", encoding="utf-8")
@@ -170,6 +250,9 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert "model.apply(disable_observer)" in source
     assert "model.apply(enable_observer)" in source
     assert "validate_resume_checkpoint" in source
+    assert 'parser.add_argument("--fp32-lineage", type=Path, required=True)' in source
+    assert "validate_fp32_lineage" in source
+    assert 'fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen' in source
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
     assert "shutil.copy2" in source
@@ -186,22 +269,48 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert '"maximum_frozen_ap50_then_tiny_recall50"' in source
 
 
-def test_fp32_training_records_optional_teacher_initialization_lineage() -> None:
+def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -> None:
     source = (RECIPE / "train_fp32.py").read_text(encoding="utf-8")
     ast.parse(source)
-    assert 'parser.add_argument("--teacher-init-weights", type=Path)' in source
-    assert "teacher_initialization = args.teacher_init_weights or args.base_weights" in source
-    assert "teacher = YOLO(str(teacher_initialization))" in source
+    assert 'parser.add_argument("--initial-weights", type=Path)' in source
+    assert 'Path(__file__).with_name("yolo26n-p2-deploy.yaml")' in source
+    assert "initialization = args.initial_weights or args.base_weights" in source
+    assert "model = YOLO(str(architecture))" in source
+    assert "model.load(str(initialization))" in source
+    assert source.count(".train(") == 1
+    assert "teacher_results" not in source
+    assert "student_results" not in source
     assert 'feature_heads = len(getattr(head, "cv2", ()))' in source
-    assert '"teacher_initialization": {' in source
-    assert '"warm_started": args.teacher_init_weights is not None' in source
+    assert '"initialization": {' in source
+    assert '"compatible_tensors": len(compatible)' in source
+    assert '"architecture_sha256": sha256_file(architecture)' in source
+
+
+def test_qat_requires_complete_attention_scaffolding() -> None:
+    model_source = (RECIPE / "model.py").read_text(encoding="utf-8")
+    train_source = (RECIPE / "train_qat.py").read_text(encoding="utf-8")
+    bootstrap_source = (RECIPE / "bootstrap.sh").read_text(encoding="utf-8")
+    assert "EXPECTED_ATTENTION_MATMULS = 8" in model_source
+    assert "EXPECTED_ATTENTION_SOFTMAXES = 4" in model_source
+    assert "lower_attention_for_mla(detector)" in train_source
+    assert "validate_attention_qat_scaffolding(qat_model)" in train_source
+    assert '"attention_scaffolding": attention_scaffolding' in train_source
+    assert "Attention(128, num_heads=2)" in bootstrap_source
+    assert "expected_matmuls=4" in bootstrap_source
+    assert "expected_softmaxes=2" in bootstrap_source
 
 
 def test_export_audits_full_int8_operator_boundary() -> None:
     source = (RECIPE / "onnx_audit.py").read_text(encoding="utf-8")
     ast.parse(source)
-    for operator in ("BatchNormalization", "MatMul", "Einsum", "Softmax"):
+    for operator in ("BatchNormalization", "MatMul"):
         assert f'"{operator}"' in source
+    assert '"Einsum": EXPECTED_ATTENTION_MATMULS' in source
+    assert 'ATTENTION_EINSUM_EQUATION = "abij,abjk->abik"' in source
+    assert "canonicalize_attention_for_modelsdk" in source
+    assert '"Softmax": EXPECTED_ATTENTION_SOFTMAXES' in source
+    assert 'producers[name].op_type != "DequantizeLinear"' in source
+    assert 'consumer.op_type == "QuantizeLinear"' in source
     assert "signed_int8_symmetric_axis0_per_channel" in source
     evaluator = (RECIPE / "evaluate.py").read_text(encoding="utf-8")
     assert "head.anchors = head.anchors.to(device)" in evaluator
@@ -213,10 +322,76 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     ast.parse(source)
     assert "MINIMUM_CALIBRATION_IMAGES = 128" in source
     assert "random.Random(seed).sample" in source
-    assert '"qualification_eligible": not args.allow_smoke' in source
-    assert "EXPECTED_CONVOLUTIONS = 131" in source
+    assert 'export_report["qualification_eligible"] and not args.allow_smoke' in source
+    assert 'if not report["qualification_eligible"] and not allow_smoke' in source
+    assert "expected_convolutions: int" in source
+    assert "EXPECTED_ATTENTION_MATMULS = 8" in source
+    assert "EXPECTED_ATTENTION_SOFTMAXES = 4" in source
+    assert '"BatchMatmul": EXPECTED_ATTENTION_MATMULS' in source
+    assert "attention_types != {expected_io}" in source
+    assert '"compute_scalar_type": "int8"' in source
+    assert "any_shape_on_mla=True" in source
     assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
+
+
+def test_quantized_model_audit_reads_internal_int8_tensor_types(tmp_path: Path) -> None:
+    import json
+
+    import pytest
+    from compile import audit_quantized_model
+
+    def scalar(value: int) -> dict[str, object]:
+        return {"__decode_key__": "ScalarType", "value": value}
+
+    def layer(kind: str, inputs: int, **config: object) -> dict[str, object]:
+        return {
+            "class_name": f"MLA_0/{kind}",
+            "config": {
+                "_status": "SIMA_QUANTIZED",
+                "_input_types": [scalar(1) for _ in range(inputs)],
+                "_output_types": [scalar(1)],
+                **config,
+            },
+        }
+
+    layers = [layer("ConvAddActivation_0", 1, per_channel=True, weight_quant_data=[1])]
+    layers.extend(layer(f"BatchMatmul_{index}", 2) for index in range(8))
+    layers.extend(layer(f"Softmax_{index}", 1) for index in range(4))
+    path = tmp_path / "model.sima.json"
+    document = {"modelTopology": {"model_config": {"config": {"layers": layers}}}}
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert audit_quantized_model(path, 1)["compute_scalar_type"] == "int8"
+
+    layers[1]["config"]["_input_types"][0] = scalar(6)  # type: ignore[index]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="BatchMatmul layers are not fully INT8"):
+        audit_quantized_model(path, 1)
+
+
+def test_compile_rejects_ineligible_export_without_smoke_override(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    import pytest
+    from compile import ARCHITECTURE, validate_export
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    report = {
+        "schema_version": 1,
+        "architecture": ARCHITECTURE,
+        "deployment": DeploymentContract().to_dict(),
+        "manifest_sha256": hashlib.sha256(b"{}").hexdigest(),
+        "qualification_eligible": False,
+    }
+    (export_dir / "export-report.json").write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ineligible diagnostic export"):
+        validate_export(export_dir, manifest, allow_smoke=False)
 
 
 def test_ultralytics_label_path_matches_training_loader_convention() -> None:

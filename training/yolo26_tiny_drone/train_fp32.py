@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a YOLO26n-P2 teacher, then recover the INT8-safe student."""
+"""Train the canonical deployable YOLO26n-P2 graph in FP32."""
 
 from __future__ import annotations
 
@@ -16,10 +16,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--base-weights", type=Path, required=True)
-    parser.add_argument("--teacher-init-weights", type=Path)
+    parser.add_argument("--initial-weights", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--teacher-epochs", type=int, default=100)
-    parser.add_argument("--recovery-epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-size", type=int, default=DEFAULT_MODEL_SIZE)
     parser.add_argument("--workers", type=int, default=8)
@@ -27,8 +26,8 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260806)
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
-    if min(args.teacher_epochs, args.recovery_epochs, args.batch_size) < 1:
-        parser.error("teacher epochs, recovery epochs, and batch size must be positive")
+    if min(args.epochs, args.batch_size) < 1:
+        parser.error("epochs and batch size must be positive")
     if args.workers < 0:
         parser.error("workers must be >= 0")
     try:
@@ -39,8 +38,8 @@ def main() -> int:
         parser.error(f"manifest does not exist: {args.manifest}")
     if not args.base_weights.is_file():
         parser.error(f"base weights do not exist: {args.base_weights}")
-    if args.teacher_init_weights is not None and not args.teacher_init_weights.is_file():
-        parser.error(f"teacher initialization does not exist: {args.teacher_init_weights}")
+    if args.initial_weights is not None and not args.initial_weights.is_file():
+        parser.error(f"initial weights do not exist: {args.initial_weights}")
     digest = sha256_file(args.base_weights)
     if digest != YOLO26N_SHA256 and not args.smoke:
         parser.error(f"base weight SHA-256 mismatch: expected {YOLO26N_SHA256}, got {digest}")
@@ -59,12 +58,9 @@ def main() -> int:
 
     package_root = Path(ultralytics.__file__).resolve().parent
     require_ultralytics_revision(package_root)
-    if not (package_root / "cfg" / "models" / "26" / "yolo26-p2.yaml").is_file():
-        raise RuntimeError("pinned Ultralytics package does not contain YOLO26-P2")
-    teacher_architecture = package_root / "cfg" / "models" / "26" / "yolo26-p2.yaml"
-    student_architecture = Path(__file__).with_name("yolo26n-p2-int8.yaml")
-    if not student_architecture.is_file():
-        raise RuntimeError(f"INT8-safe student architecture is missing: {student_architecture}")
+    architecture = Path(__file__).with_name("yolo26n-p2-deploy.yaml")
+    if not architecture.is_file():
+        raise RuntimeError(f"canonical deployment architecture is missing: {architecture}")
 
     common = {
         "data": str(data_yaml),
@@ -80,58 +76,55 @@ def main() -> int:
         "project": str(args.output_dir),
         "exist_ok": False,
     }
-    teacher_initialization = args.teacher_init_weights or args.base_weights
-    if args.teacher_init_weights is None:
-        teacher = YOLO(str(teacher_architecture)).load(str(teacher_initialization))
-    else:
-        teacher = YOLO(str(teacher_initialization))
-        head = teacher.model.model[-1]
-        checkpoint_classes = int(teacher.model.yaml.get("nc", -1))
+    initialization = args.initial_weights or args.base_weights
+    source = YOLO(str(initialization))
+    if args.initial_weights is not None:
+        head = source.model.model[-1]
+        checkpoint_classes = int(source.model.yaml.get("nc", -1))
         feature_heads = len(getattr(head, "cv2", ()))
         if checkpoint_classes != 1 or feature_heads != 4:
             raise RuntimeError(
-                "teacher initialization must be a one-class YOLO26-P2 checkpoint: "
+                "initial weights must be a one-class YOLO26-P2 checkpoint: "
                 f"classes={checkpoint_classes}, feature_heads={feature_heads}"
             )
-    teacher_results = teacher.train(
+    model = YOLO(str(architecture))
+    source_state = source.model.float().state_dict()
+    target_state = model.model.state_dict()
+    compatible = {
+        name
+        for name, tensor in source_state.items()
+        if name in target_state and tensor.shape == target_state[name].shape
+    }
+    if not compatible:
+        raise RuntimeError("initial weights contain no tensors compatible with the deployment graph")
+    model.load(str(initialization))
+    results = model.train(
         **common,
-        epochs=args.teacher_epochs,
-        name="teacher",
+        epochs=args.epochs,
+        name="fp32",
     )
-    teacher_best = args.output_dir / "teacher" / "weights" / "best.pt"
-    if not teacher_best.is_file():
-        raise RuntimeError(f"teacher training did not produce {teacher_best}")
-
-    # This is the graph-surgery boundary. Matching P2 backbone, neck, and head
-    # tensors transfer from the converged teacher; only the two attention sites
-    # are reinitialized as compiler-friendly convolutional blocks.
-    student = YOLO(str(student_architecture)).load(str(teacher_best))
-    student_results = student.train(
-        **common,
-        epochs=args.recovery_epochs,
-        name="student",
-    )
-    best = args.output_dir / "student" / "weights" / "best.pt"
+    best = args.output_dir / "fp32" / "weights" / "best.pt"
     if not best.is_file():
-        raise RuntimeError(f"student recovery did not produce {best}")
+        raise RuntimeError(f"FP32 training did not produce {best}")
     lineage = {
-        "schema_version": 1,
-        "architecture": "yolo26n-p2-int8-conv-one-class",
+        "schema_version": 2,
+        "architecture": "yolo26n-p2-attention-one-class",
+        "architecture_sha256": sha256_file(architecture),
         "deployment": contract.to_dict(),
         "base_weights_sha256": digest,
-        "teacher_initialization": {
-            "file": teacher_initialization.name,
-            "sha256": sha256_file(teacher_initialization),
-            "warm_started": args.teacher_init_weights is not None,
+        "initialization": {
+            "file": initialization.name,
+            "sha256": sha256_file(initialization),
+            "task_specific": args.initial_weights is not None,
+            "compatible_tensors": len(compatible),
+            "target_tensors": len(target_state),
         },
-        "teacher_weights_sha256": sha256_file(teacher_best),
         "best_weights_sha256": sha256_file(best),
         "manifest_sha256": sha256_file(args.manifest),
         "qualification_eligible": not args.smoke,
         "split_counts": {split: sum(record.split == split for record in records) for split in ("train", "val", "test")},
         "ultralytics_revision": ULTRALYTICS_REVISION,
-        "teacher_results": getattr(teacher_results, "results_dict", {}),
-        "student_results": getattr(student_results, "results_dict", {}),
+        "fp32_results": getattr(results, "results_dict", {}),
     }
     (args.output_dir / "lineage.json").write_text(
         json.dumps(lineage, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"

@@ -13,11 +13,16 @@ model, so promotion is a separate, evidence-backed step.
   spatial evidence than it does at stride 8.
 - The end-to-end YOLO26 training head and its small-target-aware assignment are
   retained.
-- The two PSA sites are replaced with C3k2 convolutional blocks before FP32
-  training. SDK 2.0 QAT leaves their MatMul/Softmax path without QDQ. Keeping
-  them would silently create a mixed-precision model; the convolutional
-  replacement is trainable and exports as signed INT8 throughout the compute
-  graph.
+- The canonical graph retains both PSA attention sites from upstream
+  YOLO26-P2. Before QAT capture, its fixed two-head attention blocks
+  are unrolled per head so every MatMul keeps deployment batch axis zero at
+  one, as required by ModelSDK. This exact lowering preserves the original
+  parameters, state-dict paths, and attention math. The attention-capable SiMa
+  QAT quantizer then adds signed INT8 QDQ to both inputs and the output of every
+  MatMul, and to the input and output of every Softmax. Export rewrites each
+  rank-4 MatMul to the exactly equivalent two-input Einsum spelling documented
+  by ModelSDK for batch matrix multiplication; tensor shapes, QDQ boundaries,
+  parameters, and arithmetic do not change.
 - Deployment exports the one-to-one raw heads in grouped-by-role order:
   `bbox_0..3, class_logit_0..3`. Neat `BoxDecodeType::YoloV26` derives strides
   4, 8, 16, and 32 from their spatial dimensions.
@@ -74,8 +79,12 @@ held-out test sequence, never the training split.
 
 ## Environment
 
-The SiMa QAT API requires Python 3.10 and PyTorch 2.3.1. Bootstrap from an SDK
-2.0 QAT wheel or installation:
+The SiMa QAT API requires Python 3.10 and PyTorch 2.3.1. It must include the
+SiMa MatMul and Softmax PT2E annotators; the original `swml-qat` develop.20
+package does not. The dependency is implemented by internal `swml-qat` commit
+`dee0915` on `feat/int8-matmul-softmax-qat`; this Models change must not merge
+before that dependency. Bootstrap from an attention-capable QAT wheel or
+source installation:
 
 ```bash
 SIMA_QAT_WHEEL=/path/to/swml_qat.whl \
@@ -89,6 +98,11 @@ SIMA_QAT_SITE_PACKAGES=/path/to/sdk/site-packages \
   training/yolo26_tiny_drone/bootstrap.sh
 ```
 
+Bootstrap prepares a real two-head Ultralytics PSA block on CPU and fails
+unless all four per-head MatMul and two Softmax operators receive complete
+fake quantization. An import-only check is insufficient because older packages
+silently leave attention outside QAT.
+
 The public YOLO26n base weights are pinned to SHA-256
 `9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef`.
 Supply the local file explicitly; the scripts do not silently change it.
@@ -99,10 +113,10 @@ Supply the local file explicitly; the scripts do not silently change it.
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_fp32.py \
   --manifest /data/drone/manifest.json \
   --base-weights /data/checkpoints/yolo26n.pt \
-  --teacher-init-weights /data/checkpoints/rgb-drone-teacher.pt \
+  --initial-weights /data/checkpoints/rgb-drone-p2.pt \
   --output-dir build/yolo26-drone-fp32 \
   --image-size 1600 \
-  --teacher-epochs 100 --recovery-epochs 30 --batch-size 16 --device 0
+  --epochs 100 --batch-size 16 --device 0
 ```
 
 `--image-size` is a static deployment contract, not a training-only resize.
@@ -111,22 +125,27 @@ the ONNX tensor ABI, compiler calibration evidence, and the MPK audit. Larger
 inputs such as 1600 are useful for single-digit-pixel targets, but they must
 pass compiler and board memory/performance qualification before promotion.
 
-The first stage fine-tunes the official attention-based P2 model as an FP32
-teacher. The second stage transfers its compatible backbone, neck, and head
-weights into the INT8-safe graph and recovers the two surgically replaced
-blocks. Only the recovered student proceeds to QAT. Both stages use
-Ultralytics MuSGD, and the lineage records both checkpoint digests.
-`--teacher-init-weights` optionally starts that first stage from an existing
-YOLO26-P2 detector (for example, the sequence-safe single-drone teacher); its
-digest is recorded independently while the official architectural base stays
-pinned. Omit it to initialize directly from the official base.
+FP32 and QAT use the same canonical, attention-based deployable graph. QAT
+later folds BatchNorm and adds fake-quantization scaffolding in place without
+changing the detector architecture. Compatible tensors are loaded by name and
+shape from the initial checkpoint. Lineage records the canonical YAML digest,
+initialization digest, and exact compatible/target tensor counts so partial
+transfer is explicit.
+
+`--initial-weights` optionally starts from an existing one-class, four-head
+YOLO26-P2 checkpoint, such as the sequence-safe single-drone model. Omit it to
+initialize from the pinned official YOLO26n base. The latter necessarily has
+lower transfer coverage because it has three heads and a different class
+count; either way, there is only one FP32 training stage and its output is
+`build/yolo26-drone-fp32/fp32/weights/best.pt`.
 
 ## Target-exact QAT
 
 ```bash
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_qat.py \
   --manifest /data/drone/manifest.json \
-  --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
+  --fp32-checkpoint build/yolo26-drone-fp32/fp32/weights/best.pt \
+  --fp32-lineage build/yolo26-drone-fp32/lineage.json \
   --output-dir build/yolo26-drone-qat \
   --image-size 1600 \
   --observer-warmup-images 1024 \
@@ -137,12 +156,20 @@ pinned. Omit it to initialize directly from the official base.
 Batch 1 is mandatory. PT2E specializes YOLO26 reshapes to the example batch,
 and the Modalix app is batch 1. Gradient accumulation supplies the effective
 optimization batch without training a graph that cannot be deployed.
+The FP32 lineage is mandatory and cryptographically binds the checkpoint,
+manifest, architecture, and deployment shape to QAT. A smoke/ineligible FP32
+source remains ineligible through QAT, export, and compilation even if its
+numeric accuracy happens to pass later gates.
 
 All mature BatchNorm layers are folded while retaining both training heads.
-Activations use signed per-tensor INT8 fake quantization; convolution weights
-use signed symmetric axis-0 per-channel INT8. Observers see at least 128 unique
-unaugmented images selected reproducibly without replacement across the full
-training split, and the checkpoint records every selected path and digest.
+Activations—including both operands and results of attention MatMul and both
+Softmax boundaries—use signed per-tensor INT8 fake quantization. Convolution
+weights use signed symmetric axis-0 per-channel INT8. The two two-head sites
+lower to eight MatMul and four Softmax operators; QAT preparation refuses any
+other count or incomplete fake-quant coverage.
+Observers see at least 128 unique unaugmented images selected reproducibly
+without replacement across the full training split, and the checkpoint
+records every selected path and digest.
 Observer updates are temporarily disabled for every held-out validation pass,
 so validation images cannot influence quantization ranges, and are permanently
 frozen after the first 20% of epochs by default, before the remaining low-rate
@@ -168,7 +195,8 @@ AP50/tiny-recall ordering:
 ```bash
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/train_qat.py \
   --manifest /data/drone/manifest.json \
-  --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
+  --fp32-checkpoint build/yolo26-drone-fp32/fp32/weights/best.pt \
+  --fp32-lineage build/yolo26-drone-fp32/lineage.json \
   --resume-checkpoint build/yolo26-drone-qat/checkpoint-best-frozen.pt \
   --output-dir build/yolo26-drone-qat-refined \
   --epochs 10 --learning-rate 2e-5 --trainable-scope head \
@@ -184,17 +212,19 @@ Use `--trainable-scope classification` to freeze the box branches as well and
 recover only one-to-many and one-to-one class-score heads when localization
 metrics are already acceptable but INT8 confidence ranking remains degraded.
 Add `--class-distillation-weight 1.0` to preserve those raw class logits with a
-frozen copy of the fused FP32 student. Smooth-L1 distillation covers both the
-one-to-many loss branch and the one-to-one deployment branch, while the normal
-ground-truth detection loss remains active. The weight and measured
-distillation loss are retained in every checkpoint history entry.
+frozen copy of the same fused FP32 detector. This optional refinement teacher
+does not change the architecture or the normal FP32-to-QAT path. Smooth-L1
+distillation covers both the one-to-many loss branch and the one-to-one
+deployment branch, while the normal ground-truth detection loss remains
+active. The weight and measured distillation loss are retained in every
+checkpoint history entry.
 
 ## Export gates
 
 ```bash
 .venv-yolo26-qat/bin/python training/yolo26_tiny_drone/export.py \
   --checkpoint build/yolo26-drone-qat/checkpoint-best-frozen.pt \
-  --fp32-checkpoint build/yolo26-drone-fp32/student/weights/best.pt \
+  --fp32-checkpoint build/yolo26-drone-fp32/fp32/weights/best.pt \
   --output-dir build/yolo26-drone-source
 ```
 
@@ -205,13 +235,17 @@ silently replace a better publishable candidate.
 
 Export fails when:
 
+- the FP32 lineage or QAT checkpoint is ineligible for qualification (unless
+  explicitly exporting a diagnostic smoke artifact, which remains ineligible);
 - observer evidence is below 128 images or observers were not frozen;
 - validation has fewer than 100 tiny instances, QAT AP50 is below 0.30, or
   QAT tiny-object recall is below 0.50;
 - AP50 drops more than 2 points or tiny-object recall drops more than 5 points;
 - the input or eight P2–P5 outputs differ from the checkpoint's recorded
   static deployment contract;
-- BatchNorm, MatMul, Einsum, or Softmax remains;
+- BatchNorm or raw MatMul remains, the expected eight canonicalized Einsum/four
+  Softmax operators are missing, or any attention input/output lacks signed
+  INT8 QDQ;
 - any convolution weight lacks signed symmetric per-channel INT8 QDQ.
 
 ## ModelSDK compile
@@ -230,11 +264,16 @@ python training/yolo26_tiny_drone/compile.py \
 ```
 
 The compiler refuses a manifest outside the checkpoint lineage or an
-unqualified export. Its report pins every selected image, the assembled
+unqualified export. `--allow-smoke` can inspect an ineligible source but can
+never turn it into an eligible MPK. The report pins every selected image, the assembled
 calibration tensor, source ONNX, serialized INT8 graph, and MPK by SHA-256. It
-also verifies 131 per-channel INT8 MLA convolutions, one MLA segment, no A65
-fallback or host shared object, INT8 transport for all eight raw heads, and
-float32 public boundaries expected by Neat.
+also enables non-4D MLA tensors while preserving deployment batch one and
+verifies that every source convolution becomes a per-channel INT8 MLA
+convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8
+MLA BatchMatmul layers, all four Softmax layers are `SIMA_QUANTIZED` INT8 MLA
+layers, there is one MLA segment with no A65 fallback or host shared object,
+all eight raw heads use INT8 transport, and Neat's public boundaries remain
+float32.
 
 `--allow-smoke` exists only for structural development checks. Its report is
 explicitly marked ineligible for qualification and must never be promoted.

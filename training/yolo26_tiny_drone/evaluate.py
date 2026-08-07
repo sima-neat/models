@@ -53,26 +53,30 @@ def decode(
     return decoded
 
 
-def _match_image(predicted: Tensor, truth: Tensor, threshold: float) -> list[bool]:
+def _match_truth_indices(predicted: Tensor, truth: Tensor, threshold: float) -> list[int | None]:
     if predicted.shape[0] == 0:
         return []
     if truth.shape[0] == 0:
-        return [False] * predicted.shape[0]
+        return [None] * predicted.shape[0]
     overlaps = box_iou(predicted, truth)
     matched_truth: set[int] = set()
-    matches = []
+    assignments = []
     for prediction_index in range(predicted.shape[0]):
         values, indices = overlaps[prediction_index].sort(descending=True)
-        matched = False
+        assignment = None
         for value, truth_index in zip(values.tolist(), indices.tolist()):
             if value < threshold:
                 break
             if truth_index not in matched_truth:
                 matched_truth.add(truth_index)
-                matched = True
+                assignment = truth_index
                 break
-        matches.append(matched)
-    return matches
+        assignments.append(assignment)
+    return assignments
+
+
+def _match_image(predicted: Tensor, truth: Tensor, threshold: float) -> list[bool]:
+    return [truth_index is not None for truth_index in _match_truth_indices(predicted, truth, threshold)]
 
 
 def _average_precision(scores: list[float], matches: list[bool], ground_truth_count: int) -> float:
@@ -120,7 +124,8 @@ def evaluate_model(
             order = predicted_scores.argsort(descending=True)
             predicted_boxes = predicted_boxes[order]
             predicted_scores = predicted_scores[order]
-            image_matches_50 = _match_image(predicted_boxes, truth, 0.50)
+            assignments_50 = _match_truth_indices(predicted_boxes, truth, 0.50)
+            image_matches_50 = [truth_index is not None for truth_index in assignments_50]
             image_matches_30 = _match_image(predicted_boxes, truth, 0.30)
             scores.extend(predicted_scores.cpu().tolist())
             matches_50.extend(image_matches_50)
@@ -131,15 +136,7 @@ def evaluate_model(
                 area = (truth[:, 2] - truth[:, 0]) * (truth[:, 3] - truth[:, 1])
                 tiny_indices = set(torch.where(area < 16.0**2)[0].tolist())
                 tiny_ground_truth += len(tiny_indices)
-                if tiny_indices and predicted_boxes.numel():
-                    overlaps = box_iou(predicted_boxes, truth)
-                    matched_truth: set[int] = set()
-                    for prediction_index in range(predicted_boxes.shape[0]):
-                        value, truth_index = overlaps[prediction_index].max(0)
-                        index = int(truth_index)
-                        if float(value) >= 0.50 and index not in matched_truth:
-                            matched_truth.add(index)
-                    tiny_matched_50 += len(matched_truth & tiny_indices)
+                tiny_matched_50 += len({index for index in assignments_50 if index in tiny_indices})
 
     if ground_truth_count == 0:
         raise RuntimeError("validation set contains no drone annotations")

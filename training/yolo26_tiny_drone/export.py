@@ -12,20 +12,30 @@ from typing import Any
 import torch
 from contract import INPUT_NAME, DeploymentContract
 from model import (
+    EXPECTED_ATTENTION_MATMULS,
+    EXPECTED_ATTENTION_SOFTMAXES,
     Yolo26TrainingDeployWrapper,
     fuse_batch_norm_for_qat,
+    lower_attention_for_mla,
     select_deploy_graph,
+    validate_attention_qat_scaffolding,
     validate_deploy_outputs,
 )
-from onnx_audit import audit_onnx, sha256_file
+from onnx_audit import audit_onnx, canonicalize_attention_for_modelsdk, sha256_file
 from provenance import require_ultralytics_revision
 
 
 def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
     if checkpoint.get("schema_version") != 1:
         raise RuntimeError("unsupported QAT checkpoint schema")
-    if checkpoint.get("architecture") != "yolo26n-p2-int8-conv-one-class":
+    if checkpoint.get("architecture") != "yolo26n-p2-attention-one-class":
         raise RuntimeError("checkpoint architecture is not the deployment YOLO26-P2 variant")
+    expected_attention = {
+        "matmul_count": EXPECTED_ATTENTION_MATMULS,
+        "softmax_count": EXPECTED_ATTENTION_SOFTMAXES,
+    }
+    if checkpoint.get("attention_scaffolding") != expected_attention:
+        raise RuntimeError("QAT checkpoint lacks complete INT8 attention scaffolding evidence")
     try:
         DeploymentContract.from_dict(checkpoint.get("deployment"))
     except (TypeError, ValueError) as exc:
@@ -36,6 +46,8 @@ def validate_checkpoint(checkpoint: dict[str, Any], args: argparse.Namespace) ->
         raise RuntimeError("QAT observers were not frozen before export")
     if not checkpoint.get("qualification_eligible") and not args.allow_smoke:
         raise RuntimeError("diagnostic QAT checkpoint cannot be published")
+    if checkpoint.get("fp32_qualification_eligible") is not True and not args.allow_smoke:
+        raise RuntimeError("QAT checkpoint descends from ineligible FP32 training")
     baseline = checkpoint.get("baseline") or {}
     final = checkpoint.get("final_metrics") or {}
     if not baseline or not final:
@@ -135,10 +147,16 @@ def main() -> int:
     detector = YOLO(str(args.fp32_checkpoint)).model
     detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
     fuse_batch_norm_for_qat(detector)
+    detector, lowered_attention_count = lower_attention_for_mla(detector)
+    if lowered_attention_count != 2:
+        raise RuntimeError(f"expected two YOLO26 attention modules, lowered {lowered_attention_count}")
     detector.to(device).requires_grad_(True).train()
     wrapped = Yolo26TrainingDeployWrapper(detector).to(device).train()
     example = (torch.rand(contract.input_shape, device=device),)
     qat_model = sima_prepare_qat_model(wrapped, example, device)
+    attention_scaffolding = validate_attention_qat_scaffolding(qat_model)
+    if attention_scaffolding != checkpoint.get("attention_scaffolding"):
+        raise RuntimeError("export attention scaffolding does not match the QAT checkpoint")
     qat_model.load_state_dict(checkpoint["qat_state_dict"], strict=True)
     finalized = sima_finalize_qat_model(qat_model)
     deploy_graph = select_deploy_graph(finalized)
@@ -152,17 +170,23 @@ def main() -> int:
         output_names=contract.output_names(),
         device=device,
     )
+    canonicalization = canonicalize_attention_for_modelsdk(onnx_path)
     audit = audit_onnx(onnx_path, contract)
     report = {
         "schema_version": 1,
-        "architecture": "yolo26n-p2-int8-conv-one-class",
+        "architecture": "yolo26n-p2-attention-one-class",
         "deployment": contract.to_dict(),
         "accuracy": accuracy,
         "checkpoint_sha256": sha256_file(args.checkpoint),
         "fp32_checkpoint_sha256": fp32_digest,
+        "fp32_lineage_sha256": checkpoint.get("fp32_lineage_sha256"),
+        "fp32_qualification_eligible": checkpoint.get("fp32_qualification_eligible") is True,
         "manifest_sha256": checkpoint["manifest_sha256"],
         "observer_images": checkpoint["observer_images"],
-        "onnx": {"file": onnx_path.name, "audit": audit},
+        "source_qualification_eligible": checkpoint.get("qualification_eligible") is True,
+        "qualification_eligible": checkpoint.get("qualification_eligible") is True and not args.allow_smoke,
+        "diagnostic_export": args.allow_smoke,
+        "onnx": {"file": onnx_path.name, "canonicalization": canonicalization, "audit": audit},
         "versions": checkpoint.get("versions", {}),
     }
     (args.output_dir / "export-report.json").write_text(

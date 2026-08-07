@@ -10,7 +10,11 @@ from typing import Any
 import numpy as np
 import onnx
 from contract import DEFAULT_CONTRACT, INPUT_NAME, DeploymentContract
-from onnx import numpy_helper
+from onnx import helper, numpy_helper, shape_inference
+
+EXPECTED_ATTENTION_MATMULS = 8
+EXPECTED_ATTENTION_SOFTMAXES = 4
+ATTENTION_EINSUM_EQUATION = "abij,abjk->abik"
 
 
 def sha256_file(path: Path) -> str:
@@ -51,6 +55,84 @@ def _constant_array(
     return None
 
 
+def canonicalize_attention_for_modelsdk(
+    path: Path,
+    *,
+    expected_matmuls: int = EXPECTED_ATTENTION_MATMULS,
+) -> dict[str, Any]:
+    """Express rank-4 attention MatMul through ModelSDK's supported Einsum path.
+
+    ModelSDK 2.1 imports ONNX MatMul as ``nn.batch_matmul``, for which its MLA
+    checker has no placement entry. Its documented batch-matmul representation
+    is a two-input Einsum. This exact operator substitution preserves all QDQ
+    edges and tensor shapes; only the ONNX spelling changes.
+    """
+    model = onnx.load(path)
+    inferred = shape_inference.infer_shapes(model)
+    shapes = {
+        value.name: _shape(value)
+        for value in (*inferred.graph.input, *inferred.graph.value_info, *inferred.graph.output)
+    }
+    matmuls = [node for node in model.graph.node if node.op_type == "MatMul"]
+    if len(matmuls) != expected_matmuls:
+        raise RuntimeError(f"expected {expected_matmuls} attention MatMul operators, found {len(matmuls)}")
+
+    rewritten = []
+    converted = 0
+    for node in model.graph.node:
+        if node.op_type != "MatMul":
+            rewritten.append(node)
+            continue
+        input_shapes = [shapes.get(name) for name in node.input]
+        output_shapes = [shapes.get(name) for name in node.output]
+        if (
+            len(node.input) != 2
+            or len(node.output) != 1
+            or any(shape is None or len(shape) != 4 for shape in (*input_shapes, *output_shapes))
+        ):
+            raise RuntimeError(
+                f"attention MatMul {node.name} is not a statically shaped rank-4 operator: "
+                f"{input_shapes} -> {output_shapes}"
+            )
+        lhs = input_shapes[0]
+        rhs = input_shapes[1]
+        result = output_shapes[0]
+        if lhs is None or rhs is None or result is None:
+            raise RuntimeError(f"attention MatMul {node.name} has unresolved shapes")
+        if (
+            any(dimension <= 0 for shape in (lhs, rhs, result) for dimension in shape)
+            or lhs[:2] != rhs[:2]
+            or lhs[:2] != result[:2]
+            or lhs[2] != result[2]
+            or rhs[3] != result[3]
+            or lhs[3] != rhs[2]
+        ):
+            raise RuntimeError(f"attention MatMul {node.name} has incompatible shapes: {lhs}, {rhs} -> {result}")
+        rewritten.append(
+            helper.make_node(
+                "Einsum",
+                list(node.input),
+                list(node.output),
+                name=node.name.replace("MatMul", "Einsum"),
+                equation=ATTENTION_EINSUM_EQUATION,
+            )
+        )
+        converted += 1
+
+    model.graph.ClearField("node")
+    model.graph.node.extend(rewritten)
+    onnx.checker.check_model(model)
+    temporary = path.with_suffix(".tmp.onnx")
+    onnx.save(model, temporary)
+    temporary.replace(path)
+    return {
+        "converted_matmuls": converted,
+        "onnx_operator": "Einsum",
+        "equation": ATTENTION_EINSUM_EQUATION,
+        "reason": "ModelSDK 2.1 documented batch-matmul import path",
+    }
+
+
 def audit_onnx(path: Path, contract: DeploymentContract = DEFAULT_CONTRACT) -> dict[str, Any]:
     model = onnx.load(path)
     onnx.checker.check_model(model)
@@ -63,15 +145,51 @@ def audit_onnx(path: Path, contract: DeploymentContract = DEFAULT_CONTRACT) -> d
         raise RuntimeError(f"raw-head output contract mismatch: {actual_outputs}")
 
     operators = Counter(node.op_type for node in model.graph.node)
-    forbidden = {
-        name: operators[name] for name in ("BatchNormalization", "MatMul", "Einsum", "Softmax") if operators[name]
-    }
+    forbidden = {name: operators[name] for name in ("BatchNormalization", "MatMul") if operators[name]}
     if forbidden:
         raise RuntimeError(f"non-INT8-friendly operators remain: {forbidden}")
     if operators["QuantizeLinear"] == 0 or operators["DequantizeLinear"] == 0:
         raise RuntimeError("QAT graph contains no QDQ operators")
 
     producers = {output: node for node in model.graph.node for output in node.output}
+    consumers: dict[str, list[Any]] = {}
+    for node in model.graph.node:
+        for input_name in node.input:
+            consumers.setdefault(input_name, []).append(node)
+
+    expected_attention = {
+        "Einsum": EXPECTED_ATTENTION_MATMULS,
+        "Softmax": EXPECTED_ATTENTION_SOFTMAXES,
+    }
+    for operator, expected_count in expected_attention.items():
+        nodes = [node for node in model.graph.node if node.op_type == operator]
+        if len(nodes) != expected_count:
+            raise RuntimeError(f"expected {expected_count} attention {operator} operators, found {len(nodes)}")
+        required_inputs = 2 if operator == "Einsum" else 1
+        for node in nodes:
+            if operator == "Einsum":
+                attributes = {
+                    attribute.name: onnx.helper.get_attribute_value(attribute) for attribute in node.attribute
+                }
+                if attributes.get("equation") != ATTENTION_EINSUM_EQUATION.encode():
+                    raise RuntimeError(f"attention Einsum {node.name} has an unexpected equation")
+            elif operator == "Softmax":
+                attributes = {
+                    attribute.name: onnx.helper.get_attribute_value(attribute) for attribute in node.attribute
+                }
+                if attributes.get("axis") != -1:
+                    raise RuntimeError(f"attention Softmax {node.name} must normalize its final sequence axis")
+            if len(node.input) < required_inputs or any(
+                producers.get(name) is None or producers[name].op_type != "DequantizeLinear"
+                for name in node.input[:required_inputs]
+            ):
+                raise RuntimeError(f"attention {operator} {node.name} does not have INT8 QDQ inputs")
+            if any(
+                not any(consumer.op_type == "QuantizeLinear" for consumer in consumers.get(output, []))
+                for output in node.output
+            ):
+                raise RuntimeError(f"attention {operator} {node.name} does not have an INT8 QDQ output")
+
     initializers = {tensor.name: tensor for tensor in model.graph.initializer}
     activation_quantizers = [node for node in model.graph.node if node.op_type == "QuantizeLinear"]
     for node in activation_quantizers:
@@ -125,6 +243,12 @@ def audit_onnx(path: Path, contract: DeploymentContract = DEFAULT_CONTRACT) -> d
         "activation_quantizer_count": len(activation_quantizers),
         "weight_quantization": "signed_int8_symmetric_axis0_per_channel",
         "activation_quantization": "signed_int8_per_tensor_qdq",
-        "attention": "convolutional_replacement_no_matmul_softmax",
+        "attention": {
+            "matmul_count": operators["Einsum"],
+            "onnx_operator": "Einsum",
+            "equation": ATTENTION_EINSUM_EQUATION,
+            "softmax_count": operators["Softmax"],
+            "quantization": "signed_int8_per_tensor_qdq_inputs_and_outputs",
+        },
         "outputs": [{"name": name, "shape": list(shape)} for name, shape in actual_outputs],
     }

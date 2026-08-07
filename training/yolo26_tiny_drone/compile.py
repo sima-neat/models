@@ -20,10 +20,12 @@ from onnx_audit import audit_onnx, sha256_file
 from PIL import Image
 
 LOG = logging.getLogger("yolo26_tiny_drone.compile")
-ARCHITECTURE = "yolo26n-p2-int8-conv-one-class"
+ARCHITECTURE = "yolo26n-p2-attention-one-class"
 MODEL_NAME = "yolo26n_p2_tiny_drone_int8_qat_b1"
 MINIMUM_CALIBRATION_IMAGES = 128
-EXPECTED_CONVOLUTIONS = 131
+EXPECTED_ATTENTION_MATMULS = 8
+EXPECTED_ATTENTION_SOFTMAXES = 4
+SERIALIZED_INT8_SCALAR_TYPE = 1
 
 
 def validate_export(
@@ -41,6 +43,10 @@ def validate_export(
         raise ValueError("export report has an invalid deployment contract") from exc
     if report.get("manifest_sha256") != sha256_file(manifest):
         raise ValueError("compile manifest does not match the QAT/export lineage")
+    if type(report.get("qualification_eligible")) is not bool:
+        raise ValueError("export report has no explicit qualification eligibility")
+    if not report["qualification_eligible"] and not allow_smoke:
+        raise ValueError("ineligible diagnostic export requires --allow-smoke")
     if int(report.get("observer_images", 0)) < MINIMUM_CALIBRATION_IMAGES and not allow_smoke:
         raise ValueError("export has fewer than 128 QAT observer images")
 
@@ -147,28 +153,78 @@ def build_calibration(records: list[FrameRecord], contract: DeploymentContract) 
     return samples, evidence
 
 
-def audit_quantized_model(path: Path) -> dict[str, Any]:
+def audit_quantized_model(path: Path, expected_convolutions: int) -> dict[str, Any]:
     document = json.loads(path.read_text(encoding="utf-8"))
     try:
         layers = document["modelTopology"]["model_config"]["config"]["layers"]
     except (KeyError, TypeError) as exc:
         raise RuntimeError(f"serialized model has no layer topology: {path}") from exc
     convolutions = [layer for layer in layers if str(layer.get("class_name", "")).startswith("MLA_0/ConvAddActivation")]
-    if len(convolutions) != EXPECTED_CONVOLUTIONS:
-        raise RuntimeError(f"expected {EXPECTED_CONVOLUTIONS} MLA convolutions, found {len(convolutions)}")
-    scalar_types = {layer.get("config", {}).get("conv_attrs.input_type", {}).get("value") for layer in convolutions}
+    if len(convolutions) != expected_convolutions:
+        raise RuntimeError(f"expected {expected_convolutions} MLA convolutions, found {len(convolutions)}")
+
+    def serialized_scalar_types(value: Any) -> tuple[int, ...]:
+        values: list[int] = []
+        if isinstance(value, dict):
+            if value.get("__decode_key__") == "ScalarType" and isinstance(value.get("value"), int):
+                values.append(value["value"])
+            else:
+                for child in value.values():
+                    values.extend(serialized_scalar_types(child))
+        elif isinstance(value, list):
+            for child in value:
+                values.extend(serialized_scalar_types(child))
+        return tuple(values)
+
+    def io_types(layer: dict[str, Any]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        config = layer.get("config", {})
+        return (
+            serialized_scalar_types(config.get("_input_types")),
+            serialized_scalar_types(config.get("_output_types")),
+        )
+
+    convolution_io = {io_types(layer) for layer in convolutions}
     statuses = {layer.get("config", {}).get("_status") for layer in convolutions}
     per_channel = {layer.get("config", {}).get("per_channel") for layer in convolutions}
     integer_weights = {"weight_quant_data" in layer.get("config", {}) for layer in convolutions}
-    if scalar_types != {6} or statuses != {"SIMA_QUANTIZED"} or per_channel != {True} or integer_weights != {True}:
+    if (
+        convolution_io != {((SERIALIZED_INT8_SCALAR_TYPE,), (SERIALIZED_INT8_SCALAR_TYPE,))}
+        or statuses != {"SIMA_QUANTIZED"}
+        or per_channel != {True}
+        or integer_weights != {True}
+    ):
         raise RuntimeError(
             "compiled compute graph is not fully per-channel INT8: "
-            f"types={scalar_types}, statuses={statuses}, per_channel={per_channel}, weights={integer_weights}"
+            f"io_types={convolution_io}, statuses={statuses}, per_channel={per_channel}, weights={integer_weights}"
         )
+    attention_kinds = {
+        "BatchMatmul": EXPECTED_ATTENTION_MATMULS,
+        "Softmax": EXPECTED_ATTENTION_SOFTMAXES,
+    }
+    attention_report = {}
+    for kind, expected_count in attention_kinds.items():
+        attention_layers = [layer for layer in layers if str(layer.get("class_name", "")).startswith(f"MLA_0/{kind}")]
+        if len(attention_layers) != expected_count:
+            raise RuntimeError(f"expected {expected_count} MLA {kind} layers, found {len(attention_layers)}")
+        expected_inputs = (SERIALIZED_INT8_SCALAR_TYPE,) * (2 if kind == "BatchMatmul" else 1)
+        expected_io = (expected_inputs, (SERIALIZED_INT8_SCALAR_TYPE,))
+        attention_types = {io_types(layer) for layer in attention_layers}
+        attention_statuses = {layer.get("config", {}).get("_status") for layer in attention_layers}
+        if attention_types != {expected_io} or attention_statuses != {"SIMA_QUANTIZED"}:
+            raise RuntimeError(
+                f"compiled {kind} layers are not fully INT8: types={attention_types}, statuses={attention_statuses}"
+            )
+        attention_report[kind] = {
+            "count": len(attention_layers),
+            "input_scalar_type": "int8",
+            "output_scalar_type": "int8",
+            "status": "SIMA_QUANTIZED",
+        }
     return {
         "compute_convolution_count": len(convolutions),
-        "compute_scalar_type": 6,
+        "compute_scalar_type": "int8",
         "internal_precision": "int8",
+        "attention": attention_report,
         "quantized_model_json_sha256": sha256_file(path),
         "weight_quantization": "per_channel_int8",
     }
@@ -262,6 +318,7 @@ def compile_model(
     output_dir: Path,
     model_name: str,
     contract: DeploymentContract,
+    expected_convolutions: int,
 ) -> tuple[Path, dict[str, Any]]:
     # Keep SDK imports out of source-validation and unit-test paths.
     from afe.apis.defines import (
@@ -300,7 +357,9 @@ def compile_model(
     quantized = loaded.quantize(
         calibration_data=calibration_data,
         quantization_config=config,
-        any_shape_on_mla=False,
+        # Attention uses static rank-4 tensors and ModelSDK's documented
+        # two-input Einsum representation for batch matrix multiplication.
+        any_shape_on_mla=True,
         automatic_layout_conversion=False,
         model_name=model_name,
         log_level=logging.INFO,
@@ -308,7 +367,10 @@ def compile_model(
     if quantized is None:
         raise RuntimeError("ModelSDK quantization returned no model")
     quantized.save(model_name=model_name, output_directory=str(output_dir))
-    quantized_report = audit_quantized_model(output_dir / f"{model_name}.sima.json")
+    quantized_report = audit_quantized_model(
+        output_dir / f"{model_name}.sima.json",
+        expected_convolutions,
+    )
     quantized.compile(
         output_path=str(output_dir),
         batch_size=1,
@@ -351,12 +413,20 @@ def main() -> int:
     )
     calibration, calibration_report = build_calibration(selected, contract)
     output_dir.mkdir(parents=True, exist_ok=False)
-    archive, quantized_report = compile_model(source, calibration, output_dir, args.model_name, contract)
+    archive, quantized_report = compile_model(
+        source,
+        calibration,
+        output_dir,
+        args.model_name,
+        contract,
+        int(export_report["onnx"]["audit"]["convolution_count"]),
+    )
     report = {
         "schema_version": 1,
         "architecture": ARCHITECTURE,
         "deployment": contract.to_dict(),
-        "qualification_eligible": not args.allow_smoke,
+        "source_qualification_eligible": export_report["qualification_eligible"],
+        "qualification_eligible": export_report["qualification_eligible"] and not args.allow_smoke,
         "source": {
             "export_report_sha256": sha256_file(export_dir / "export-report.json"),
             "onnx_sha256": export_report["onnx"]["audit"]["sha256"],

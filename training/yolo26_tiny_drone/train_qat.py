@@ -21,7 +21,15 @@ import torch
 from contract import DEFAULT_MODEL_SIZE, DeploymentContract
 from dataset import DroneDataset, FixedBatchCollator, FrameRecord, load_manifest, sha256_file
 from evaluate import evaluate_model
-from model import Yolo26TrainingDeployWrapper, fuse_batch_norm_for_qat, validate_deploy_outputs
+from model import (
+    EXPECTED_ATTENTION_MATMULS,
+    EXPECTED_ATTENTION_SOFTMAXES,
+    Yolo26TrainingDeployWrapper,
+    fuse_batch_norm_for_qat,
+    lower_attention_for_mla,
+    validate_attention_qat_scaffolding,
+    validate_deploy_outputs,
+)
 from provenance import require_ultralytics_revision
 from torch import nn
 from torch.ao.quantization import disable_observer, enable_observer
@@ -33,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--fp32-checkpoint", type=Path, required=True)
+    parser.add_argument("--fp32-lineage", type=Path, required=True)
     parser.add_argument("--resume-checkpoint", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
@@ -73,8 +82,8 @@ def parse_args() -> argparse.Namespace:
         parser.error(str(exc))
     if args.epochs < 2 and not args.smoke:
         parser.error("production QAT needs at least two epochs so frozen observers receive refinement")
-    if not args.manifest.is_file() or not args.fp32_checkpoint.is_file():
-        parser.error("manifest and FP32 checkpoint must exist")
+    if not args.manifest.is_file() or not args.fp32_checkpoint.is_file() or not args.fp32_lineage.is_file():
+        parser.error("manifest, FP32 checkpoint, and FP32 lineage must exist")
     if args.resume_checkpoint is not None and not args.resume_checkpoint.is_file():
         parser.error("resume checkpoint must exist")
     if args.trainable_scope != "all" and args.resume_checkpoint is None:
@@ -197,18 +206,53 @@ def atomic_save(document: dict[str, Any], destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def validate_fp32_lineage(
+    path: Path,
+    fp32_checkpoint: Path,
+    manifest: Path,
+    contract: DeploymentContract,
+) -> dict[str, Any]:
+    """Require the immutable training lineage and bind it to this QAT run."""
+    try:
+        lineage = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot read FP32 lineage: {path}") from exc
+    if lineage.get("schema_version") != 2 or lineage.get("architecture") != "yolo26n-p2-attention-one-class":
+        raise RuntimeError("FP32 lineage has an unsupported schema or architecture")
+    try:
+        recorded_contract = DeploymentContract.from_dict(lineage.get("deployment"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("FP32 lineage has an invalid deployment contract") from exc
+    if recorded_contract != contract:
+        raise RuntimeError("FP32 lineage deployment contract does not match QAT")
+    if lineage.get("best_weights_sha256") != sha256_file(fp32_checkpoint):
+        raise RuntimeError("FP32 checkpoint digest does not match its lineage")
+    if lineage.get("manifest_sha256") != sha256_file(manifest):
+        raise RuntimeError("QAT manifest digest does not match FP32 lineage")
+    if type(lineage.get("qualification_eligible")) is not bool:
+        raise RuntimeError("FP32 lineage has no explicit qualification eligibility")
+    return lineage
+
+
 def validate_resume_checkpoint(
     checkpoint: dict[str, Any],
     manifest: Path,
     fp32_checkpoint: Path,
+    fp32_lineage: Path,
     contract: DeploymentContract,
     training_selection: dict[str, Any],
 ) -> None:
     """Reject a resume source that is not the same frozen production contract."""
     if checkpoint.get("schema_version") != 1:
         raise RuntimeError("resume checkpoint has an unsupported schema")
-    if checkpoint.get("architecture") != "yolo26n-p2-int8-conv-one-class":
+    if checkpoint.get("architecture") != "yolo26n-p2-attention-one-class":
         raise RuntimeError("resume checkpoint has the wrong architecture")
+    expected_attention = {
+        "matmul_count": EXPECTED_ATTENTION_MATMULS,
+        "softmax_count": EXPECTED_ATTENTION_SOFTMAXES,
+    }
+    if checkpoint.get("attention_scaffolding") != expected_attention:
+        raise RuntimeError("resume checkpoint lacks complete INT8 attention scaffolding evidence")
     try:
         resume_contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
     except (TypeError, ValueError) as exc:
@@ -228,6 +272,8 @@ def validate_resume_checkpoint(
         raise RuntimeError("resume checkpoint manifest digest does not match")
     if checkpoint.get("fp32_checkpoint_sha256") != sha256_file(fp32_checkpoint):
         raise RuntimeError("resume checkpoint FP32 digest does not match")
+    if checkpoint.get("fp32_lineage_sha256") != sha256_file(fp32_lineage):
+        raise RuntimeError("resume checkpoint FP32 lineage digest does not match")
     if not isinstance(checkpoint.get("qat_state_dict"), dict):
         raise RuntimeError("resume checkpoint has no QAT state dictionary")
     if not isinstance(checkpoint.get("baseline"), dict) or not isinstance(checkpoint.get("final_metrics"), dict):
@@ -305,6 +351,12 @@ def evaluate_without_observer_updates(
 def main() -> int:
     args = parse_args()
     contract = DeploymentContract(args.image_size)
+    fp32_lineage = validate_fp32_lineage(
+        args.fp32_lineage,
+        args.fp32_checkpoint,
+        args.manifest,
+        contract,
+    )
     seed_everything(args.seed)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -318,6 +370,7 @@ def main() -> int:
             resume,
             args.manifest,
             args.fp32_checkpoint,
+            args.fp32_lineage,
             contract,
             training_selection,
         )
@@ -375,6 +428,9 @@ def main() -> int:
     detector = YOLO(str(args.fp32_checkpoint)).model
     detector.args = get_cfg(overrides=dict(getattr(detector, "args", {})))
     fuse_batch_norm_for_qat(detector)
+    detector, lowered_attention_count = lower_attention_for_mla(detector)
+    if lowered_attention_count != 2:
+        raise RuntimeError(f"expected two YOLO26 attention modules, lowered {lowered_attention_count}")
     detector.to(device).requires_grad_(True).train()
     criterion = detector.init_criterion()
     wrapped = Yolo26TrainingDeployWrapper(detector).to(device).train()
@@ -396,6 +452,7 @@ def main() -> int:
         ),
     )
     qat_model = sima_prepare_qat_model(wrapped, example, device)
+    attention_scaffolding = validate_attention_qat_scaffolding(qat_model)
     if resume is None:
         if observer_data is None:
             raise RuntimeError("fresh QAT has no observer data")
@@ -526,7 +583,7 @@ def main() -> int:
         print(json.dumps(entry, sort_keys=True), flush=True)
         checkpoint = {
             "schema_version": 1,
-            "architecture": "yolo26n-p2-int8-conv-one-class",
+            "architecture": "yolo26n-p2-attention-one-class",
             "deployment": contract.to_dict(),
             "qat_state_dict": qat_model.state_dict(),
             "epoch": epoch,
@@ -540,12 +597,15 @@ def main() -> int:
             "observer_images": len(observed_paths),
             "observer_selection": observer_evidence,
             "training_selection": training_selection,
+            "attention_scaffolding": attention_scaffolding,
             "manifest_sha256": sha256_file(args.manifest),
             "fp32_checkpoint_sha256": sha256_file(args.fp32_checkpoint),
+            "fp32_lineage_sha256": sha256_file(args.fp32_lineage),
+            "fp32_qualification_eligible": fp32_lineage["qualification_eligible"],
             "resume_checkpoint_sha256": resume_digest,
             "trainable_scope": args.trainable_scope,
             "trainable_parameter_count": trainable_parameter_count,
-            "qualification_eligible": not args.smoke and observers_frozen,
+            "qualification_eligible": (fp32_lineage["qualification_eligible"] and not args.smoke and observers_frozen),
             "versions": {
                 "torch": torch.__version__,
                 "ultralytics": ultralytics.__version__,

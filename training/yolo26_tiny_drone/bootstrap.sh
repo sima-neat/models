@@ -28,11 +28,13 @@ else
   printf '%s\n' "$SIMA_QAT_SITE_PACKAGES" > "$site/sima_qat_sdk.pth"
 fi
 
-"$venv/bin/python" - <<'PY'
+PYTHONPATH="$recipe_dir${PYTHONPATH:+:$PYTHONPATH}" "$venv/bin/python" - <<'PY'
 import torch
 import torchvision
 import ultralytics
+from model import lower_attention_for_mla, validate_attention_qat_scaffolding
 from sima_qat.qat_api import sima_prepare_qat_model
+from ultralytics.nn.modules.block import Attention
 
 assert torch.__version__.split("+")[0] == "2.3.1", torch.__version__
 assert torchvision.__version__.split("+")[0] == "0.18.1", torchvision.__version__
@@ -40,4 +42,16 @@ print("torch", torch.__version__)
 print("torchvision", torchvision.__version__)
 print("ultralytics", ultralytics.__version__)
 print("sima_prepare_qat_model", sima_prepare_qat_model)
+
+attention = Attention(128, num_heads=2).train()
+attention, lowered_count = lower_attention_for_mla(attention)
+assert lowered_count == 1, lowered_count
+example = (torch.rand(1, 128, 8, 8),)
+prepared = sima_prepare_qat_model(attention, example, torch.device("cpu"))
+attention_evidence = validate_attention_qat_scaffolding(
+    prepared,
+    expected_matmuls=4,
+    expected_softmaxes=2,
+)
+print("attention_qat", attention_evidence)
 PY
