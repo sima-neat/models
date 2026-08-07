@@ -7,7 +7,7 @@ def ultralytics_label_path(image: Path) -> Path:
     """Return the label path Ultralytics will derive for an image path."""
     parts = list(image.parts)
     try:
-        images_index = parts.index("images")
+        images_index = len(parts) - 1 - parts[::-1].index("images")
     except ValueError as error:
         raise ValueError(f"image path must contain an 'images' directory for Ultralytics: {image}") from error
     parts[images_index] = "labels"

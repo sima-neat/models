@@ -494,6 +494,9 @@ def test_ultralytics_label_path_matches_training_loader_convention() -> None:
     image = Path("/dataset/images/sequence/frame.jpg")
     assert ultralytics_label_path(image) == Path("/dataset/labels/sequence/frame.txt")
 
+    nested = Path("/datasets/images/project/images/sequence/frame.jpg")
+    assert ultralytics_label_path(nested) == Path("/datasets/images/project/labels/sequence/frame.txt")
+
 
 def test_ultralytics_revision_prefers_distribution_provenance(monkeypatch) -> None:
     monkeypatch.setattr(provenance, "_distribution_revision", lambda: provenance.ULTRALYTICS_REVISION)
