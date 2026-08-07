@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import importlib.metadata
 import importlib.util
 import json
 import shutil
 import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 ULTRALYTICS_REVISION = "1367566337fb8056223a1aeb469360747f1b1bcd"
@@ -97,6 +101,53 @@ def require_swml_qat_runtime() -> str:
             f"swml-qat package content mismatch: expected {SWML_QAT_PACKAGE_SHA256}, got {package_digest}"
         )
     return package_digest
+
+
+@dataclass(frozen=True)
+class VerifiedRuntimePackage:
+    package_root: Path
+    package_sha256: str
+    temporary: tempfile.TemporaryDirectory
+
+
+def activate_verified_swml_qat_runtime() -> VerifiedRuntimePackage:
+    """Import sima_qat from a private snapshot of the bytes that passed verification."""
+    if "sima_qat" in sys.modules:
+        raise RuntimeError("sima_qat was imported before its runtime snapshot was activated")
+    specification = importlib.util.find_spec("sima_qat")
+    locations = None if specification is None else specification.submodule_search_locations
+    if not locations:
+        raise RuntimeError("cannot locate the installed sima_qat runtime package")
+    source_root = Path(next(iter(locations))).resolve()
+    source_digest = require_swml_qat_runtime()
+    temporary = tempfile.TemporaryDirectory(prefix="yolo26-swml-qat-")
+    snapshot_root = Path(temporary.name) / "sima_qat"
+    try:
+        shutil.copytree(
+            source_root,
+            snapshot_root,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.md"),
+        )
+        snapshot_digest = runtime_package_sha256(snapshot_root)
+        if snapshot_digest != source_digest:
+            raise RuntimeError(
+                f"swml-qat changed while creating its private snapshot: expected {source_digest}, got {snapshot_digest}"
+            )
+        for path in snapshot_root.rglob("*"):
+            if path.is_file():
+                path.chmod(0o400)
+        sys.path.insert(0, temporary.name)
+        importlib.invalidate_caches()
+        module = importlib.import_module("sima_qat")
+        loaded_root = Path(module.__file__).resolve().parent
+        if loaded_root != snapshot_root:
+            raise RuntimeError(f"sima_qat loaded outside its verified snapshot: {loaded_root}")
+    except BaseException:
+        sys.path = [entry for entry in sys.path if entry != temporary.name]
+        sys.modules.pop("sima_qat", None)
+        temporary.cleanup()
+        raise
+    return VerifiedRuntimePackage(snapshot_root, snapshot_digest, temporary)
 
 
 def require_ultralytics_revision(package_root: Path) -> str:

@@ -95,7 +95,8 @@ package does not. The dependency is implemented by internal `swml-qat` commit
 `dee0915` on `feat/int8-matmul-softmax-qat`; this Models change must not merge
 before that dependency. The recipe content-hashes the installed `sima_qat`
 runtime against that commit before bootstrap validation, QAT, resume, and
-export; a structurally similar or locally modified package cannot qualify.
+export, then imports only from the verified private snapshot; a structurally
+similar, locally modified, or concurrently replaced package cannot qualify.
 Bootstrap from the exact QAT wheel or source installation:
 
 ```bash
@@ -308,14 +309,14 @@ serialized INT8 graph, and MPK by SHA-256. Dataset contents are rehashed after
 the calibration tensor is assembled and before compilation starts. The
 validated export report and ONNX are copied to a private read-only snapshot;
 ModelSDK consumes only that snapshot, which is revalidated after compilation.
-It
-also enables non-4D MLA tensors while preserving deployment batch one and
+It also enables non-4D MLA tensors while preserving deployment batch one and
 verifies that every source convolution becomes a per-channel INT8 MLA
 convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8
 MLA BatchMatmul layers, all four Softmax layers are `SIMA_QUANTIZED` INT8 MLA
 layers, there is one MLA segment with no A65 fallback or host shared object,
 all eight raw heads use INT8 transport, and Neat's public boundaries remain
-float32.
+float32. MPK audit requires both the ordered public output names and byte sizes
+to match the contract, including equal-sized bbox/class tensor collisions.
 
 `--allow-smoke` exists only for structural development checks. Its report is
 explicitly marked ineligible for qualification and must never be promoted.

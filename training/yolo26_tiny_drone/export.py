@@ -28,7 +28,8 @@ from onnx_audit import audit_onnx, canonicalize_attention_for_modelsdk, sha256_f
 from provenance import (
     SWML_QAT_REVISION,
     ULTRALYTICS_PACKAGE_SHA256,
-    require_swml_qat_runtime,
+    VerifiedRuntimePackage,
+    activate_verified_swml_qat_runtime,
     require_ultralytics_revision,
     snapshot_file,
 )
@@ -118,6 +119,7 @@ class VerifiedExportSources:
     checkpoint_sha256: str
     fp32_checkpoint_sha256: str
     ultralytics_revision: str
+    swml_qat_runtime: VerifiedRuntimePackage
 
 
 def load_verified_export_sources(
@@ -129,7 +131,7 @@ def load_verified_export_sources(
     from ultralytics import YOLO
     from ultralytics.cfg import get_cfg
 
-    swml_qat_digest = require_swml_qat_runtime()
+    swml_qat_runtime = activate_verified_swml_qat_runtime()
     checkpoint_digest = sha256_file(args.checkpoint)
     fp32_digest = sha256_file(args.fp32_checkpoint)
     with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-") as temporary:
@@ -160,7 +162,7 @@ def load_verified_export_sources(
             raise RuntimeError("QAT checkpoint Ultralytics package contents do not match the export environment")
         if checkpoint.get("versions", {}).get("swml_qat_revision") != SWML_QAT_REVISION:
             raise RuntimeError("QAT checkpoint swml-qat revision does not match the export environment")
-        if checkpoint.get("versions", {}).get("swml_qat_package_sha256") != swml_qat_digest:
+        if checkpoint.get("versions", {}).get("swml_qat_package_sha256") != swml_qat_runtime.package_sha256:
             raise RuntimeError("QAT checkpoint swml-qat package contents do not match the export environment")
         if fp32_digest != checkpoint.get("fp32_checkpoint_sha256"):
             raise RuntimeError("FP32 checkpoint digest does not match the QAT lineage")
@@ -174,6 +176,7 @@ def load_verified_export_sources(
         checkpoint_sha256=checkpoint_digest,
         fp32_checkpoint_sha256=fp32_digest,
         ultralytics_revision=ultralytics_revision,
+        swml_qat_runtime=swml_qat_runtime,
     )
 
 

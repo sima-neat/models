@@ -46,7 +46,7 @@ from provenance import (
     ULTRALYTICS_PACKAGE_SHA256,
     ULTRALYTICS_REVISION,
     YOLO26N_SHA256,
-    require_swml_qat_runtime,
+    activate_verified_swml_qat_runtime,
     require_ultralytics_revision,
     snapshot_file,
 )
@@ -472,7 +472,7 @@ def evaluate_without_observer_updates(
 def main() -> int:
     args = parse_args()
     contract = DeploymentContract(args.image_size)
-    swml_qat_digest = require_swml_qat_runtime()
+    swml_qat_runtime = activate_verified_swml_qat_runtime()
     records = load_manifest(args.manifest)
     dataset_digest = dataset_content_sha256(args.manifest, records)
     seed_everything(args.seed)
@@ -722,7 +722,7 @@ def main() -> int:
                 "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
                 "swml_qat": qat_package_version(),
                 "swml_qat_revision": SWML_QAT_REVISION,
-                "swml_qat_package_sha256": swml_qat_digest,
+                "swml_qat_package_sha256": swml_qat_runtime.package_sha256,
             },
         }
         atomic_save(checkpoint, args.output_dir / "checkpoint-latest.pt")

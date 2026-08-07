@@ -299,9 +299,20 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
     if len(inputs) != 1 or inputs[0].get("name") != INPUT_NAME or inputs[0].get("size") != public_input_size:
         raise RuntimeError(f"MPK public input ABI mismatch: {inputs}")
     terminal = plugins[-1] if plugins else {}
-    output_sizes = [node.get("size") for node in terminal.get("output_nodes", [])]
-    if _kernel(terminal) != "pass_through" or output_sizes != public_output_sizes:
-        raise RuntimeError(f"MPK public output ABI mismatch: {output_sizes}")
+    terminal_inputs = terminal.get("input_nodes", [])
+    output_nodes = terminal.get("output_nodes", [])
+    role_input_abi = [(str(node.get("name", "")).rsplit("/", 1)[-1], node.get("size")) for node in terminal_inputs]
+    output_sizes = [node.get("size") for node in output_nodes]
+    expected_output_abi = list(zip(contract.output_names(), public_output_sizes, strict=True))
+    if (
+        _kernel(terminal) != "pass_through"
+        or role_input_abi != expected_output_abi
+        or output_sizes != public_output_sizes
+    ):
+        raise RuntimeError(
+            "MPK public output ABI mismatch: "
+            f"expected {expected_output_abi}, got roles={role_input_abi}, output_sizes={output_sizes}"
+        )
     unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
     tensor_types = (
         unpack[0].get("config_params", {}).get("params", {}).get("tensor_types", []) if len(unpack) == 1 else []
@@ -335,7 +346,9 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
             "shape": list(contract.input_shape),
         },
         "public_output_dtype": "float32",
+        "public_output_names": [name for name, _size in role_input_abi],
         "public_output_sizes": output_sizes,
+        "public_output_abi": role_input_abi,
         "output_transport_types": tensor_types,
         "shared_object_count": len(shared_objects),
         "tessellation": "ev74",

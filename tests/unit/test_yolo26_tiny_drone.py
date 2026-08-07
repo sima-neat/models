@@ -427,9 +427,9 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert 'qat_model.load_state_dict(resume["qat_state_dict"], strict=True)' in source
     assert '"resume_checkpoint_sha256": resume_digest' in source
     assert "load_verified_qat_sources" in source
-    assert "swml_qat_digest = require_swml_qat_runtime()" in source
+    assert "swml_qat_runtime = activate_verified_swml_qat_runtime()" in source
     assert '"swml_qat_revision": SWML_QAT_REVISION' in source
-    assert '"swml_qat_package_sha256": swml_qat_digest' in source
+    assert '"swml_qat_package_sha256": swml_qat_runtime.package_sha256' in source
     assert 'snapshot_file(args.fp32_checkpoint, snapshot_dir / "fp32.pt", fp32_digest)' in source
     assert "YOLO(str(fp32_snapshot))" in source
     assert "sha256_file(args.fp32_checkpoint)" not in source[source.index("def main()") :]
@@ -550,8 +550,8 @@ def test_export_consumes_only_verified_input_snapshots() -> None:
     assert 'with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-")' in loader
     assert "torch.load(checkpoint_snapshot" in loader
     assert "YOLO(str(fp32_snapshot))" in loader
-    assert loader.index("require_swml_qat_runtime()") < loader.index("torch.load(checkpoint_snapshot")
-    assert 'get("swml_qat_package_sha256") != swml_qat_digest' in loader
+    assert loader.index("activate_verified_swml_qat_runtime()") < loader.index("torch.load(checkpoint_snapshot")
+    assert 'get("swml_qat_package_sha256") != swml_qat_runtime.package_sha256' in loader
     assert "torch.load(args.checkpoint" not in main
     assert "YOLO(str(args.fp32_checkpoint))" not in main
     assert '"checkpoint_sha256": sources.checkpoint_sha256' in main
@@ -572,12 +572,93 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert '"compute_scalar_type": "int8"' in source
     assert "any_shape_on_mla=True" in source
     assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
+    assert "role_input_abi != expected_output_abi" in source
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
     main = source[source.index("def main()") :]
     assert main.index("build_calibration(selected, contract)") < main.index("require_unchanged_dataset(")
     assert "with tempfile.TemporaryDirectory" in main
     assert main.count("validate_export(") == 2
     assert main.index("compile_model(") < main.rindex("validate_export(")
+
+
+def test_mpk_audit_rejects_equal_size_output_reordering(tmp_path: Path) -> None:
+    import io
+    import json
+    import tarfile
+
+    import numpy as np
+    from compile import audit_mpk
+    from contract import INPUT_NAME
+
+    contract = DeploymentContract()
+    expected_outputs = [
+        {"name": name, "size": int(np.prod(shape)) * np.dtype(np.float32).itemsize} for name, shape in contract.outputs
+    ]
+    terminal_inputs = [
+        {"name": f"dequantize_{index}/{node['name']}", "size": node["size"]}
+        for index, node in enumerate(expected_outputs)
+    ]
+    terminal_outputs = [
+        {"name": f"pass_through_out_{index}", "size": node["size"]} for index, node in enumerate(expected_outputs)
+    ]
+    plugins = [
+        {
+            "sequence": 0,
+            "processor": "DMA",
+            "config_params": {"kernel": "quantization_transform", "params": {"output_data_type": "int8"}},
+        },
+        *[
+            {
+                "sequence": index + 1,
+                "processor": "DMA",
+                "config_params": {"kernel": "dequantization_transform", "params": {"input_data_type": "int8"}},
+            }
+            for index in range(len(expected_outputs))
+        ],
+        {
+            "sequence": 10,
+            "processor": "DMA",
+            "config_params": {
+                "kernel": "unpack_transform",
+                "params": {"tensor_types": ["int8"] * len(expected_outputs)},
+            },
+        },
+        {
+            "sequence": 11,
+            "processor": "MLA",
+            "input_nodes": terminal_inputs,
+            "output_nodes": terminal_outputs,
+            "config_params": {"kernel": "pass_through"},
+        },
+    ]
+    manifest = {
+        "model_sdk_version": "test",
+        "input_nodes": [
+            {
+                "name": INPUT_NAME,
+                "size": int(np.prod(contract.input_shape)) * np.dtype(np.float32).itemsize,
+            }
+        ],
+        "plugins": plugins,
+    }
+    archive = tmp_path / "model.mpk"
+
+    def write_archive() -> None:
+        document = json.dumps(manifest).encode()
+        with tarfile.open(archive, "w:gz") as stream:
+            for name, content in (("model/model.elf", b"elf"), ("model/model_mpk.json", document)):
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                stream.addfile(info, io.BytesIO(content))
+
+    write_archive()
+    assert audit_mpk(archive, contract)["public_output_names"] == contract.output_names()
+
+    terminal_inputs[1], terminal_inputs[4] = terminal_inputs[4], terminal_inputs[1]
+    assert terminal_inputs[1]["size"] == terminal_inputs[4]["size"]
+    write_archive()
+    with pytest.raises(RuntimeError, match="public output ABI mismatch"):
+        audit_mpk(archive, contract)
 
 
 def test_compile_uses_a_private_export_snapshot(tmp_path: Path) -> None:
@@ -725,3 +806,32 @@ def test_swml_qat_runtime_requires_the_pinned_package_contents(tmp_path: Path, m
     monkeypatch.setattr(provenance, "runtime_package_sha256", lambda _package_root: "modified")
     with pytest.raises(RuntimeError, match="swml-qat package content mismatch"):
         provenance.require_swml_qat_runtime()
+
+
+def test_swml_qat_import_uses_the_verified_private_snapshot(tmp_path: Path, monkeypatch) -> None:
+    package = tmp_path / "sima_qat"
+    package.mkdir()
+    source = package / "__init__.py"
+    source.write_text('VALUE = "verified"\n', encoding="utf-8")
+
+    class Specification:
+        submodule_search_locations = [str(package)]
+
+    monkeypatch.setattr(provenance.importlib.util, "find_spec", lambda _name: Specification())
+    monkeypatch.setattr(
+        provenance,
+        "runtime_package_sha256",
+        lambda _package_root: provenance.SWML_QAT_PACKAGE_SHA256,
+    )
+    runtime = provenance.activate_verified_swml_qat_runtime()
+    try:
+        source.write_text('VALUE = "replacement"\n', encoding="utf-8")
+        module = sys.modules["sima_qat"]
+        assert module.VALUE == "verified"
+        assert Path(module.__file__).resolve().parent == runtime.package_root
+        assert runtime.package_root != package
+        assert runtime.package_root.joinpath("__init__.py").stat().st_mode & 0o777 == 0o400
+    finally:
+        sys.modules.pop("sima_qat", None)
+        sys.path = [entry for entry in sys.path if entry != str(runtime.package_root.parent)]
+        runtime.temporary.cleanup()
