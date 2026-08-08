@@ -46,8 +46,9 @@ from provenance import (
     ULTRALYTICS_PACKAGE_SHA256,
     ULTRALYTICS_REVISION,
     YOLO26N_SHA256,
+    VerifiedRuntimePackage,
     activate_verified_swml_qat_runtime,
-    require_ultralytics_revision,
+    activate_verified_ultralytics_runtime,
     snapshot_file,
 )
 from torch import nn
@@ -335,6 +336,7 @@ class VerifiedQATSources:
     resume_checkpoint_sha256: str | None
     ultralytics_version: str
     ultralytics_revision: str
+    ultralytics_runtime: VerifiedRuntimePackage
 
 
 def load_verified_qat_sources(
@@ -344,11 +346,14 @@ def load_verified_qat_sources(
     training_selection: dict[str, Any],
 ) -> VerifiedQATSources:
     """Validate, snapshot, and fully consume every mutable QAT source."""
+    ultralytics_runtime = activate_verified_ultralytics_runtime()
     import ultralytics
     from ultralytics import YOLO
     from ultralytics.cfg import get_cfg
 
-    ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
+    ultralytics_revision = ultralytics_runtime.revision
+    if ultralytics_revision is None:
+        raise RuntimeError("verified Ultralytics runtime has no source revision")
     fp32_digest = sha256_file(args.fp32_checkpoint)
     lineage_digest = sha256_file(args.fp32_lineage)
     resume_digest = sha256_file(args.resume_checkpoint) if args.resume_checkpoint is not None else None
@@ -385,7 +390,7 @@ def load_verified_qat_sources(
             raise RuntimeError("resume checkpoint Ultralytics revision does not match the environment")
         if (
             resume is not None
-            and resume.get("versions", {}).get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256
+            and resume.get("versions", {}).get("ultralytics_package_sha256") != ultralytics_runtime.package_sha256
         ):
             raise RuntimeError("resume checkpoint Ultralytics package contents do not match the environment")
         if resume is not None and resume.get("versions", {}).get("swml_qat_revision") != SWML_QAT_REVISION:
@@ -408,6 +413,7 @@ def load_verified_qat_sources(
         resume_checkpoint_sha256=resume_digest,
         ultralytics_version=ultralytics.__version__,
         ultralytics_revision=ultralytics_revision,
+        ultralytics_runtime=ultralytics_runtime,
     )
 
 
@@ -719,7 +725,7 @@ def main() -> int:
                 "torch": torch.__version__,
                 "ultralytics": sources.ultralytics_version,
                 "ultralytics_revision": ultralytics_revision,
-                "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
+                "ultralytics_package_sha256": sources.ultralytics_runtime.package_sha256,
                 "swml_qat": qat_package_version(),
                 "swml_qat_revision": SWML_QAT_REVISION,
                 "swml_qat_package_sha256": swml_qat_runtime.package_sha256,

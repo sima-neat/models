@@ -27,10 +27,9 @@ from model import (
 from onnx_audit import audit_onnx, canonicalize_attention_for_modelsdk, sha256_file
 from provenance import (
     SWML_QAT_REVISION,
-    ULTRALYTICS_PACKAGE_SHA256,
     VerifiedRuntimePackage,
     activate_verified_swml_qat_runtime,
-    require_ultralytics_revision,
+    activate_verified_ultralytics_runtime,
     snapshot_file,
 )
 
@@ -119,6 +118,7 @@ class VerifiedExportSources:
     checkpoint_sha256: str
     fp32_checkpoint_sha256: str
     ultralytics_revision: str
+    ultralytics_runtime: VerifiedRuntimePackage
     swml_qat_runtime: VerifiedRuntimePackage
 
 
@@ -127,7 +127,7 @@ def load_verified_export_sources(
     device: torch.device,
 ) -> VerifiedExportSources:
     """Snapshot, validate, and fully consume the two mutable export inputs."""
-    import ultralytics
+    ultralytics_runtime = activate_verified_ultralytics_runtime()
     from ultralytics import YOLO
     from ultralytics.cfg import get_cfg
 
@@ -151,14 +151,16 @@ def load_verified_export_sources(
         contract = DeploymentContract.from_dict(checkpoint.get("deployment"))
         if int(checkpoint["arguments"]["batch_size"]) != 1:
             raise RuntimeError("QAT checkpoint was not captured for the batch-1 deployment contract")
-        ultralytics_revision = require_ultralytics_revision(Path(ultralytics.__file__).resolve().parent)
+        ultralytics_revision = ultralytics_runtime.revision
+        if ultralytics_revision is None:
+            raise RuntimeError("verified Ultralytics runtime has no source revision")
         checkpoint_revision = checkpoint.get("versions", {}).get("ultralytics_revision")
         if checkpoint_revision != ultralytics_revision:
             raise RuntimeError(
                 "QAT checkpoint Ultralytics revision does not match the export environment: "
                 f"checkpoint={checkpoint_revision}, environment={ultralytics_revision}"
             )
-        if checkpoint.get("versions", {}).get("ultralytics_package_sha256") != ULTRALYTICS_PACKAGE_SHA256:
+        if checkpoint.get("versions", {}).get("ultralytics_package_sha256") != ultralytics_runtime.package_sha256:
             raise RuntimeError("QAT checkpoint Ultralytics package contents do not match the export environment")
         if checkpoint.get("versions", {}).get("swml_qat_revision") != SWML_QAT_REVISION:
             raise RuntimeError("QAT checkpoint swml-qat revision does not match the export environment")
@@ -176,6 +178,7 @@ def load_verified_export_sources(
         checkpoint_sha256=checkpoint_digest,
         fp32_checkpoint_sha256=fp32_digest,
         ultralytics_revision=ultralytics_revision,
+        ultralytics_runtime=ultralytics_runtime,
         swml_qat_runtime=swml_qat_runtime,
     )
 

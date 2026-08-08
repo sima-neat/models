@@ -17,10 +17,8 @@ from dataset import (
     write_ultralytics_dataset,
 )
 from provenance import (
-    ULTRALYTICS_PACKAGE_SHA256,
-    ULTRALYTICS_REVISION,
     YOLO26N_SHA256,
-    require_ultralytics_revision,
+    activate_verified_ultralytics_runtime,
     snapshot_file,
 )
 
@@ -70,11 +68,11 @@ def main() -> int:
     generated = args.output_dir / "dataset"
     data_yaml = write_ultralytics_dataset(args.manifest, generated)
 
-    import ultralytics
+    ultralytics_runtime = activate_verified_ultralytics_runtime()
     from ultralytics import YOLO
 
-    package_root = Path(ultralytics.__file__).resolve().parent
-    require_ultralytics_revision(package_root)
+    if ultralytics_runtime.revision is None:
+        raise RuntimeError("verified Ultralytics runtime has no source revision")
     architecture = Path(__file__).with_name("yolo26n-p2-deploy.yaml")
     if not architecture.is_file():
         raise RuntimeError(f"canonical deployment architecture is missing: {architecture}")
@@ -170,8 +168,8 @@ def main() -> int:
             if applies
         ],
         "split_counts": {split: sum(record.split == split for record in records) for split in ("train", "val", "test")},
-        "ultralytics_revision": ULTRALYTICS_REVISION,
-        "ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256,
+        "ultralytics_revision": ultralytics_runtime.revision,
+        "ultralytics_package_sha256": ultralytics_runtime.package_sha256,
         "fp32_results": getattr(results, "results_dict", {}),
     }
     (args.output_dir / "lineage.json").write_text(

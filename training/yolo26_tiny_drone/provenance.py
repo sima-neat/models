@@ -108,20 +108,35 @@ class VerifiedRuntimePackage:
     package_root: Path
     package_sha256: str
     temporary: tempfile.TemporaryDirectory
+    revision: str | None = None
 
 
-def activate_verified_swml_qat_runtime() -> VerifiedRuntimePackage:
-    """Import sima_qat from a private snapshot of the bytes that passed verification."""
-    if "sima_qat" in sys.modules:
-        raise RuntimeError("sima_qat was imported before its runtime snapshot was activated")
-    specification = importlib.util.find_spec("sima_qat")
+def _loaded_package_modules(package_name: str) -> list[str]:
+    prefix = f"{package_name}."
+    return [name for name in sys.modules if name == package_name or name.startswith(prefix)]
+
+
+def _package_root(package_name: str) -> Path:
+    specification = importlib.util.find_spec(package_name)
     locations = None if specification is None else specification.submodule_search_locations
     if not locations:
-        raise RuntimeError("cannot locate the installed sima_qat runtime package")
-    source_root = Path(next(iter(locations))).resolve()
-    source_digest = require_swml_qat_runtime()
-    temporary = tempfile.TemporaryDirectory(prefix="yolo26-swml-qat-")
-    snapshot_root = Path(temporary.name) / "sima_qat"
+        raise RuntimeError(f"cannot locate the installed {package_name} runtime package")
+    return Path(next(iter(locations))).resolve()
+
+
+def _activate_verified_package(
+    package_name: str,
+    source_root: Path,
+    source_digest: str,
+    *,
+    label: str,
+    revision: str | None = None,
+) -> VerifiedRuntimePackage:
+    loaded = _loaded_package_modules(package_name)
+    if loaded:
+        raise RuntimeError(f"{package_name} was imported before its runtime snapshot was activated")
+    temporary = tempfile.TemporaryDirectory(prefix=f"yolo26-{package_name.replace('_', '-')}-")
+    snapshot_root = Path(temporary.name) / package_name
     try:
         shutil.copytree(
             source_root,
@@ -131,23 +146,52 @@ def activate_verified_swml_qat_runtime() -> VerifiedRuntimePackage:
         snapshot_digest = runtime_package_sha256(snapshot_root)
         if snapshot_digest != source_digest:
             raise RuntimeError(
-                f"swml-qat changed while creating its private snapshot: expected {source_digest}, got {snapshot_digest}"
+                f"{label} changed while creating its private snapshot: expected {source_digest}, got {snapshot_digest}"
             )
         for path in snapshot_root.rglob("*"):
             if path.is_file():
                 path.chmod(0o400)
         sys.path.insert(0, temporary.name)
         importlib.invalidate_caches()
-        module = importlib.import_module("sima_qat")
-        loaded_root = Path(module.__file__).resolve().parent
+        module = importlib.import_module(package_name)
+        module_file = getattr(module, "__file__", None)
+        if module_file is None:
+            raise RuntimeError(f"{package_name} runtime has no package file")
+        loaded_root = Path(module_file).resolve().parent
         if loaded_root != snapshot_root:
-            raise RuntimeError(f"sima_qat loaded outside its verified snapshot: {loaded_root}")
+            raise RuntimeError(f"{package_name} loaded outside its verified snapshot: {loaded_root}")
     except BaseException:
         sys.path = [entry for entry in sys.path if entry != temporary.name]
-        sys.modules.pop("sima_qat", None)
+        for name in _loaded_package_modules(package_name):
+            sys.modules.pop(name, None)
         temporary.cleanup()
         raise
-    return VerifiedRuntimePackage(snapshot_root, snapshot_digest, temporary)
+    return VerifiedRuntimePackage(snapshot_root, snapshot_digest, temporary, revision)
+
+
+def activate_verified_swml_qat_runtime() -> VerifiedRuntimePackage:
+    """Import sima_qat from a private snapshot of the bytes that passed verification."""
+    source_root = _package_root("sima_qat")
+    source_digest = require_swml_qat_runtime()
+    return _activate_verified_package(
+        "sima_qat",
+        source_root,
+        source_digest,
+        label="swml-qat",
+    )
+
+
+def activate_verified_ultralytics_runtime() -> VerifiedRuntimePackage:
+    """Import Ultralytics only from a private snapshot of verified package bytes."""
+    source_root = _package_root("ultralytics")
+    revision = require_ultralytics_revision(source_root)
+    return _activate_verified_package(
+        "ultralytics",
+        source_root,
+        ULTRALYTICS_PACKAGE_SHA256,
+        label="Ultralytics",
+        revision=revision,
+    )
 
 
 def require_ultralytics_revision(package_root: Path) -> str:

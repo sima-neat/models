@@ -428,8 +428,11 @@ def test_qat_script_enforces_representative_floor_and_batch_one() -> None:
     assert '"resume_checkpoint_sha256": resume_digest' in source
     assert "load_verified_qat_sources" in source
     assert "swml_qat_runtime = activate_verified_swml_qat_runtime()" in source
+    loader = source[source.index("def load_verified_qat_sources") : source.index("def select_trainable_parameters")]
+    assert loader.index("activate_verified_ultralytics_runtime()") < loader.index("import ultralytics")
     assert '"swml_qat_revision": SWML_QAT_REVISION' in source
     assert '"swml_qat_package_sha256": swml_qat_runtime.package_sha256' in source
+    assert '"ultralytics_package_sha256": sources.ultralytics_runtime.package_sha256' in source
     assert 'snapshot_file(args.fp32_checkpoint, snapshot_dir / "fp32.pt", fp32_digest)' in source
     assert "YOLO(str(fp32_snapshot))" in source
     assert "sha256_file(args.fp32_checkpoint)" not in source[source.index("def main()") :]
@@ -452,6 +455,8 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
     assert 'parser.add_argument("--initial-weights", type=Path)' in source
     assert 'Path(__file__).with_name("yolo26n-p2-deploy.yaml")' in source
     assert "initialization = args.initial_weights or args.base_weights" in source
+    main = source[source.index("def main()") :]
+    assert main.index("activate_verified_ultralytics_runtime()") < main.index("from ultralytics import YOLO")
     assert "model = YOLO(str(architecture_snapshot))" in source
     assert "model.load(str(initialization_snapshot))" in source
     assert "snapshot_file(" in source
@@ -468,7 +473,7 @@ def test_fp32_training_uses_one_canonical_graph_and_records_transfer_lineage() -
     assert '"dataset_sha256": dataset_digest' in source
     assert "not args.smoke and args.initial_weights is None" in source
     assert '"task_specific_initialization_without_lineage"' in source
-    assert '"ultralytics_package_sha256": ULTRALYTICS_PACKAGE_SHA256' in source
+    assert '"ultralytics_package_sha256": ultralytics_runtime.package_sha256' in source
     assert 'context="FP32 training"' in source
 
 
@@ -550,7 +555,10 @@ def test_export_consumes_only_verified_input_snapshots() -> None:
     assert 'with tempfile.TemporaryDirectory(prefix="yolo26-export-inputs-")' in loader
     assert "torch.load(checkpoint_snapshot" in loader
     assert "YOLO(str(fp32_snapshot))" in loader
+    assert loader.index("activate_verified_ultralytics_runtime()") < loader.index("from ultralytics import YOLO")
     assert loader.index("activate_verified_swml_qat_runtime()") < loader.index("torch.load(checkpoint_snapshot")
+    assert 'get("ultralytics_package_sha256")' in loader
+    assert "ultralytics_runtime.package_sha256" in loader
     assert 'get("swml_qat_package_sha256") != swml_qat_runtime.package_sha256' in loader
     assert "torch.load(args.checkpoint" not in main
     assert "YOLO(str(args.fp32_checkpoint))" not in main
@@ -786,6 +794,45 @@ def test_ultralytics_revision_rejects_modified_installed_contents(monkeypatch) -
 
     with pytest.raises(RuntimeError, match="package content mismatch"):
         provenance.require_ultralytics_revision(RECIPE)
+
+
+def test_ultralytics_import_uses_the_verified_private_snapshot(tmp_path: Path, monkeypatch) -> None:
+    package = tmp_path / "ultralytics"
+    package.mkdir()
+    source = package / "__init__.py"
+    source.write_text('VALUE = "verified"\n', encoding="utf-8")
+
+    class Specification:
+        submodule_search_locations = [str(package)]
+
+    loaded_modules = {
+        name: module for name, module in sys.modules.items() if name == "ultralytics" or name.startswith("ultralytics.")
+    }
+    for name in loaded_modules:
+        sys.modules.pop(name, None)
+    monkeypatch.setattr(provenance.importlib.util, "find_spec", lambda _name: Specification())
+    monkeypatch.setattr(provenance, "_distribution_revision", lambda: provenance.ULTRALYTICS_REVISION)
+    monkeypatch.setattr(
+        provenance,
+        "runtime_package_sha256",
+        lambda _package_root: provenance.ULTRALYTICS_PACKAGE_SHA256,
+    )
+    runtime = provenance.activate_verified_ultralytics_runtime()
+    try:
+        source.write_text('VALUE = "replacement"\n', encoding="utf-8")
+        module = sys.modules["ultralytics"]
+        assert module.VALUE == "verified"
+        assert Path(module.__file__).resolve().parent == runtime.package_root
+        assert runtime.package_root != package
+        assert runtime.package_root.joinpath("__init__.py").stat().st_mode & 0o777 == 0o400
+        assert runtime.revision == provenance.ULTRALYTICS_REVISION
+    finally:
+        for name in tuple(sys.modules):
+            if name == "ultralytics" or name.startswith("ultralytics."):
+                sys.modules.pop(name, None)
+        sys.modules.update(loaded_modules)
+        sys.path = [entry for entry in sys.path if entry != str(runtime.package_root.parent)]
+        runtime.temporary.cleanup()
 
 
 def test_swml_qat_runtime_requires_the_pinned_package_contents(tmp_path: Path, monkeypatch) -> None:
