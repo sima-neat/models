@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from pathlib import Path
 
 import yaml
 from model_registry.model import load_and_validate_model
+
+from models.yolo26_tiny_drone.quantized_snapshot import (
+    EXPECTED_CALIBRATION_TENSOR_SHA256,
+    EXPECTED_ONNX_SHA256,
+    MODEL_FILES,
+    MODEL_NAME,
+    build_archive,
+    materialize_snapshot,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "yolo26_tiny_drone"
@@ -28,6 +39,12 @@ def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
     assert variant["parameters"]["calibration_tensor_sha256"] == (
         "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"
     )
+    assert variant["parameters"]["quantized_source"] == {
+        "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/508162355",
+        "sha256": "9d8444f989563e71f32ab2569f4f49e02607036b92c376f0c64b79e3ac4530cc",
+        "size_bytes": 9644979,
+        "media_type": "application/gzip",
+    }
 
 
 def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
@@ -44,7 +61,9 @@ def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
     assert {"--model", "--output-dir", "--variant"} <= option_strings
     assert "audit_onnx(source, contract)" in source
     assert "validate_calibration(" in source
-    assert "compile_model(" in source
+    assert "materialize=False" in source
+    assert "materialize_snapshot(" in source
+    assert "Model.load(MODEL_NAME" in source
     assert '"mpk": audit_mpk(archive, contract)' in source
     assert 'parameters.get("tessellation_owner") != "mla"' in source
 
@@ -69,3 +88,44 @@ def test_calibration_archive_builder_is_deterministic_and_fail_closed() -> None:
     assert 'gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0)' in source
     assert "member.issym()" in source and "member.islnk()" in source
     assert "calibration tensor digest mismatch" in source
+
+
+def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    for index, name in enumerate(MODEL_FILES):
+        (source_dir / name).write_bytes(f"qualified-{index}\n".encode())
+    quantized_json = source_dir / f"{MODEL_NAME}.sima.json"
+    quantized_digest = hashlib.sha256(quantized_json.read_bytes()).hexdigest()
+    report = {
+        "schema_version": 1,
+        "architecture": "yolo26n-p2-attention-one-class",
+        "qualification_eligible": True,
+        "source_qualification_eligible": True,
+        "source": {"onnx_sha256": EXPECTED_ONNX_SHA256},
+        "calibration": {"count": 128, "tensor_sha256": EXPECTED_CALIBRATION_TENSOR_SHA256},
+        "quantized_model": {
+            "compute_convolution_count": 129,
+            "compute_scalar_type": "int8",
+            "weight_quantization": "per_channel_int8",
+            "quantized_model_json_sha256": quantized_digest,
+            "attention": {
+                "BatchMatmul": {"count": 8, "input_scalar_type": "int8", "output_scalar_type": "int8"},
+                "Softmax": {"count": 4, "input_scalar_type": "int8", "output_scalar_type": "int8"},
+            },
+        },
+        "mpk": {"compiler_version": "2.1.3"},
+    }
+    report_path = tmp_path / "compile-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    first = tmp_path / "first.tar.gz"
+    second = tmp_path / "second.tar.gz"
+
+    build_archive(report_path, source_dir, first)
+    build_archive(report_path, source_dir, second)
+
+    assert first.read_bytes() == second.read_bytes()
+    output = tmp_path / "materialized"
+    manifest = materialize_snapshot(first, output)
+    assert manifest["model_name"] == MODEL_NAME
+    assert {path.name for path in output.iterdir()} == set(MODEL_FILES)

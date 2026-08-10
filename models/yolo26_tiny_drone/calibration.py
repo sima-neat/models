@@ -59,7 +59,8 @@ def validate_calibration(
     *,
     expected_tensor_sha256: str,
     preprocess_rgb_image: Any,
-) -> tuple[np.ndarray, dict[str, Any]]:
+    materialize: bool = True,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
     """Verify all source bytes and reconstruct the exact NHWC FP32 tensor."""
     with tarfile.open(archive, "r:gz") as stream:
         members = _safe_members(stream)
@@ -84,6 +85,7 @@ def validate_calibration(
 
         expected_names = {str(MANIFEST_NAME)}
         samples: list[np.ndarray] = []
+        tensor_hasher = hashlib.sha256()
         observed_images: list[dict[str, str]] = []
         for index, declaration in enumerate(images):
             if not isinstance(declaration, dict):
@@ -109,18 +111,26 @@ def validate_calibration(
             if _sha256_bytes(payload) != digest:
                 raise ValueError(f"calibration image digest mismatch: {name}")
             with Image.open(io.BytesIO(payload)) as source:
-                samples.append(preprocess_rgb_image(source.convert("RGB"), contract))
+                sample = preprocess_rgb_image(source.convert("RGB"), contract)
+            expected_sample_shape = (contract.model_size, contract.model_size, 3)
+            if sample.shape != expected_sample_shape or sample.dtype != np.float32:
+                raise ValueError(f"invalid calibration sample {name}: shape={sample.shape}, dtype={sample.dtype}")
+            contiguous = np.ascontiguousarray(sample)
+            tensor_hasher.update(memoryview(contiguous).cast("B"))
+            if materialize:
+                samples.append(contiguous)
             observed_images.append({"file": name, "sequence": sequence, "sha256": digest})
 
         if set(members) != expected_names:
             unexpected = sorted(set(members) - expected_names)
             raise ValueError(f"calibration archive has unexpected members: {unexpected}")
 
-    calibration = np.stack(samples)
-    expected_shape = (EXPECTED_IMAGES, contract.model_size, contract.model_size, 3)
-    if calibration.shape != expected_shape or calibration.dtype != np.float32:
-        raise ValueError(f"invalid calibration tensor: shape={calibration.shape}, dtype={calibration.dtype}")
-    tensor_sha256 = hashlib.sha256(memoryview(np.ascontiguousarray(calibration)).cast("B")).hexdigest()
+    calibration = np.stack(samples) if materialize else None
+    if calibration is not None:
+        expected_shape = (EXPECTED_IMAGES, contract.model_size, contract.model_size, 3)
+        if calibration.shape != expected_shape or calibration.dtype != np.float32:
+            raise ValueError(f"invalid calibration tensor: shape={calibration.shape}, dtype={calibration.dtype}")
+    tensor_sha256 = tensor_hasher.hexdigest()
     if tensor_sha256 != expected_tensor_sha256:
         raise ValueError(
             f"calibration tensor digest mismatch: expected {expected_tensor_sha256}, found {tensor_sha256}"

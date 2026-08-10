@@ -75,6 +75,11 @@ compile_variants:
       calibration_samples: 128
       calibration_tensor_sha256: d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e
       expected_convolutions: 129
+      quantized_source:
+        uri: https://api.github.com/repos/sima-neat/models/releases/assets/508162355
+        sha256: 9d8444f989563e71f32ab2569f4f49e02607036b92c376f0c64b79e3ac4530cc
+        size_bytes: 9644979
+        media_type: application/gzip
 tests:
   correctness:
     - id: multiuav_tiny_drone_accuracy

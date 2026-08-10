@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ import yaml
 from calibration import validate_calibration
 from model_registry.fetch import Fetcher
 from model_registry.source import SourceSpec
+from quantized_snapshot import materialize_snapshot
 
 MODEL_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = MODEL_DIR.parents[1]
@@ -23,7 +26,8 @@ sys.path.insert(0, str(TRAINING_DIR))
 from compile import (  # noqa: E402
     MODEL_NAME,
     audit_mpk,
-    compile_model,
+    audit_quantized_model,
+    build_mla_tessellation_parameters,
     preprocess_rgb_image,
 )
 from contract import DeploymentContract  # noqa: E402
@@ -75,25 +79,50 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
         contract,
         expected_tensor_sha256=str(parameters["calibration_tensor_sha256"]),
         preprocess_rgb_image=preprocess_rgb_image,
+        materialize=False,
     )
+    if calibration is not None:
+        raise RuntimeError("compile-only validation unexpectedly materialized calibration data")
+    gc.collect()
+
+    quantized_source = SourceSpec.from_mapping(parameters["quantized_source"])
+    quantized_archive, _cache_hit = Fetcher().fetch(quantized_source)
 
     if output_dir.exists():
         raise FileExistsError(f"refusing to overwrite output directory: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=False)
-    archive, quantized_report, layout_report = compile_model(
-        source,
-        calibration,
-        output_dir,
-        MODEL_NAME,
-        contract,
-        int(parameters["expected_convolutions"]),
-    )
+    with tempfile.TemporaryDirectory(prefix="yolo26-quantized-snapshot-") as temporary:
+        snapshot_dir = Path(temporary) / "model"
+        snapshot_report = materialize_snapshot(quantized_archive, snapshot_dir)
+        quantized_report = audit_quantized_model(
+            snapshot_dir / f"{MODEL_NAME}.sima.json",
+            int(parameters["expected_convolutions"]),
+        )
+        from afe.apis.model import Model
+
+        quantized = Model.load(MODEL_NAME, str(snapshot_dir))
+        if quantized is None:
+            raise RuntimeError("ModelSDK returned no model for the qualified quantized snapshot")
+        tessellation_parameters, layout_report = build_mla_tessellation_parameters(quantized)
+        quantized.compile(
+            output_path=str(output_dir),
+            batch_size=1,
+            tessellate_parameters=tessellation_parameters,
+        )
+    archives = sorted(output_dir.glob("*_mpk.tar.gz"))
+    if len(archives) != 1:
+        raise RuntimeError(f"expected one compiled MPK, found {archives}")
+    archive = archives[0]
     report = {
         "schema_version": 1,
         "model_id": "yolo26_tiny_drone",
         "variant_id": variant_id,
         "source": source_audit,
         "calibration": calibration_report,
+        "quantized_snapshot": {
+            **snapshot_report,
+            "archive_sha256": quantized_source.sha256,
+        },
         "quantized_model": quantized_report,
         "mla_layout": layout_report,
         "mpk": audit_mpk(archive, contract),
