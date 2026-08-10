@@ -16,6 +16,7 @@ import yaml
 from calibration import validate_calibration
 from model_registry.fetch import Fetcher
 from model_registry.source import SourceSpec
+from output_labels import restore_public_output_labels
 from quantized_snapshot import materialize_snapshot
 
 MODEL_DIR = Path(__file__).resolve().parent
@@ -103,6 +104,7 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
         quantized = Model.load(MODEL_NAME, str(snapshot_dir))
         if quantized is None:
             raise RuntimeError("ModelSDK returned no model for the qualified quantized snapshot")
+        output_label_report = restore_public_output_labels(quantized, contract.output_names())
         tessellation_parameters, layout_report = build_mla_tessellation_parameters(quantized)
         quantized.compile(
             output_path=str(output_dir),
@@ -124,6 +126,7 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
             "archive_sha256": quantized_source.sha256,
         },
         "quantized_model": quantized_report,
+        "public_output_labels": output_label_report,
         "mla_layout": layout_report,
         "mpk": audit_mpk(archive, contract),
     }

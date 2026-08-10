@@ -5,9 +5,11 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from model_registry.model import load_and_validate_model
 
+from models.yolo26_tiny_drone.output_labels import restore_public_output_labels
 from models.yolo26_tiny_drone.quantized_snapshot import (
     EXPECTED_CALIBRATION_TENSOR_SHA256,
     EXPECTED_ONNX_SHA256,
@@ -64,8 +66,44 @@ def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
     assert "materialize=False" in source
     assert "materialize_snapshot(" in source
     assert "Model.load(MODEL_NAME" in source
+    assert "restore_public_output_labels(quantized, contract.output_names())" in source
     assert '"mpk": audit_mpk(archive, contract)' in source
     assert 'parameters.get("tessellation_owner") != "mla"' in source
+
+
+def test_modelsdk_output_labels_are_restored_and_verified() -> None:
+    class Net:
+        def __init__(self) -> None:
+            self._output_labels = None
+
+        @property
+        def output_labels(self):
+            return self._output_labels
+
+    class Model:
+        def __init__(self) -> None:
+            self._net = Net()
+
+    model = Model()
+    report = restore_public_output_labels(model, ["bbox_0", "class_logit_0"])
+
+    assert model._net.output_labels == ["bbox_0", "class_logit_0"]
+    assert report == {
+        "names": ["bbox_0", "class_logit_0"],
+        "restored_after_load": True,
+    }
+
+
+def test_modelsdk_output_labels_refuse_to_overwrite_an_abi_change() -> None:
+    class Net:
+        _output_labels = ["different"]
+        output_labels = _output_labels
+
+    class Model:
+        _net = Net()
+
+    with pytest.raises(RuntimeError, match="public output labels changed"):
+        restore_public_output_labels(Model(), ["bbox_0"])
 
 
 def test_registry_accuracy_gates_match_qualified_export() -> None:
