@@ -579,7 +579,13 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert "attention_types != {expected_io}" in source
     assert '"compute_scalar_type": "int8"' in source
     assert "any_shape_on_mla=True" in source
+    assert "TensorTessellateParameters" in source
+    assert "TensorDRAMLayout.HWC" in source
+    assert "TensorDRAMLayout.HWC16" in source
+    assert "tessellate_parameters=tessellation_parameters" in source
+    assert "tessellate_parameters=None" not in source
     assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
+    assert '"tessellation": "mla"' in source
     assert "role_input_abi != expected_output_abi" in source
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
     main = source[source.index("def main()") :]
@@ -589,16 +595,10 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert main.index("compile_model(") < main.rindex("validate_export(")
 
 
-def test_mpk_audit_rejects_equal_size_output_reordering(tmp_path: Path) -> None:
-    import io
-    import json
-    import tarfile
-
+def _mpk_fixture(contract: DeploymentContract) -> tuple[dict[str, object], list[dict[str, object]]]:
     import numpy as np
-    from compile import audit_mpk
     from contract import INPUT_NAME
 
-    contract = DeploymentContract()
     expected_outputs = [
         {"name": name, "size": int(np.prod(shape)) * np.dtype(np.float32).itemsize} for name, shape in contract.outputs
     ]
@@ -612,60 +612,123 @@ def test_mpk_audit_rejects_equal_size_output_reordering(tmp_path: Path) -> None:
     plugins = [
         {
             "sequence": 0,
-            "processor": "DMA",
+            "processor": "EV74",
+            "input_nodes": [{"name": INPUT_NAME}],
+            "output_nodes": [{"name": "quantize_0"}],
             "config_params": {"kernel": "quantization_transform", "params": {"output_data_type": "int8"}},
         },
-        *[
-            {
-                "sequence": index + 1,
-                "processor": "DMA",
-                "config_params": {"kernel": "dequantization_transform", "params": {"input_data_type": "int8"}},
-            }
-            for index in range(len(expected_outputs))
-        ],
         {
-            "sequence": 10,
-            "processor": "DMA",
+            "sequence": 1,
+            "processor": "MLA",
+            "input_nodes": [{"name": "quantize_0"}],
+            "output_nodes": [{"name": "MLA_0"}],
+            "config_params": {},
+        },
+        {
+            "sequence": 2,
+            "processor": "EV74",
             "config_params": {
                 "kernel": "unpack_transform",
                 "params": {"tensor_types": ["int8"] * len(expected_outputs)},
             },
         },
+        *[
+            {
+                "sequence": index + 3,
+                "processor": "EV74",
+                "config_params": {"kernel": "dequantization_transform", "params": {"input_data_type": "int8"}},
+            }
+            for index in range(len(expected_outputs))
+        ],
         {
-            "sequence": 11,
-            "processor": "MLA",
+            "sequence": len(expected_outputs) + 3,
+            "processor": "EV74",
             "input_nodes": terminal_inputs,
             "output_nodes": terminal_outputs,
             "config_params": {"kernel": "pass_through"},
         },
     ]
-    manifest = {
-        "model_sdk_version": "test",
-        "input_nodes": [
-            {
-                "name": INPUT_NAME,
-                "size": int(np.prod(contract.input_shape)) * np.dtype(np.float32).itemsize,
-            }
-        ],
-        "plugins": plugins,
-    }
+    return (
+        {
+            "model_sdk_version": "2.1.3",
+            "input_nodes": [
+                {
+                    "name": INPUT_NAME,
+                    "size": int(np.prod(contract.input_shape)) * np.dtype(np.float32).itemsize,
+                }
+            ],
+            "plugins": plugins,
+        },
+        terminal_inputs,
+    )
+
+
+def _write_mpk_fixture(path: Path, manifest: dict[str, object]) -> None:
+    import io
+    import json
+    import tarfile
+
+    document = json.dumps(manifest).encode()
+    with tarfile.open(path, "w:gz") as stream:
+        for name, content in (("model/model.elf", b"elf"), ("model/model_mpk.json", document)):
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            stream.addfile(info, io.BytesIO(content))
+
+
+def test_mpk_audit_rejects_equal_size_output_reordering(tmp_path: Path) -> None:
+    from compile import audit_mpk
+
+    contract = DeploymentContract()
+    manifest, terminal_inputs = _mpk_fixture(contract)
     archive = tmp_path / "model.mpk"
 
-    def write_archive() -> None:
-        document = json.dumps(manifest).encode()
-        with tarfile.open(archive, "w:gz") as stream:
-            for name, content in (("model/model.elf", b"elf"), ("model/model_mpk.json", document)):
-                info = tarfile.TarInfo(name)
-                info.size = len(content)
-                stream.addfile(info, io.BytesIO(content))
-
-    write_archive()
+    _write_mpk_fixture(archive, manifest)
     assert audit_mpk(archive, contract)["public_output_names"] == contract.output_names()
 
     terminal_inputs[1], terminal_inputs[4] = terminal_inputs[4], terminal_inputs[1]
     assert terminal_inputs[1]["size"] == terminal_inputs[4]["size"]
-    write_archive()
+    _write_mpk_fixture(archive, manifest)
     with pytest.raises(RuntimeError, match="public output ABI mismatch"):
+        audit_mpk(archive, contract)
+
+
+@pytest.mark.parametrize("kernel", ["tessellation_transform", "detessellation_transform"])
+def test_mpk_audit_rejects_external_tensor_layout(tmp_path: Path, kernel: str) -> None:
+    from compile import audit_mpk
+
+    contract = DeploymentContract()
+    manifest, _terminal_inputs = _mpk_fixture(contract)
+    plugins = manifest["plugins"]
+    assert isinstance(plugins, list)
+    plugins.insert(
+        1,
+        {
+            "sequence": 1,
+            "processor": "EV74",
+            "config_params": {"kernel": kernel, "params": {}},
+        },
+    )
+    archive = tmp_path / "external-layout.mpk"
+    _write_mpk_fixture(archive, manifest)
+
+    with pytest.raises(RuntimeError, match="does not implement tensor layout on MLA"):
+        audit_mpk(archive, contract)
+
+
+def test_mpk_audit_rejects_indirect_quantizer_to_mla_route(tmp_path: Path) -> None:
+    from compile import audit_mpk
+
+    contract = DeploymentContract()
+    manifest, _terminal_inputs = _mpk_fixture(contract)
+    plugins = manifest["plugins"]
+    assert isinstance(plugins, list)
+    mla = next(plugin for plugin in plugins if plugin.get("processor") == "MLA")
+    mla["input_nodes"] = [{"name": "external_tessellated_input"}]
+    archive = tmp_path / "indirect-mla.mpk"
+    _write_mpk_fixture(archive, manifest)
+
+    with pytest.raises(RuntimeError, match="quantizer does not feed MLA directly"):
         audit_mpk(archive, contract)
 
 

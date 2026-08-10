@@ -315,8 +315,14 @@ convolution, all eight per-head Einsum operators become `SIMA_QUANTIZED` INT8
 MLA BatchMatmul layers, all four Softmax layers are `SIMA_QUANTIZED` INT8 MLA
 layers, there is one MLA segment with no A65 fallback or host shared object,
 all eight raw heads use INT8 transport, and Neat's public boundaries remain
-float32. MPK audit requires both the ordered public output names and byte sizes
-to match the contract, including equal-sized bbox/class tensor collisions.
+float32. The recipe derives the MLA tensor names from the quantized graph and
+requests direct HWC input tessellation plus HWC16 output detessellation on MLA.
+The MPK audit requires the INT8 quantizer to feed MLA directly and rejects any
+external tessellation or detessellation transform. HWC16 channel-padding crops
+may remain as EV74 slice transforms; they are neither tessellation nor
+detessellation. The audit also requires both the ordered public output names
+and byte sizes to match the contract, including equal-sized bbox/class tensor
+collisions.
 
 `--allow-smoke` exists only for structural development checks. Its report is
 explicitly marked ineligible for qualification and must never be promoted.
