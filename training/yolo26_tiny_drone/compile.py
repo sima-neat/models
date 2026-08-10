@@ -140,9 +140,8 @@ def select_calibration_records(
     return sorted(selected, key=lambda record: str(record.image))
 
 
-def preprocess_image(path: Path, contract: DeploymentContract) -> np.ndarray:
-    with Image.open(path) as source:
-        image = source.convert("RGB")
+def preprocess_rgb_image(image: Image.Image, contract: DeploymentContract) -> np.ndarray:
+    """Apply the deployment letterbox to one decoded RGB image."""
     width, height = image.size
     scale = min(contract.model_size / width, contract.model_size / height)
     resized_width = max(1, round(width * scale))
@@ -153,6 +152,11 @@ def preprocess_image(path: Path, contract: DeploymentContract) -> np.ndarray:
     canvas = Image.new("RGB", (contract.model_size, contract.model_size), (114, 114, 114))
     canvas.paste(resized, (left, top))
     return np.asarray(canvas, dtype=np.float32) / np.float32(255.0)
+
+
+def preprocess_image(path: Path, contract: DeploymentContract) -> np.ndarray:
+    with Image.open(path) as source:
+        return preprocess_rgb_image(source.convert("RGB"), contract)
 
 
 def build_calibration(records: list[FrameRecord], contract: DeploymentContract) -> tuple[np.ndarray, dict[str, Any]]:
@@ -168,7 +172,7 @@ def build_calibration(records: list[FrameRecord], contract: DeploymentContract) 
         or samples.dtype != np.float32
     ):
         raise RuntimeError(f"invalid calibration tensor: shape={samples.shape}, dtype={samples.dtype}")
-    digest = hashlib.sha256(np.ascontiguousarray(samples).tobytes()).hexdigest()
+    digest = hashlib.sha256(memoryview(np.ascontiguousarray(samples)).cast("B")).hexdigest()
     evidence = {
         "count": len(records),
         "images": [

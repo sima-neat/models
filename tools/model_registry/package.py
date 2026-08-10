@@ -20,17 +20,33 @@ def _size_text(size_bytes: int) -> str:
     return "1KB" if size_bytes else "0KB"
 
 
-def _metadata(*, name: str, version: str, description: str, resources: list[str],
-              checksums: dict[str, str], selectables: list[dict[str, str]], size_bytes: int) -> dict[str, Any]:
+def _metadata(
+    *,
+    name: str,
+    version: str,
+    description: str,
+    resources: list[str],
+    checksums: dict[str, str],
+    selectables: list[dict[str, str]],
+    size_bytes: int,
+) -> dict[str, Any]:
     if not resources:
         raise ValidationError(f"{name}: sima-cli metadata requires at least one non-selectable resource")
     size = _size_text(size_bytes)
     return {
-        "name": name, "version": version, "release": "", "description": description,
-        "platforms": [], "resources": resources, "resources-checksum": checksums,
-        "selectable-resources": selectables, "size": {"download": size, "install": size},
-        "installation": {"script": 'echo "Compiled model MPK artifacts downloaded"',
-                         "post-message": "[bold]Compiled model artifacts are ready.[/bold]\n"},
+        "name": name,
+        "version": version,
+        "release": "",
+        "description": description,
+        "platforms": [],
+        "resources": resources,
+        "resources-checksum": checksums,
+        "selectable-resources": selectables,
+        "size": {"download": size, "install": size},
+        "installation": {
+            "script": 'echo "Compiled model MPK artifacts downloaded"',
+            "post-message": "[bold]Compiled model artifacts are ready.[/bold]\n",
+        },
     }
 
 
@@ -39,9 +55,16 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def package_compiled_models(repository: str | Path, compiled_dir: str | Path, output_dir: str | Path,
-                            git_sha: str, *, environment: str = "staging", branch: str = "main",
-                            previous_index: str | Path | None = None) -> dict[str, Any]:
+def package_compiled_models(
+    repository: str | Path,
+    compiled_dir: str | Path,
+    output_dir: str | Path,
+    git_sha: str,
+    *,
+    environment: str = "staging",
+    branch: str = "main",
+    previous_index: str | Path | None = None,
+) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
@@ -89,10 +112,23 @@ def package_compiled_models(repository: str | Path, compiled_dir: str | Path, ou
             if not isinstance(provenance.get(key), str) or not provenance[key].strip():
                 raise ValidationError(f"{result_path}: provenance {key} must be a non-empty string")
         source_sha256 = provenance.get("source_sha256")
-        if not isinstance(source_sha256, str) or len(source_sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in source_sha256.lower()
+        if (
+            not isinstance(source_sha256, str)
+            or len(source_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in source_sha256.lower())
         ):
             raise ValidationError(f"{result_path}: provenance source_sha256 must be a SHA-256 digest")
+        declared_calibration = catalog[model_id]["calibration"]
+        calibration_sha256 = provenance.get("calibration_sha256")
+        if declared_calibration["status"] == "ready":
+            expected_calibration = declared_calibration["source"]["sha256"]
+            if calibration_sha256 != expected_calibration:
+                raise ValidationError(
+                    f"{result_path}: provenance calibration_sha256 must be {expected_calibration!r}, "
+                    f"found {calibration_sha256!r}"
+                )
+        elif calibration_sha256 is not None:
+            raise ValidationError(f"{result_path}: unexpected calibration provenance for {model_id}")
         verified = verify_mpk(result_path.parent)
         if result.get("sha256") != verified["sha256"] or result.get("archive") != verified["archive"]:
             raise ValidationError(f"{result_path}: compile result does not match the MPK archive")
@@ -102,11 +138,17 @@ def package_compiled_models(repository: str | Path, compiled_dir: str | Path, ou
             if not source.is_file():
                 raise ValidationError(f"{result_path.parent}: incomplete compiled model output")
             shutil.copy2(source, destination / source.name)
-        current_by_model.setdefault(model_id, []).append({
-            "target": variants[variant_id]["target"], "variant_id": variant_id,
-            "mpk": f"{model_id}/{variant_id}/{verified['archive']}", "sha256": verified["sha256"],
-            "size_bytes": verified["size_bytes"], "built_at": result.get("built_at"), "provenance": provenance,
-        })
+        current_by_model.setdefault(model_id, []).append(
+            {
+                "target": variants[variant_id]["target"],
+                "variant_id": variant_id,
+                "mpk": f"{model_id}/{variant_id}/{verified['archive']}",
+                "sha256": verified["sha256"],
+                "size_bytes": verified["size_bytes"],
+                "built_at": result.get("built_at"),
+                "provenance": provenance,
+            }
+        )
 
     index_models: dict[str, Any] = {}
     for model_id, model in sorted(catalog.items()):
@@ -123,16 +165,27 @@ def package_compiled_models(repository: str | Path, compiled_dir: str | Path, ou
             if any(not value for value in built_at_values):
                 raise ValidationError(f"{model_id}: compile result is missing built_at")
             index_models[model_id] = {
-                "display_name": model["display_name"], "description": model["description"],
-                "latest_tag": version, "artifact_branch": branch, "built_at": max(built_at_values),
+                "display_name": model["display_name"],
+                "description": model["description"],
+                "latest_tag": version,
+                "artifact_branch": branch,
+                "built_at": max(built_at_values),
                 "variants": {
                     item["variant_id"]: {
-                        "target": item["target"], "mpk": item["mpk"], "sha256": item["sha256"],
+                        "target": item["target"],
+                        "mpk": item["mpk"],
+                        "sha256": item["sha256"],
                         "size_bytes": item["size_bytes"],
                         "compiler_version": item["provenance"].get("compiler_version", ""),
                         "compiler_label": item["provenance"].get("compiler_label", ""),
                         "source_sha256": item["provenance"].get("source_sha256", ""),
-                    } for item in built
+                        **(
+                            {"calibration_sha256": item["provenance"]["calibration_sha256"]}
+                            if item["provenance"].get("calibration_sha256")
+                            else {}
+                        ),
+                    }
+                    for item in built
                 },
             }
         else:
@@ -150,39 +203,76 @@ def package_compiled_models(repository: str | Path, compiled_dir: str | Path, ou
     for model_id, entry in sorted(index_models.items()):
         for variant_id, variant in sorted(entry["variants"].items()):
             url = artifact_url(environment, entry["artifact_branch"], entry["latest_tag"], variant["mpk"])
-            packaged_models.append({
-                "id": model_id, "display_name": entry["display_name"], "variant_id": variant_id,
-                "target": variant["target"], "mpk": variant["mpk"], "artifact_url": url,
-                "sha256": variant["sha256"], "size_bytes": variant["size_bytes"],
-                "compiled_git_sha": entry["latest_tag"], "artifact_branch": entry["artifact_branch"],
-                "built_at": entry["built_at"],
-            })
-            root_selectables.append({"name": f"{entry['display_name']} ({variant_id})", "url": "",
-                                     "resource": url, "checksum": variant["sha256"]})
+            packaged_models.append(
+                {
+                    "id": model_id,
+                    "display_name": entry["display_name"],
+                    "variant_id": variant_id,
+                    "target": variant["target"],
+                    "mpk": variant["mpk"],
+                    "artifact_url": url,
+                    "sha256": variant["sha256"],
+                    "size_bytes": variant["size_bytes"],
+                    "compiled_git_sha": entry["latest_tag"],
+                    "artifact_branch": entry["artifact_branch"],
+                    "built_at": entry["built_at"],
+                }
+            )
+            root_selectables.append(
+                {
+                    "name": f"{entry['display_name']} ({variant_id})",
+                    "url": "",
+                    "resource": url,
+                    "checksum": variant["sha256"],
+                }
+            )
 
     for model_id, built in current_by_model.items():
         model_dir = output / model_id
         resources = [Path(item["mpk"]).relative_to(model_id).as_posix() for item in built]
         checksums = {resource: sha256_file(model_dir / resource)[0] for resource in resources}
         size_bytes = sum((model_dir / resource).stat().st_size for resource in resources)
-        _write_json(model_dir / "metadata.json", _metadata(
-            name=f"gh:sima-neat/models/{model_id}", version=version,
-            description=catalog[model_id]["description"], resources=resources, checksums=checksums,
-            selectables=[], size_bytes=size_bytes))
+        _write_json(
+            model_dir / "metadata.json",
+            _metadata(
+                name=f"gh:sima-neat/models/{model_id}",
+                version=version,
+                description=catalog[model_id]["description"],
+                resources=resources,
+                checksums=checksums,
+                selectables=[],
+                size_bytes=size_bytes,
+            ),
+        )
 
     latest_index = {
-        "schema_version": 1, "repository": "sima-neat/models", "branch": branch,
-        "catalog_tag": version, "updated_at": datetime.now(timezone.utc).isoformat(), "models": index_models,
+        "schema_version": 1,
+        "repository": "sima-neat/models",
+        "branch": branch,
+        "catalog_tag": version,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "models": index_models,
     }
     _write_json(output / "latest.json", latest_index)
     catalog_document = {
-        "schema_version": 1, "repository": "sima-neat/models", "commit": git_sha,
-        "commit_folder": version, "models": packaged_models,
+        "schema_version": 1,
+        "repository": "sima-neat/models",
+        "commit": git_sha,
+        "commit_folder": version,
+        "models": packaged_models,
     }
     _write_json(output / "catalog.json", catalog_document)
     catalog_digest, catalog_size = sha256_file(output / "catalog.json")
-    _write_json(output / "metadata.json", _metadata(
-        name="gh:sima-neat/models", version=version, description="SiMa Neat compiled model MPK catalog",
-        resources=["catalog.json"], checksums={"catalog.json": catalog_digest}, selectables=root_selectables,
-        size_bytes=catalog_size + sum(item["size_bytes"] for item in packaged_models)))
+    _write_json(
+        output / "metadata.json",
+        _metadata(
+            name="gh:sima-neat/models",
+            version=version,
+            description="SiMa Neat compiled model MPK catalog",
+            resources=["catalog.json"],
+            checksums={"catalog.json": catalog_digest},
+            selectables=root_selectables,
+            size_bytes=catalog_size + sum(item["size_bytes"] for item in packaged_models),
+        ),
+    )
     return catalog_document

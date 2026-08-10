@@ -1,0 +1,10 @@
+schema_version: 1
+status: qualified_reference
+dataset_sha256: 2747596e19c2b0f47882610de1129f28f0d434250bd2338d3e73ac69f5a3a6aa
+validation_tiny_ground_truth_count: 197828
+metrics:
+  - {name: qat_ap50, minimum: 0.30, measured: 0.9649116197101038}
+  - {name: qat_tiny_recall50, minimum: 0.50, measured: 0.9810037001839982}
+  - {name: ap50_drop, maximum: 0.02, measured: 0.0001795978578725821}
+  - {name: tiny_recall50_drop, maximum: 0.05, measured: -0.0031694199001152112}
+note: Metrics are from the sequence-safe held-out MultiUAV split recorded by the qualified epoch-7 export.

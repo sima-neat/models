@@ -73,12 +73,20 @@ class Fetcher:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         url = source.resolve_url(self.allowed_https_hosts)
-        token = os.environ.get("HF_TOKEN", "").strip()
         request = Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
-        if token and urlsplit_hostname(url) == "huggingface.co":
+        hostname = urlsplit_hostname(url)
+        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if hf_token and hostname == "huggingface.co":
             # urllib does not copy unredirected headers to Hugging Face's signed
             # CDN redirect, so the bearer token remains scoped to huggingface.co.
-            request.add_unredirected_header("Authorization", f"Bearer {token}")
+            request.add_unredirected_header("Authorization", f"Bearer {hf_token}")
+        if github_token and hostname in {"api.github.com", "github.com"}:
+            # Private release downloads redirect to a signed object URL. Keep
+            # repository credentials scoped to GitHub; redirect authorization
+            # is carried by the short-lived signature.
+            request.add_unredirected_header("Authorization", f"Bearer {github_token}")
+            request.add_header("Accept", "application/octet-stream")
 
         temporary: Path | None = None
         try:

@@ -1,0 +1,16 @@
+schema_version: 1
+status: qualified_reference
+target: modalix
+configuration:
+  input_shape: [1, 3, 1600, 1600]
+  precision: int8
+  tessellation_owner: mla
+  tracker_profile: tiny_drone
+metrics:
+  - model_inference_latency_ms
+  - preprocessing_latency_ms
+  - boxdecode_latency_ms
+  - tracking_latency_ms
+  - overlay_latency_ms
+  - end_to_end_latency_ms
+note: Preserve per-stage and end-to-end latency evidence when the registry artifact is requalified on a DevKit.

@@ -40,6 +40,30 @@ def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
                 "source_sha256": "c" * 64,
             },
         )
+    output = root / "yolo26_tiny_drone" / "modalix_int8_tessellation_mla"
+    output.mkdir(parents=True)
+    archive = output / "yolo26n_p2_tiny_drone_int8_qat_b1_mpk.tar.gz"
+    with tarfile.open(archive, "w:gz") as stream:
+        for name in ("yolo26/model.elf", "yolo26/yolo26_mpk.json"):
+            content = b"fixture"
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            stream.addfile(info, io.BytesIO(content))
+    verify_mpk(
+        output,
+        write_manifest=True,
+        provenance={
+            "model_id": "yolo26_tiny_drone",
+            "variant_id": "modalix_int8_tessellation_mla",
+            "git_sha": git_sha,
+            "target": "modalix",
+            "environment": "staging",
+            "compiler_version": "2.1.3",
+            "compiler_label": "model-compiler-2.1.3",
+            "source_sha256": "d" * 64,
+            "calibration_sha256": "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b",
+        },
+    )
     return root / "resnet_50"
 
 
@@ -108,7 +132,11 @@ def test_package_carries_forward_pointers_without_copying_unchanged_mpk(tmp_path
     next_sha = "b" * 40
     destination = tmp_path / "next"
     result = package_compiled_models(
-        ROOT, no_changes, destination, next_sha, branch="feature/catalog",
+        ROOT,
+        no_changes,
+        destination,
+        next_sha,
+        branch="feature/catalog",
         previous_index=previous / "latest.json",
     )
 

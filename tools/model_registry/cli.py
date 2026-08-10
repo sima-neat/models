@@ -32,6 +32,14 @@ def _parser() -> argparse.ArgumentParser:
     fetch.add_argument("--cache-dir", type=Path)
     fetch.add_argument("--json", action="store_true", dest="json_output")
 
+    calibration = subcommands.add_parser(
+        "fetch-calibration", help="download and verify a model's immutable calibration snapshot"
+    )
+    calibration.add_argument("model_dir", type=Path)
+    calibration.add_argument("--schema", type=Path)
+    calibration.add_argument("--cache-dir", type=Path)
+    calibration.add_argument("--json", action="store_true", dest="json_output")
+
     matrix = subcommands.add_parser("matrix", help="emit a deterministic changed-model compilation matrix")
     matrix.add_argument("--repository", type=Path, default=Path.cwd())
     matrix.add_argument("--all", action="store_true", dest="all_models")
@@ -40,9 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     matrix.add_argument("--base")
     matrix.add_argument("--head")
 
-    compiler = subcommands.add_parser(
-        "resolve-compiler", help="resolve the repository-wide Model Compiler dependency"
-    )
+    compiler = subcommands.add_parser("resolve-compiler", help="resolve the repository-wide Model Compiler dependency")
     compiler.add_argument("--repository", type=Path, default=Path.cwd())
 
     mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
@@ -55,6 +61,7 @@ def _parser() -> argparse.ArgumentParser:
     mpk.add_argument("--compiler-version")
     mpk.add_argument("--compiler-label")
     mpk.add_argument("--source-sha256")
+    mpk.add_argument("--calibration-sha256")
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
 
@@ -103,6 +110,30 @@ def _fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_calibration(args: argparse.Namespace) -> int:
+    model = load_and_validate_model(args.model_dir, args.schema)
+    calibration = model["calibration"]
+    if calibration["status"] != "ready":
+        result = {"model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    else:
+        source = SourceSpec.from_mapping(calibration["source"])
+        path, cache_hit = Fetcher(args.cache_dir).fetch(source)
+        result = {
+            "cache_hit": cache_hit,
+            "model_id": model["id"],
+            "path": str(path),
+            "sha256": source.sha256,
+            "size_bytes": source.size_bytes,
+        }
+    if args.json_output:
+        print(json.dumps(result, sort_keys=True))
+    elif result["path"]:
+        print(f"Verified calibration: {result['path']}")
+    else:
+        print(f"No calibration required: {result['model_id']}")
+    return 0
+
+
 def _matrix(args: argparse.Namespace) -> int:
     catalog = discover_catalog(args.repository)
     selection_modes = (
@@ -140,6 +171,7 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "compiler_version",
         "compiler_label",
         "source_sha256",
+        "calibration_sha256",
         "git_sha",
         "environment",
     )
@@ -170,8 +202,11 @@ def _fetch_previous(args: argparse.Namespace) -> int:
     if index is None and args.fallback_branch and args.fallback_branch != args.branch:
         index = fetch_previous_index(args.environment, args.fallback_branch, args.output_file)
         source_branch = args.fallback_branch if index is not None else None
-    result = {"found": index is not None, "catalog_tag": index.get("catalog_tag") if index else None,
-              "source_branch": source_branch}
+    result = {
+        "found": index is not None,
+        "catalog_tag": index.get("catalog_tag") if index else None,
+        "source_branch": source_branch,
+    }
     print(json.dumps(result, sort_keys=True) if args.json_output else (result["catalog_tag"] or "No previous index"))
     return 0
 
@@ -184,6 +219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(args)
         if args.command == "fetch":
             return _fetch(args)
+        if args.command == "fetch-calibration":
+            return _fetch_calibration(args)
         if args.command == "matrix":
             return _matrix(args)
         if args.command == "resolve-compiler":

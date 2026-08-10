@@ -15,6 +15,9 @@ HF_URI_RE = re.compile(
     r"(?P<path>.+)$"
 )
 HF_RESOLVE_RE = re.compile(r"^/(?:(?:datasets|spaces)/)?[^/]+/[^/]+/resolve/[a-f0-9]{40}/.+$")
+GITHUB_RELEASE_RE = re.compile(r"^/[^/]+/[^/]+/releases/download/[^/]+/[^/]+$")
+GITHUB_RELEASE_API_RE = re.compile(r"^/repos/[^/]+/[^/]+/releases/assets/[0-9]+$")
+DEFAULT_HTTPS_HOSTS = {"api.github.com", "github.com", "huggingface.co"}
 
 
 def redact_url(value: str) -> str:
@@ -81,10 +84,14 @@ class SourceSpec:
             raise SourcePolicyError("HTTPS source URI must use the default TLS port")
         if any(part in {".", ".."} for part in parts.path.split("/")):
             raise SourcePolicyError("HTTPS source path must not contain dot or parent segments")
-        hosts = allowed_https_hosts or {"huggingface.co"}
+        hosts = allowed_https_hosts or DEFAULT_HTTPS_HOSTS
         hostname = (parts.hostname or "").lower()
         if hostname not in hosts:
             raise SourcePolicyError(f"HTTPS source host is not approved: {hostname or '<missing>'}")
         if hostname == "huggingface.co" and not HF_RESOLVE_RE.fullmatch(parts.path):
             raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
+        if hostname == "github.com" and not GITHUB_RELEASE_RE.fullmatch(parts.path):
+            raise SourcePolicyError("GitHub sources must be release assets")
+        if hostname == "api.github.com" and not GITHUB_RELEASE_API_RE.fullmatch(parts.path):
+            raise SourcePolicyError("GitHub API sources must identify a release asset")
         return self.uri

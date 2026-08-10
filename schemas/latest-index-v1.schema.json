@@ -38,7 +38,8 @@
         "size_bytes": {"type": "integer", "minimum": 1},
         "compiler_version": {"type": "string", "minLength": 1},
         "compiler_label": {"type": "string", "minLength": 1},
-        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "calibration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }
     }
   }

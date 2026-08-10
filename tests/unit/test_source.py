@@ -51,3 +51,26 @@ def test_redaction_removes_credentials_query_and_fragment() -> None:
     value = redact_url("https://user:secret@example.test/model.onnx?token=top-secret#fragment")
     assert value == "https://example.test/model.onnx"
     assert "secret" not in value
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://api.github.com/repos/sima-neat/models/releases/assets/508126877",
+        "https://github.com/sima-neat/models/releases/download/source-v1/model.onnx",
+    ],
+)
+def test_github_release_assets_are_immutable_sources(uri: str) -> None:
+    assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://api.github.com/repos/sima-neat/models/releases/latest",
+        "https://github.com/sima-neat/models/raw/main/model.onnx",
+    ],
+)
+def test_mutable_github_sources_fail(uri: str) -> None:
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()
