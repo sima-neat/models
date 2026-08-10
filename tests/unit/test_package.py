@@ -15,13 +15,43 @@ ROOT = Path(__file__).resolve().parents[2]
 GIT_SHA = "a" * 40
 
 
-def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
-    for variant_id in ("modalix_bf16", "modalix_int8"):
-        output = root / "resnet_50" / variant_id
+def _compiled_fixture(
+    root: Path,
+    *,
+    git_sha: str = GIT_SHA,
+    models: tuple[str, ...] = ("resnet_50", "yolo26_tiny_drone"),
+) -> None:
+    if "resnet_50" in models:
+        for variant_id in ("modalix_bf16", "modalix_int8"):
+            output = root / "resnet_50" / variant_id
+            output.mkdir(parents=True)
+            archive = output / f"resnet_50_{variant_id}_mpk.tar.gz"
+            with tarfile.open(archive, "w:gz") as stream:
+                for name in ("resnet/model.elf", "resnet/resnet_mpk.json"):
+                    content = b"fixture"
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    stream.addfile(info, io.BytesIO(content))
+            verify_mpk(
+                output,
+                write_manifest=True,
+                provenance={
+                    "model_id": "resnet_50",
+                    "variant_id": variant_id,
+                    "git_sha": git_sha,
+                    "target": "modalix",
+                    "environment": "staging",
+                    "compiler_version": "2.1.3",
+                    "compiler_label": "model-compiler-2.1.3",
+                    "source_sha256": "c" * 64,
+                },
+            )
+    if "yolo26_tiny_drone" in models:
+        output = root / "yolo26_tiny_drone" / "modalix_int8_tessellation_mla"
         output.mkdir(parents=True)
-        archive = output / f"resnet_50_{variant_id}_mpk.tar.gz"
+        archive = output / "yolo26n_p2_tiny_drone_int8_qat_b1_mpk.tar.gz"
         with tarfile.open(archive, "w:gz") as stream:
-            for name in ("resnet/model.elf", "resnet/resnet_mpk.json"):
+            for name in ("yolo26/model.elf", "yolo26/yolo26_mpk.json"):
                 content = b"fixture"
                 info = tarfile.TarInfo(name)
                 info.size = len(content)
@@ -30,41 +60,17 @@ def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
             output,
             write_manifest=True,
             provenance={
-                "model_id": "resnet_50",
-                "variant_id": variant_id,
+                "model_id": "yolo26_tiny_drone",
+                "variant_id": "modalix_int8_tessellation_mla",
                 "git_sha": git_sha,
                 "target": "modalix",
                 "environment": "staging",
                 "compiler_version": "2.1.3",
                 "compiler_label": "model-compiler-2.1.3",
-                "source_sha256": "c" * 64,
+                "source_sha256": "d" * 64,
+                "calibration_sha256": "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b",
             },
         )
-    output = root / "yolo26_tiny_drone" / "modalix_int8_tessellation_mla"
-    output.mkdir(parents=True)
-    archive = output / "yolo26n_p2_tiny_drone_int8_qat_b1_mpk.tar.gz"
-    with tarfile.open(archive, "w:gz") as stream:
-        for name in ("yolo26/model.elf", "yolo26/yolo26_mpk.json"):
-            content = b"fixture"
-            info = tarfile.TarInfo(name)
-            info.size = len(content)
-            stream.addfile(info, io.BytesIO(content))
-    verify_mpk(
-        output,
-        write_manifest=True,
-        provenance={
-            "model_id": "yolo26_tiny_drone",
-            "variant_id": "modalix_int8_tessellation_mla",
-            "git_sha": git_sha,
-            "target": "modalix",
-            "environment": "staging",
-            "compiler_version": "2.1.3",
-            "compiler_label": "model-compiler-2.1.3",
-            "source_sha256": "d" * 64,
-            "calibration_sha256": "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b",
-        },
-    )
-    return root / "resnet_50"
 
 
 def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> None:
@@ -158,3 +164,23 @@ def test_first_package_requires_every_catalog_model(tmp_path: Path) -> None:
     compiled.mkdir()
     with pytest.raises(ValidationError, match="no compiled output and no previous"):
         package_compiled_models(ROOT, compiled, tmp_path / "dist", GIT_SHA)
+
+
+def test_feature_package_can_start_with_only_its_compiled_model(tmp_path: Path) -> None:
+    compiled = tmp_path / "compiled"
+    _compiled_fixture(compiled, models=("yolo26_tiny_drone",))
+    destination = tmp_path / "dist"
+
+    result = package_compiled_models(
+        ROOT,
+        compiled,
+        destination,
+        GIT_SHA,
+        branch="feature/yolo26",
+        allow_partial_catalog=True,
+    )
+
+    assert {model["id"] for model in result["models"]} == {"yolo26_tiny_drone"}
+    latest = json.loads((destination / "latest.json").read_text(encoding="utf-8"))
+    assert set(latest["models"]) == {"yolo26_tiny_drone"}
+    assert (destination / "yolo26_tiny_drone" / "metadata.json").is_file()

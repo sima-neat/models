@@ -73,6 +73,11 @@ def _parser() -> argparse.ArgumentParser:
     package.add_argument("--environment", choices=("staging", "production"), required=True)
     package.add_argument("--branch", required=True)
     package.add_argument("--previous-index", type=Path)
+    package.add_argument(
+        "--allow-partial-catalog",
+        action="store_true",
+        help="omit unbuilt models with no previous index entry (intended for feature branches)",
+    )
     package.add_argument("--json", action="store_true", dest="json_output")
 
     previous = subcommands.add_parser("fetch-previous", help="fetch the previous model-aware latest index")
@@ -190,6 +195,7 @@ def _package(args: argparse.Namespace) -> int:
         environment=args.environment,
         branch=args.branch,
         previous_index=args.previous_index,
+        allow_partial_catalog=args.allow_partial_catalog,
     )
     message = json.dumps(result, sort_keys=True) if args.json_output else f"Packaged {len(result['models'])} variant(s)"
     print(message)

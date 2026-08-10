@@ -336,6 +336,9 @@ jobs:
           if [[ -f previous-latest.json ]]; then
             package_args+=(--previous-index previous-latest.json)
           fi
+          if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            package_args+=(--allow-partial-catalog)
+          fi
           model-registry package "${package_args[@]}" > package-result.json
           python -m json.tool dist/metadata.json >/dev/null
           find dist -mindepth 2 -name metadata.json -print -exec python -m json.tool {} \; >/dev/null

@@ -64,6 +64,7 @@ def package_compiled_models(
     environment: str = "staging",
     branch: str = "main",
     previous_index: str | Path | None = None,
+    allow_partial_catalog: bool = False,
 ) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
@@ -191,6 +192,8 @@ def package_compiled_models(
         else:
             entry = previous_models.get(model_id)
             if not isinstance(entry, dict):
+                if allow_partial_catalog:
+                    continue
                 raise ValidationError(f"{model_id}: no compiled output and no previous latest.json entry")
             if set(entry.get("variants", {})) != expected_variants:
                 raise ValidationError(
