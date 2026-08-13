@@ -96,7 +96,6 @@ def resolve_base_branch(
         if line.strip() and line.strip() != "origin/HEAD"
     ]
     branches = {ref.removeprefix("origin/"): ref for ref in refs if ref.startswith("origin/")}
-    branches.pop(current, None)
 
     preferred = preferred_branch.strip() if preferred_branch else ""
     if preferred:
@@ -106,6 +105,7 @@ def resolve_base_branch(
         merge_base = _git(root, "merge-base", head, ref)
         return {"base_branch": preferred, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
 
+    branches.pop(current, None)
     candidates: list[tuple[int, int, int, str, str, str]] = []
     for branch, ref in branches.items():
         try:

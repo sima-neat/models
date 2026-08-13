@@ -245,3 +245,29 @@ def test_resolve_base_prefers_explicit_branch_and_returns_merge_base(tmp_path: P
 
     assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
     assert resolve_base_branch(repository, current_branch="feature/model", head=head) == result
+
+
+def test_resolve_base_preserves_explicit_base_with_same_branch_name(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
+    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
+    (repository / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repository, check=True)
+    subprocess.run(["git", "branch", "-M", "develop"], cwd=repository, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "develop"], cwd=repository, check=True)
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    result = resolve_base_branch(
+        repository,
+        current_branch="develop",
+        head=base_sha,
+        preferred_branch="develop",
+    )
+
+    assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
