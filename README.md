@@ -89,6 +89,13 @@ publishes a lightweight catalog whose entries reference inherited immutable
 artifacts. Model README and test-description edits do not invalidate compiled
 MPKs.
 
+Successful staging compilations are also written through the IAM-authenticated
+Vulcan Artifact Registry API as one immutable run per newly compiled variant.
+Each record links the model source checksum, variant parameters, Model Compiler
+version, build fingerprint, and exact versioned S3 MPK. These records currently
+cover compilation and MPK validation only; DevKit correctness and performance
+results will be added by the later Kerrigan workflow.
+
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), and the
 [SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)

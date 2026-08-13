@@ -90,6 +90,18 @@ resources so users can choose one or more. Each `<model-id>/metadata.json`
 provides a stable direct-install target for that model. `catalog.json` carries
 the same inventory for automation without interactive `sima-cli` selection.
 
+For staging builds that produce new MPKs, the workflow also creates one
+artifact-registry run per compiled model variant after S3 publication. It
+records the immutable source, canonical model/variant/compiler parameters, and
+the exact S3 object version and checksum, then finalizes the run. The required
+compile-result validation is recorded as compilation evidence; it is not a
+substitute for future Kerrigan DevKit correctness or performance results.
+Inherited model entries are not recorded as new compilations. Production keeps
+using S3 and the model-aware indexes until the artifact-registry API is deployed
+there. Registry ingestion is an independently retryable projection: a temporary
+registry failure does not roll back an otherwise complete S3 catalog or prevent
+the branch pointer from advancing.
+
 To preserve incremental compilation without copying large MPKs, the selection
 job pins the current branch's versioned `latest.json`, falling back to the
 resolved base branch on a branch's first build. The base is explicit for pull

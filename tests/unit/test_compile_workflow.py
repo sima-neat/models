@@ -79,17 +79,37 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
         "select",
         "package",
         "publish",
+        "publish-registry",
         "resolve-vulcan-config",
     ]
     assert workflow["jobs"]["promote-latest"]["needs"] == ["select", "publish-latest-index", "resolve-vulcan-config"]
     cleanup = workflow["jobs"]["cleanup-github-artifacts"]
-    assert cleanup["needs"] == ["publish", "publish-latest-index", "promote-latest"]
-    assert cleanup["if"] == "always() && needs.publish.result == 'success'"
+    assert cleanup["needs"] == ["publish", "publish-registry", "publish-latest-index", "promote-latest"]
+    assert "needs.publish-latest-index.result == 'success'" in cleanup["if"]
+    assert "needs.promote-latest.result == 'success'" in cleanup["if"]
     assert "actions: write" in WORKFLOW.read_text(encoding="utf-8")
     assert "actions/artifacts/$artifact_id" in cleanup["steps"][0]["run"]
     upload_script = workflow["jobs"]["publish-latest-index"]["steps"][2]["run"]
     assert "dist/latest.json" in upload_script
     assert "--cache-control no-store" in upload_script
+
+
+def test_staging_publication_records_new_compilations_in_registry() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    registry = workflow["jobs"]["publish-registry"]
+
+    assert registry["needs"] == ["select", "package", "publish", "resolve-vulcan-config"]
+    assert "needs.select.outputs.vulcan_environment == 'staging'" in registry["if"]
+    assert "needs.select.outputs.count != '0'" in registry["if"]
+    assert registry["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
+    assert "id-token: write" in WORKFLOW.read_text(encoding="utf-8")
+    credentials = next(
+        step for step in registry["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
+    )
+    assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
+    publish = next(step for step in registry["steps"] if step.get("name") == "Publish compilation records")
+    assert publish["env"]["REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    assert "model-registry publish" in publish["run"]
 
 
 def test_new_branches_carry_forward_the_published_develop_catalog() -> None:
