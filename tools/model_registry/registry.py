@@ -117,7 +117,12 @@ class S3ArtifactStore:
     def ensure_native_sha256(self, path: Path, key: str, sha256: str) -> S3Object:
         expected_checksum = base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
         head = self._head(key)
-        if head.get("ChecksumSHA256") == expected_checksum and head.get("VersionId"):
+        if (
+            head.get("ChecksumSHA256") == expected_checksum
+            and head.get("ContentLength") == path.stat().st_size
+            and isinstance(head.get("VersionId"), str)
+            and head["VersionId"]
+        ):
             return S3Object(key, str(head["VersionId"]), sha256, path.stat().st_size)
 
         if path.stat().st_size > 5 * 1024**3:
@@ -142,16 +147,25 @@ class S3ArtifactStore:
             "application/gzip",
             "--output",
             "json",
+            "--no-cli-pager",
         ]
         if self.kms_key_id:
             command.extend(["--ssekms-key-id", self.kms_key_id])
-        result = self._run_json(command, f"upload s3://{self.bucket}/{key}")
-        version_id = result.get("VersionId")
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        if completed.returncode != 0:
+            raise RegistryPublicationError(f"Could not upload s3://{self.bucket}/{key}: {completed.stderr.strip()}")
+        try:
+            uploaded = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RegistryPublicationError(f"Could not parse S3 upload response for {key}") from exc
+        version_id = uploaded.get("VersionId") if isinstance(uploaded, dict) else None
         if not isinstance(version_id, str) or not version_id:
             raise RegistryPublicationError(f"S3 versioning did not return a version for {key}")
         verified = self._head(key, version_id)
         if verified.get("ChecksumSHA256") != expected_checksum:
             raise RegistryPublicationError(f"S3 native SHA-256 verification failed for {key}")
+        if verified.get("ContentLength") != path.stat().st_size:
+            raise RegistryPublicationError(f"S3 object size does not match the packaged artifact for {key}")
         return S3Object(key, version_id, sha256, path.stat().st_size)
 
     def _head(self, key: str, version_id: str | None = None) -> JsonObject:
@@ -178,20 +192,6 @@ class S3ArtifactStore:
         except json.JSONDecodeError as exc:
             raise RegistryPublicationError(f"S3 returned invalid metadata for {key}") from exc
         return value if isinstance(value, dict) else {}
-
-    @staticmethod
-    def _run_json(command: list[str], label: str) -> JsonObject:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        if completed.returncode != 0:
-            raise RegistryPublicationError(f"Could not {label}: {completed.stderr.strip()}")
-        try:
-            value = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise RegistryPublicationError(f"Could not parse response for {label}") from exc
-        if not isinstance(value, dict):
-            raise RegistryPublicationError(f"Unexpected response for {label}")
-        return value
-
 
 def _require_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
