@@ -188,6 +188,16 @@ def test_build_fingerprint_invalidates_model_shared_and_compiler_changes(catalog
     assert model_build_fingerprint(catalog_repository, "alpha", "2.1.4") != shared_changed
 
 
+def test_build_fingerprint_ignores_model_documentation_and_test_descriptions(catalog_repository: Path) -> None:
+    first = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "README.md").write_text("documentation only\n", encoding="utf-8")
+    (model_dir / "tests").mkdir()
+    (model_dir / "tests" / "performance.yaml").write_text("samples: 100\n", encoding="utf-8")
+
+    assert model_build_fingerprint(catalog_repository, "alpha", "2.1.3") == first
+
+
 def test_matrix_reuses_model_with_matching_build_fingerprint(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
     fingerprint = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")

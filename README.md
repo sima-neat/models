@@ -86,7 +86,8 @@ its model-local inputs, shared build tooling, and Model Compiler version. A
 matching fingerprint is reused; a missing or changed fingerprint rebuilds every
 supported variant of that model. A branch with no compilation work still
 publishes a lightweight catalog whose entries reference inherited immutable
-artifacts.
+artifacts. Model README and test-description edits do not invalidate compiled
+MPKs.
 
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), and the

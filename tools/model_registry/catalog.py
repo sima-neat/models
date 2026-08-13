@@ -20,6 +20,7 @@ SHARED_BUILD_PATHS = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
+_IGNORED_MODEL_BUILD_NAMES = {"README.md"}
 
 
 def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
@@ -131,7 +132,13 @@ def _build_input_files(root: Path, model_id: str) -> list[Path]:
         elif path.is_dir():
             candidates.extend(item for item in path.rglob("*") if item.is_file())
     model_dir = root / "models" / model_id
-    candidates.extend(item for item in model_dir.rglob("*") if item.is_file())
+    candidates.extend(
+        item
+        for item in model_dir.rglob("*")
+        if item.is_file()
+        and item.name not in _IGNORED_MODEL_BUILD_NAMES
+        and "tests" not in item.relative_to(model_dir).parts
+    )
     symlinks = sorted(item for item in candidates if item.is_symlink())
     if symlinks:
         relative = ", ".join(item.relative_to(root).as_posix() for item in symlinks)
