@@ -28,9 +28,13 @@ python -m pytest
 
 [`Vulcan-Model-Compile.yml`](.github/workflows/Vulcan-Model-Compile.yml) validates
 pull requests without granting them a self-hosted runner. Trusted pushes build
-only changed models on staging. A maintainer can run the workflow manually,
-choose `staging` or protected `production`, and optionally provide a
-comma-separated model list and variant list; empty lists build the full catalog.
+only changed models on staging. The first build of a new branch resolves its
+closest base branch, compares from the merge base, and inherits unchanged model
+artifacts from that branch's published `latest.json`; it does not rebuild the
+catalog merely because GitHub reports an all-zero previous SHA. A maintainer can
+run the workflow manually, choose `staging` or protected `production`, and
+optionally provide a comma-separated model list and variant list or an explicit
+base branch; empty model and variant lists build the full catalog.
 A targeted variant run is compile-only and never advances the published catalog.
 
 The workflow first resolves the repository-wide Model Compiler pin from
@@ -76,7 +80,13 @@ build tag, build time, source/compiler provenance, and artifact branch. Root
 catalog metadata uses immutable URLs from that index, while a direct
 `models/<model-id>@<branch>:latest` install resolves the model's build tag.
 Unchanged MPKs are not copied into every catalog commit. A new branch inherits
-unchanged pointers from `main` until those models are rebuilt on the branch.
+unchanged pointers from its resolved base branch until those models are rebuilt
+on the branch. Each compiled model records a deterministic fingerprint covering
+its model-local inputs, shared build tooling, and Model Compiler version. A
+matching fingerprint is reused; a missing or changed fingerprint rebuilds every
+supported variant of that model. A branch with no compilation work still
+publishes a lightweight catalog whose entries reference inherited immutable
+artifacts.
 
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), and the

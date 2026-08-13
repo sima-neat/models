@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -15,6 +17,9 @@ SHARED_BUILD_PATHS = (
     "tools/model_registry/",
     "tools/runtime/",
 )
+
+_IGNORED_BUILD_PARTS = {".git", "__pycache__"}
+_IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 
 
 def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
@@ -49,6 +54,117 @@ def git_changed_paths(repository: str | Path, base: str, head: str) -> list[str]
     return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
 
 
+def _git(repository: Path, *arguments: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+        raise ValidationError(f"git {' '.join(arguments)} failed: {detail}") from exc
+    return result.stdout.strip()
+
+
+def resolve_base_branch(
+    repository: str | Path,
+    *,
+    current_branch: str,
+    head: str,
+    preferred_branch: str | None = None,
+    default_branch: str = "develop",
+) -> dict[str, str]:
+    """Resolve a deterministic comparison branch for an initial branch build.
+
+    Git does not record the branch from which another branch was created. An
+    explicit PR/dispatch base therefore wins. Otherwise, use the closest remote
+    branch by graph distance and prefer the configured integration branch for
+    ties.
+    """
+    root = Path(repository).expanduser().resolve()
+    current = current_branch.strip()
+    if not current:
+        raise ValidationError("current branch must not be empty")
+
+    refs = [
+        line.strip()
+        for line in _git(root, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin").splitlines()
+        if line.strip() and line.strip() != "origin/HEAD"
+    ]
+    branches = {ref.removeprefix("origin/"): ref for ref in refs if ref.startswith("origin/")}
+    branches.pop(current, None)
+
+    preferred = preferred_branch.strip() if preferred_branch else ""
+    if preferred:
+        ref = branches.get(preferred)
+        if ref is None:
+            raise ValidationError(f"base branch {preferred!r} was not fetched from origin")
+        merge_base = _git(root, "merge-base", head, ref)
+        return {"base_branch": preferred, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
+
+    candidates: list[tuple[int, int, int, str, str, str]] = []
+    for branch, ref in branches.items():
+        try:
+            merge_base = _git(root, "merge-base", head, ref)
+            ahead = int(_git(root, "rev-list", "--count", f"{merge_base}..{head}"))
+            behind = int(_git(root, "rev-list", "--count", f"{merge_base}..{ref}"))
+        except (ValidationError, ValueError):
+            continue
+        default_penalty = 0 if branch == default_branch else 1
+        candidates.append((ahead + behind, behind, default_penalty, branch, ref, merge_base))
+
+    if not candidates:
+        raise ValidationError("could not resolve a related remote base branch")
+    _, _, _, branch, ref, merge_base = min(candidates)
+    return {"base_branch": branch, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
+
+
+def _build_input_files(root: Path, model_id: str) -> list[Path]:
+    candidates: list[Path] = []
+    for prefix in SHARED_BUILD_PATHS:
+        path = root / prefix.rstrip("/")
+        if path.is_file():
+            candidates.append(path)
+        elif path.is_dir():
+            candidates.extend(item for item in path.rglob("*") if item.is_file())
+    model_dir = root / "models" / model_id
+    candidates.extend(item for item in model_dir.rglob("*") if item.is_file())
+    symlinks = sorted(item for item in candidates if item.is_symlink())
+    if symlinks:
+        relative = ", ".join(item.relative_to(root).as_posix() for item in symlinks)
+        raise ValidationError(f"build inputs must not be symbolic links: {relative}")
+    return sorted(
+        {
+            item
+            for item in candidates
+            if not (_IGNORED_BUILD_PARTS & set(item.relative_to(root).parts))
+            and item.suffix not in _IGNORED_BUILD_SUFFIXES
+        },
+        key=lambda item: item.relative_to(root).as_posix(),
+    )
+
+
+def model_build_fingerprint(repository: str | Path, model_id: str, compiler_version: str) -> str:
+    root = Path(repository).expanduser().resolve()
+    compiler = compiler_version.strip()
+    if not compiler:
+        raise ValidationError("compiler version must not be empty")
+    digest = hashlib.sha256()
+    identity = {"schema": 1, "model_id": model_id, "compiler_version": compiler}
+    digest.update(json.dumps(identity, sort_keys=True).encode())
+    for path in _build_input_files(root, model_id):
+        relative = path.relative_to(root).as_posix().encode()
+        payload = path.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
+
+
 def _is_shared_build_path(path: str) -> bool:
     return any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in SHARED_BUILD_PATHS)
 
@@ -76,6 +192,10 @@ def build_matrix(
     catalog: dict[str, dict[str, Any]],
     model_ids: list[str],
     variant_ids: list[str] | None = None,
+    *,
+    repository: str | Path | None = None,
+    compiler_version: str | None = None,
+    previous_models: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     unknown = sorted(set(model_ids) - set(catalog))
     if unknown:
@@ -106,6 +226,14 @@ def build_matrix(
     include: list[dict[str, str]] = []
     for model_id in sorted(set(model_ids)):
         model = catalog[model_id]
+        fingerprint = ""
+        if repository is not None or compiler_version is not None or previous_models is not None:
+            if repository is None or compiler_version is None:
+                raise ValidationError("repository and compiler version are required for reusable matrix selection")
+            fingerprint = model_build_fingerprint(repository, model_id, compiler_version)
+            previous = (previous_models or {}).get(model_id)
+            if isinstance(previous, dict) and previous.get("build_fingerprint") == fingerprint:
+                continue
         for variant in sorted(model["compile_variants"], key=lambda item: item["id"]):
             if requested_variants and variant["id"] not in requested_variants:
                 continue
@@ -118,6 +246,7 @@ def build_matrix(
                     "recipe": variant["recipe"],
                     "target": variant["target"],
                     "variant_id": variant["id"],
+                    **({"build_fingerprint": fingerprint} if fingerprint else {}),
                 }
             )
     return {"include": include}

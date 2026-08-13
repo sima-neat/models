@@ -24,6 +24,7 @@
         "latest_tag": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
         "artifact_branch": {"type": "string", "minLength": 1},
         "built_at": {"type": "string", "format": "date-time"},
+        "build_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "variants": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/variant"}}
       }
     },

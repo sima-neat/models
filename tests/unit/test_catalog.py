@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.catalog import build_matrix, discover_catalog, git_changed_paths, select_model_ids
+from model_registry.catalog import (
+    build_matrix,
+    discover_catalog,
+    git_changed_paths,
+    model_build_fingerprint,
+    resolve_base_branch,
+    select_model_ids,
+)
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -163,3 +170,68 @@ def test_git_diff_reports_added_modified_and_deleted_paths(tmp_path: Path) -> No
     ).stdout.strip()
 
     assert git_changed_paths(tmp_path, base, head) == ["added.txt", "deleted.txt", "modified.txt"]
+
+
+def test_build_fingerprint_invalidates_model_shared_and_compiler_changes(catalog_repository: Path) -> None:
+    (catalog_repository / "deps").mkdir()
+    manifest = catalog_repository / "deps" / "manifest.json"
+    manifest.write_text('{"model-compiler":"2.1.3"}\n', encoding="utf-8")
+    first = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+
+    (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
+    model_changed = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+    assert model_changed != first
+
+    manifest.write_text('{"model-compiler":"2.1.3", "revision":2}\n', encoding="utf-8")
+    shared_changed = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+    assert shared_changed != model_changed
+    assert model_build_fingerprint(catalog_repository, "alpha", "2.1.4") != shared_changed
+
+
+def test_matrix_reuses_model_with_matching_build_fingerprint(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    fingerprint = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+    matrix = build_matrix(
+        catalog,
+        ["alpha", "bravo"],
+        repository=catalog_repository,
+        compiler_version="2.1.3",
+        previous_models={"alpha": {"build_fingerprint": fingerprint}},
+    )
+
+    assert {entry["model_id"] for entry in matrix["include"]} == {"bravo"}
+    assert all(len(entry["build_fingerprint"]) == 64 for entry in matrix["include"])
+
+
+def test_resolve_base_prefers_explicit_branch_and_returns_merge_base(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
+    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
+    (repository / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repository, check=True)
+    subprocess.run(["git", "branch", "-M", "develop"], cwd=repository, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "develop"], cwd=repository, check=True)
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(["git", "switch", "-qc", "feature/model"], cwd=repository, check=True)
+    (repository / "model.txt").write_text("model\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "model"], cwd=repository, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    result = resolve_base_branch(
+        repository,
+        current_branch="feature/model",
+        head=head,
+        preferred_branch="develop",
+    )
+
+    assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
+    assert resolve_base_branch(repository, current_branch="feature/model", head=head) == result

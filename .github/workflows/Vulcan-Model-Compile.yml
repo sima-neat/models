@@ -35,6 +35,10 @@ on:
         description: Comma-separated variant IDs within selected models; leave empty to build every variant
         required: false
         type: string
+      base_branch:
+        description: Optional base branch for changed-model selection and artifact inheritance
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -58,6 +62,9 @@ jobs:
       model_compiler_version: ${{ steps.compiler.outputs.version }}
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       publishable: ${{ steps.matrix.outputs.publishable }}
+      base_branch: ${{ steps.base.outputs.base_branch }}
+      previous_found: ${{ steps.previous.outputs.found }}
+      previous_source_branch: ${{ steps.previous.outputs.source_branch }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v6
@@ -99,14 +106,88 @@ jobs:
           echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "Model Compiler dependency: \`$version\` (\`$label\`)" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Resolve branch comparison base
+        id: base
+        env:
+          CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
+          DEFAULT_BRANCH: develop
+          EVENT_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PREFERRED_BRANCH: ${{ inputs.base_branch || github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          preferred_args=()
+          if [[ -n "${PREFERRED_BRANCH:-}" ]]; then
+            preferred_args=(--preferred-branch "$PREFERRED_BRANCH")
+          fi
+          resolution="$(model-registry resolve-base \
+            --repository . \
+            --current-branch "$CURRENT_BRANCH" \
+            --head "$HEAD_SHA" \
+            --default-branch "$DEFAULT_BRANCH" \
+            "${preferred_args[@]}")"
+          base_branch="$(jq -er '.base_branch' <<< "$resolution")"
+          merge_base="$(jq -er '.merge_base' <<< "$resolution")"
+          comparison_base="$merge_base"
+          if [[ "${EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$EVENT_BEFORE" =~ ^0+$ ]]; then
+            comparison_base="$EVENT_BEFORE"
+          fi
+          echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
+          echo "comparison_base=$comparison_base" >> "$GITHUB_OUTPUT"
+          echo "Resolved base branch: \`$base_branch\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Comparison: \`$comparison_base..$HEAD_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve immutable previous model catalog
+        id: previous
+        env:
+          CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          FALLBACK_BRANCH: ${{ steps.base.outputs.base_branch }}
+          VULCAN_ENVIRONMENT: ${{ steps.environment.outputs.vulcan_environment }}
+        run: |
+          set -euo pipefail
+          result="$(model-registry fetch-previous \
+            --environment "$VULCAN_ENVIRONMENT" \
+            --branch "$CURRENT_BRANCH" \
+            --fallback-branch "$FALLBACK_BRANCH" \
+            --output-file previous-latest.json \
+            --json)"
+          found="$(jq -er '.found' <<< "$result")"
+          source_branch="$(jq -r '.source_branch // ""' <<< "$result")"
+          if [[ "$found" != "true" && "$EVENT_NAME" != "workflow_dispatch" && \
+                "$CURRENT_BRANCH" != "develop" && "$CURRENT_BRANCH" != "main" ]]; then
+            echo "Neither $CURRENT_BRANCH nor resolved base $FALLBACK_BRANCH has a published catalog." >&2
+            echo "Build the base branch first or dispatch this workflow with an explicit base_branch." >&2
+            exit 1
+          fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
+          if [[ "$found" == "true" ]]; then
+            catalog_tag="$(jq -er '.catalog_tag' previous-latest.json)"
+            echo "Previous catalog: \`$source_branch@$catalog_tag\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Previous catalog: none (bootstrap build)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pin previous catalog for the packaging job
+        if: github.event_name != 'pull_request' && steps.previous.outputs.found == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: previous-model-index
+          path: previous-latest.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Build deterministic matrix
         id: matrix
         env:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_MODELS: ${{ inputs.models }}
           REQUESTED_VARIANTS: ${{ inputs.variants }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          COMPARISON_BASE: ${{ steps.base.outputs.comparison_base }}
+          COMPILER_VERSION: ${{ steps.compiler.outputs.version }}
+          PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -115,14 +196,19 @@ jobs:
               variant_args=(--variants "$REQUESTED_VARIANTS")
             fi
             if [[ -n "${REQUESTED_MODELS:-}" ]]; then
-              matrix="$(model-registry matrix --repository . --models "$REQUESTED_MODELS" "${variant_args[@]}")"
+              matrix="$(model-registry matrix --repository . --models "$REQUESTED_MODELS" \
+                --compiler-version "$COMPILER_VERSION" "${variant_args[@]}")"
             else
-              matrix="$(model-registry matrix --repository . --all "${variant_args[@]}")"
+              matrix="$(model-registry matrix --repository . --all \
+                --compiler-version "$COMPILER_VERSION" "${variant_args[@]}")"
             fi
-          elif [[ "$BASE_SHA" =~ ^0+$ ]]; then
-            matrix="$(model-registry matrix --repository . --all)"
           else
-            matrix="$(model-registry matrix --repository . --base "$BASE_SHA" --head "$HEAD_SHA")"
+            reuse_args=(--compiler-version "$COMPILER_VERSION")
+            if [[ "$PREVIOUS_FOUND" == "true" ]]; then
+              reuse_args+=(--previous-index previous-latest.json)
+            fi
+            matrix="$(model-registry matrix --repository . \
+              --base "$COMPARISON_BASE" --head "$HEAD_SHA" "${reuse_args[@]}")"
           fi
           count="$(python -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))' <<< "$matrix")"
           publishable=true
@@ -168,6 +254,7 @@ jobs:
       RECIPE: ${{ matrix.recipe }}
       EXPECTED_COMPILER_VERSION: ${{ needs.select.outputs.model_compiler_version }}
       MODEL_COMPILER_LABEL: ${{ needs.select.outputs.model_compiler_label }}
+      BUILD_FINGERPRINT: ${{ matrix.build_fingerprint }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
@@ -257,6 +344,7 @@ jobs:
             --source-sha256 "${{ steps.source.outputs.sha256 }}" \
             --git-sha "$GITHUB_SHA" \
             --environment "${{ needs.select.outputs.vulcan_environment }}" \
+            --build-fingerprint "$BUILD_FINGERPRINT" \
             > "$result"
           archive="$("$MODEL_COMPILER_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive"])' "$result")"
           digest="$("$MODEL_COMPILER_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$result")"
@@ -287,8 +375,10 @@ jobs:
     name: Build sima-cli model catalog
     needs: [select, compile]
     if: >-
+      always() &&
       github.event_name != 'pull_request' &&
-      needs.compile.result == 'success' &&
+      (needs.compile.result == 'success' ||
+       (needs.compile.result == 'skipped' && needs.select.outputs.count == '0')) &&
       needs.select.outputs.publishable == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -304,7 +394,18 @@ jobs:
       - name: Install registry tooling
         run: python -m pip install .
 
+      - name: Prepare empty compiled-output directory
+        run: mkdir _compiled
+
+      - name: Download pinned previous model catalog
+        if: needs.select.outputs.previous_found == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: previous-model-index
+          path: _previous
+
       - name: Download compiled model outputs
+        if: needs.select.outputs.count != '0'
         uses: actions/download-artifact@v7
         with:
           pattern: compiled-model-*
@@ -316,12 +417,6 @@ jobs:
           VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
         run: |
           set -euo pipefail
-          model-registry fetch-previous \
-            --environment "$VULCAN_ENVIRONMENT" \
-            --branch "$GITHUB_REF_NAME" \
-            --fallback-branch develop \
-            --output-file previous-latest.json \
-            --json > previous-result.json
           package_args=(
             --repository . \
             --compiled-dir _compiled \
@@ -331,8 +426,8 @@ jobs:
             --branch "$GITHUB_REF_NAME" \
             --json
           )
-          if [[ -f previous-latest.json ]]; then
-            package_args+=(--previous-index previous-latest.json)
+          if [[ -f _previous/previous-latest.json ]]; then
+            package_args+=(--previous-index _previous/previous-latest.json)
           fi
           model-registry package "${package_args[@]}" > package-result.json
           python -m json.tool dist/metadata.json >/dev/null
@@ -365,7 +460,7 @@ jobs:
       artifact_folder: "."
       artifact_pattern: models-dist
       artifact_glob: "**/*"
-      min_artifact_count: 6
+      min_artifact_count: 3
       publish_manifest: true
       cleanup_github_artifacts: false
 
@@ -440,7 +535,7 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: Delete the package artifact after all consumers finish
+      - name: Delete packaging artifacts after all consumers finish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -448,10 +543,12 @@ jobs:
           mapfile -t artifact_ids < <(
             gh api --paginate \
               "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-              --jq '.artifacts[] | select(.name == "models-dist") | .id'
+              --jq '.artifacts[] | select(.name == "models-dist" or .name == "previous-model-index") | .id'
           )
-          if (( ${#artifact_ids[@]} != 1 )); then
-            echo "Expected exactly one models-dist artifact, found ${#artifact_ids[@]}" >&2
+          if (( ${#artifact_ids[@]} < 1 || ${#artifact_ids[@]} > 2 )); then
+            echo "Expected models-dist and at most one previous-model-index artifact; found ${#artifact_ids[@]}" >&2
             exit 1
           fi
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/${artifact_ids[0]}"
+          for artifact_id in "${artifact_ids[@]}"; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+          done

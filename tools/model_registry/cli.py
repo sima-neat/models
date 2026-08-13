@@ -7,13 +7,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .artifact import verify_mpk
-from .catalog import build_matrix, discover_catalog, git_changed_paths, select_model_ids
+from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model
 from .package import package_compiled_models
-from .published import fetch_previous_index
+from .published import fetch_previous_index, validate_latest_index
 from .source import SourceSpec
 
 
@@ -40,6 +40,15 @@ def _parser() -> argparse.ArgumentParser:
     matrix.add_argument("--changed-path", action="append", default=[])
     matrix.add_argument("--base")
     matrix.add_argument("--head")
+    matrix.add_argument("--compiler-version")
+    matrix.add_argument("--previous-index", type=Path)
+
+    base = subcommands.add_parser("resolve-base", help="resolve the closest base branch and merge base")
+    base.add_argument("--repository", type=Path, default=Path.cwd())
+    base.add_argument("--current-branch", required=True)
+    base.add_argument("--head", required=True)
+    base.add_argument("--preferred-branch")
+    base.add_argument("--default-branch", default="develop")
 
     compiler = subcommands.add_parser("resolve-compiler", help="resolve the repository-wide Model Compiler dependency")
     compiler.add_argument("--repository", type=Path, default=Path.cwd())
@@ -56,6 +65,7 @@ def _parser() -> argparse.ArgumentParser:
     mpk.add_argument("--source-sha256")
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
+    mpk.add_argument("--build-fingerprint")
 
     package = subcommands.add_parser("package", help="assemble compiled MPKs into sima-cli package metadata")
     package.add_argument("--repository", type=Path, default=Path.cwd())
@@ -127,7 +137,35 @@ def _matrix(args: argparse.Namespace) -> int:
         variant_ids = [item.strip() for item in args.variants.split(",") if item.strip()]
         if not variant_ids:
             raise ModelRegistryError("--variants must contain at least one variant ID")
-    print(json.dumps(build_matrix(catalog, model_ids, variant_ids), sort_keys=True, separators=(",", ":")))
+    previous_models = None
+    if args.previous_index is not None:
+        if args.compiler_version is None:
+            raise ModelRegistryError("--compiler-version is required with --previous-index")
+        try:
+            value = json.loads(args.previous_index.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ModelRegistryError(f"could not read previous index {args.previous_index}: {exc}") from exc
+        previous_models = validate_latest_index(value)["models"]
+    print(json.dumps(build_matrix(
+        catalog,
+        model_ids,
+        variant_ids,
+        repository=args.repository if args.compiler_version is not None else None,
+        compiler_version=args.compiler_version,
+        previous_models=previous_models,
+    ), sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _resolve_base(args: argparse.Namespace) -> int:
+    result = resolve_base_branch(
+        args.repository,
+        current_branch=args.current_branch,
+        head=args.head,
+        preferred_branch=args.preferred_branch,
+        default_branch=args.default_branch,
+    )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 
@@ -146,6 +184,7 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "source_sha256",
         "git_sha",
         "environment",
+        "build_fingerprint",
     )
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
     result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
@@ -193,6 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _fetch(args)
         if args.command == "matrix":
             return _matrix(args)
+        if args.command == "resolve-base":
+            return _resolve_base(args)
         if args.command == "resolve-compiler":
             return _resolve_compiler(args)
         if args.command == "verify-mpk":

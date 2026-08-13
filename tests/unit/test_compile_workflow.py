@@ -86,7 +86,7 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
     assert cleanup["needs"] == ["publish", "publish-latest-index", "promote-latest"]
     assert cleanup["if"] == "always() && needs.publish.result == 'success'"
     assert "actions: write" in WORKFLOW.read_text(encoding="utf-8")
-    assert "actions/artifacts/${artifact_ids[0]}" in cleanup["steps"][0]["run"]
+    assert "actions/artifacts/$artifact_id" in cleanup["steps"][0]["run"]
     upload_script = workflow["jobs"]["publish-latest-index"]["steps"][2]["run"]
     assert "dist/latest.json" in upload_script
     assert "--cache-control no-store" in upload_script
@@ -94,12 +94,39 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
 
 def test_new_branches_carry_forward_the_published_develop_catalog() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    package_script = next(
+    previous_script = next(
         step["run"]
-        for step in workflow["jobs"]["package"]["steps"]
-        if step.get("name") == "Generate root and per-model package metadata"
+        for step in workflow["jobs"]["select"]["steps"]
+        if step.get("name") == "Resolve immutable previous model catalog"
     )
-    assert "--fallback-branch develop" in package_script
+    assert '--fallback-branch "$FALLBACK_BRANCH"' in previous_script
+    previous_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "previous")
+    assert "steps.base.outputs.base_branch" in previous_step["env"]["FALLBACK_BRANCH"]
+
+
+def test_new_branch_uses_merge_base_instead_of_full_catalog_fallback() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    matrix_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
+    base_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
+
+    assert "model-registry resolve-base" in base_script
+    assert 'comparison_base="$merge_base"' in base_script
+    assert "model-registry matrix --repository ." in matrix_script
+    assert '--base "$COMPARISON_BASE" --head "$HEAD_SHA"' in matrix_script
+    assert 'elif [[ "$BASE_SHA" =~ ^0+$ ]]' not in matrix_script
+
+
+def test_zero_compile_selection_still_packages_and_publishes_catalog() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    package = workflow["jobs"]["package"]
+    steps = package["steps"]
+
+    assert "needs.compile.result == 'skipped'" in package["if"]
+    assert "needs.select.outputs.count == '0'" in package["if"]
+    assert next(step for step in steps if step.get("name") == "Prepare empty compiled-output directory")
+    download = next(step for step in steps if step.get("name") == "Download compiled model outputs")
+    assert download["if"] == "needs.select.outputs.count != '0'"
+    assert workflow["jobs"]["publish"]["with"]["min_artifact_count"] == "3"
 
 
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:

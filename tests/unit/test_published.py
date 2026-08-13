@@ -59,6 +59,21 @@ def test_fetch_previous_index_rejects_wrong_branch(tmp_path: Path) -> None:
                              opener=FakeOpener({url: json.dumps(_index("main")).encode()}))
 
 
+def test_fetch_previous_index_rejects_invalid_build_fingerprint(tmp_path: Path) -> None:
+    branch = "develop"
+    value = _index(branch)
+    value["models"]["resnet_50"]["build_fingerprint"] = "not-a-digest"
+    url = _url(ENVIRONMENT_BASE_URLS["staging"], "models", branch, "latest.json")
+
+    with pytest.raises(ValidationError, match="build_fingerprint"):
+        fetch_previous_index(
+            "staging",
+            branch,
+            tmp_path / "previous.json",
+            opener=FakeOpener({url: json.dumps(value).encode()}),
+        )
+
+
 def test_missing_previous_index_is_a_clean_first_build(tmp_path: Path) -> None:
     assert fetch_previous_index("production", "new-branch", tmp_path / "previous.json", opener=FakeOpener({})) is None
 

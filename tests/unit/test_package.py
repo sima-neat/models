@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from model_registry.artifact import verify_mpk
-from model_registry.catalog import discover_catalog
+from model_registry.catalog import discover_catalog, model_build_fingerprint
 from model_registry.errors import ValidationError
 from model_registry.package import package_compiled_models
 
@@ -43,6 +43,7 @@ def _compiled_fixture(root: Path, *, git_sha: str = GIT_SHA) -> Path:
                     "compiler_version": "2.1.3",
                     "compiler_label": "model-compiler-2.1.3",
                     "source_sha256": "c" * 64,
+                    "build_fingerprint": model_build_fingerprint(ROOT, model_id, "2.1.3"),
                 },
             )
     return root / "resnet_50"
@@ -72,6 +73,7 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     assert latest["models"]["resnet_50"]["latest_tag"] == GIT_SHA[:12]
     assert latest["models"]["resnet_50"]["artifact_branch"] == "develop"
     assert latest["models"]["resnet_50"]["built_at"]
+    assert len(latest["models"]["resnet_50"]["build_fingerprint"]) == 64
 
     model_metadata = json.loads((destination / "resnet_50" / "metadata.json").read_text(encoding="utf-8"))
     assert model_metadata["name"] == "gh:sima-neat/models/resnet_50"

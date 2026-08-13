@@ -90,14 +90,21 @@ resources so users can choose one or more. Each `<model-id>/metadata.json`
 provides a stable direct-install target for that model. `catalog.json` carries
 the same inventory for automation without interactive `sima-cli` selection.
 
-To preserve incremental compilation without copying large MPKs, the packaging
-job reads the previous branch's versioned `latest.json`. Each model entry owns
-an immutable `latest_tag`, `artifact_branch`, build timestamp, and per-variant
-provenance. New branches fall back to the published `develop` integration
-index. Changed model outputs
-are stored under the current commit; unchanged entries continue to reference
-their prior immutable build. Root metadata and `catalog.json` remain complete
-and use absolute artifact URLs. Direct model installs use the model-aware index.
+To preserve incremental compilation without copying large MPKs, the selection
+job pins the current branch's versioned `latest.json`, falling back to the
+resolved base branch on a branch's first build. The base is explicit for pull
+requests and manual dispatches and otherwise resolved from the closest remote
+branch by Git graph distance, with `develop` winning ties. The comparison starts
+at the merge base rather than treating GitHub's all-zero new-branch `before` SHA
+as a request to rebuild the entire catalog. Each model entry owns an immutable
+`latest_tag`, `artifact_branch`, build timestamp, per-variant provenance, and a
+deterministic build fingerprint over model-local inputs, shared build inputs,
+and the pinned Model Compiler version. Changed model outputs are stored under
+the current commit; unchanged entries continue to reference their prior
+immutable build. When no fingerprint requires compilation, the workflow still
+publishes complete metadata and a branch index without leasing a Vulcan compiler
+runner. Root metadata and `catalog.json` remain complete and use absolute
+artifact URLs. Direct model installs use the model-aware index.
 
 Cleanup collects references from all current model indexes before applying age
 retention, so an older model build remains protected while any live index uses
