@@ -4,7 +4,9 @@ import hashlib
 import os
 import ssl
 import tempfile
+import time
 from collections.abc import Callable
+from http.client import HTTPException
 from pathlib import Path
 from typing import BinaryIO
 from urllib.error import HTTPError, URLError
@@ -16,6 +18,19 @@ from .errors import FetchError
 from .source import SourceSpec, redact_url
 
 OpenUrl = Callable[..., BinaryIO]
+Sleeper = Callable[[float], None]
+
+
+class _SizeMismatch(FetchError):
+    """A transfer ended before the declared payload size was received."""
+
+
+class _ChecksumMismatch(FetchError):
+    """A complete payload did not match its immutable digest."""
+
+
+class _TransferError(FetchError):
+    """A transport operation failed before the payload reached local storage."""
 
 
 def open_verified_url(request: Request, timeout: int) -> BinaryIO:
@@ -47,10 +62,16 @@ class Fetcher:
         *,
         opener: OpenUrl | None = None,
         allowed_https_hosts: set[str] | None = None,
+        max_attempts: int = 3,
+        sleeper: Sleeper = time.sleep,
     ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
         self.cache_dir = Path(cache_dir).expanduser().resolve() if cache_dir else default_cache_dir()
         self.opener = opener or open_verified_url
         self.allowed_https_hosts = allowed_https_hosts
+        self.max_attempts = max_attempts
+        self.sleeper = sleeper
 
     def cache_path(self, source: SourceSpec) -> Path:
         return self.cache_dir / "sha256" / source.sha256[:2] / source.sha256 / source.filename
@@ -58,9 +79,63 @@ class Fetcher:
     def _verify(self, path: Path, source: SourceSpec) -> None:
         digest, size = sha256_file(path)
         if size != source.size_bytes:
-            raise FetchError(f"size mismatch for {source.filename}: expected {source.size_bytes}, got {size}")
+            raise _SizeMismatch(f"size mismatch for {source.filename}: expected {source.size_bytes}, got {size}")
         if digest != source.sha256:
-            raise FetchError(f"SHA-256 mismatch for {source.filename}: expected {source.sha256}, got {digest}")
+            raise _ChecksumMismatch(f"SHA-256 mismatch for {source.filename}: expected {source.sha256}, got {digest}")
+
+    @staticmethod
+    def _retryable(exc: BaseException) -> bool:
+        if isinstance(exc, _SizeMismatch):
+            return True
+        if isinstance(exc, HTTPError):
+            return exc.code in {408, 429} or 500 <= exc.code < 600
+        return isinstance(exc, (URLError, _TransferError))
+
+    @staticmethod
+    def _request(url: str, hostname: str, hf_token: str, github_token: str) -> Request:
+        request = Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
+        if hf_token and hostname == "huggingface.co":
+            # urllib does not copy unredirected headers to Hugging Face's signed
+            # CDN redirect, so the bearer token remains scoped to huggingface.co.
+            request.add_unredirected_header("Authorization", f"Bearer {hf_token}")
+        if github_token and hostname in {"api.github.com", "github.com"}:
+            # Private release downloads redirect to a signed object URL. Keep
+            # repository credentials scoped to GitHub; the redirect itself is
+            # authorized by its short-lived signature.
+            request.add_unredirected_header("Authorization", f"Bearer {github_token}")
+            request.add_header("Accept", "application/octet-stream")
+        return request
+
+    def _download_once(self, request: Request, source: SourceSpec, destination: Path) -> None:
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=f".{source.filename}.", suffix=".partial", dir=destination.parent, delete=False
+            ) as output:
+                temporary = Path(output.name)
+                try:
+                    response = self.opener(request, timeout=60)
+                except HTTPError:
+                    raise
+                except (OSError, TimeoutError, HTTPException) as exc:
+                    raise _TransferError(str(exc)) from exc
+                with response:
+                    while True:
+                        try:
+                            chunk = response.read(1024 * 1024)
+                        except (OSError, TimeoutError, HTTPException) as exc:
+                            raise _TransferError(str(exc)) from exc
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+            self._verify(temporary, source)
+            os.replace(temporary, destination)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def fetch(self, source: SourceSpec) -> tuple[Path, bool]:
         destination = self.cache_path(source)
@@ -73,44 +148,24 @@ class Fetcher:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         url = source.resolve_url(self.allowed_https_hosts)
-        request = Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
         hostname = urlsplit_hostname(url)
         hf_token = os.environ.get("HF_TOKEN", "").strip()
         github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-        if hf_token and hostname == "huggingface.co":
-            # urllib does not copy unredirected headers to Hugging Face's signed
-            # CDN redirect, so the bearer token remains scoped to huggingface.co.
-            request.add_unredirected_header("Authorization", f"Bearer {hf_token}")
-        if github_token and hostname in {"api.github.com", "github.com"}:
-            # Private release downloads redirect to a signed object URL. Keep
-            # repository credentials scoped to GitHub; the redirect itself is
-            # authorized by its short-lived signature.
-            request.add_unredirected_header("Authorization", f"Bearer {github_token}")
-            request.add_header("Accept", "application/octet-stream")
 
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=f".{source.filename}.", suffix=".partial", dir=destination.parent, delete=False
-            ) as output:
-                temporary = Path(output.name)
-                with self.opener(request, timeout=60) as response:
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                output.flush()
-                os.fsync(output.fileno())
-            self._verify(temporary, source)
-            os.replace(temporary, destination)
-            temporary = None
-            return destination, False
-        except (HTTPError, URLError, OSError, TimeoutError, FetchError) as exc:
-            raise FetchError(f"failed to fetch {redact_url(url)}: {exc}") from exc
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        failures: list[str] = []
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                request = self._request(url, hostname, hf_token, github_token)
+                self._download_once(request, source, destination)
+                return destination, False
+            except (HTTPError, URLError, OSError, TimeoutError, HTTPException, FetchError) as exc:
+                failures.append(f"attempt {attempt}: {exc}")
+                if attempt == self.max_attempts or not self._retryable(exc):
+                    detail = "; ".join(failures)
+                    raise FetchError(f"failed to fetch {redact_url(url)} after {attempt} attempt(s): {detail}") from exc
+                self.sleeper(2 ** (attempt - 1))
+
+        raise AssertionError("unreachable")
 
 
 def urlsplit_hostname(url: str) -> str:
