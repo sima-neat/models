@@ -295,10 +295,12 @@ def publish_compilations(
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
         environment_fingerprint = canonical_sha256(environment_document)
+        # A new attempt of the same workflow run resumes the same registry
+        # transaction instead of creating a duplicate record per attempt.
         key_digest = hashlib.sha256(
-            f"{github_run_id}:{github_run_attempt}:{model_id}:{variant_id}".encode()
-        ).hexdigest()[:32]
-        stable_key = f"models-{github_run_id}-{github_run_attempt}-{key_digest}"
+            f"{github_run_id}:{environment}:{branch}:{git_sha}:{model_id}:{variant_id}:{run_fingerprint}".encode()
+        ).hexdigest()
+        stable_key = f"models-{key_digest}"
         create = client.request(
             "POST",
             "/v1/runs",
@@ -322,7 +324,7 @@ def publish_compilations(
                     "model_id": model_id,
                     "variant_id": variant_id,
                     "artifact_kind": "mpk",
-                    "github_run_attempt": github_run_attempt,
+                    "github_run_id": github_run_id,
                 },
             },
             f"{stable_key}-create",

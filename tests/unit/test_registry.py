@@ -101,7 +101,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "model_id": "resnet_50",
         "variant_id": "modalix_bf16",
         "artifact_kind": "mpk",
-        "github_run_attempt": "1",
+        "github_run_id": "1234",
     }
     parameters = calls[2][2]["parameters"]
     assert parameters["compiler_version"] == "2.1.3"
@@ -136,3 +136,34 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
 
     assert result == {"count": 0, "runs": []}
     assert calls == []
+
+
+def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+
+    def publish(attempt: str) -> list[tuple[str, str, dict | None, str]]:
+        calls: list[tuple[str, str, dict | None, str]] = []
+
+        def request(method: str, path: str, body: dict | None, key: str) -> dict:
+            calls.append((method, path, body, key))
+            return {"run_id": "00000000-0000-4000-8000-000000000001"} if path == "/v1/runs" else {"ok": True}
+
+        publish_compilations(
+            repository=ROOT,
+            dist_dir=dist,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            kms_key_id=None,
+            environment="staging",
+            branch="develop",
+            git_sha="a" * 40,
+            github_run_id="1234",
+            github_run_attempt=attempt,
+            github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
+            request=request,
+            artifact_store=FakeStore(),
+        )
+        return calls
+
+    assert publish("1") == publish("2")

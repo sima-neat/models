@@ -79,12 +79,11 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
         "select",
         "package",
         "publish",
-        "publish-registry",
         "resolve-vulcan-config",
     ]
     assert workflow["jobs"]["promote-latest"]["needs"] == ["select", "publish-latest-index", "resolve-vulcan-config"]
     cleanup = workflow["jobs"]["cleanup-github-artifacts"]
-    assert cleanup["needs"] == ["publish", "publish-registry", "publish-latest-index", "promote-latest"]
+    assert cleanup["needs"] == ["publish", "publish-latest-index", "promote-latest"]
     assert "needs.publish-latest-index.result == 'success'" in cleanup["if"]
     assert "needs.promote-latest.result == 'success'" in cleanup["if"]
     assert "actions: write" in WORKFLOW.read_text(encoding="utf-8")
@@ -96,20 +95,38 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
 
 def test_staging_publication_records_new_compilations_in_registry() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    registry = workflow["jobs"]["publish-registry"]
+    compile_job = workflow["jobs"]["compile"]
 
-    assert registry["needs"] == ["select", "package", "publish", "resolve-vulcan-config"]
-    assert "needs.select.outputs.vulcan_environment == 'staging'" in registry["if"]
-    assert "needs.select.outputs.count != '0'" in registry["if"]
-    assert registry["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
-    assert "id-token: write" in WORKFLOW.read_text(encoding="utf-8")
+    assert compile_job["needs"] == ["select", "resolve-vulcan-config"]
+    assert compile_job["permissions"]["id-token"] == "write"
     credentials = next(
-        step for step in registry["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
+        step
+        for step in compile_job["steps"]
+        if step.get("name") == "Configure artifact-registry publisher credentials"
     )
+    assert "needs.select.outputs.publishable == 'true'" in credentials["if"]
+    assert "needs.select.outputs.vulcan_environment == 'staging'" in credentials["if"]
     assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
-    publish = next(step for step in registry["steps"] if step.get("name") == "Publish compilation records")
+    publish = next(step for step in compile_job["steps"] if step.get("name") == "Publish this model compilation")
     assert publish["env"]["REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
-    assert "model-registry publish" in publish["run"]
+    assert '-m model_registry publish' in publish["run"]
+    assert '--dist-dir "$ARTIFACT_ROOT"' in publish["run"]
+    assert 'result["count"] == 1' in publish["run"]
+    publish_index = compile_job["steps"].index(publish)
+    retain_index = next(
+        index
+        for index, step in enumerate(compile_job["steps"])
+        if step.get("name") == "Retain the validated model output for packaging"
+    )
+    assert publish_index < retain_index
+
+
+def test_shared_latest_metadata_waits_for_the_complete_matrix() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    assert workflow["jobs"]["package"]["needs"] == ["select", "compile"]
+    assert "needs.compile.result == 'success'" in workflow["jobs"]["package"]["if"]
+    assert "publish-registry" not in workflow["jobs"]
 
 
 def test_new_branches_carry_forward_the_published_develop_catalog() -> None:

@@ -229,11 +229,12 @@ jobs:
 
   compile:
     name: Compile ${{ matrix.model_id }} (${{ matrix.variant_id }})
-    needs: select
+    needs: [select, resolve-vulcan-config]
     if: github.event_name != 'pull_request' && needs.select.outputs.count != '0'
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
       contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -351,6 +352,47 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
 
+      - name: Configure artifact-registry publisher credentials
+        if: >-
+          needs.select.outputs.publishable == 'true' &&
+          needs.select.outputs.vulcan_environment == 'staging'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish this model compilation
+        if: >-
+          needs.select.outputs.publishable == 'true' &&
+          needs.select.outputs.vulcan_environment == 'staging'
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+          VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          result="$("$MODEL_COMPILER_PYTHON" -m model_registry publish \
+            --repository . \
+            --dist-dir "$ARTIFACT_ROOT" \
+            --api-url "$REGISTRY_API_URL" \
+            --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" \
+            --kms-key-id "$KMS_KEY_ID" \
+            --environment "$VULCAN_ENVIRONMENT" \
+            --branch "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --json)"
+          "$MODEL_COMPILER_PYTHON" -c \
+            'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
+          echo "Published $MODEL_ID/$VARIANT_ID to the model registry." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Retain the validated model output for packaging
         uses: actions/upload-artifact@v7
         with:
@@ -362,7 +404,7 @@ jobs:
   resolve-vulcan-config:
     name: Resolve Vulcan publication config
     needs: select
-    if: github.event_name != 'pull_request' && needs.select.outputs.publishable == 'true'
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       id-token: write
@@ -464,76 +506,9 @@ jobs:
       publish_manifest: true
       cleanup_github_artifacts: false
 
-  publish-registry:
-    name: Record model compilations in artifact registry
-    needs: [select, package, publish, resolve-vulcan-config]
-    if: >-
-      needs.publish.result == 'success' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
-      needs.select.outputs.count != '0'
-    runs-on: ubuntu-latest
-    environment: ${{ needs.select.outputs.vulcan_environment }}
-    permissions:
-      contents: read
-      actions: read
-      id-token: write
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install registry tooling
-        run: python -m pip install .
-
-      - name: Download packaged model catalog
-        uses: actions/download-artifact@v7
-        with:
-          name: models-dist
-          path: dist
-
-      - name: Configure artifact-registry publisher credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-          role-session-name: models-registry-${{ github.run_id }}
-
-      - name: Publish compilation records
-        env:
-          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-          VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
-          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-        run: |
-          set -euo pipefail
-          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
-          result="$(model-registry publish \
-            --repository . \
-            --dist-dir dist \
-            --api-url "$REGISTRY_API_URL" \
-            --aws-region "$AWS_REGION" \
-            --bucket "$ARTIFACT_BUCKET" \
-            --kms-key-id "$KMS_KEY_ID" \
-            --environment "$VULCAN_ENVIRONMENT" \
-            --branch "$GITHUB_REF_NAME" \
-            --git-sha "$GITHUB_SHA" \
-            --github-run-id "$GITHUB_RUN_ID" \
-            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --json)"
-          jq -e . <<< "$result" >/dev/null
-          echo "Recorded $(jq -r '.count' <<< "$result") model compilation(s) in the Vulcan registry." \
-            >> "$GITHUB_STEP_SUMMARY"
-
   publish-latest-index:
     name: Publish model-aware latest.json
-    needs: [select, package, publish, publish-registry, resolve-vulcan-config]
+    needs: [select, package, publish, resolve-vulcan-config]
     if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
@@ -595,7 +570,7 @@ jobs:
 
   cleanup-github-artifacts:
     name: Clean up packaged GitHub artifacts
-    needs: [publish, publish-registry, publish-latest-index, promote-latest]
+    needs: [publish, publish-latest-index, promote-latest]
     if: >-
       always() &&
       needs.publish.result == 'success' &&
