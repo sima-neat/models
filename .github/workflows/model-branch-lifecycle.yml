@@ -101,7 +101,7 @@ jobs:
           : "${API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
 
           body="$(jq -cn --arg ref "refs/heads/${BRANCH}" '{git_ref:$ref}')"
-          endpoint="${API_URL%/}/v1/repositories/${REPOSITORY}/branches:${OPERATION}"
+          endpoint="${API_URL%/}/v1/repositories/${REPOSITORY}/branches/${OPERATION}"
           response="$(curl --fail-with-body --retry 5 --retry-connrefused \
             --aws-sigv4 aws:amz:us-west-2:execute-api \
             --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
