@@ -1,0 +1,154 @@
+name: Model branch lifecycle
+
+on:
+  delete:
+  create:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Branch lifecycle operation to test or retry
+        required: true
+        type: choice
+        options: [purge, restore]
+      branch:
+        description: Branch name, without refs/heads/
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: model-branch-lifecycle-${{ github.event.ref || inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  update-registry:
+    name: ${{ github.event_name == 'delete' && 'Purge deleted branch' || 'Restore branch' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.ref_type == 'branch'
+    environment: staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve and validate lifecycle request
+        id: request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.event.ref }}
+          REQUESTED_OPERATION: ${{ inputs.operation }}
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+
+          case "$EVENT_NAME" in
+            delete)
+              operation=purge
+              branch="$EVENT_REF"
+              ;;
+            create)
+              operation=restore
+              branch="$EVENT_REF"
+              ;;
+            workflow_dispatch)
+              operation="$REQUESTED_OPERATION"
+              branch="$REQUESTED_BRANCH"
+              ;;
+            *)
+              echo "Unsupported event: $EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+
+          if [[ -z "$branch" || "$branch" == refs/* ]]; then
+            echo "Branch must be a non-empty name without a refs/ prefix." >&2
+            exit 2
+          fi
+          case "$branch" in
+            main|develop|release-*)
+              echo "Refusing to $operation protected branch '$branch'." >> "$GITHUB_STEP_SUMMARY"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          echo "operation=$operation" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure artifact-registry publisher credentials
+        if: steps.request.outputs.proceed == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-branch-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Update branch lifecycle in the model registry
+        if: steps.request.outputs.proceed == 'true'
+        env:
+          API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REPOSITORY: ${{ github.repository }}
+          OPERATION: ${{ steps.request.outputs.operation }}
+          BRANCH: ${{ steps.request.outputs.branch }}
+          IDEMPOTENCY_KEY: branch-${{ steps.request.outputs.operation }}-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          : "${API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+
+          body="$(jq -cn --arg ref "refs/heads/${BRANCH}" '{git_ref:$ref}')"
+          endpoint="${API_URL%/}/v1/repositories/${REPOSITORY}/branches:${OPERATION}"
+          response="$(curl --fail-with-body --retry 5 --retry-all-errors \
+            --aws-sigv4 aws:amz:us-west-2:execute-api \
+            --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
+            --header "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
+            --header 'content-type: application/json' \
+            --header "idempotency-key: ${IDEMPOTENCY_KEY}" \
+            --data "$body" \
+            "$endpoint")"
+
+          if [[ "$OPERATION" == restore ]]; then
+            jq -e '.status == "active"' <<< "$response" >/dev/null
+            echo "Restored registry publication for \`refs/heads/${BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          job_id="$(jq -er '.job_id' <<< "$response")"
+          for attempt in {1..60}; do
+            status="$(curl --fail-with-body --retry 3 --retry-all-errors \
+              --aws-sigv4 aws:amz:us-west-2:execute-api \
+              --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
+              --header "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
+              "${API_URL%/}/v1/purge-jobs/${job_id}")"
+            state="$(jq -er '.status' <<< "$status")"
+            case "$state" in
+              completed)
+                deleted_objects="$(jq -r '.deleted_object_count // 0' <<< "$status")"
+                deleted_runs="$(jq -r '.deleted_run_count // 0' <<< "$status")"
+                {
+                  echo "Purged \`refs/heads/${BRANCH}\` from the model registry."
+                  echo "- Database runs removed: ${deleted_runs}"
+                  echo "- Registered S3 object versions removed: ${deleted_objects}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              failed)
+                jq . <<< "$status" >&2
+                exit 1
+                ;;
+              queued|running) ;;
+              *)
+                echo "Unexpected purge status '$state' for job $job_id" >&2
+                jq . <<< "$status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "Purge $job_id did not complete within five minutes." >&2
+          exit 1
