@@ -11,11 +11,11 @@ from .model import load_and_validate_model
 
 GLOBAL_COMPILE_INPUT_PATHS = (
     "deps/",
-    # Model recipes import these modules while preparing immutable source and
-    # calibration inputs. Changes can therefore affect every compiled MPK.
+    # Model recipes import these modules while interpreting model definitions.
+    # Transport-only fetch changes are deliberately excluded: every source and
+    # calibration payload is size- and SHA-256-pinned before compilation.
     "tools/model_registry/__init__.py",
     "tools/model_registry/errors.py",
-    "tools/model_registry/fetch.py",
     "tools/model_registry/model.py",
     "tools/model_registry/source.py",
 )

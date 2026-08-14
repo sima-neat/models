@@ -61,6 +61,15 @@ def test_dispatch_can_select_expensive_variants_and_passes_private_asset_token()
     assert "needs.select.outputs.publishable == 'true'" in workflow["jobs"]["package"]["if"]
 
 
+def test_dispatch_without_model_filters_is_the_explicit_full_rebuild_path() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    matrix_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
+
+    assert 'if [[ "$EVENT_NAME" == "workflow_dispatch" ]]' in matrix_script
+    assert 'if [[ -n "${REQUESTED_MODELS:-}" ]]' in matrix_script
+    assert "model-registry matrix --repository . --all" in matrix_script
+
+
 def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert (

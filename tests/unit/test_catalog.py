@@ -67,7 +67,6 @@ def test_model_local_added_modified_and_deleted_paths(catalog_repository: Path, 
         "deps/manifest.json",
         "tools/model_registry/__init__.py",
         "tools/model_registry/errors.py",
-        "tools/model_registry/fetch.py",
         "tools/model_registry/model.py",
         "tools/model_registry/source.py",
     ],
@@ -85,6 +84,7 @@ def test_global_compile_inputs_select_every_model(catalog_repository: Path, path
         "tools/model_registry/artifact.py",
         "tools/model_registry/catalog.py",
         "tools/model_registry/cli.py",
+        "tools/model_registry/fetch.py",
         "tools/model_registry/package.py",
         "tools/model_registry/published.py",
         "tools/model_registry/registry.py",
@@ -95,6 +95,12 @@ def test_orchestration_and_publication_paths_do_not_select_models(
     catalog_repository: Path, path: str
 ) -> None:
     assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
+
+
+def test_fetch_transport_changes_do_not_select_models(catalog_repository: Path) -> None:
+    # Fetcher accepts only payloads matching the model's pinned size and SHA-256,
+    # so retry/auth/cache implementation changes cannot alter compiler inputs.
+    assert select_model_ids(discover_catalog(catalog_repository), ["tools/model_registry/fetch.py"]) == []
 
 
 def test_mismatched_directory_id_fails(catalog_repository: Path) -> None:
@@ -199,15 +205,15 @@ def test_build_fingerprint_invalidates_model_global_and_compiler_changes(catalog
     manifest.write_text('{"model-compiler":"2.1.3"}\n', encoding="utf-8")
     tooling = catalog_repository / "tools" / "model_registry"
     tooling.mkdir(parents=True)
-    fetch = tooling / "fetch.py"
-    fetch.write_text("# fetch v1\n", encoding="utf-8")
+    model = tooling / "model.py"
+    model.write_text("# model loader v1\n", encoding="utf-8")
     first = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
 
     (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
     model_changed = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
     assert model_changed != first
 
-    fetch.write_text("# fetch v2\n", encoding="utf-8")
+    model.write_text("# model loader v2\n", encoding="utf-8")
     global_changed = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
     assert global_changed != model_changed
 
@@ -224,6 +230,7 @@ def test_build_fingerprint_ignores_orchestration_and_publication_changes(
     ignored = [
         catalog_repository / ".github" / "workflows" / "Vulcan-Model-Compile.yml",
         catalog_repository / "schemas" / "publication.schema.json",
+        catalog_repository / "tools" / "model_registry" / "fetch.py",
         catalog_repository / "tools" / "model_registry" / "registry.py",
         catalog_repository / "tools" / "runtime" / "execute.py",
     ]
