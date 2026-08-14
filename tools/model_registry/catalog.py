@@ -9,13 +9,15 @@ from typing import Any
 from .errors import ValidationError
 from .model import load_and_validate_model
 
-SHARED_BUILD_PATHS = (
-    ".github/workflows/Vulcan-Model-Compile.yml",
+GLOBAL_COMPILE_INPUT_PATHS = (
     "deps/",
-    "pyproject.toml",
-    "schemas/",
-    "tools/model_registry/",
-    "tools/runtime/",
+    # Model recipes import these modules while preparing immutable source and
+    # calibration inputs. Changes can therefore affect every compiled MPK.
+    "tools/model_registry/__init__.py",
+    "tools/model_registry/errors.py",
+    "tools/model_registry/fetch.py",
+    "tools/model_registry/model.py",
+    "tools/model_registry/source.py",
 )
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
@@ -125,7 +127,7 @@ def resolve_base_branch(
 
 def _build_input_files(root: Path, model_id: str) -> list[Path]:
     candidates: list[Path] = []
-    for prefix in SHARED_BUILD_PATHS:
+    for prefix in GLOBAL_COMPILE_INPUT_PATHS:
         path = root / prefix.rstrip("/")
         if path.is_file():
             candidates.append(path)
@@ -172,8 +174,11 @@ def model_build_fingerprint(repository: str | Path, model_id: str, compiler_vers
     return digest.hexdigest()
 
 
-def _is_shared_build_path(path: str) -> bool:
-    return any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in SHARED_BUILD_PATHS)
+def _is_global_compile_input(path: str) -> bool:
+    return any(
+        path == prefix or (prefix.endswith("/") and path.startswith(prefix))
+        for prefix in GLOBAL_COMPILE_INPUT_PATHS
+    )
 
 
 def select_model_ids(catalog: dict[str, dict[str, Any]], changed_paths: list[str]) -> list[str]:
@@ -184,7 +189,7 @@ def select_model_ids(catalog: dict[str, dict[str, Any]], changed_paths: list[str
         path = PurePosixPath(raw_path).as_posix()
         normalized_paths.add(path[2:] if path.startswith("./") else path)
     normalized = sorted(normalized_paths)
-    if any(_is_shared_build_path(path) for path in normalized):
+    if any(_is_global_compile_input(path) for path in normalized):
         return sorted(catalog)
 
     selected: set[str] = set()
