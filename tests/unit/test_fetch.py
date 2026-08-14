@@ -182,6 +182,30 @@ def test_local_cache_io_failure_is_not_retried(tmp_path: Path, monkeypatch: pyte
     assert not list(fetcher.cache_path(source()).parent.glob("*.partial"))
 
 
+def test_opener_oserror_is_retried_as_transport_failure(tmp_path: Path) -> None:
+    calls = 0
+    delays = []
+
+    def opener(request: Request, timeout: int) -> Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("socket disconnected")
+        return Response(PAYLOAD)
+
+    path, cache_hit = Fetcher(
+        tmp_path,
+        opener=opener,
+        allowed_https_hosts={"models.example"},
+        sleeper=delays.append,
+    ).fetch(source())
+
+    assert not cache_hit
+    assert path.read_bytes() == PAYLOAD
+    assert calls == 2
+    assert delays == [1]
+
+
 def test_hugging_face_token_is_sent_but_not_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     observed = {}
 
