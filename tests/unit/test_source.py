@@ -58,6 +58,8 @@ def test_redaction_removes_credentials_query_and_fragment() -> None:
     [
         "https://api.github.com/repos/sima-neat/models/releases/assets/508126877",
         "https://github.com/sima-neat/models/releases/download/source-v1/model.onnx",
+        "https://github.com/owner/repository/releases/download/calibration-v1/data.npz",
+        "https://api.github.com/repos/owner/repository/releases/assets/123456",
     ],
 )
 def test_github_release_assets_are_immutable_sources(uri: str) -> None:
@@ -69,8 +71,11 @@ def test_github_release_assets_are_immutable_sources(uri: str) -> None:
     [
         "https://api.github.com/repos/sima-neat/models/releases/latest",
         "https://github.com/sima-neat/models/raw/main/model.onnx",
+        "https://github.com/owner/repository/raw/main/data.npz",
+        "https://github.com/owner/repository/releases/latest/download/data.npz",
+        "https://api.github.com/repos/owner/repository/releases/latest",
     ],
 )
-def test_mutable_github_sources_fail(uri: str) -> None:
+def test_non_asset_github_urls_fail(uri: str) -> None:
     with pytest.raises(SourcePolicyError):
         SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()

@@ -31,7 +31,10 @@
 6. Declare targets and recipe parameters explicitly. Do not add a compiler pin
    to a model variant: all variants use the repository-wide Model Compiler
    version in `deps/manifest.json`. Unknown fields are rejected so misspellings
-   cannot silently change a build.
+   cannot silently change a build. When qualification proves a declared
+   combination unusable, set `status: unsupported` and record the evidence in
+   `reason`; the matrix and packager will retain the contract but exclude that
+   artifact. Do not use unsupported status for a merely untested variant.
 7. Validate, fetch, and inspect the resulting CI matrix:
 
    ```bash

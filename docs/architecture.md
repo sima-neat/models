@@ -90,13 +90,33 @@ resources so users can choose one or more. Each `<model-id>/metadata.json`
 provides a stable direct-install target for that model. `catalog.json` carries
 the same inventory for automation without interactive `sima-cli` selection.
 
-To preserve incremental compilation without copying large MPKs, the packaging
-job reads the previous branch's versioned `latest.json`. Each model entry owns
-an immutable `latest_tag`, `artifact_branch`, build timestamp, and per-variant
-provenance. New branches fall back to the `main` index. Changed model outputs
-are stored under the current commit; unchanged entries continue to reference
-their prior immutable build. Root metadata and `catalog.json` remain complete
-and use absolute artifact URLs. Direct model installs use the model-aware index.
+For staging builds that produce new MPKs, the workflow also creates one
+artifact-registry run per compiled model variant after S3 publication. It
+records the immutable source, canonical model/variant/compiler parameters, and
+the exact S3 object version and checksum, then finalizes the run. The required
+compile-result validation is recorded as compilation evidence; it is not a
+substitute for future Kerrigan DevKit correctness or performance results.
+Inherited model entries are not recorded as new compilations. Production keeps
+using S3 and the model-aware indexes until the artifact-registry API is deployed
+there. Registry ingestion is an independently retryable projection: a temporary
+registry failure does not roll back an otherwise complete S3 catalog or prevent
+the branch pointer from advancing.
+
+To preserve incremental compilation without copying large MPKs, the selection
+job pins the current branch's versioned `latest.json`, falling back to the
+resolved base branch on a branch's first build. The base is explicit for pull
+requests and manual dispatches and otherwise resolved from the closest remote
+branch by Git graph distance, with `develop` winning ties. The comparison starts
+at the merge base rather than treating GitHub's all-zero new-branch `before` SHA
+as a request to rebuild the entire catalog. Each model entry owns an immutable
+`latest_tag`, `artifact_branch`, build timestamp, per-variant provenance, and a
+deterministic build fingerprint over model-local inputs, shared build inputs,
+and the pinned Model Compiler version. Changed model outputs are stored under
+the current commit; unchanged entries continue to reference their prior
+immutable build. When no fingerprint requires compilation, the workflow still
+publishes complete metadata and a branch index without leasing a Vulcan compiler
+runner. Root metadata and `catalog.json` remain complete and use absolute
+artifact URLs. Direct model installs use the model-aware index.
 
 Cleanup collects references from all current model indexes before applying age
 retention, so an older model build remains protected while any live index uses

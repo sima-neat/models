@@ -37,6 +37,25 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     assert "unknown model id" in capsys.readouterr().err
 
 
+def test_matrix_selects_one_ssd_variant(capsys) -> None:
+    variant = "modalix_int8_tess_mla"
+    result = main(
+        [
+            "matrix",
+            "--repository",
+            str(ROOT),
+            "--models",
+            "ssd_mobilenet_v1",
+            "--variants",
+            variant,
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert f'"variant_id":"{variant}"' in output
+    assert '"model_id":"ssd_mobilenet_v1"' in output
+
+
 def test_package_supports_python_module_entrypoint() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "model_registry", "--help"],

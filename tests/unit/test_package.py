@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from model_registry.artifact import verify_mpk
+from model_registry.catalog import discover_catalog, model_build_fingerprint
 from model_registry.errors import ValidationError
 from model_registry.package import package_compiled_models
 
@@ -19,58 +20,43 @@ def _compiled_fixture(
     root: Path,
     *,
     git_sha: str = GIT_SHA,
-    models: tuple[str, ...] = ("resnet_50", "yolo26_tiny_drone"),
+    models: tuple[str, ...] | None = None,
 ) -> None:
-    if "resnet_50" in models:
-        for variant_id in ("modalix_bf16", "modalix_int8"):
-            output = root / "resnet_50" / variant_id
+    for model_id, model in discover_catalog(ROOT).items():
+        if models is not None and model_id not in models:
+            continue
+        for variant in model["compile_variants"]:
+            if variant.get("status", "supported") == "unsupported":
+                continue
+            variant_id = variant["id"]
+            output = root / model_id / variant_id
             output.mkdir(parents=True)
-            archive = output / f"resnet_50_{variant_id}_mpk.tar.gz"
+            archive = output / f"{model_id}_{variant_id}_mpk.tar.gz"
             with tarfile.open(archive, "w:gz") as stream:
-                for name in ("resnet/model.elf", "resnet/resnet_mpk.json"):
+                for name in (f"{model_id}/model.elf", f"{model_id}/{model_id}_mpk.json"):
                     content = b"fixture"
                     info = tarfile.TarInfo(name)
                     info.size = len(content)
                     stream.addfile(info, io.BytesIO(content))
-            verify_mpk(
-                output,
-                write_manifest=True,
-                provenance={
-                    "model_id": "resnet_50",
-                    "variant_id": variant_id,
-                    "git_sha": git_sha,
-                    "target": "modalix",
-                    "environment": "staging",
-                    "compiler_version": "2.1.3",
-                    "compiler_label": "model-compiler-2.1.3",
-                    "source_sha256": "c" * 64,
-                },
-            )
-    if "yolo26_tiny_drone" in models:
-        output = root / "yolo26_tiny_drone" / "modalix_int8_tessellation_mla"
-        output.mkdir(parents=True)
-        archive = output / "yolo26n_p2_tiny_drone_int8_qat_b1_mpk.tar.gz"
-        with tarfile.open(archive, "w:gz") as stream:
-            for name in ("yolo26/model.elf", "yolo26/yolo26_mpk.json"):
-                content = b"fixture"
-                info = tarfile.TarInfo(name)
-                info.size = len(content)
-                stream.addfile(info, io.BytesIO(content))
-        verify_mpk(
-            output,
-            write_manifest=True,
-            provenance={
-                "model_id": "yolo26_tiny_drone",
-                "variant_id": "modalix_int8_tessellation_mla",
+            provenance = {
+                "model_id": model_id,
+                "variant_id": variant_id,
                 "git_sha": git_sha,
-                "target": "modalix",
+                "target": variant["target"],
                 "environment": "staging",
                 "compiler_version": "2.1.3",
                 "compiler_label": "model-compiler-2.1.3",
-                "source_sha256": "d" * 64,
-                "calibration_sha256": "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b",
-            },
-        )
+                "source_sha256": "c" * 64,
+                "build_fingerprint": model_build_fingerprint(ROOT, model_id, "2.1.3"),
+            }
+            calibration = model["calibration"]
+            if calibration["status"] == "ready":
+                provenance["calibration_sha256"] = calibration["source"]["sha256"]
+            verify_mpk(
+                output,
+                write_manifest=True,
+                provenance=provenance,
+            )
 
 
 def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> None:
@@ -97,6 +83,7 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     assert latest["models"]["resnet_50"]["latest_tag"] == GIT_SHA[:12]
     assert latest["models"]["resnet_50"]["artifact_branch"] == "develop"
     assert latest["models"]["resnet_50"]["built_at"]
+    assert len(latest["models"]["resnet_50"]["build_fingerprint"]) == 64
 
     model_metadata = json.loads((destination / "resnet_50" / "metadata.json").read_text(encoding="utf-8"))
     assert model_metadata["name"] == "gh:sima-neat/models/resnet_50"
@@ -125,6 +112,26 @@ def test_package_rejects_existing_output_directory(tmp_path: Path) -> None:
     destination.mkdir()
     with pytest.raises(ValidationError, match="already exists"):
         package_compiled_models(ROOT, compiled, destination, GIT_SHA)
+
+
+def test_package_rejects_unsupported_compiled_variant_with_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog = discover_catalog(ROOT)
+    variant = next(
+        item for item in catalog["ssd_mobilenet_v3"]["compile_variants"] if item["id"] == "modalix_int8_tess_mla"
+    )
+    variant["status"] = "unsupported"
+    variant["reason"] = "fixture compiler evidence"
+    monkeypatch.setattr("model_registry.package.discover_catalog", lambda _root: catalog)
+    result = tmp_path / "compiled" / "ssd_mobilenet_v3" / "modalix_int8_tess_mla" / "compile-result.json"
+    result.parent.mkdir(parents=True)
+    result.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        ValidationError,
+        match="compiled output references unsupported variant.*fixture compiler evidence",
+    ):
+        package_compiled_models(ROOT, tmp_path / "compiled", tmp_path / "dist", GIT_SHA)
 
 
 def test_package_carries_forward_pointers_without_copying_unchanged_mpk(tmp_path: Path) -> None:

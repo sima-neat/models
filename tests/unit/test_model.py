@@ -42,6 +42,13 @@ def test_duplicate_variant_ids_fail() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
+def test_unsupported_variant_requires_reason() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["compile_variants"][0]["status"] = "unsupported"
+    with pytest.raises(ValidationError, match="compile_variants.*reason.*required"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
 def test_unapproved_https_host_is_a_validation_error() -> None:
     model = load_model(FIXTURES / "fixture_model")
     model["source"]["uri"] = "https://unapproved.example/model.onnx"

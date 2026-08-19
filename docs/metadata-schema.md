@@ -18,5 +18,12 @@ model directory. Variant IDs must be unique within a model. The exact compiler
 version is repository-wide and comes from `deps/manifest.json`, preventing
 variants from silently selecting different Model Compiler environments.
 
+Variants are supported by default. A combination proven unusable with the
+repository compiler may be retained as `status: unsupported` together with a
+non-empty `reason`. Unsupported variants remain part of the documented model
+contract, but matrix generation and release packaging exclude them. This keeps
+known limitations visible without publishing an artifact that failed its
+qualification evidence.
+
 Validation errors use paths such as `source.sha256` and include the model
 directory, making both local and CI failures actionable.

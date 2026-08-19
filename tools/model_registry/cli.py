@@ -7,13 +7,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .artifact import verify_mpk
-from .catalog import build_matrix, discover_catalog, git_changed_paths, select_model_ids
+from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model
 from .package import package_compiled_models
-from .published import fetch_previous_index
+from .published import fetch_previous_index, validate_latest_index
+from .registry import publish_compilations
 from .source import SourceSpec
 
 
@@ -44,9 +45,19 @@ def _parser() -> argparse.ArgumentParser:
     matrix.add_argument("--repository", type=Path, default=Path.cwd())
     matrix.add_argument("--all", action="store_true", dest="all_models")
     matrix.add_argument("--models", help="comma-separated model IDs")
+    matrix.add_argument("--variants", help="comma-separated variant IDs within the selected models")
     matrix.add_argument("--changed-path", action="append", default=[])
     matrix.add_argument("--base")
     matrix.add_argument("--head")
+    matrix.add_argument("--compiler-version")
+    matrix.add_argument("--previous-index", type=Path)
+
+    base = subcommands.add_parser("resolve-base", help="resolve the closest base branch and merge base")
+    base.add_argument("--repository", type=Path, default=Path.cwd())
+    base.add_argument("--current-branch", required=True)
+    base.add_argument("--head", required=True)
+    base.add_argument("--preferred-branch")
+    base.add_argument("--default-branch", default="develop")
 
     compiler = subcommands.add_parser("resolve-compiler", help="resolve the repository-wide Model Compiler dependency")
     compiler.add_argument("--repository", type=Path, default=Path.cwd())
@@ -64,6 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     mpk.add_argument("--calibration-sha256")
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
+    mpk.add_argument("--build-fingerprint")
 
     package = subcommands.add_parser("package", help="assemble compiled MPKs into sima-cli package metadata")
     package.add_argument("--repository", type=Path, default=Path.cwd())
@@ -86,6 +98,21 @@ def _parser() -> argparse.ArgumentParser:
     previous.add_argument("--fallback-branch")
     previous.add_argument("--output-file", type=Path, required=True)
     previous.add_argument("--json", action="store_true", dest="json_output")
+
+    publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
+    publish.add_argument("--repository", type=Path, default=Path.cwd())
+    publish.add_argument("--dist-dir", type=Path, required=True)
+    publish.add_argument("--api-url", required=True)
+    publish.add_argument("--aws-region", default="us-west-2")
+    publish.add_argument("--bucket", required=True)
+    publish.add_argument("--kms-key-id")
+    publish.add_argument("--environment", choices=("staging", "production"), required=True)
+    publish.add_argument("--branch", required=True)
+    publish.add_argument("--git-sha", required=True)
+    publish.add_argument("--github-run-id", required=True)
+    publish.add_argument("--github-run-attempt", required=True)
+    publish.add_argument("--github-run-url", required=True)
+    publish.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
 
@@ -159,7 +186,46 @@ def _matrix(args: argparse.Namespace) -> int:
                 raise ModelRegistryError("--base and --head must be supplied together")
             paths.extend(git_changed_paths(args.repository, args.base, args.head))
         model_ids = select_model_ids(catalog, paths)
-    print(json.dumps(build_matrix(catalog, model_ids), sort_keys=True, separators=(",", ":")))
+    variant_ids = None
+    if args.variants is not None:
+        variant_ids = [item.strip() for item in args.variants.split(",") if item.strip()]
+        if not variant_ids:
+            raise ModelRegistryError("--variants must contain at least one variant ID")
+    previous_models = None
+    if args.previous_index is not None:
+        if args.compiler_version is None:
+            raise ModelRegistryError("--compiler-version is required with --previous-index")
+        try:
+            value = json.loads(args.previous_index.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ModelRegistryError(f"could not read previous index {args.previous_index}: {exc}") from exc
+        previous_models = validate_latest_index(value)["models"]
+    print(
+        json.dumps(
+            build_matrix(
+                catalog,
+                model_ids,
+                variant_ids,
+                repository=args.repository if args.compiler_version is not None else None,
+                compiler_version=args.compiler_version,
+                previous_models=previous_models,
+            ),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
+def _resolve_base(args: argparse.Namespace) -> int:
+    result = resolve_base_branch(
+        args.repository,
+        current_branch=args.current_branch,
+        head=args.head,
+        preferred_branch=args.preferred_branch,
+        default_branch=args.default_branch,
+    )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 
@@ -179,6 +245,7 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "calibration_sha256",
         "git_sha",
         "environment",
+        "build_fingerprint",
     )
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
     result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
@@ -217,6 +284,26 @@ def _fetch_previous(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish(args: argparse.Namespace) -> int:
+    result = publish_compilations(
+        repository=args.repository,
+        dist_dir=args.dist_dir,
+        api_url=args.api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_id=args.github_run_id,
+        github_run_attempt=args.github_run_attempt,
+        github_run_url=args.github_run_url,
+    )
+    message = json.dumps(result, sort_keys=True) if args.json_output else f"Published {result['count']} compilation(s)"
+    print(message)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -229,6 +316,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _fetch_calibration(args)
         if args.command == "matrix":
             return _matrix(args)
+        if args.command == "resolve-base":
+            return _resolve_base(args)
         if args.command == "resolve-compiler":
             return _resolve_compiler(args)
         if args.command == "verify-mpk":
@@ -237,6 +326,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _package(args)
         if args.command == "fetch-previous":
             return _fetch_previous(args)
+        if args.command == "publish":
+            return _publish(args)
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)

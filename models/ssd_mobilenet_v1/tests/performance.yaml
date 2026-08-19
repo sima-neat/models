@@ -1,0 +1,12 @@
+schema_version: 1
+status: pending_hardware_qualification
+target: modalix
+configuration:
+  warmup_frames: 20
+  measured_frames: 100
+  batch_size: 1
+metrics:
+  - name: latency_p50_ms
+  - name: latency_p99_ms
+  - name: throughput_fps
+note: Compare tessellation in MLA with tessellation outside MLA separately for INT8 and BF16.

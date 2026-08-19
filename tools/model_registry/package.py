@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifact import verify_mpk
-from .catalog import discover_catalog
+from .catalog import discover_catalog, model_build_fingerprint
 from .errors import ValidationError
 from .fetch import sha256_file
 from .published import artifact_url, validate_latest_index
@@ -95,6 +95,11 @@ def package_compiled_models(
         variants = {item["id"]: item for item in catalog[model_id]["compile_variants"]}
         if variant_id not in variants:
             raise ValidationError(f"compiled output references unknown variant: {model_id}/{variant_id}")
+        if variants[variant_id].get("status", "supported") == "unsupported":
+            raise ValidationError(
+                f"compiled output references unsupported variant: {model_id}/{variant_id}: "
+                f"{variants[variant_id]['reason']}"
+            )
         result = json.loads(result_path.read_text(encoding="utf-8"))
         provenance = result.get("provenance", {})
         expected_provenance = {
@@ -104,6 +109,9 @@ def package_compiled_models(
             "target": variants[variant_id]["target"],
             "environment": environment,
         }
+        compiler_version = provenance.get("compiler_version")
+        if isinstance(compiler_version, str) and compiler_version.strip():
+            expected_provenance["build_fingerprint"] = model_build_fingerprint(root, model_id, compiler_version)
         for key, value in expected_provenance.items():
             if provenance.get(key) != value:
                 raise ValidationError(
@@ -153,7 +161,9 @@ def package_compiled_models(
 
     index_models: dict[str, Any] = {}
     for model_id, model in sorted(catalog.items()):
-        expected_variants = {item["id"] for item in model["compile_variants"]}
+        expected_variants = {
+            item["id"] for item in model["compile_variants"] if item.get("status", "supported") == "supported"
+        }
         if model_id in current_by_model:
             built = current_by_model[model_id]
             found_variants = {item["variant_id"] for item in built}
@@ -171,6 +181,7 @@ def package_compiled_models(
                 "latest_tag": version,
                 "artifact_branch": branch,
                 "built_at": max(built_at_values),
+                "build_fingerprint": built[0]["provenance"]["build_fingerprint"],
                 "variants": {
                     item["variant_id"]: {
                         "target": item["target"],

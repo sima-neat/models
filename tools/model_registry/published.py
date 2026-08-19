@@ -57,6 +57,13 @@ def validate_latest_index(value: Any, *, branch: str | None = None) -> dict[str,
             raise ValidationError(f"latest.json model {model_id!r} has an invalid artifact_branch")
         if not isinstance(variants, dict) or not variants:
             raise ValidationError(f"latest.json model {model_id!r} has no variants")
+        fingerprint = entry.get("build_fingerprint")
+        if fingerprint is not None and (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint.lower())
+        ):
+            raise ValidationError(f"latest.json model {model_id!r} has an invalid build_fingerprint")
     return value
 
 
