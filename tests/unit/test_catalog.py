@@ -79,6 +79,19 @@ def test_yolo26_training_inputs_select_only_the_tiny_drone_model(catalog_reposit
 @pytest.mark.parametrize(
     "path",
     [
+        "training/yolo26_tiny_drone_extra/compile.py",
+        "training/unrelated_model/compile.py",
+    ],
+)
+def test_unrelated_training_inputs_do_not_select_tiny_drone(catalog_repository: Path, path: str) -> None:
+    _write_model(catalog_repository, "yolo26_tiny_drone")
+
+    assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         "deps/manifest.json",
     ],
 )
