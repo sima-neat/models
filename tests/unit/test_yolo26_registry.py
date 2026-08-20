@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,10 @@ def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> 
         (source_dir / name).write_bytes(f"qualified-{index}\n".encode())
     quantized_json = source_dir / f"{MODEL_NAME}.sima.json"
     quantized_digest = hashlib.sha256(quantized_json.read_bytes()).hexdigest()
+    payload_digests = {
+        name: hashlib.sha256((source_dir / name).read_bytes()).hexdigest()
+        for name in MODEL_FILES
+    }
     report = {
         "schema_version": 1,
         "architecture": "yolo26n-p2-attention-one-class",
@@ -147,6 +152,7 @@ def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> 
             "compute_scalar_type": "int8",
             "weight_quantization": "per_channel_int8",
             "quantized_model_json_sha256": quantized_digest,
+            "serialized_model_sha256": payload_digests,
             "attention": {
                 "BatchMatmul": {"count": 8, "input_scalar_type": "int8", "output_scalar_type": "int8"},
                 "Softmax": {"count": 4, "input_scalar_type": "int8", "output_scalar_type": "int8"},
@@ -167,3 +173,14 @@ def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> 
     manifest = materialize_snapshot(first, output)
     assert manifest["model_name"] == MODEL_NAME
     assert {path.name for path in output.iterdir()} == set(MODEL_FILES)
+
+    for index, name in enumerate(MODEL_FILES):
+        path = source_dir / name
+        original = path.read_bytes()
+        path.write_bytes(b"mutated payload")
+        with pytest.raises(
+            ValueError,
+            match=rf"serialized model payload does not match its qualification report: {re.escape(name)}",
+        ):
+            build_archive(report_path, source_dir, tmp_path / f"mutated-{index}.tar.gz")
+        path.write_bytes(original)

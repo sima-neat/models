@@ -32,6 +32,23 @@ SERIALIZED_INT8_SCALAR_TYPE = 1
 EXPECTED_MODEL_SDK_VERSION = "2.1.3"
 
 
+def serialized_model_sha256(output_dir: Path, model_name: str) -> dict[str, str]:
+    """Bind every ModelSDK payload saved by the qualified quantization step."""
+    names = (
+        f"{model_name}.sima",
+        f"{model_name}.sima.json",
+        f"{model_name}.fp32.sima",
+        f"{model_name}.fp32.sima.json",
+    )
+    digests: dict[str, str] = {}
+    for name in names:
+        path = output_dir / name
+        if not path.is_file():
+            raise FileNotFoundError(f"serialized ModelSDK payload does not exist: {path}")
+        digests[name] = sha256_file(path)
+    return digests
+
+
 def snapshot_export(export_dir: Path, destination: Path) -> tuple[Path, Path]:
     """Copy one self-consistent export into a private compilation snapshot."""
     export_root = export_dir.resolve()
@@ -480,6 +497,7 @@ def compile_model(
         output_dir / f"{model_name}.sima.json",
         expected_convolutions,
     )
+    quantized_report["serialized_model_sha256"] = serialized_model_sha256(output_dir, model_name)
     tessellation_parameters, tessellation_report = build_mla_tessellation_parameters(quantized)
     quantized.compile(
         output_path=str(output_dir),

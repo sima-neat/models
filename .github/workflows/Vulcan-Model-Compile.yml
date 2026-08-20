@@ -494,7 +494,7 @@ jobs:
           if [[ -f _previous/previous-latest.json ]]; then
             package_args+=(--previous-index _previous/previous-latest.json)
           fi
-          if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" != "main" && "$GITHUB_REF_NAME" != "develop" ]]; then
             package_args+=(--allow-partial-catalog)
           fi
           model-registry package "${package_args[@]}" > package-result.json

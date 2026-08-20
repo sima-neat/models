@@ -104,7 +104,7 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
     assert "--cache-control no-store" in upload_script
 
 
-def test_feature_branch_publication_can_seed_a_partial_catalog() -> None:
+def test_only_feature_branch_publication_can_seed_a_partial_catalog() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     package_script = next(
         step["run"]
@@ -112,7 +112,7 @@ def test_feature_branch_publication_can_seed_a_partial_catalog() -> None:
         if step.get("name") == "Generate root and per-model package metadata"
     )
 
-    assert 'if [[ "$GITHUB_REF_NAME" != "main" ]]' in package_script
+    assert 'if [[ "$GITHUB_REF_NAME" != "main" && "$GITHUB_REF_NAME" != "develop" ]]' in package_script
     assert "package_args+=(--allow-partial-catalog)" in package_script
 
 

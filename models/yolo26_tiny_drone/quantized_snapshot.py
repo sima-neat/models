@@ -139,6 +139,7 @@ def build_archive(compile_report: Path, source_dir: Path, output: Path) -> dict[
     calibration = report.get("calibration", {})
     quantized = report.get("quantized_model", {})
     attention = quantized.get("attention", {})
+    qualified_payloads = quantized.get("serialized_model_sha256")
     if (
         report.get("schema_version") != 1
         or report.get("architecture") != "yolo26n-p2-attention-one-class"
@@ -157,6 +158,8 @@ def build_archive(compile_report: Path, source_dir: Path, output: Path) -> dict[
         or attention.get("Softmax", {}).get("input_scalar_type") != "int8"
         or attention.get("Softmax", {}).get("output_scalar_type") != "int8"
         or report.get("mpk", {}).get("compiler_version") != EXPECTED_MODEL_SDK_VERSION
+        or not isinstance(qualified_payloads, dict)
+        or set(qualified_payloads) != set(MODEL_FILES)
     ):
         raise ValueError("compile report is not the qualified YOLO26 INT8 QAT model")
 
@@ -169,8 +172,8 @@ def build_archive(compile_report: Path, source_dir: Path, output: Path) -> dict[
         payload = path.read_bytes()
         payloads[name] = payload
         digests[name] = _sha256_bytes(payload)
-    if digests[f"{MODEL_NAME}.sima.json"] != quantized.get("quantized_model_json_sha256"):
-        raise ValueError("quantized model JSON does not match its qualification report")
+        if digests[name] != qualified_payloads[name]:
+            raise ValueError(f"serialized model payload does not match its qualification report: {name}")
 
     manifest = {
         "schema_version": 1,
