@@ -89,6 +89,36 @@ def test_unrelated_training_inputs_do_not_select_tiny_drone(catalog_repository: 
     assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
 
 
+def test_ostrack_qat_training_inputs_select_only_ostrack(catalog_repository: Path) -> None:
+    _write_model(catalog_repository, "ostrack_vitb_noce_int8_qat")
+    _write_model(catalog_repository, "edgetam_image_prompt_p3_int8_qat")
+
+    selected = select_model_ids(
+        discover_catalog(catalog_repository),
+        ["training/ostrack_vitb_noce_int8_qat/build_qdq_source.py"],
+    )
+
+    assert selected == ["ostrack_vitb_noce_int8_qat"]
+
+
+def test_shared_edgetam_qat_inputs_select_all_three_components(catalog_repository: Path) -> None:
+    component_ids = [
+        "edgetam_image_prompt_p3_int8_qat",
+        "edgetam_memory_encoder_p1_int8_qat",
+        "edgetam_recurrent_s1_p1_int8_qat",
+    ]
+    for model_id in component_ids:
+        _write_model(catalog_repository, model_id)
+    _write_model(catalog_repository, "ostrack_vitb_noce_int8_qat")
+
+    selected = select_model_ids(
+        discover_catalog(catalog_repository),
+        ["training/edgetam_p1_int8_qat/build_qdq_sources.py"],
+    )
+
+    assert selected == component_ids
+
+
 @pytest.mark.parametrize(
     "path",
     [

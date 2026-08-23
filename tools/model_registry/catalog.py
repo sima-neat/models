@@ -14,6 +14,10 @@ GLOBAL_COMPILE_INPUT_PATHS = (
 )
 
 MODEL_COMPILE_INPUT_PATHS = {
+    "edgetam_image_prompt_p3_int8_qat": ("training/edgetam_p1_int8_qat/",),
+    "edgetam_memory_encoder_p1_int8_qat": ("training/edgetam_p1_int8_qat/",),
+    "edgetam_recurrent_s1_p1_int8_qat": ("training/edgetam_p1_int8_qat/",),
+    "ostrack_vitb_noce_int8_qat": ("training/ostrack_vitb_noce_int8_qat/",),
     "yolo26_tiny_drone": ("training/yolo26_tiny_drone/",),
 }
 

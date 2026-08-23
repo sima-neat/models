@@ -1,0 +1,31 @@
+{
+  "acceptance": {
+    "maximum_iou_drop": 0.02,
+    "observed_iou_drop": 0.00408954918384552,
+    "passed": true
+  },
+  "bf16": {
+    "iou": 0.8850971758365631,
+    "peak": 0.90625,
+    "success50": 0.96875
+  },
+  "dataset": {
+    "records": 32,
+    "sources": {
+      "COCO17": 16,
+      "TrackingNet": 16
+    },
+    "status": "compact_development_reference"
+  },
+  "qparameter_catalogue_sha256": "0c2317959b482b5825b5dd243d03450276cd92f9398aa8349d077087e780eb96",
+  "schema_version": 1,
+  "selected_checkpoint_sha256": "8ef43ff072b11c981694f0b2280ccfff0a173842d13adaa0455fbfba2cd151a2",
+  "selected_checkpoint_size_bytes": 370295431,
+  "selected_state": "update0",
+  "status": "qualified_pytorch_reference",
+  "w8a8": {
+    "iou": 0.8810076266527176,
+    "peak": 0.90625,
+    "success50": 0.96875
+  }
+}

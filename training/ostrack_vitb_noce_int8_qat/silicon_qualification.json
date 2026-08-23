@@ -1,0 +1,49 @@
+{
+  "artifact": {
+    "mla_elf_count": 1,
+    "mla_elf_sha256": "c41dedf362f688e1f2ce3262320bc4bf06284e1ce10b9977d5168f6d7bdcb1e6",
+    "mla_elf_size_bytes": 266617432,
+    "mpk_sha256": "de2b3ac7ec5db0380b7588f2628fffbb9f3c23305b2416afd09192c25bd93193"
+  },
+  "candidate": {
+    "bf16_head_affines": 15,
+    "bf16_head_nodes": 19,
+    "precision": "mixed",
+    "qat_checkpoint_sha256": "8ef43ff072b11c981694f0b2280ccfff0a173842d13adaa0455fbfba2cd151a2",
+    "serialized_model_sha256": "e9ad38e5cbda1078298f83e7f8c595595542dc0f87fe23ce34a36d97c4ddacb1"
+  },
+  "device": "Modalix 192.168.1.246",
+  "fixed_dev32": {
+    "bf16": {
+      "iou": 0.8850482553243637,
+      "success50": 0.96875
+    },
+    "board": {
+      "iou": 0.8690026236261783,
+      "success50": 0.96875
+    },
+    "host_afe": {
+      "iou": 0.8690026236261783,
+      "success50": 0.96875
+    },
+    "host_board_per_sample_iou_exact": true,
+    "inputs_sha256": "ce75ae82e716a50247f45ab6313668307083da252f2f4a5fb005b4c94629d6f1",
+    "qat": {
+      "iou": 0.8810076266527176,
+      "success50": 0.96875
+    },
+    "records": 32,
+    "sources": {
+      "COCO17": 16,
+      "TrackingNet": 16
+    }
+  },
+  "performance": {
+    "fps": 58.602737458031214,
+    "mean_latency_ms": 17.06404928125,
+    "median_latency_ms": 16.8082905,
+    "warmup_excluded": true
+  },
+  "schema_version": 1,
+  "status": "qualified_on_silicon"
+}

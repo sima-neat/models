@@ -1,0 +1,31 @@
+{
+  "archive_validation": {
+    "gzip_test": "passed",
+    "manifest_sha256": "e57c79cecf329998453b085e62661037253934b4b73a3870efbd8e6de8ca8fa0",
+    "payload_file_count": 24,
+    "payload_size_bytes": 2934357,
+    "sha256sum_check": "24/24 files passed"
+  },
+  "asset": {
+    "api_url": "https://api.github.com/repos/sima-neat/models/releases/assets/526755427",
+    "base_tree": "afe_qdq_boundary_fix_r64b/source",
+    "download_url": "https://github.com/sima-neat/models/releases/download/edgetam-pure-w8a8-r160-v1/edgetam_model_compiler_overlay_r160_20260823.tar.gz",
+    "kind": "Model Compiler overlay bundle",
+    "name": "edgetam_model_compiler_overlay_r160_20260823.tar.gz",
+    "release_asset_id": 526755427,
+    "sha256": "c2c5f17e587a5e85e402433e6829f7824d5f70f7dc5ee037d3e239ac26e12a44",
+    "size_bytes": 741029,
+    "support_status": "internal workaround pending upstream"
+  },
+  "full_reproduction_bundle": {
+    "api_url": "https://api.github.com/repos/sima-neat/models/releases/assets/526421812",
+    "download_url": "https://github.com/sima-neat/models/releases/download/edgetam-pure-w8a8-r160-v1/edgetam_pure_w8a8_modalix_r160_20260823.tar.gz",
+    "kind": "complete reproduction bundle",
+    "name": "edgetam_pure_w8a8_modalix_r160_20260823.tar.gz",
+    "release_asset_id": 526421812,
+    "sha256": "de021599f8dfc5af5cc25df5566ab3a233e46a88cd8efcc9ad96c1721f2caa42",
+    "size_bytes": 549270092
+  },
+  "release_tag": "edgetam-pure-w8a8-r160-v1",
+  "schema_version": 1
+}

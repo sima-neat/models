@@ -1,0 +1,35 @@
+{
+  "acceptance": {
+    "maximum_j_and_f_drop": 0.02,
+    "observed_j_and_f_drop": 0.0137808382527047,
+    "passed": true
+  },
+  "bf16": {
+    "F": 0.9740269527231378,
+    "J": 0.9671054872999776,
+    "J_and_F": 0.9705662200115577
+  },
+  "dataset": {
+    "observations": 49,
+    "records": 4,
+    "sources": [
+      "DAVIS2017-train",
+      "SA-V-train"
+    ],
+    "status": "compact_development_reference"
+  },
+  "deployment_contract": "image_prompt_p3_plus_recurrent_s1_p1_plus_memory_encoder_p1",
+  "qparameter_catalogue_sha256": "9e4dc59a90b0c82e3636c89b3cae65c42d31618ca8efd96a9235f2053e9a8c90",
+  "schema_version": 1,
+  "selected_checkpoint_sha256": "a40d991080fc41432b5c4762d65fad830ed7c7fd420649269cadf8f27665c5e2",
+  "selected_checkpoint_size_bytes": 56353097,
+  "selected_state": "stage_a",
+  "status": "qualified_pytorch_reference",
+  "w8a8": {
+    "F": 0.9575847817755998,
+    "J": 0.9559859817421061,
+    "J_and_F": 0.956785381758853,
+    "davis2017_J_and_F": 0.9425361436773559,
+    "sav_J_and_F": 0.967472310319976
+  }
+}

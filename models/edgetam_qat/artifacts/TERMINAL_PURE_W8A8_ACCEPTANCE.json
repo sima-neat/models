@@ -1,0 +1,194 @@
+{
+  "accuracy": {
+    "matched_modalix_prompt": {
+      "absolute_drop": 0.012755095958709717,
+      "bf16": 0.9289562702178955,
+      "board_w8a8": 0.9162011742591858,
+      "drop_points": 1.2755095958709717,
+      "gate_points": 1.5,
+      "margin_points": 0.22449040412902832,
+      "metric": "selected J",
+      "records": 7,
+      "status": "PASS_WITHIN_1P5"
+    },
+    "source_qat_frozen_dev": {
+      "absolute_drop": 0.013780838252704708,
+      "checkpoint_sha256": "a40d991080fc41432b5c4762d65fad830ed7c7fd420649269cadf8f27665c5e2",
+      "current_gate_pass": true,
+      "dataset_ids": [
+        "davis2017",
+        "sav"
+      ],
+      "drop_points": 1.3780838252704708,
+      "metric": "J&F",
+      "note": "The historical receipt status used a stricter 0.5-point global / 1-point per-source contract. This qualification applies the requested 1.5-point global gate without rewriting that historical status.",
+      "observations": 49,
+      "records": 4,
+      "student_w8a8": 0.956785381758853,
+      "teacher_bf16": 0.9705662200115577
+    }
+  },
+  "artifacts": {
+    "edgetam_memory_pure_w8a8_single_mla.elf": {
+      "kind": "MLA ELF",
+      "sha256": "d59c44291eac56e84917d87298882aa2aff8d43fe85a0f2fe75484376dfacf32",
+      "size_bytes": 55578864
+    },
+    "edgetam_memory_pure_w8a8_single_mla_mpk.tar.gz": {
+      "kind": "MPK",
+      "sha256": "ca75fbf9cb3bac4eb9370f46f4c407e2bda609912ecc307b4f7e070334c5c670",
+      "size_bytes": 24363069
+    },
+    "edgetam_prompt_pure_w8a8_single_mla.elf": {
+      "kind": "MLA ELF",
+      "sha256": "9430d625cbfb10915da877f98d3aacd1f748dce5360e32f20b18bac612792304",
+      "size_bytes": 103447776
+    },
+    "edgetam_prompt_pure_w8a8_single_mla_mpk.tar.gz": {
+      "kind": "MPK",
+      "sha256": "b850d6732eaf3c242cc578f328a5fe3be2337af8d646b62d0c895281a0f90e96",
+      "size_bytes": 47363598
+    },
+    "edgetam_recurrent_pure_w8a8_single_mla.elf": {
+      "kind": "MLA ELF",
+      "sha256": "dce3bed02966d14d81222aaaffeb656aeb43f962df77e2d68733b68be4bdec79",
+      "size_bytes": 289076680
+    },
+    "edgetam_recurrent_pure_w8a8_single_mla_mpk.tar.gz": {
+      "kind": "MPK",
+      "sha256": "8034cb99557d8640c8ab3bbd8b6c328d557ee0667eb66bb183893b5c9362fc8a",
+      "size_bytes": 114180792
+    }
+  },
+  "board": {
+    "memory": {
+      "benchmark_fps": 265.3856207878326,
+      "benchmark_latency_ms": 4.148622333333333,
+      "deterministic_runs": 3,
+      "mean_ms": 4.969957666666667,
+      "median_ms": 4.55721
+    },
+    "power_note": "The installed benchmark backend reported 0 W/0 J, which means power was not measured. No power claim is made.",
+    "prompt": {
+      "afe_exact_tensors": 35,
+      "afe_tensor_count": 35,
+      "mean_ms": 12.622606857142857,
+      "median_ms": 12.943305,
+      "record_count": 7
+    },
+    "recurrent": {
+      "afe_exact_tensors": 5,
+      "afe_tensor_count": 5,
+      "benchmark_fps": 7.807433664801548,
+      "benchmark_latency_ms": 34.07633499999999,
+      "deterministic_runs": 3,
+      "mean_ms": 36.331308,
+      "median_ms": 36.281535
+    }
+  },
+  "checks": {
+    "all_board_public_tensors_int8": true,
+    "matched_board_prompt_j_drop_le_0p015": true,
+    "memory_board_deterministic": true,
+    "memory_pure_w8a8_single_mla_elf": true,
+    "prompt_board_exact_to_afe": true,
+    "prompt_pure_w8a8_single_mla_elf": true,
+    "recurrent_board_exact_to_afe": true,
+    "recurrent_pure_w8a8_single_mla_elf": true,
+    "source_qat_global_j_and_f_drop_le_0p015": true,
+    "three_standalone_mla_elf_files": true
+  },
+  "compiled_precision": {
+    "memory": {
+      "constant_dtypes": {
+        "<i4": 79,
+        "|i1": 194
+      },
+      "elf_sha256": "d59c44291eac56e84917d87298882aa2aff8d43fe85a0f2fe75484376dfacf32",
+      "modelgraph_types": {
+        "INT32_1": 316,
+        "INT8": 2072
+      },
+      "retained_mlc_receipt": "not locally recovered; MPK ModelGraph/constant maps, final ELF token audit, one-MLA manifest, and deterministic Modalix execution are retained",
+      "weight_count": 79
+    },
+    "prompt": {
+      "constant_dtypes": {
+        "<i4": 177,
+        "|i1": 349
+      },
+      "elf_sha256": "9430d625cbfb10915da877f98d3aacd1f748dce5360e32f20b18bac612792304",
+      "modelgraph_types": {
+        "INT32_1": 708,
+        "INT8": 3832
+      },
+      "retained_mlc_zero_forbidden": true,
+      "weight_count": 177
+    },
+    "recurrent": {
+      "constant_dtypes": {
+        "<i4": 389,
+        "|i1": 751
+      },
+      "elf_sha256": "dce3bed02966d14d81222aaaffeb656aeb43f962df77e2d68733b68be4bdec79",
+      "modelgraph_types": {
+        "INT32_1": 1556,
+        "INT8": 8996
+      },
+      "retained_mlc_zero_forbidden": true,
+      "weight_count": 389
+    }
+  },
+  "limitations": [
+    "The frozen task gate is a compact DAVIS2017-train + SA-V-train development sample, not an official benchmark holdout.",
+    "The requested 1.5-point global gate passes, but the retained historical per-source Davis slice did not meet its stricter 1-point gate.",
+    "Prompt and recurrent compiled outputs are byte-exact to AFE on the retained Modalix cases. Memory is deterministically validated on Modalix; its local retained-MLC receipt could not be recovered, so its package-level integer maps and silicon run are retained instead.",
+    "The component benchmarks are not a full video-pipeline throughput claim."
+  ],
+  "precision_contract": {
+    "accumulation": "INT32 only",
+    "activations": "INT8 only",
+    "apu_a65_fallback": false,
+    "forbidden": [
+      "BF16",
+      "FP16",
+      "FP32",
+      "INT16/A16"
+    ],
+    "invocation": "one MLA stage and one MLA ELF per prompt, recurrent, and memory component",
+    "weights": "INT8 only"
+  },
+  "receipt_sha256s": {
+    "afe_vs_board_parity.json": "b4a533811231e39f9d796facfa10c43ef5859c0d04d2054efcd7ee99e0b3d053",
+    "boundary_parity.json": "37841f02aa4f1366f262602eb705a08296652838fa8e1e120eed1b8985267d23",
+    "c16_abi_fixed_receipt.json": "9a5f0b72e46a83a71b027f6fcd8a1d52b435847a6dfd84d1f9c1d02a28721f34",
+    "dog_f01_afe_outputs.json": "40814c2b94de8dbfc9e1f8378c7658935d4586bdb6775641807e685eb1b0bfd5",
+    "dog_f01_inputs.json": "e7aea5dabbece537f18f66c8fcde2136b3474a02d4fba5ca8ea971c7c681ced6",
+    "dog_f01_inputs_mpk_order.json": "b2978370acb577127be95a55cf92aef9f6fd38235908c15b463015246134ed11",
+    "edgetam_r154_labelled_inputs.json": "7a402c50becd601a77a4215a97d17ee369a9bbd9992f79b48869dec911518e98",
+    "edgetam_r155_board_report.json": "08fc8262b74610e1c3eeda7b010e2708b158efe9654b951feaa18682eab10e66",
+    "edgetam_r155_board_vs_afe_parity.json": "4d6489d1afa55f6e7db88dde73a68ba6e9fac3dd1ef24a5124b4a37e4f945631",
+    "edgetam_r157_canonical_integer_stability_accuracy.json": "855a0b719caf1617e301ea5f6462849d0739eaa7a3923d0074aa6d3c0e1b4821",
+    "host_qat_frozen_dev_gate.json": "34b03f2b319d9ca59e87ca608a45324d15ad29fb62ceaf110ffdb806ada51736",
+    "host_qat_selection_receipt.json": "7c4aa9b5a016adb2a8b304262ffaf8b57e3dd6bf85eed3e9d7d09410cb458e2e",
+    "memory_board_result_v2.json": "6319225b084ccc0fb8bceda3b2d652dfec8c529fe0500ccf8024849207cf96c6",
+    "memory_package_pure_w8a8_audit.json": "a896f7f9aca0514a2e71b86c7c6746a4745427f99340682dd48778d2cbcf856b",
+    "memory_report.json": "c6663d21b1504a760e8d5b7dc461a4befa9383015297aef037eba0114d2ceddf",
+    "prompt_c16_abi_fixed_receipt.json": "044a9db53885e0f8c2886029402d63cbd0e9dca26aa05fc9712087fb528508f6",
+    "prompt_compile_pure_w8a8_audit.json": "69bbc6671047040d309ef4da2c53f55f52e013ee9c523367a51b8a84103a7160",
+    "prompt_package_pure_w8a8_audit.json": "75d1e1b1ec6a393fb3995a11ac603870dba3fe9130e63ccdd9c5ffb2784e8824",
+    "pure_w8a8_audit.json": "91f27680939fce8f1f8a3ba2e98a76afae0008470c81c9b1abf5dd20323b09c0",
+    "recurrent_compile_result.json": "d1d262bf6033094d7c2202330c0d814a661d19aa74c066e7b26d0c80bfb6f38d",
+    "recurrent_finalization.json": "47abd34128adf89e21b844ae689f995e5bdbdb6fa4ef7e1223cbfee1374e333f",
+    "recurrent_precision_inventory.json": "2360adb9e370cb7d1707709b770622e82356924030e9149d9b6c65e497fdb919",
+    "recurrent_report.json": "48df1ca439584c66ad8e76fceb97af4fb97cb424b9c866cef1c83cdbda9c9d03"
+  },
+  "schema": "edgetam-pure-w8a8-terminal-acceptance/v1",
+  "status": "QUALIFIED_PURE_W8A8_MODALIX",
+  "target": {
+    "architecture": "aarch64",
+    "board": "192.168.1.246",
+    "hostname": "modalix",
+    "kernel": "6.18.3-modalix"
+  }
+}

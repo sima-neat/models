@@ -1,0 +1,65 @@
+{
+  "accepted_variant": {
+    "artifact": {
+      "media_type": "application/gzip",
+      "path": "artifacts/ostrack_r57_bf16io_fp32cast_mpk.tar.gz",
+      "release_asset_id": 523827871,
+      "release_uri": "https://api.github.com/repos/sima-neat/models/releases/assets/523827871",
+      "sha256": "de2b3ac7ec5db0380b7588f2628fffbb9f3c23305b2416afd09192c25bd93193",
+      "size_bytes": 168355735
+    },
+    "id": "modalix_mixed_qat_r57",
+    "lineage": {
+      "qat_checkpoint_sha256": "8ef43ff072b11c981694f0b2280ccfff0a173842d13adaa0455fbfba2cd151a2",
+      "serialized_afe_sha256": "e9ad38e5cbda1078298f83e7f8c595595542dc0f87fe23ce34a36d97c4ddacb1"
+    },
+    "precision": {
+      "claim": "mixed",
+      "full_int8": false,
+      "notes": "Representable backbone QAT paths remain quantized; semantic attention and 15 QAT-dequantized score/size/offset head affines execute in BF16."
+    },
+    "single_mla_elf": {
+      "count": 1,
+      "sha256": "c41dedf362f688e1f2ce3262320bc4bf06284e1ce10b9977d5168f6d7bdcb1e6",
+      "size_bytes": 266617432
+    },
+    "target": "modalix",
+    "terminal_receipt": {
+      "path": "artifacts/TERMINAL_R57_SILICON_ACCEPTANCE.json",
+      "sha256": "ca3dcd47531e7d26d2ed51bbb58fc6886f1f9f440636f84c550cedb386431c48",
+      "size_bytes": 3696
+    }
+  },
+  "display_name": "OSTrack ViT-B no-CE QAT",
+  "model_id": "ostrack_vitb_noce_qat",
+  "publication": {
+    "blockers": [
+      "Publish the accepted immutable source artifact and record its real remote URI, SHA-256, and size.",
+      "Add a schema-valid model.yaml and model-local registry recipe bound to that immutable source.",
+      "Reproduce or adopt the accepted MPK through the pinned registry build workflow so compile provenance and build fingerprint are generated."
+    ],
+    "qualified_mpk_uploaded": true,
+    "ready": false,
+    "remote_asset_url_recorded": true,
+    "release_tag": "ostrack-vitb-noce-qat-r57-v1"
+  },
+  "qualification": {
+    "board": "192.168.1.246",
+    "fixed_dev32": {
+      "bf16_iou_drop": 0.016045631698185403,
+      "board_iou": 0.8690026236261783,
+      "board_success50": 0.96875,
+      "host_board_per_sample_iou_exact": true,
+      "qat_iou_drop": 0.012005003026539285,
+      "records": 32
+    },
+    "performance": {
+      "fps_from_mean": 58.602737458031214,
+      "mean_latency_ms": 17.06404928125,
+      "median_latency_ms": 16.8082905,
+      "warmup_excluded": true
+    },
+    "status": "qualified_on_silicon"
+  },
+  "schema_version": 1
+}
