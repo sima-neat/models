@@ -229,6 +229,8 @@ def test_model_card_links_to_the_exact_compiled_github_source() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert "function githubModelUrl(run, modelId)" in script
+    assert 'const runRepository = String(run.repository || "").toLowerCase()' in script
+    assert "runRepository !== configuredRepository" in script
     assert "/tree/${commit}/models/${encodeURIComponent(modelId)}`" in script
     assert r"/^[a-f0-9]{40}$/i.test(commit)" in script
     assert 'class="model-source-link"' in script

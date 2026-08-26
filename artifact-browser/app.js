@@ -63,9 +63,12 @@ function shortSha(sha = "") {
 function githubModelUrl(run, modelId) {
   const organization = String(state.repository.organization || "");
   const repository = String(state.repository.name || "");
+  const configuredRepository = `${organization}/${repository}`.toLowerCase();
+  const runRepository = String(run.repository || "").toLowerCase();
   const commit = String(run.commit_sha || "");
   if (!/^[A-Za-z0-9_.-]+$/.test(organization)
     || !/^[A-Za-z0-9_.-]+$/.test(repository)
+    || runRepository !== configuredRepository
     || !/^[a-f0-9]{40}$/i.test(commit)
     || !/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(modelId)) return null;
   return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
