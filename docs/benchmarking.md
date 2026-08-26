@@ -33,7 +33,7 @@ compiled batch sizes fails validation.
 Install the published package from Vulcan:
 
 ```bash
-sima-cli neat install --stg models/benchmarker@develop:latest
+sima-cli neat install --stg models-utils/benchmarker@develop:latest
 source ~/pyneat/bin/activate
 benchmarker --version
 ```
@@ -180,7 +180,7 @@ scripts/build_benchmarker_vulcan_package.sh
 Changes to the benchmarker source, schemas, dependency declaration, packaging,
 or workflow trigger `.github/workflows/Vulcan-Benchmarker.yml`. Pull requests
 build and verify the package without publishing. Trusted branch pushes publish
-under the isolated `models/benchmarker` Vulcan path and advance that branch's
+under the isolated `models-utils/benchmarker` Vulcan namespace and advance that branch's
 benchmarker-specific `latest.tag`.
 
 The future automated hardware acceptance step can run the same manifest and CLI

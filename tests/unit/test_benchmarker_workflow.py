@@ -17,10 +17,18 @@ def test_benchmarker_workflow_is_change_scoped_and_publishes_subpackage() -> Non
         assert f'      - "{path}"' in text
     assert "scripts/build_benchmarker_vulcan_package.sh" in text
     assert "artifact_folder: benchmarker" in text
+    assert text.count("artifact_namespace: models-utils") == 2
     assert "artifact_pattern: benchmarker-dist" in text
     assert "vulcan-publish-artifacts.yml@main" in text
     assert "vulcan-update-latest-artifacts.yml@main" in text
     assert "github.event_name != 'pull_request'" in text
+
+
+def test_benchmarker_pushes_default_to_staging() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "inputs.environment || 'staging'" in text
+    assert "vars.VULCAN_ENV" not in text
 
 
 def test_sima_cli_install_does_not_shadow_setup_python() -> None:

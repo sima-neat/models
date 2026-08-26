@@ -41,7 +41,7 @@ The Python-only `benchmarker` is published separately when its source,
 schemas, dependency pins, or packaging change. Install its branch package with:
 
 ```bash
-sima-cli neat install --stg models/benchmarker@develop:latest
+sima-cli neat install --stg models-utils/benchmarker@develop:latest
 ```
 
 The package installs its benchmarker-specific declared `core@v0.4.0` dependency when needed, then
