@@ -68,6 +68,14 @@
           <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
           <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
           <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
+          <div class="toggle-filter">
+            <span>Build history</span>
+            <label class="switch-row">
+              <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
+              <i aria-hidden="true"></i><b>Include earlier builds</b>
+            </label>
+            <small id="history-filter-help">Latest per compiler is shown by default.</small>
+          </div>
           <button id="clear-filters" class="text-button" type="button">Clear</button>
           </div>
         </div>
@@ -80,7 +88,7 @@
             <span id="result-count" aria-live="polite">—</span>
           </div>
           <div id="result-list" class="result-list" aria-busy="true"></div>
-          <button id="load-more" class="load-more" type="button" hidden>Load earlier builds</button>
+          <button id="load-more" class="load-more" type="button" hidden>Load more builds</button>
         </div>
         <aside id="detail-pane" class="detail-pane" aria-label="Selected artifact details">
           <div class="detail-empty">

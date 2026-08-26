@@ -183,6 +183,21 @@ def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     assert 'run.status === "completed"' in script
 
 
+def test_latest_model_build_per_compiler_is_the_default_with_history_opt_in() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="history-filter" type="checkbox" role="switch"' in html
+    assert "Latest per compiler is shown by default." in html
+    assert 'query.set("run_type", "model_compile")' in script
+    assert 'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
+    assert 'initialQuery.get("history") === "1"' in script
+    assert 'url.searchParams.set("history", "1")' in script
+    assert 'elements["history-filter"].checked = false' in script
+    assert ".switch-row input:checked + i" in styles
+
+
 def test_browser_loads_the_published_taxonomy_and_exposes_category_facets() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")

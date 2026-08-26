@@ -86,11 +86,21 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .filter-drawer { overflow: hidden; border-top: 1px solid var(--line); }
 .filter-drawer:not([hidden]) { animation: filter-reveal 180ms ease-out; }
 .filters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); align-items: end; gap: 20px 26px; padding: 24px 0 26px; }
-.filters label { display: grid; gap: 5px; }
-.filters label span { color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.filters > label { display: grid; gap: 5px; }
+.filters > label > span, .toggle-filter > span { color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .filters select { width: 100%; padding: 8px 26px 8px 0; border: 0; border-bottom: 1px solid var(--line); outline: 0; color: var(--ink); background: transparent; font-size: 14px; cursor: pointer; }
 .filters select:focus { border-bottom-color: var(--blue); }
 .filters select:disabled { opacity: .45; cursor: not-allowed; }
+.toggle-filter { display: grid; align-content: start; gap: 5px; }
+.switch-row { min-height: 33px; display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-row i { width: 36px; height: 20px; flex: 0 0 auto; position: relative; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); transition: border-color 160ms ease, background 160ms ease; }
+.switch-row i::after { content: ""; width: 14px; height: 14px; position: absolute; top: 2px; left: 2px; border-radius: 50%; background: var(--ink-faint); transition: background 160ms ease, transform 160ms ease; }
+.switch-row input:checked + i { border-color: var(--blue); background: var(--blue-soft); }
+.switch-row input:checked + i::after { background: var(--blue); transform: translateX(16px); }
+.switch-row input:focus-visible + i { outline: 2px solid var(--blue); outline-offset: 3px; }
+.switch-row b { color: var(--ink-soft); font-size: 13px; font-weight: 600; }
+.toggle-filter small { color: var(--ink-faint); font-size: 11px; line-height: 1.35; }
 .text-button { justify-self: start; padding: 8px 0; border: 0; color: var(--blue); background: transparent; font-size: 14px; font-weight: 600; cursor: pointer; }
 
 .workspace { display: grid; grid-template-columns: minmax(620px, 1.25fr) minmax(390px, .75fr); align-items: start; border-bottom: 1px solid var(--line); }

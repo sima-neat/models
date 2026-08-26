@@ -11,6 +11,7 @@ const CATEGORY_QUERY_FIELDS = {
 };
 const initialQuery = new URLSearchParams(location.search);
 const initialSearch = initialQuery.get("q") || "";
+const initialIncludeHistory = initialQuery.get("history") === "1";
 
 const state = {
   apiBase: configuredApiBase,
@@ -32,7 +33,7 @@ const state = {
 const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "registry-status", "registry-copy", "search", "filter-toggle",
-    "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "model-type-filter", "task-filter",
+    "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
     "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
     "result-count", "result-list", "load-more", "detail-pane", "toast-region",
   ].map((id) => [id, document.getElementById(id)]),
@@ -112,7 +113,8 @@ function catalogCacheKey() {
   const repo = state.repository;
   const categories = Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = elements.search.value.trim();
-  return `sima-neat-model-catalog:${state.apiBase}:${repo.organization}/${repo.name}:${search}:${JSON.stringify(categories)}`;
+  const history = elements["history-filter"].checked ? "history" : "latest";
+  return `sima-neat-model-catalog:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchPreferenceKey() {
@@ -230,9 +232,17 @@ function writeSearchUrl() {
   history.replaceState({}, "", url);
 }
 
+function writeHistoryUrl() {
+  const url = new URL(location.href);
+  if (elements["history-filter"].checked) url.searchParams.set("history", "1");
+  else url.searchParams.delete("history");
+  history.replaceState({}, "", url);
+}
+
 function activeFilterCount() {
   return [
     elements["branch-filter"].value && elements["branch-filter"].value !== DEFAULT_BRANCH,
+    elements["history-filter"].checked,
     elements["compiler-filter"].value,
     ...Object.values(categoryFilters()),
   ].filter(Boolean).length;
@@ -503,6 +513,8 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   elements["load-more"].disabled = true;
   const query = new URLSearchParams({ limit: String(limit) });
   query.set("status", "completed");
+  query.set("run_type", "model_compile");
+  if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
   if (branch) query.set("git_ref", `refs/heads/${branch}`);
   if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
   Object.entries(categoryFilters()).forEach(([name, value]) => {
@@ -539,6 +551,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
 async function initialize() {
   setTheme(document.documentElement.dataset.theme || "light");
   elements.search.value = initialSearch;
+  elements["history-filter"].checked = initialIncludeHistory;
   state.preferredBranch = readBranchPreference();
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
@@ -620,6 +633,15 @@ elements["compiler-filter"].addEventListener("change", () => {
   updateFilterDisclosure();
   renderRuns();
 });
+elements["history-filter"].addEventListener("change", async () => {
+  writeHistoryUrl();
+  updateFilterDisclosure();
+  try {
+    await loadRuns({ branch: state.preferredBranch });
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
 Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", async () => {
   state.categorySelection[elementId] = elements[elementId].value;
   writeCategoryFilterUrl();
@@ -636,12 +658,14 @@ elements["clear-filters"].addEventListener("click", async () => {
   state.preferredBranch = "";
   writeBranchPreference(state.preferredBranch);
   elements["compiler-filter"].value = "";
+  elements["history-filter"].checked = false;
   Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => {
     elements[elementId].value = "";
     state.categorySelection[elementId] = "";
   });
   writeSearchUrl();
   writeCategoryFilterUrl();
+  writeHistoryUrl();
   updateFilterDisclosure();
   try {
     await loadRuns({ branch: "", limit: 200 });
