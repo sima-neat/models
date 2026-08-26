@@ -170,7 +170,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
 
     assert "Manrope:wght@400;500;600;700" in html
     assert "IBM+Plex+Mono" in html
-    assert 'id="page-title">Find a model' in html
+    assert 'id="page-title">Discover what runs next' in html
     assert "Search models, tasks, or architectures" in html
     assert 'class="page-header"' in html
     assert "Trace every" not in html
