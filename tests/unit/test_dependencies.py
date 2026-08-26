@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from model_registry.dependencies import resolve_model_compiler
+from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +15,24 @@ def test_repository_model_compiler_dependency_is_pinned() -> None:
         "label": "model-compiler-2.1.3",
         "version": "2.1.3",
     }
+
+
+def test_repository_benchmark_runtime_is_fully_pinned() -> None:
+    runtime = resolve_benchmark_runtime(ROOT)
+    assert runtime["devkit"] == {"board": "modalix", "os_type": "elxr", "platform_version": "2.1.3"}
+    assert runtime["neat_core"] == {"version": "0.4.0", "install_target": "core@v0.4.0"}
+    assert runtime["benchmarker"]["vulcan"]["tag"] == "611dd0d8e173"
+
+
+def test_benchmark_runtime_rejects_mutable_artifact_tag(tmp_path: Path) -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["benchmarker"]["vulcan"]["tag"] = "latest"
+    path = tmp_path / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="immutable"):
+        resolve_benchmark_runtime(tmp_path)
 
 
 @pytest.mark.parametrize("version", ["2.1", "develop", "2.1.3-develop", 213, None])

@@ -116,7 +116,7 @@ benchmarker \
 ```
 
 The output follows
-[`performance-result-v1.schema.json`](../schemas/performance-result-v1.schema.json)
+[`performance-result-v2.schema.json`](../schemas/performance-result-v2.schema.json)
 and is written atomically. Average latency and throughput are available from
 Neat 0.4.0. Percentiles are marked `unsupported` until the installed public
 BenchmarkReport exposes them. Missing power telemetry is `unavailable`, never a
@@ -142,6 +142,7 @@ result as a benchmark run linked to its originating compile run:
 ```bash
 model-registry publish-benchmark \
   --result /workspace/results/performance-result.json \
+  --log /workspace/results/benchmark.log \
   --api-url "$VULCAN_ARTIFACT_REGISTRY_API_URL" \
   --aws-region us-west-2 \
   --bucket "$VULCAN_ARTIFACT_BUCKET" \
@@ -183,6 +184,8 @@ build and verify the package without publishing. Trusted branch pushes publish
 under the isolated `models-utils/benchmarker` Vulcan namespace and advance that branch's
 benchmarker-specific `latest.tag`.
 
-The future automated hardware acceptance step can run the same manifest and CLI
-through the Kerrigan/Fleet Manager runner bridge. Until then, the DevKit returns
-the JSON report and log for manual publication from a trusted host.
+The compile workflow automates this first for `resnet_50/modalix_bf16`. It resolves
+the approved Modalix GitHub runner group, verifies the DevKit platform against
+`deps/manifest.json`, installs the immutable benchmarker package (which verifies
+its Neat dependency), runs the benchmark directly on that DevKit runner, and
+publishes the returned JSON and log from a separate trusted hosted job.

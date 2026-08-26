@@ -66,6 +66,7 @@ jobs:
       model_compiler_version: ${{ steps.compiler.outputs.version }}
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       publishable: ${{ steps.matrix.outputs.publishable }}
+      benchmark_selected: ${{ steps.matrix.outputs.benchmark_selected }}
       base_branch: ${{ steps.base.outputs.base_branch }}
       previous_found: ${{ steps.previous.outputs.found }}
       previous_source_branch: ${{ steps.previous.outputs.source_branch }}
@@ -221,6 +222,8 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
+          benchmark_selected="$(jq -r 'any(.include[]; .model_id == "resnet_50" and .variant_id == "modalix_bf16")' <<< "$matrix")"
+          echo "benchmark_selected=$benchmark_selected" >> "$GITHUB_OUTPUT"
           echo "Selected $count model variant(s)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain pull-request safety boundary
@@ -414,6 +417,7 @@ jobs:
             --json)"
           "$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
+          printf '%s\n' "$result" > "$OUTPUT_DIR/registry-publication.json"
           echo "Published $MODEL_ID/$VARIANT_ID to the model registry." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain the validated model output for packaging
@@ -423,6 +427,142 @@ jobs:
           path: ${{ env.ARTIFACT_ROOT }}
           if-no-files-found: error
           retention-days: 14
+
+  resolve-benchmark-runner:
+    name: Resolve benchmark DevKit runner
+    if: github.event_name != 'pull_request'
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+
+  benchmark-resnet50:
+    name: Benchmark ResNet-50 BF16 on DevKit
+    needs: [select, compile, resolve-vulcan-config, resolve-benchmark-runner]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.compile.result == 'success' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.select.outputs.vulcan_environment == 'staging' &&
+      github.ref_name != 'main' && github.ref_name != 'develop' &&
+      needs.select.outputs.benchmark_selected == 'true'
+    runs-on:
+      group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
+      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.select.outputs.vulcan_environment }}"]
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the trusted revision
+        uses: actions/checkout@v6
+
+      - name: Download the compiled ResNet-50 output
+        uses: actions/download-artifact@v7
+        with:
+          name: compiled-model-resnet_50-modalix_bf16
+          path: _compiled
+
+      - name: Install registry tooling in an isolated environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/model-registry-tools"
+          "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install .
+          echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
+
+      - name: Resolve and verify benchmark runtime
+        run: |
+          set -euo pipefail
+          runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository .)"
+          platform_version="$(jq -er '.devkit.platform_version' <<< "$runtime")"
+          neat_version="$(jq -er '.neat_core.version' <<< "$runtime")"
+          actual_platform="$(sed -n 's/^DISTRO_VERSION=//p' /etc/buildinfo)"
+          test "$actual_platform" = "$platform_version"
+          echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
+          echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
+
+      - name: Install pinned benchmarker and Neat dependency
+        run: |
+          set -euo pipefail
+          environment="$(jq -er '.benchmarker.vulcan.environment' <<< "$BENCHMARK_RUNTIME")"
+          name="$(jq -er '.benchmarker.vulcan.name' <<< "$BENCHMARK_RUNTIME")"
+          branch="$(jq -er '.benchmarker.vulcan.branch' <<< "$BENCHMARK_RUNTIME")"
+          tag="$(jq -er '.benchmarker.vulcan.tag' <<< "$BENCHMARK_RUNTIME")"
+          expected_version="$(jq -er '.benchmarker.version' <<< "$BENCHMARK_RUNTIME")"
+          sima-cli neat install --env "$environment" "$name@$branch:$tag"
+          "$HOME/pyneat/bin/python" -c 'import pyneat, os; assert pyneat.__version__.split("+", 1)[0] == os.environ["NEAT_VERSION"]'
+          "$HOME/pyneat/bin/benchmarker" --version | grep -E " ${expected_version}(\\+|$)"
+
+      - name: Generate manifest and run benchmark
+        run: |
+          set -euo pipefail
+          export SIMA_PLATFORM_VERSION="$(jq -er '.devkit.platform_version' <<< "$BENCHMARK_RUNTIME")"
+          mkdir -p _benchmark
+          "$REGISTRY_PYTHON" -m model_registry make-benchmark-manifest \
+            --repository . \
+            --compiled-dir _compiled \
+            --output _benchmark/performance-test.json \
+            --branch "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA" \
+            --variant modalix_bf16
+          set -o pipefail
+          "$HOME/pyneat/bin/benchmarker" \
+            --manifest _benchmark/performance-test.json \
+            --output _benchmark/performance-result-v2.json \
+            2>&1 | tee _benchmark/benchmark.log
+
+      - name: Retain benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-resnet_50-modalix_bf16
+          path: |
+            _benchmark/performance-result-v2.json
+            _benchmark/benchmark.log
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-resnet50-benchmark:
+    name: Publish ResNet-50 benchmark to Vulcan
+    needs: [select, benchmark-resnet50, resolve-vulcan-config]
+    if: needs.benchmark-resnet50.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: benchmark-resnet_50-modalix_bf16
+          path: _benchmark
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish schema-v2 result and log
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          model-registry publish-benchmark \
+            --result _benchmark/performance-result-v2.json \
+            --log _benchmark/benchmark.log \
+            --api-url "$REGISTRY_API_URL" \
+            --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" \
+            --kms-key-id "$KMS_KEY_ID" \
+            --environment staging \
+            --branch "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   resolve-vulcan-config:
     name: Resolve Vulcan publication config

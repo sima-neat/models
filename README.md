@@ -103,11 +103,12 @@ MPKs.
 Successful staging compilations are also written through the IAM-authenticated
 Vulcan Artifact Registry API as one immutable run per newly compiled variant.
 Each record links the model source checksum, variant parameters, Model Compiler
-version, build fingerprint, and exact versioned S3 MPK. These records currently
-cover compilation and MPK validation. A trusted host can publish a benchmarker's
-schema-validated, fingerprinted performance result as a child of that compile run with
-`model-registry publish-benchmark`; automated DevKit collection remains deferred
-to the later Kerrigan workflow.
+version, build fingerprint, and exact versioned S3 MPK. For staging feature
+branches, a successful ResNet-50 BF16 compilation continues onto a resolved
+Modalix GitHub runner. The runner verifies the manifest-pinned platform, installs
+the pinned benchmarker and Neat runtime, and returns a schema-v2 result and log.
+A trusted hosted job publishes both under the model's S3 hierarchy and records an
+immutable `model_benchmark` child of the compile run.
 
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), the

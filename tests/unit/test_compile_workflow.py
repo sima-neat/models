@@ -271,3 +271,32 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     assert calibration["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert compile_step["env"]["CALIBRATION_PATH"] == "${{ steps.calibration.outputs.path }}"
     assert "--calibration-sha256" in verify_step["run"]
+
+
+def test_resnet50_benchmark_runs_directly_on_resolved_github_devkit() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    resolver = workflow["jobs"]["resolve-benchmark-runner"]
+    benchmark = workflow["jobs"]["benchmark-resnet50"]
+    steps = benchmark["steps"]
+
+    assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
+    assert benchmark["runs-on"]["group"] == "${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}"
+    assert benchmark["runs-on"]["labels"] == [
+        "self-hosted",
+        "Linux",
+        "ARM64",
+        "modalix",
+        "vulcan-${{ needs.select.outputs.vulcan_environment }}",
+    ]
+    assert "needs.select.outputs.benchmark_selected == 'true'" in benchmark["if"]
+    assert "github.ref_name != 'main'" in benchmark["if"]
+    assert "github.ref_name != 'develop'" in benchmark["if"]
+    runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
+    install = next(step for step in steps if step.get("name") == "Install pinned benchmarker and Neat dependency")
+    execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
+    assert "resolve-benchmark-runtime" in runtime["run"]
+    assert "/etc/buildinfo" in runtime["run"]
+    assert "sima-cli neat install" in install["run"]
+    assert "make-benchmark-manifest" in execute["run"]
+    assert "performance-result-v2.json" in execute["run"]
+    assert "kerrigan" not in WORKFLOW.read_text(encoding="utf-8").lower()

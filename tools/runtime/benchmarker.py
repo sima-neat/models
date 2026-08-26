@@ -37,6 +37,7 @@ REFERENCE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
 PACKAGE_DISTRIBUTION = "sima-neat-benchmarker"
 DEFAULT_TRIALS = 3
 POWER_DEVICE_PATHS = (Path("/dev/i2c-3"), Path("/dev/i2c-4"))
+RESULT_SCHEMA_VERSION = 2
 
 
 def tool_version() -> str:
@@ -616,7 +617,7 @@ def benchmark_identity_document(result: dict[str, Any]) -> dict[str, Any] | None
     if any(value is None for value in required):
         return None
     return {
-        "schema_version": 1,
+        "schema_version": result["schema_version"],
         "benchmark_type": result["benchmark_type"],
         "model": {
             "id": model["id"],
@@ -637,7 +638,7 @@ def update_result_identity(result: dict[str, Any]) -> None:
     document = benchmark_identity_document(result)
     result["identity"] = {
         "algorithm": "sha256",
-        "canonicalization_version": 1,
+        "canonicalization_version": result["schema_version"],
         "fingerprint": canonical_sha256(document) if document is not None else None,
     }
 
@@ -690,11 +691,15 @@ def _result_base(
     telemetry = preflight or power_telemetry_preflight()
     power_reason = telemetry.get("reason") or "runtime_did_not_return_metric"
     result = {
-        "schema_version": 1,
+        "schema_version": RESULT_SCHEMA_VERSION,
         "status": "error",
         "benchmark_type": "model.synthetic",
         "tool": {"name": "benchmarker", "version": tool_version()},
-        "identity": {"algorithm": "sha256", "canonicalization_version": 1, "fingerprint": None},
+        "identity": {
+            "algorithm": "sha256",
+            "canonicalization_version": RESULT_SCHEMA_VERSION,
+            "fingerprint": None,
+        },
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "failure_classification": None,
         "model": {
@@ -746,10 +751,32 @@ def _result_base(
             ),
         },
         "trials": [],
+        "orchestration": orchestration_context(),
         "provenance": manifest.get("provenance", {}) if isinstance(manifest.get("provenance", {}), dict) else {},
     }
     update_result_identity(result)
     return result
+
+
+def orchestration_context() -> dict[str, Any]:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        runner = os.environ.get("RUNNER_NAME", "")
+        correlation = hashlib.sha256(runner.encode()).hexdigest()[:16] if runner else None
+        attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+        return {
+            "provider": "github-actions-devkit-runner",
+            "session_id": os.environ.get("GITHUB_RUN_ID"),
+            "task_id": os.environ.get("GITHUB_JOB"),
+            "attempt": int(attempt) if attempt.isdigit() else None,
+            "target_correlation_id": correlation,
+        }
+    return {
+        "provider": "manual",
+        "session_id": None,
+        "task_id": None,
+        "attempt": None,
+        "target_correlation_id": None,
+    }
 
 
 def run_benchmark(
@@ -857,7 +884,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
     parser.add_argument("--manifest", type=Path, required=True, help="performance-test-v1 JSON manifest")
-    parser.add_argument("--output", type=Path, required=True, help="performance-result-v1 JSON output")
+    parser.add_argument("--output", type=Path, required=True, help="performance-result-v2 JSON output")
     return parser
 
 

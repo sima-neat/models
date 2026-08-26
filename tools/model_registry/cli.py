@@ -7,9 +7,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .artifact import verify_mpk
+from .benchmark_manifest import make_resnet50_benchmark_manifest
 from .benchmark_publication import publish_benchmark_result
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
-from .dependencies import resolve_model_compiler
+from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model
@@ -69,6 +70,22 @@ def _parser() -> argparse.ArgumentParser:
     compiler = subcommands.add_parser("resolve-compiler", help="resolve the repository-wide Model Compiler dependency")
     compiler.add_argument("--repository", type=Path, default=Path.cwd())
 
+    benchmark_runtime = subcommands.add_parser(
+        "resolve-benchmark-runtime", help="resolve pinned DevKit and benchmark runtime dependencies"
+    )
+    benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
+
+    benchmark_manifest = subcommands.add_parser(
+        "make-benchmark-manifest", help="generate the direct-DevKit ResNet-50 benchmark manifest"
+    )
+    benchmark_manifest.add_argument("--repository", type=Path, default=Path.cwd())
+    benchmark_manifest.add_argument("--compiled-dir", type=Path, required=True)
+    benchmark_manifest.add_argument("--output", type=Path, required=True)
+    benchmark_manifest.add_argument("--branch", required=True)
+    benchmark_manifest.add_argument("--git-sha", required=True)
+    benchmark_manifest.add_argument("--variant", default="modalix_bf16")
+    benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
+
     mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
     mpk.add_argument("output_dir", type=Path)
     mpk.add_argument("--write-manifest", action="store_true")
@@ -125,6 +142,7 @@ def _parser() -> argparse.ArgumentParser:
         "publish-benchmark", help="publish a benchmark run linked to its Vulcan model compilation run"
     )
     publish_benchmark.add_argument("--result", type=Path, required=True)
+    publish_benchmark.add_argument("--log", type=Path)
     publish_benchmark.add_argument("--schema", type=Path)
     publish_benchmark.add_argument("--api-url", required=True)
     publish_benchmark.add_argument("--aws-region", default="us-west-2")
@@ -272,6 +290,24 @@ def _resolve_compiler(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
+    print(json.dumps(resolve_benchmark_runtime(args.repository), sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _make_benchmark_manifest(args: argparse.Namespace) -> int:
+    result = make_resnet50_benchmark_manifest(
+        repository=args.repository,
+        compiled_dir=args.compiled_dir,
+        output_path=args.output,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        variant_id=args.variant,
+    )
+    print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"])
+    return 0
+
+
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
@@ -345,6 +381,7 @@ def _publish(args: argparse.Namespace) -> int:
 def _publish_benchmark(args: argparse.Namespace) -> int:
     result = publish_benchmark_result(
         result_path=args.result,
+        log_path=args.log,
         schema_path=args.schema,
         api_url=args.api_url,
         aws_region=args.aws_region,
@@ -394,6 +431,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _resolve_base(args)
         if args.command == "resolve-compiler":
             return _resolve_compiler(args)
+        if args.command == "resolve-benchmark-runtime":
+            return _resolve_benchmark_runtime(args)
+        if args.command == "make-benchmark-manifest":
+            return _make_benchmark_manifest(args)
         if args.command == "verify-mpk":
             return _verify_mpk(args)
         if args.command == "package":

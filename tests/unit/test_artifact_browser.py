@@ -10,7 +10,15 @@ DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-browser.yml"
 
 
 def test_artifact_browser_assets_exist() -> None:
-    for name in ("index.html", "app.js", "styles.css", "config.js", "favicon.svg", "README.md"):
+    for name in (
+        "index.html",
+        "app.js",
+        "benchmark-adapters.js",
+        "styles.css",
+        "config.js",
+        "favicon.svg",
+        "README.md",
+    ):
         assert (BROWSER / name).is_file()
 
 
@@ -79,7 +87,7 @@ def test_staging_deployment_fingerprints_mutable_browser_assets() -> None:
     )
 
     assert 'revision="${GITHUB_SHA:0:12}"' in assemble
-    for asset in ("app", "styles", "config"):
+    for asset in ("app", "benchmark-adapters", "styles", "config"):
         assert f"{asset}.${{revision}}" in assemble
     assert "sed -i" in assemble
 
@@ -252,3 +260,31 @@ def test_model_card_links_to_the_exact_compiled_github_source() -> None:
     assert "View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}" in script
     assert 'target="_blank" rel="noreferrer"' in script
     assert ".model-source-link:focus-visible" in styles
+
+
+def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
+    assert "new Map([[1, adaptV1], [2, adaptV2]])" in adapters
+    assert "/benchmarks/latest" in script
+    assert 'class="trial-chart"' in script
+    assert 'role="img"' in script
+    assert 'class="sr-only"' in script
+    assert ".chart-points circle" in styles
+
+
+def test_detail_layout_can_focus_the_selected_model() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="workspace"' in html
+    assert "sima-neat-model-detail-layout" in script
+    assert 'class="detail-layout-toggle"' in script
+    assert 'aria-pressed="${state.detailLayout === "focused"}"' in script
+    assert '.workspace[data-detail-layout="focused"]' in styles
+    assert "@media (max-width: 840px)" in styles
+    assert ".detail-layout-toggle { display: none; }" in styles

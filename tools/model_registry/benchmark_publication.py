@@ -20,7 +20,7 @@ Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
     return {
-        "schema_version": 1,
+        "schema_version": result["schema_version"],
         "benchmark_type": result["benchmark_type"],
         "model": {
             "id": result["model"]["id"],
@@ -39,13 +39,16 @@ def benchmark_identity_document(result: JsonObject) -> JsonObject:
 
 def load_benchmark_result(result_path: str | Path, schema_path: str | Path | None = None) -> JsonObject:
     path = Path(result_path).expanduser().resolve()
-    schema = (
-        Path(schema_path).expanduser().resolve()
-        if schema_path is not None
-        else Path(__file__).resolve().parents[2] / "schemas" / "performance-result-v1.schema.json"
-    )
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
+        version = result.get("schema_version") if isinstance(result, dict) else None
+        if version not in {1, 2}:
+            raise ValidationError(f"unsupported benchmark result schema version: {version!r}")
+        schema = (
+            Path(schema_path).expanduser().resolve()
+            if schema_path is not None
+            else Path(__file__).resolve().parents[2] / "schemas" / f"performance-result-v{version}.schema.json"
+        )
         schema_value = json.loads(schema.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValidationError(f"could not read benchmark result or schema: {exc}") from exc
@@ -89,6 +92,8 @@ def _require_git_sha(value: str) -> str:
 def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
     definitions = {
         "latency_avg_ms": ("model.latency.avg", "lower"),
+        "latency_p50_ms": ("model.latency.p50", "lower"),
+        "latency_p95_ms": ("model.latency.p95", "lower"),
         "throughput_fps": ("model.throughput", "higher"),
         "avg_power_watts": ("board.power.avg", "lower"),
         "energy_joules": ("board.energy", "lower"),
@@ -122,6 +127,7 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
 def publish_benchmark_result(
     *,
     result_path: str | Path,
+    log_path: str | Path | None = None,
     api_url: str,
     aws_region: str,
     bucket: str,
@@ -136,6 +142,7 @@ def publish_benchmark_result(
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
     path = Path(result_path).expanduser().resolve()
+    log = Path(log_path).expanduser().resolve() if log_path is not None else None
     result = load_benchmark_result(path, schema_path)
     parent_run_id = _require_compile_run_id(result, compile_run_id)
     commit_sha = _require_git_sha(git_sha)
@@ -154,7 +161,7 @@ def publish_benchmark_result(
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
 
     create_body: JsonObject = {
-        "schema_version": 1,
+        "schema_version": result["schema_version"],
         "run_type": "model_benchmark",
         "parent_run_id": parent_run_id,
         "commit_sha": commit_sha,
@@ -217,10 +224,11 @@ def publish_benchmark_result(
     )
 
     result_sha, _ = sha256_file(path)
-    object_key = (
-        f"benchmarks/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{variant_id}/"
-        f"{fingerprint}/{execution_digest}.json"
+    result_prefix = (
+        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{variant_id}/"
+        f"benchmarks/{fingerprint}/{execution_digest}"
     )
+    object_key = f"{result_prefix}/performance-result-v{result['schema_version']}.json"
     stored = store.ensure_native_sha256(path, object_key, result_sha, media_type="application/json")
     artifact = client.request(
         "PUT",
@@ -245,11 +253,33 @@ def publish_benchmark_result(
     )
     test_body: JsonObject = {
         "status": "passed" if result["status"] == "passed" else "error",
-        "version": "1",
+        "version": str(result["schema_version"]),
         "summary": result,
     }
     if artifact.get("artifact_id"):
         test_body["report_artifact_id"] = artifact["artifact_id"]
+    log_stored = None
+    if log is not None:
+        log_sha, _ = sha256_file(log)
+        log_stored = store.ensure_native_sha256(log, f"{result_prefix}/benchmark.log", log_sha, media_type="text/plain")
+        log_artifact = client.request(
+            "PUT",
+            f"/v1/runs/{run_id}/artifacts/benchmark-log",
+            {
+                "artifact_type": "log",
+                "s3_bucket": bucket,
+                "s3_key": log_stored.key,
+                "s3_version_id": log_stored.version_id,
+                "sha256": log_stored.sha256,
+                "size_bytes": log_stored.size_bytes,
+                "media_type": "text/plain",
+                "retention_class": "branch",
+                "metadata": {"model_id": model_id, "variant_id": variant_id},
+            },
+            f"{stable_key}-log-artifact",
+        )
+        if log_artifact.get("artifact_id"):
+            test_body["log_artifact_id"] = log_artifact["artifact_id"]
     if result.get("failure_classification"):
         test_body["failure_classification"] = result["failure_classification"]
     client.request(
@@ -280,4 +310,5 @@ def publish_benchmark_result(
         "result_fingerprint": fingerprint,
         "execution_digest": execution_digest,
         "s3_key": stored.key,
+        "log_s3_key": log_stored.key if log_stored is not None else None,
     }

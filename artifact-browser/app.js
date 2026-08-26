@@ -1,3 +1,5 @@
+import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
 const configuredRepository = config.repository || {};
@@ -12,6 +14,7 @@ const CATEGORY_QUERY_FIELDS = {
 const initialQuery = new URLSearchParams(location.search);
 const initialSearch = initialQuery.get("q") || "";
 const initialIncludeHistory = initialQuery.get("history") === "1";
+const DETAIL_LAYOUT_KEY = "sima-neat-model-detail-layout";
 
 const state = {
   apiBase: configuredApiBase,
@@ -25,6 +28,7 @@ const state = {
   preferredBranch: null,
   detailCache: new Map(),
   taxonomy: null,
+  detailLayout: readDetailLayout(),
   categorySelection: Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, initialQuery.get(queryName) || ""]),
   ),
@@ -35,7 +39,7 @@ const elements = Object.fromEntries(
     "theme-toggle", "environment-name", "registry-status", "registry-copy", "search", "filter-toggle",
     "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
     "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
-    "result-count", "result-list", "load-more", "detail-pane", "toast-region",
+    "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -99,13 +103,26 @@ function formatBytes(bytes) {
   return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
 }
 
+function readDetailLayout() {
+  try { return localStorage.getItem(DETAIL_LAYOUT_KEY) === "focused" ? "focused" : "balanced"; }
+  catch { return "balanced"; }
+}
+
+function applyDetailLayout() {
+  elements.workspace.dataset.detailLayout = state.detailLayout;
+}
+
 async function api(path) {
   const response = await fetch(`${state.apiBase}${path}`, {
     headers: { Accept: "application/json" },
     mode: "cors",
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || payload.message || `Registry request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(payload.error?.message || payload.message || `Registry request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -397,11 +414,15 @@ async function selectRun(runId, { updateUrl = true } = {}) {
   try {
     let detail = state.detailCache.get(runId);
     if (!detail) {
-      const [summary, provenance, tests, metrics] = await Promise.all([
+      const [summary, provenance, tests, metrics, benchmark] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
+        api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        }),
       ]);
-      detail = { summary, provenance, tests, metrics };
+      detail = { summary, provenance, tests, metrics, benchmark };
       state.detailCache.set(runId, detail);
     }
     if (state.selectedId === runId) renderDetail(detail);
@@ -415,6 +436,53 @@ async function selectRun(runId, { updateUrl = true } = {}) {
 function keyValue(label, value, { copy = false, mono = false } = {}) {
   const safeValue = escapeHtml(value ?? "—");
   return `<div class="key-value"><dt>${escapeHtml(label)}</dt><dd class="${mono ? "mono" : ""}"><span title="${safeValue}">${safeValue}</span>${copy && value ? `<button type="button" class="copy-button" data-copy="${safeValue}" aria-label="Copy ${escapeHtml(label)}">${icons.copy}</button>` : ""}</dd></div>`;
+}
+
+function metricCard(label, metric, digits = 2) {
+  const value = metric ? `${Number(metric.value).toFixed(digits)} ${metric.unit}` : "Not available";
+  return `<div class="benchmark-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function trialChart(trials) {
+  if (trials.length < 2) return "";
+  const values = trials.map((trial) => trial.latencyMs);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const spread = maximum - minimum || Math.max(maximum * 0.05, 0.1);
+  const low = Math.max(0, minimum - spread * 0.2);
+  const high = maximum + spread * 0.2;
+  const width = 640;
+  const left = 70;
+  const right = 28;
+  const top = 28;
+  const row = 34;
+  const height = top + trials.length * row + 30;
+  const x = (value) => left + ((value - low) / (high - low)) * (width - left - right);
+  const grid = [0, .25, .5, .75, 1].map((fraction) => {
+    const position = left + fraction * (width - left - right);
+    const label = low + fraction * (high - low);
+    return `<line x1="${position}" y1="${top - 8}" x2="${position}" y2="${height - 25}"/><text x="${position}" y="${height - 7}">${label.toFixed(2)}</text>`;
+  }).join("");
+  const points = trials.map((trial, index) => {
+    const y = top + index * row;
+    return `<text class="trial-label" x="0" y="${y + 4}">Trial ${trial.number}</text><circle cx="${x(trial.latencyMs)}" cy="${y}" r="6"/><text class="trial-value" x="${Math.min(x(trial.latencyMs) + 11, width - 55)}" y="${y + 4}">${trial.latencyMs.toFixed(2)}</text>`;
+  }).join("");
+  return `<figure class="trial-chart"><figcaption>Latency consistency <span>milliseconds · lower is better</span></figcaption><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Average latency in milliseconds for ${trials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>Latency by benchmark trial</caption><thead><tr><th>Trial</th><th>Average latency in milliseconds</th></tr></thead><tbody>${trials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.latencyMs}</td></tr>`).join("")}</tbody></table></figure>`;
+}
+
+function benchmarkPanel(payload) {
+  if (!payload) return `<section><div class="detail-section-title"><h3>Benchmark</h3></div><p class="muted-message">No completed benchmark is linked to this compilation yet.</p></section>`;
+  const adapted = adaptBenchmarkResult(payload.result);
+  if (adapted.kind === "unsupported") {
+    return `<section><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${escapeHtml(adapted.schemaVersion)}</span></div><p class="muted-message">This benchmark schema is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}</section>`;
+  }
+  if (adapted.kind !== "supported") return "";
+  const benchmark = adapted.value;
+  return `<section class="benchmark-section"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${benchmark.schemaVersion}</span></div>
+    <div class="benchmark-summary">${metricCard("Average latency", benchmark.metrics.latency)}${metricCard("Throughput", benchmark.metrics.throughput, 1)}${metricCard("Board power", benchmark.metrics.power)}${metricCard("Energy / inference", benchmark.metrics.energy, 4)}</div>
+    ${trialChart(benchmark.trials)}
+    <dl class="benchmark-context">${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
+  </section>`;
 }
 
 function renderDetail(detail) {
@@ -433,7 +501,7 @@ function renderDetail(detail) {
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
-    <div class="detail-topline"><button class="close-detail" type="button" aria-label="Close details">×</button></div>
+    <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
     <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div>${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" title="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
     <div class="detail-tags">${precision ? `<span>${escapeHtml(precision)}</span>` : ""}<span>${escapeHtml(run.toolchain_name || "compiler")} ${escapeHtml(run.toolchain_version || "")}</span><span>${escapeHtml(branchName(run.git_ref))}</span>${categories.model_type ? `<span>${escapeHtml(categories.model_type)}</span>` : ""}${categories.architecture?.id ? `<span>${escapeHtml(categories.architecture.id)}</span>` : ""}${(categories.tasks || []).map((task) => `<span>${escapeHtml(task)}</span>`).join("")}</div>
 
@@ -463,6 +531,8 @@ function renderDetail(detail) {
       <div class="test-list">${tests.length ? tests.map((test) => `<div><span class="test-mark ${escapeHtml(test.status)}">${test.status === "passed" ? "✓" : "!"}</span><p><strong>${escapeHtml(test.name)}</strong><small>${escapeHtml(test.suite)}${test.duration_ms ? ` · ${escapeHtml(test.duration_ms)} ms` : ""}</small></p><span>${escapeHtml(test.status)}</span></div>`).join("") : `<p class="muted-message">No validation records.</p>`}</div>
       ${measurements.length ? `<p class="measurement-note">${measurements.length} performance measurement${measurements.length === 1 ? "" : "s"} recorded.</p>` : ""}
     </section>
+
+    ${benchmarkPanel(detail.benchmark)}
 
     ${Object.keys(parameters.compile_parameters || {}).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters.compile_parameters, null, 2))}</pre></details>` : ""}
   </div>`;
@@ -688,6 +758,13 @@ elements["detail-pane"].addEventListener("click", (event) => {
   if (copy) copyText(copy.dataset.copy);
   const download = event.target.closest("[data-download]");
   if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
+  if (event.target.closest(".detail-layout-toggle")) {
+    state.detailLayout = state.detailLayout === "focused" ? "balanced" : "focused";
+    try { localStorage.setItem(DETAIL_LAYOUT_KEY, state.detailLayout); } catch { /* Storage is optional. */ }
+    applyDetailLayout();
+    if (state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
+    return;
+  }
   if (event.target.closest(".close-detail")) {
     state.selectedId = null;
     const url = new URL(location.href);
@@ -713,4 +790,5 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+applyDetailLayout();
 initialize();

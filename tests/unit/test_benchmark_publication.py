@@ -135,7 +135,38 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert store.objects[0][1].endswith(f"/{published['execution_digest']}.json")
+    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v2.json")
+
+
+def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:
+    path = valid_result(tmp_path)
+    log = tmp_path / "benchmark.log"
+    log.write_text("benchmark complete\n", encoding="utf-8")
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        if endpoint == "/v1/runs":
+            return {"run_id": BENCHMARK_RUN_ID}
+        if endpoint.endswith("/artifacts/benchmark-log"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000004"}
+        return {"ok": True}
+
+    store = FakeStore()
+    published = publish_benchmark_result(
+        result_path=path,
+        log_path=log,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        request=request,
+        artifact_store=store,
+    )
+
+    assert published["log_s3_key"].endswith("/benchmark.log")
+    assert store.objects[0][1].rsplit("/", 1)[0] == store.objects[1][1].rsplit("/", 1)[0]
+    assert store.objects[1][3] == "text/plain"
 
 
 def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(tmp_path: Path) -> None:

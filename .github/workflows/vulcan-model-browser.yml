@@ -44,6 +44,7 @@ jobs:
           mkdir -p _site
           cp artifact-browser/index.html _site/
           cp artifact-browser/app.js "_site/app.${revision}.js"
+          cp artifact-browser/benchmark-adapters.js "_site/benchmark-adapters.${revision}.js"
           cp artifact-browser/styles.css "_site/styles.${revision}.css"
           cp artifact-browser/config.js "_site/config.${revision}.js"
           cp artifact-browser/favicon.svg _site/
@@ -52,6 +53,7 @@ jobs:
             -e "s|src=\"config.js\"|src=\"config.${revision}.js\"|" \
             -e "s|src=\"app.js\"|src=\"app.${revision}.js\"|" \
             _site/index.html
+          sed -i "s|./benchmark-adapters.js|./benchmark-adapters.${revision}.js|" "_site/app.${revision}.js"
 
       - name: Upload static site artifact
         uses: actions/upload-artifact@v7

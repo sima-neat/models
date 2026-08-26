@@ -39,7 +39,7 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     env = {
         **os.environ,
         "BENCHMARKER_BUILD_PYTHON": sys.executable,
-        "BENCHMARKER_PACKAGE_VERSION": "0.1.0+unit",
+        "BENCHMARKER_PACKAGE_VERSION": "0.2.0+unit",
         "SIMA_CLI_BIN": str(cli),
     }
 
@@ -52,10 +52,11 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         metadata = wheel.read(metadata_name).decode()
         assert "Name: sima-neat-benchmarker" in metadata
-        assert "Version: 0.1.0+unit" in metadata
+        assert "Version: 0.2.0+unit" in metadata
         assert "benchmarker/__init__.py" in names
         assert "benchmarker/schemas/performance-test-v1.schema.json" in names
         assert "benchmarker/schemas/performance-result-v1.schema.json" in names
+        assert "benchmarker/schemas/performance-result-v2.schema.json" in names
         entry_points = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
         assert "benchmarker = benchmarker:main" in wheel.read(entry_points).decode()
 
@@ -66,7 +67,7 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@v0.4.0"}},
     }
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata == {"name": "gh:sima-neat/models/benchmarker", "version": "0.1.0+unit"}
+    assert metadata == {"name": "gh:sima-neat/models/benchmarker", "version": "0.2.0+unit"}
 
 
 def test_package_installer_uses_declared_core_dependency() -> None:
