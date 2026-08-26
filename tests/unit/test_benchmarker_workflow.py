@@ -21,3 +21,12 @@ def test_benchmarker_workflow_is_change_scoped_and_publishes_subpackage() -> Non
     assert "vulcan-publish-artifacts.yml@main" in text
     assert "vulcan-update-latest-artifacts.yml@main" in text
     assert "github.event_name != 'pull_request'" in text
+
+
+def test_sima_cli_install_does_not_shadow_setup_python() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert 'echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"' not in text
+    assert 'echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"' in text
+    assert 'SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"' in (
+        ROOT / "scripts" / "build_benchmarker_vulcan_package.sh"
+    ).read_text(encoding="utf-8")

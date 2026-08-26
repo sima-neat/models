@@ -79,8 +79,9 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
-          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
-          "${HOME}/.sima-cli/.venv/bin/sima-cli" packages build --help >/dev/null
+          sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"
+          "${sima_cli}" packages build --help >/dev/null
+          echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"
 
       - name: Test benchmarker contracts
         run: |
