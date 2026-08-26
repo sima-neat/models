@@ -28,6 +28,12 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--schema", type=Path)
     validate.add_argument("--json", action="store_true", dest="json_output")
 
+    validate_catalog = subcommands.add_parser(
+        "validate-catalog", help="validate every model manifest and its taxonomy categorization"
+    )
+    validate_catalog.add_argument("--repository", type=Path, default=Path.cwd())
+    validate_catalog.add_argument("--json", action="store_true", dest="json_output")
+
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
     fetch.add_argument("--schema", type=Path)
@@ -145,6 +151,13 @@ def _validate(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     result = {"model_id": model["id"], "model_dir": str(args.model_dir.resolve()), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model: {model['id']}")
+    return 0
+
+
+def _validate_catalog(args: argparse.Namespace) -> int:
+    catalog = discover_catalog(args.repository)
+    result = {"model_count": len(catalog), "model_ids": sorted(catalog), "valid": True}
+    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model catalog: {len(catalog)} models")
     return 0
 
 
@@ -369,6 +382,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "validate":
             return _validate(args)
+        if args.command == "validate-catalog":
+            return _validate_catalog(args)
         if args.command == "fetch":
             return _fetch(args)
         if args.command == "fetch-calibration":

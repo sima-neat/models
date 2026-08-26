@@ -83,7 +83,7 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     assert latest["schema_version"] == 2
     assert latest["taxonomy"]["path"] == "taxonomy.json"
     assert latest["models"]["resnet_50"]["categorization"] == {
-        "taxonomy_version": 1,
+        "taxonomy_version": 2,
         "model_type": "vision",
         "tasks": ["image_classification"],
         "modalities": {"inputs": ["image"], "outputs": ["class_scores"]},

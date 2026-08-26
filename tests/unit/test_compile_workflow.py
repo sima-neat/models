@@ -43,6 +43,18 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
 
+def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["select"]["steps"]
+    validation_index = next(
+        index for index, step in enumerate(steps) if step.get("name") == "Validate complete model catalog and taxonomy"
+    )
+    compiler_index = next(index for index, step in enumerate(steps) if step.get("id") == "compiler")
+
+    assert steps[validation_index]["run"] == "model-registry validate-catalog --repository ."
+    assert validation_index < compiler_index
+
+
 def test_production_is_an_explicit_dispatch_choice() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     options = workflow["on"]["workflow_dispatch"]["inputs"]["environment"]["options"]

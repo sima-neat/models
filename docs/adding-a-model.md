@@ -16,8 +16,8 @@
    Branches such as `main` are rejected because they are mutable.
 3. Describe the ONNX interface and preprocessing explicitly. Do not rely on a
    model card changing independently of this repository.
-4. New models use schema version 2 and reference sanctioned categories from
-   `taxonomies/model-taxonomy-v1.yaml`. Declare a model type, one or more tasks,
+4. Every model uses schema version 2 and references sanctioned categories from
+   `taxonomies/model-taxonomy-v2.yaml`. Declare a model type, one or more tasks,
    semantic input/output modalities, and an architecture ID. Add a reviewed
    taxonomy entry instead of inventing a free-form authoritative category.
 5. Declare surgery as `type: none` or point at a model-local hook. Keep generic

@@ -1,6 +1,6 @@
 # Model categorization taxonomy
 
-`taxonomies/model-taxonomy-v1.yaml` is the canonical source of searchable model
+`taxonomies/model-taxonomy-v2.yaml` is the current canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
 references; the Model Registry semantic validator resolves those references
@@ -10,7 +10,7 @@ Do not copy sanctioned lists into model definitions, browser code, API code, or
 database migrations. Individual schema-version 2 models declare references:
 
 ```yaml
-taxonomy_version: 1
+taxonomy_version: 2
 model_type: vision
 tasks: [image_classification]
 modalities:
@@ -38,16 +38,16 @@ corrections, so historical records remain deterministic. Adding sanctioned IDs
 therefore evolves taxonomy data without requiring another model-schema or
 database-schema redesign.
 
-Model schema v1 remains supported during migration and has no categorization.
-Schema v2 requires all authoritative category facets. ResNet-50 is the initial
-v2 validation model; other models remain explicitly uncategorized until their
-definitions are migrated and rebuilt.
+Model schema v2 and all authoritative category facets are mandatory. Catalog
+validation rejects a missing field, an unknown sanctioned ID, or an incompatible
+model type before any compilation job can be scheduled. Taxonomy v1 remains in
+the repository as immutable publication history; taxonomy v2 adds the SSD and
+YOLO architecture families needed by the fully categorized catalog.
 
 Packaging emits `taxonomy.json`, records its SHA-256 in schema-version 2
 `latest.json`, and projects canonical category IDs into `latest.json` and
 `catalog.json`. Registry publication uploads the immutable taxonomy before a
-categorized run. Existing v1 run records are not guessed or heuristically
-backfilled.
+categorized run. Existing run records are not guessed or heuristically backfilled.
 
 ## Search semantics
 

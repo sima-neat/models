@@ -44,8 +44,13 @@ def validate_latest_index(value: Any, *, branch: str | None = None) -> dict[str,
         raise ValidationError("latest.json branch does not match the requested branch")
     if value["schema_version"] == 2:
         taxonomy = value.get("taxonomy")
-        if not isinstance(taxonomy, dict) or taxonomy.get("version") != 1 or taxonomy.get("path") != "taxonomy.json":
-            raise ValidationError("latest.json schema version 2 requires taxonomy version 1 at taxonomy.json")
+        if (
+            not isinstance(taxonomy, dict)
+            or not isinstance(taxonomy.get("version"), int)
+            or taxonomy["version"] < 1
+            or taxonomy.get("path") != "taxonomy.json"
+        ):
+            raise ValidationError("latest.json schema version 2 requires a positive taxonomy version at taxonomy.json")
         digest = taxonomy.get("sha256")
         if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ValidationError("latest.json taxonomy sha256 must be a lowercase SHA-256 digest")

@@ -1,7 +1,20 @@
-schema_version: 1
+schema_version: 2
 id: ssd_mobilenet_v1
 display_name: SSD-MobileNet V1 300x300
 description: COCO SSD-MobileNet V1 raw box and class predictor heads for Neat-owned decode and NMS.
+taxonomy_version: 2
+model_type: vision
+tasks:
+  - object_detection
+modalities:
+  inputs:
+    - image
+  outputs:
+    - bounding_boxes
+    - class_scores
+architecture:
+  id: ssd_mobilenet_v1
+  variant: coco_300x300
 owners:
   - "@sima-neat/models"
 license:

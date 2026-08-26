@@ -96,7 +96,7 @@ def validate_model(
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
 
-    taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path)) if model["schema_version"] == 2 else {}
+    taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path))
     try:
         validate_model_categorization(model, taxonomy)
     except ValidationError as exc:

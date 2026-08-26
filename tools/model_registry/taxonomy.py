@@ -11,7 +11,7 @@ import yaml
 
 from .errors import ValidationError
 
-TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v1.yaml")
+TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v2.yaml")
 TAXONOMY_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
@@ -85,7 +85,7 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
         if unknown:
             details.append(f"unknown fields: {', '.join(unknown)}")
         raise ValidationError(f"{taxonomy_path}: taxonomy {'; '.join(details)}")
-    if taxonomy["version"] != 1:
+    if taxonomy["version"] != 2:
         raise ValidationError(f"{taxonomy_path}: unsupported taxonomy version {taxonomy['version']!r}")
 
     model_types = _mapping(taxonomy["model_types"], "model_types")
@@ -132,16 +132,10 @@ def taxonomy_sha256(taxonomy: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any]) -> dict[str, Any] | None:
-    category_fields = {"taxonomy_version", "model_type", "tasks", "modalities", "architecture", "tags"}
+def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any]) -> dict[str, Any]:
     schema_version = model.get("schema_version")
-    present = category_fields & set(model)
-    if schema_version == 1:
-        if present:
-            raise ValidationError("categorization fields require model schema_version 2")
-        return None
     if schema_version != 2:
-        raise ValidationError(f"unsupported model schema_version {schema_version!r}")
+        raise ValidationError("model schema_version 2 is required; taxonomy categorization is mandatory")
 
     taxonomy_version = model["taxonomy_version"]
     if taxonomy_version != taxonomy["version"]:

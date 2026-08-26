@@ -19,7 +19,7 @@ from model_registry.errors import ValidationError
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v2.yaml"
 
 
 def _write_model(repository: Path, model_id: str, *, declared_id: str | None = None) -> None:
@@ -36,7 +36,7 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
     (tmp_path / "schemas" / "model.schema.json").write_text(SCHEMA.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "taxonomies").mkdir()
-    (tmp_path / "taxonomies" / "model-taxonomy-v1.yaml").write_text(
+    (tmp_path / "taxonomies" / "model-taxonomy-v2.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
     )
     _write_model(tmp_path, "alpha")
@@ -149,6 +149,16 @@ def test_mismatched_directory_id_fails(catalog_repository: Path) -> None:
     model["id"] = "bravo"
     (catalog_repository / "models" / "alpha" / "model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
     with pytest.raises(ValidationError, match="id must match directory name"):
+        discover_catalog(catalog_repository)
+
+
+def test_missing_taxonomy_blocks_catalog_before_matrix(catalog_repository: Path) -> None:
+    path = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(path.read_text(encoding="utf-8"))
+    del model["tasks"]
+    path.write_text(yaml.safe_dump(model), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="tasks.*required"):
         discover_catalog(catalog_repository)
 
 

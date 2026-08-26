@@ -16,6 +16,7 @@ from .catalog import discover_catalog
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .taxonomy import (
+    TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
     load_taxonomy,
     taxonomy_sha256,
@@ -208,7 +209,7 @@ class S3ArtifactStore:
 
 
 def _publish_taxonomy(client: SigV4RegistryClient, root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    taxonomy = load_taxonomy(root / "taxonomies" / "model-taxonomy-v1.yaml")
+    taxonomy = load_taxonomy(root / TAXONOMY_RELATIVE_PATH)
     taxonomy_document = canonical_taxonomy_document(taxonomy)
     taxonomy_digest = taxonomy_sha256(taxonomy_document)
     taxonomy_version = taxonomy_document["version"]

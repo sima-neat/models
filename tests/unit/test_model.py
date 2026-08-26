@@ -12,7 +12,7 @@ from model_registry.taxonomy import load_taxonomy, validate_model_categorization
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v2.yaml"
 
 
 def test_valid_fixture_passes() -> None:
@@ -108,10 +108,19 @@ def test_incompatible_model_type_and_architecture_fail() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 
-def test_v1_model_cannot_partially_adopt_categorization() -> None:
+def test_model_without_required_taxonomy_version_fails() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    del model["taxonomy_version"]
+    with pytest.raises(ValidationError, match="taxonomy_version.*required"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+def test_legacy_schema_is_rejected_even_without_category_fields() -> None:
     model = load_model(FIXTURES / "fixture_model")
     model["schema_version"] = 1
-    with pytest.raises(ValidationError, match="categorization fields require model schema_version 2"):
+    for field in ("taxonomy_version", "model_type", "tasks", "modalities", "architecture"):
+        model.pop(field)
+    with pytest.raises(ValidationError, match="schema_version.*2 was expected"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 

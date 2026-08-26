@@ -9,6 +9,11 @@
     "id",
     "display_name",
     "description",
+    "taxonomy_version",
+    "model_type",
+    "tasks",
+    "modalities",
+    "architecture",
     "owners",
     "license",
     "source",
@@ -23,7 +28,7 @@
     "maturity"
   ],
   "properties": {
-    "schema_version": {"enum": [1, 2]},
+    "schema_version": {"const": 2},
     "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
@@ -64,14 +69,6 @@
     "tests": {"$ref": "#/$defs/tests"},
     "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
   },
-  "allOf": [
-    {
-      "if": {"properties": {"schema_version": {"const": 2}}, "required": ["schema_version"]},
-      "then": {
-        "required": ["taxonomy_version", "model_type", "tasks", "modalities", "architecture"]
-      }
-    }
-  ],
   "$defs": {
     "taxonomyId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
     "taxonomyIdSet": {

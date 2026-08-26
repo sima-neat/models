@@ -1,4 +1,4 @@
-# `model.yaml` schema v1 and v2
+# `model.yaml` schema v2
 
 `schemas/model.schema.json` is the authoritative contract. YAML is parsed with
 the safe loader and validated with JSON Schema Draft 2020-12.
@@ -28,11 +28,10 @@ qualification evidence.
 Validation errors use paths such as `source.sha256` and include the model
 directory, making both local and CI failures actionable.
 
-Schema version 2 additionally requires `taxonomy_version`, `model_type`,
+Schema version 2 requires `taxonomy_version`, `model_type`,
 `tasks`, `modalities`, and `architecture`. Structural constraints live in JSON
 Schema; sanctioned IDs and compatibility rules live in
-`taxonomies/model-taxonomy-v1.yaml`. See [the taxonomy contract](model-taxonomy.md).
+`taxonomies/model-taxonomy-v2.yaml`. See [the taxonomy contract](model-taxonomy.md).
 
-Schema version 1 remains readable during migration but cannot declare partial
-categorization. ResNet-50 is the first migrated model; remaining v1 models are
-published without category fields until updated.
+Schema version 1 manifests are rejected. CI validates the complete catalog and
+its sanctioned taxonomy references before scheduling any Model Compiler runner.
