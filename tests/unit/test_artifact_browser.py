@@ -222,3 +222,16 @@ def test_smart_search_uses_names_and_taxonomy_labels_on_client_and_server() -> N
     assert 'query.set("q", elements.search.value.trim())' in script
     assert 'url.searchParams.set("q", query)' in script
     assert "setTimeout(() => loadRuns" in script
+
+
+def test_model_card_links_to_the_exact_compiled_github_source() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert "function githubModelUrl(run, modelId)" in script
+    assert "/tree/${commit}/models/${encodeURIComponent(modelId)}`" in script
+    assert r"/^[a-f0-9]{40}$/i.test(commit)" in script
+    assert 'class="model-source-link"' in script
+    assert "View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}" in script
+    assert 'target="_blank" rel="noreferrer"' in script
+    assert ".model-source-link:focus-visible" in styles

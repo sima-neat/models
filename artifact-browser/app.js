@@ -45,6 +45,7 @@ const icons = {
   download: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 20h14"/></svg>`,
   copy: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`,
   external: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5m0-5-8 8M19 14v5H5V5h5"/></svg>`,
+  github: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.75a9.25 9.25 0 0 0-2.92 18.03c.46.08.63-.2.63-.45v-1.8c-2.57.56-3.11-1.09-3.11-1.09-.42-1.07-1.03-1.35-1.03-1.35-.84-.58.06-.57.06-.57.93.07 1.42.96 1.42.96.83 1.42 2.17 1.01 2.7.77.08-.6.32-1.01.59-1.24-2.05-.23-4.21-1.03-4.21-4.57 0-1.01.36-1.83.95-2.48-.1-.23-.41-1.17.09-2.44 0 0 .78-.25 2.54.95A8.8 8.8 0 0 1 12 7.1a8.7 8.7 0 0 1 2.31.31c1.76-1.2 2.53-.95 2.53-.95.51 1.27.19 2.21.1 2.44.59.65.95 1.47.95 2.48 0 3.55-2.17 4.33-4.23 4.56.33.29.63.85.63 1.72v2.67c0 .25.16.54.63.45A9.25 9.25 0 0 0 12 2.75Z"/></svg>`,
 };
 
 function escapeHtml(value = "") {
@@ -57,6 +58,17 @@ function branchName(ref = "") {
 
 function shortSha(sha = "") {
   return sha.slice(0, 12);
+}
+
+function githubModelUrl(run, modelId) {
+  const organization = String(state.repository.organization || "");
+  const repository = String(state.repository.name || "");
+  const commit = String(run.commit_sha || "");
+  if (!/^[A-Za-z0-9_.-]+$/.test(organization)
+    || !/^[A-Za-z0-9_.-]+$/.test(repository)
+    || !/^[a-f0-9]{40}$/i.test(commit)
+    || !/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(modelId)) return null;
+  return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
 }
 
 function formatDate(value, includeTime = true) {
@@ -404,10 +416,12 @@ function renderDetail(detail) {
   const variant = run.metadata?.variant_id || "default";
   const precision = parameters.compile_parameters?.precision;
   const categories = run.model_categories || {};
+  const sourceUrl = githubModelUrl(run, model);
+  const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div>
+    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div>${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" title="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
     <div class="detail-tags">${precision ? `<span>${escapeHtml(precision)}</span>` : ""}<span>${escapeHtml(run.toolchain_name || "compiler")} ${escapeHtml(run.toolchain_version || "")}</span><span>${escapeHtml(branchName(run.git_ref))}</span>${categories.model_type ? `<span>${escapeHtml(categories.model_type)}</span>` : ""}${categories.architecture?.id ? `<span>${escapeHtml(categories.architecture.id)}</span>` : ""}${(categories.tasks || []).map((task) => `<span>${escapeHtml(task)}</span>`).join("")}</div>
 
     <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
