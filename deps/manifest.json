@@ -1,4 +1,5 @@
 {
+  "platform-version": "2.1.3",
   "benchmarker": {
     "version": "0.2.0",
     "vulcan": {
@@ -10,8 +11,7 @@
   },
   "devkit": {
     "board": "modalix",
-    "os_type": "elxr",
-    "platform_version": "2.1.3"
+    "os_type": "elxr"
   },
   "model-compiler": {
     "version": "2.1.3"

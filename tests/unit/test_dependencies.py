@@ -18,6 +18,10 @@ def test_repository_model_compiler_dependency_is_pinned() -> None:
 
 
 def test_repository_benchmark_runtime_is_fully_pinned() -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["platform-version"] == "2.1.3"
+    assert "platform_version" not in manifest["devkit"]
+
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {"board": "modalix", "os_type": "elxr", "platform_version": "2.1.3"}
     assert runtime["neat_core"] == {"version": "0.4.0", "install_target": "core@v0.4.0"}

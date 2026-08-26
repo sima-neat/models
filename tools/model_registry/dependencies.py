@@ -49,11 +49,11 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     if not isinstance(benchmarker, dict):
         raise ValidationError("dependency manifest must define benchmarker as an object")
 
-    platform_version = devkit.get("platform_version")
+    platform_version = manifest.get("platform-version")
     core_version = core.get("version")
     benchmarker_version = benchmarker.get("version")
     for field, value in (
-        ("devkit.platform_version", platform_version),
+        ("platform-version", platform_version),
         ("neat-core.version", core_version),
         ("benchmarker.version", benchmarker_version),
     ):
