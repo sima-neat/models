@@ -183,7 +183,11 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .external-link svg { width: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .source-block { padding: 15px; background: var(--surface); }
 .source-block strong { font-size: 15px; }
-.source-block > p { margin: 8px 0 14px; color: var(--ink-soft); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.source-block > p { margin: 8px 0 10px; color: var(--ink-soft); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.source-model-card { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: 0 0 16px; color: var(--blue); font-size: 13px; font-weight: 600; line-height: 1.45; text-decoration: none; overflow-wrap: anywhere; }
+.source-model-card:hover { text-decoration: underline; text-underline-offset: 3px; }
+.source-model-card:focus-visible { border-radius: 2px; outline: 2px solid var(--blue); outline-offset: 3px; }
+.source-model-card svg { width: 13px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .source-block > div { display: grid; grid-template-columns: auto minmax(0,1fr) 25px; align-items: center; gap: 8px; }
 .source-block span { color: var(--ink-faint); font-size: 13px; }
 .source-block code { overflow: hidden; color: var(--ink-faint); font: 13px var(--font-mono); text-overflow: ellipsis; }

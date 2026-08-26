@@ -264,6 +264,23 @@ def test_model_card_links_to_the_exact_compiled_github_source() -> None:
     assert ".model-source-link:focus-visible" in styles
 
 
+def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert "function trustedHuggingFaceUrl" in script
+    assert 'url.hostname !== "huggingface.co"' in script
+    assert "function huggingFaceSourceLink" in script
+    assert "input.metadata?.model_card" in script
+    assert "hf:\\/\\/(models|datasets|spaces)" in script
+    assert 'class="source-model-card"' in script
+    assert 'target="_blank" rel="noreferrer"' in script
+    assert "Open the original model card on Hugging Face" in script
+    assert ".source-model-card:focus-visible" in styles
+    assert "https://huggingface.co/onnx-community/resnet-50-ONNX" in preview
+
+
 def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")

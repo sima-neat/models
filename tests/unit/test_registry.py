@@ -116,6 +116,13 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "architecture": {"id": "resnet_50", "paradigm": "cnn", "variant": "imagenet_1k"},
         "tags": [],
     }
+    source_input = calls[2][2]
+    assert source_input is not None
+    assert source_input["source_reference"].startswith("hf://models/onnx-community/resnet-50-ONNX@")
+    assert source_input["metadata"] == {
+        "model_id": "resnet_50",
+        "model_card": "https://huggingface.co/onnx-community/resnet-50-ONNX",
+    }
     parameters = calls[3][2]["parameters"]
     assert parameters["compiler_version"] == "2.1.3"
     assert parameters["target"] == "modalix"

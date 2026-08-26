@@ -383,6 +383,10 @@ def publish_compilations(
             f"{stable_key}-create",
         )
         run_id = _require_text(create.get("run_id"), "run_id")
+        source_metadata = {"model_id": model_id}
+        model_card = model.get("upstream", {}).get("model_card")
+        if isinstance(model_card, str) and model_card:
+            source_metadata["model_card"] = model_card
         client.request(
             "PUT",
             f"/v1/runs/{run_id}/inputs/source-model",
@@ -392,7 +396,7 @@ def publish_compilations(
                 "sha256": source_sha,
                 "size_bytes": model["source"]["size_bytes"],
                 "media_type": model["source"].get("media_type", "application/onnx"),
-                "metadata": {"model_id": model_id},
+                "metadata": source_metadata,
             },
             f"{stable_key}-input",
         )

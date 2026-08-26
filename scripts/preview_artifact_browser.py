@@ -108,7 +108,11 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 "inputs": [{
                     "name": "onnx-model",
                     "input_type": "model",
-                    "source_reference": "models/resnet_50/model.onnx",
+                    "source_reference": "hf://models/onnx-community/resnet-50-ONNX@b6ef686fe842388c9449c7acb7269d02c69bacfb/onnx/model.onnx",
+                    "metadata": {
+                        "model_id": "resnet_50",
+                        "model_card": "https://huggingface.co/onnx-community/resnet-50-ONNX",
+                    },
                     "sha256": "9c871fc4454da4436cd52254bccd428f0fae7b0f8a7ec09681c92fc6530b237a",
                     "size_bytes": 102_438_921,
                 }],

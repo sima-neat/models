@@ -85,6 +85,42 @@ function githubModelUrl(run, modelId) {
   return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
 }
 
+function trustedHuggingFaceUrl(value = "") {
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== "https:" || url.hostname !== "huggingface.co" || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function huggingFaceSourceLink(input = {}) {
+  const declaredModelCard = trustedHuggingFaceUrl(input.metadata?.model_card);
+  if (declaredModelCard) {
+    return { href: declaredModelCard, label: declaredModelCard.replace(/^https:\/\//, "").replace(/\/$/, "") };
+  }
+
+  const match = /^hf:\/\/(models|datasets|spaces)\/([^/@?#]+)\/([^/@?#]+)@[a-f0-9]{40}\/.+$/i.exec(
+    String(input.source_reference || ""),
+  );
+  if (!match) return null;
+  const [, repositoryType, owner, repository] = match;
+  const typePrefix = repositoryType === "models" ? "" : `${repositoryType}/`;
+  const href = `https://huggingface.co/${typePrefix}${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+  return { href, label: href.replace(/^https:\/\//, "") };
+}
+
+function sourceInputPanel(input) {
+  const huggingFace = huggingFaceSourceLink(input);
+  return `<section><div class="detail-section-title"><h3>Source input</h3></div><div class="source-block">
+    <strong>${escapeHtml(input.name)}</strong>
+    <p>${escapeHtml(input.source_reference || input.input_type)}</p>
+    ${huggingFace ? `<a class="source-model-card" href="${escapeHtml(huggingFace.href)}" target="_blank" rel="noreferrer" aria-label="Open the original model card on Hugging Face">${escapeHtml(huggingFace.label)} ${icons.external}</a>` : ""}
+    <div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div>
+  </div></section>`;
+}
+
 function formatDate(value, includeTime = true) {
   if (!value) return "—";
   const date = new Date(value);
@@ -535,7 +571,7 @@ function renderDetail(detail) {
       ${keyValue("Fingerprint", run.run_fingerprint, { copy: true, mono: true })}
     </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</section>
 
-    ${input ? `<section><div class="detail-section-title"><h3>Source input</h3></div><div class="source-block"><strong>${escapeHtml(input.name)}</strong><p>${escapeHtml(input.source_reference || input.input_type)}</p><div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div></div></section>` : ""}
+    ${input ? sourceInputPanel(input) : ""}
 
     <section><div class="detail-section-title"><h3>Validation</h3><span>${tests.length}</span></div>
       <div class="test-list">${tests.length ? tests.map((test) => `<div><span class="test-mark ${escapeHtml(test.status)}">${test.status === "passed" ? "✓" : "!"}</span><p><strong>${escapeHtml(test.name)}</strong><small>${escapeHtml(test.suite)}${test.duration_ms ? ` · ${escapeHtml(test.duration_ms)} ms` : ""}</small></p><span>${escapeHtml(test.status)}</span></div>`).join("") : `<p class="muted-message">No validation records.</p>`}</div>
