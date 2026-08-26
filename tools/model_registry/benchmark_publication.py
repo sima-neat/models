@@ -145,7 +145,10 @@ def publish_benchmark_result(
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
     variant_id = result["model"]["variant_id"]
-    stable_digest = hashlib.sha256(f"{parent_run_id}:{fingerprint}".encode()).hexdigest()
+    execution_digest = canonical_sha256(result)
+    stable_digest = hashlib.sha256(
+        f"{parent_run_id}:{fingerprint}:{execution_digest}".encode()
+    ).hexdigest()
     stable_key = f"models-benchmark-{stable_digest}"
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
@@ -177,6 +180,7 @@ def publish_benchmark_result(
             "variant_id": variant_id,
             "benchmark_type": result["benchmark_type"],
             "compile_run_id": parent_run_id,
+            "benchmark_execution_digest": execution_digest,
         },
     }
     if github_run_url:
@@ -214,7 +218,8 @@ def publish_benchmark_result(
 
     result_sha, _ = sha256_file(path)
     object_key = (
-        f"benchmarks/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{variant_id}/{fingerprint}.json"
+        f"benchmarks/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{variant_id}/"
+        f"{fingerprint}/{execution_digest}.json"
     )
     stored = store.ensure_native_sha256(path, object_key, result_sha, media_type="application/json")
     artifact = client.request(
@@ -229,7 +234,12 @@ def publish_benchmark_result(
             "size_bytes": stored.size_bytes,
             "media_type": "application/json",
             "retention_class": "branch",
-            "metadata": {"model_id": model_id, "variant_id": variant_id, "result_fingerprint": fingerprint},
+            "metadata": {
+                "model_id": model_id,
+                "variant_id": variant_id,
+                "result_fingerprint": fingerprint,
+                "benchmark_execution_digest": execution_digest,
+            },
         },
         f"{stable_key}-artifact",
     )
@@ -268,5 +278,6 @@ def publish_benchmark_result(
         "model_id": model_id,
         "variant_id": variant_id,
         "result_fingerprint": fingerprint,
+        "execution_digest": execution_digest,
         "s3_key": stored.key,
     }

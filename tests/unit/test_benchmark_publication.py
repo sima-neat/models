@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 from model_registry.benchmark_publication import load_benchmark_result, publish_benchmark_result
 from model_registry.errors import ValidationError
-from model_registry.registry import S3Object
+from model_registry.registry import S3Object, canonical_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILE_RUN_ID = "00000000-0000-4000-8000-000000000001"
@@ -107,6 +107,8 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert published["compile_run_id"] == COMPILE_RUN_ID
     assert published["benchmark_run_id"] == BENCHMARK_RUN_ID
     assert published["model_id"] == "resnet_50"
+    result = json.loads(path.read_text(encoding="utf-8"))
+    assert published["execution_digest"] == canonical_sha256(result)
     assert [endpoint for _, endpoint, _, _ in calls] == [
         "/v1/runs",
         f"/v1/runs/{BENCHMARK_RUN_ID}/inputs/compiled-model",
@@ -133,6 +135,50 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert store.objects[0][1].endswith(f"/{published['execution_digest']}.json")
+
+
+def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(tmp_path: Path) -> None:
+    path = valid_result(tmp_path)
+
+    def publish() -> tuple[dict, list[str], FakeStore]:
+        keys: list[str] = []
+
+        def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+            keys.append(key)
+            if endpoint == "/v1/runs":
+                return {"run_id": BENCHMARK_RUN_ID}
+            return {"ok": True}
+
+        store = FakeStore()
+        published = publish_benchmark_result(
+            result_path=path,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            environment="staging",
+            branch="feature/benchmark",
+            git_sha="a" * 40,
+            request=request,
+            artifact_store=store,
+        )
+        return published, keys, store
+
+    first, first_keys, first_store = publish()
+    retry, retry_keys, retry_store = publish()
+    assert retry["execution_digest"] == first["execution_digest"]
+    assert retry_keys == first_keys
+    assert retry_store.objects[0][1] == first_store.objects[0][1]
+
+    later_result = json.loads(path.read_text(encoding="utf-8"))
+    later_result["timestamp_utc"] = "2026-08-26T12:00:00+00:00"
+    path.write_text(json.dumps(later_result), encoding="utf-8")
+    later, later_keys, later_store = publish()
+
+    assert later["result_fingerprint"] == first["result_fingerprint"]
+    assert later["execution_digest"] != first["execution_digest"]
+    assert later_keys[0] != first_keys[0]
+    assert later_store.objects[0][1] != first_store.objects[0][1]
 
 
 def test_rejects_tampered_benchmark_identity(tmp_path: Path) -> None:

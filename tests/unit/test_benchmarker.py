@@ -324,6 +324,53 @@ def test_cli_writes_machine_readable_error_result(tmp_path: Path, monkeypatch: p
     result = json.loads(output.read_text(encoding="utf-8"))
     assert result["status"] == "error"
     assert result["failure_classification"] == "model"
+    assert result["model"]["contract"]["name"] == "fixture-model"
+    assert result["model"]["contract"]["mla_stage_count"] == 1
+    validate("performance-result-v1.schema.json", result)
+
+
+def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mpk = tmp_path / "model.tar.gz"
+    manifest = make_manifest(mpk, make_mpk(mpk), trials=2)
+    manifest_path = tmp_path / "test.json"
+    output = tmp_path / "result.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    runtime = fake_pyneat()
+    base_model = runtime.Model
+
+    class FailingSecondTrialModel(base_model):
+        def benchmark(self, options: Any) -> Any:
+            if self.calls == 1:
+                raise RuntimeError("second trial failed")
+            return super().benchmark(options)
+
+    runtime.Model = FailingSecondTrialModel
+    preflight = {
+        "status": "available",
+        "reason": None,
+        "runtime_user": "sima",
+        "required_group": "i2c",
+        "devices": [{"path": "/dev/i2c-3", "readable": True, "writable": True}],
+    }
+    monkeypatch.setenv("SIMA_PLATFORM_VERSION", "2.1.3")
+    monkeypatch.setattr(benchmark, "import_pyneat", lambda: runtime)
+    monkeypatch.setattr(benchmark, "power_telemetry_preflight", lambda: preflight)
+
+    assert benchmark.main(["--manifest", str(manifest_path), "--output", str(output)]) == 4
+    result = json.loads(output.read_text(encoding="utf-8"))
+
+    assert result["status"] == "error"
+    assert result["failure_classification"] == "benchmark"
+    assert result["compatibility"]["actual_neat_version"] == "0.4.0+unit-test"
+    assert result["model"]["contract"]["name"] == "fixture-model"
+    assert result["model"]["resolved"]["postprocess"] == "boxdecode"
+    assert len(result["trials"]) == 1
+    assert result["trials"][0]["latency_avg_ms"] == 11.0
+    assert result["metrics"]["latency_avg_ms"]["value"] == 11.0
+    assert result["metrics"]["latency_avg_ms"]["sample_count"] == 1
+    assert result["environment"]["observations"]["end"] is not None
     validate("performance-result-v1.schema.json", result)
 
 

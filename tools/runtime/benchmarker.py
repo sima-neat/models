@@ -509,9 +509,15 @@ def _finite_positive(value: Any) -> float | None:
     return None
 
 
-def execute_trials(pyneat: ModuleType, model: Any, benchmark: dict[str, Any]) -> list[dict[str, Any]]:
+def execute_trials(
+    pyneat: ModuleType,
+    model: Any,
+    benchmark: dict[str, Any],
+    *,
+    results: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     trials = benchmark.get("trials", DEFAULT_TRIALS)
-    results: list[dict[str, Any]] = []
+    completed = results if results is not None else []
     for trial_index in range(1, trials + 1):
         try:
             options = pyneat.BenchmarkOptions()
@@ -534,7 +540,7 @@ def execute_trials(pyneat: ModuleType, model: Any, benchmark: dict[str, Any]) ->
             raise BenchmarkExecutionError(f"trial {trial_index} did not produce positive latency and throughput")
         power = _finite_positive(getattr(report, "avg_power_watts", None))
         energy = _finite_positive(getattr(report, "energy_joules", None))
-        results.append(
+        completed.append(
             {
                 "trial": trial_index,
                 "latency_avg_ms": latency_avg,
@@ -546,7 +552,7 @@ def execute_trials(pyneat: ModuleType, model: Any, benchmark: dict[str, Any]) ->
                 "energy_per_inference_joules": None,
             }
         )
-    return results
+    return completed
 
 
 def metric(
@@ -752,13 +758,15 @@ def run_benchmark(
     pyneat: ModuleType | None = None,
     actual_platform: str | None = None,
     power_preflight: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     model_path = Path(manifest["model"]["path"]).expanduser().resolve()
     if actual_platform is None:
         actual_platform = detect_platform_version()
     preflight = power_preflight or power_telemetry_preflight()
     warn_power_preflight(preflight)
-    result = _result_base(manifest, model_path, actual_platform, preflight=preflight)
+    if result is None:
+        result = _result_base(manifest, model_path, actual_platform, preflight=preflight)
     contract = inspect_mpk(model_path)
     result["model"]["contract"] = {key: value for key, value in contract.items() if key != "manifest"}
     actual_sha = sha256_file(model_path)
@@ -781,43 +789,47 @@ def run_benchmark(
     update_result_identity(result)
     model = build_model(runtime, model_path, manifest.get("model_options", {}))
     result["model"]["resolved"] = resolved_model(model)
-    trials = execute_trials(runtime, model, manifest["benchmark"])
+    trials = result["trials"]
     batch_size = contract["compiled_batch_size"] or 1
     logical_inferences = manifest["benchmark"]["samples"] * batch_size
-    for trial in trials:
-        if trial["energy_joules"] is not None:
-            trial["energy_per_inference_joules"] = trial["energy_joules"] / logical_inferences
-    result["trials"] = trials
     power_reason = preflight.get("reason") or "runtime_did_not_return_metric"
-    result["metrics"] = {
-        "latency_avg_ms": metric(trials, "latency_avg_ms", "ms", "unavailable"),
-        "latency_p50_ms": metric(
-            trials,
-            "latency_p50_ms",
-            "ms",
-            "unsupported",
-            reason="neat_0.4.0_does_not_expose_percentiles",
-        ),
-        "latency_p95_ms": metric(
-            trials,
-            "latency_p95_ms",
-            "ms",
-            "unsupported",
-            reason="neat_0.4.0_does_not_expose_percentiles",
-        ),
-        "throughput_fps": metric(trials, "throughput_fps", "fps", "unavailable"),
-        "avg_power_watts": metric(
-            trials, "avg_power_watts", "W", "unavailable", reason=power_reason
-        ),
-        "energy_joules": metric(trials, "energy_joules", "J", "unavailable", reason=power_reason),
-        "energy_per_inference_joules": metric(
-            trials,
-            "energy_per_inference_joules",
-            "J/inference",
-            "unavailable",
-            reason=power_reason,
-        ),
-    }
+    try:
+        execute_trials(runtime, model, manifest["benchmark"], results=trials)
+    finally:
+        for trial in trials:
+            if trial["energy_joules"] is not None:
+                trial["energy_per_inference_joules"] = trial["energy_joules"] / logical_inferences
+        result["metrics"] = {
+            "latency_avg_ms": metric(trials, "latency_avg_ms", "ms", "unavailable"),
+            "latency_p50_ms": metric(
+                trials,
+                "latency_p50_ms",
+                "ms",
+                "unsupported",
+                reason="neat_0.4.0_does_not_expose_percentiles",
+            ),
+            "latency_p95_ms": metric(
+                trials,
+                "latency_p95_ms",
+                "ms",
+                "unsupported",
+                reason="neat_0.4.0_does_not_expose_percentiles",
+            ),
+            "throughput_fps": metric(trials, "throughput_fps", "fps", "unavailable"),
+            "avg_power_watts": metric(
+                trials, "avg_power_watts", "W", "unavailable", reason=power_reason
+            ),
+            "energy_joules": metric(
+                trials, "energy_joules", "J", "unavailable", reason=power_reason
+            ),
+            "energy_per_inference_joules": metric(
+                trials,
+                "energy_per_inference_joules",
+                "J/inference",
+                "unavailable",
+                reason=power_reason,
+            ),
+        }
     result["environment"]["observations"]["end"] = runtime_observation()
     result["status"] = "passed"
     return result
@@ -887,7 +899,12 @@ def main(argv: list[str] | None = None) -> int:
     preflight = power_telemetry_preflight()
     result = _result_base(manifest, model_path, actual_platform, preflight=preflight)
     try:
-        result = run_benchmark(manifest, actual_platform=actual_platform, power_preflight=preflight)
+        run_benchmark(
+            manifest,
+            actual_platform=actual_platform,
+            power_preflight=preflight,
+            result=result,
+        )
     except BenchmarkToolError as exc:
         _record_error(result, exc, exc.classification)
         atomic_write_json(args.output, result)
