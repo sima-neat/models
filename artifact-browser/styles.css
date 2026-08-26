@@ -62,16 +62,9 @@ button { color: inherit; }
 .icon-button svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(22px, 4vw, 70px) 48px; }
-.page-header { min-height: 124px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 0 26px; }
-.page-header h1 { margin: 0; font-size: clamp(1.75rem, 2.5vw, 2.4rem); font-weight: 500; line-height: 1.12; letter-spacing: -.035em; }
 .kicker { margin: 0 0 10px; color: var(--ink-faint); font-size: 0.75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.registry-line { display: flex; align-items: center; gap: 10px; color: var(--ink-faint); font-size: 14px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint); }
-.status-dot.loading { animation: pulse 1.4s infinite; }
-.status-dot.online { background: var(--green); }
-.status-dot.offline { background: var(--red); }
 
-.toolbar { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.toolbar { border-bottom: 1px solid var(--line); }
 .toolbar-primary { min-height: 68px; display: flex; align-items: center; gap: 24px; }
 .search-field { min-width: 300px; flex: 1; display: flex; align-items: center; gap: 12px; }
 .search-field svg { width: 20px; fill: none; stroke: var(--ink-faint); stroke-width: 1.7; stroke-linecap: round; }
@@ -239,7 +232,6 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 .toast.error { color: #fff; background: var(--red); }
 .spinner { width: 13px; height: 13px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 
-@keyframes pulse { 50% { opacity: .25; } }
 @keyframes shimmer { to { background-position: -200% 0; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
@@ -253,7 +245,6 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 }
 
 @media (max-width: 840px) {
-  .page-header { min-height: 88px; }
   .workspace { display: block; }
   .results-pane { padding-right: 0; border-right: 0; }
   .detail-pane { position: fixed; inset: 60px 0 0; z-index: 15; max-height: none; padding: 30px clamp(22px, 5vw, 48px) 60px; background: var(--canvas); transform: translateX(105%); transition: transform 300ms cubic-bezier(.25,.8,.25,1); }
@@ -270,7 +261,6 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
   .topbar { height: 60px; padding-inline: 18px; }
   .environment { display: none; }
   main { padding-inline: 18px; }
-  .page-header { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; }
   .toolbar-primary { gap: 12px; }
   .filter-toggle { padding-left: 6px; }
   .filter-toggle > span:nth-child(2) { display: none; }

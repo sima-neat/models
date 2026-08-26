@@ -36,7 +36,7 @@ const state = {
 
 const elements = Object.fromEntries(
   [
-    "theme-toggle", "environment-name", "registry-status", "registry-copy", "search", "filter-toggle",
+    "theme-toggle", "environment-name", "search", "filter-toggle",
     "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
     "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
@@ -654,7 +654,6 @@ async function initialize() {
       next_cursor: cached.cursor,
       has_more: cached.hasMore,
     }, { cache: false });
-    elements["registry-copy"].textContent = `${state.repository.organization}/${state.repository.name} · refreshing…`;
   }
 
   try {
@@ -674,12 +673,8 @@ async function initialize() {
       const selectedBranch = elements["branch-filter"].value;
       if (selectedBranch && state.hasMore) await loadRuns({ branch: selectedBranch });
     }
-    elements["registry-status"].className = "status-dot online";
-    elements["registry-copy"].textContent = `${state.repository.organization}/${state.repository.name} · live public data`;
     elements["result-title"].textContent = state.repository.name === "models" ? "Models" : state.repository.name;
   } catch (error) {
-    elements["registry-status"].className = "status-dot offline";
-    elements["registry-copy"].textContent = cached ? "Showing saved data · registry unavailable" : "Registry unavailable";
     if (cached) showToast(error.message, true);
     else {
       elements["result-list"].innerHTML = errorPanel(error.message);
