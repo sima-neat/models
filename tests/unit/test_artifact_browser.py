@@ -70,6 +70,20 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert publish["cloudfront_paths"] == "/models /models/*"
 
 
+def test_staging_deployment_fingerprints_mutable_browser_assets() -> None:
+    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assemble = next(
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Assemble static site"
+    )
+
+    assert 'revision="${GITHUB_SHA:0:12}"' in assemble
+    for asset in ("app", "styles", "config"):
+        assert f"{asset}.${{revision}}" in assemble
+    assert "sed -i" in assemble
+
+
 def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 

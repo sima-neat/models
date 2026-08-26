@@ -40,12 +40,18 @@ jobs:
       - name: Assemble static site
         run: |
           set -euo pipefail
+          revision="${GITHUB_SHA:0:12}"
           mkdir -p _site
           cp artifact-browser/index.html _site/
-          cp artifact-browser/app.js _site/
-          cp artifact-browser/styles.css _site/
-          cp artifact-browser/config.js _site/
+          cp artifact-browser/app.js "_site/app.${revision}.js"
+          cp artifact-browser/styles.css "_site/styles.${revision}.css"
+          cp artifact-browser/config.js "_site/config.${revision}.js"
           cp artifact-browser/favicon.svg _site/
+          sed -i \
+            -e "s|href=\"styles.css\"|href=\"styles.${revision}.css\"|" \
+            -e "s|src=\"config.js\"|src=\"config.${revision}.js\"|" \
+            -e "s|src=\"app.js\"|src=\"app.${revision}.js\"|" \
+            _site/index.html
 
       - name: Upload static site artifact
         uses: actions/upload-artifact@v7
