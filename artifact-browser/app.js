@@ -636,7 +636,9 @@ async function initialize() {
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
 
-  if (!/^https:\/\/[^/]+$/.test(state.apiBase) || !state.repository.organization || !state.repository.name) {
+  const validApiOrigin = /^https:\/\/[^/]+$/.test(state.apiBase)
+    || /^http:\/\/(?:127\.0\.0\.1|localhost)(?::[0-9]+)?$/.test(state.apiBase);
+  if (!validApiOrigin || !state.repository.organization || !state.repository.name) {
     elements["result-list"].innerHTML = errorPanel("Set a valid HTTPS API origin and repository in config.js.", "Portal configuration is invalid");
     elements["result-list"].setAttribute("aria-busy", "false");
     return;

@@ -23,6 +23,18 @@ window.MODEL_REGISTRY_CONFIG = Object.freeze({
 });
 ```
 
+To preview the complete ResNet-50 schema-v2 benchmark UI without a registry or
+DevKit connection, run:
+
+```bash
+python3 scripts/preview_artifact_browser.py
+```
+
+Open the URL printed by the script. The local server provides a realistic model
+compile, provenance, validation, and three-trial benchmark result. The fixture is
+stored in `artifact-browser/fixtures/performance-result-v2.json` and can be edited
+to exercise other metric values or availability states.
+
 ## Staging deployment
 
 Changes to `artifact-browser/**` on `main` are published by
