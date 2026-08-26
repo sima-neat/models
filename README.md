@@ -37,6 +37,16 @@ optionally provide a comma-separated model list and variant list or an explicit
 base branch; empty model and variant lists build the full catalog.
 A targeted variant run is compile-only and never advances the published catalog.
 
+The Python-only `benchmarker` is published separately when its source,
+schemas, dependency pins, or packaging change. Install its branch package with:
+
+```bash
+sima-cli neat install --stg models/benchmarker@develop:latest
+```
+
+The package installs its benchmarker-specific declared `core@v0.4.0` dependency when needed, then
+installs the benchmarker wheel into the Core-managed pyneat environment.
+
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
 `model-compiler`, and the derived `model-compiler-<version>` label. Successful matrix outputs are
@@ -93,10 +103,13 @@ Successful staging compilations are also written through the IAM-authenticated
 Vulcan Artifact Registry API as one immutable run per newly compiled variant.
 Each record links the model source checksum, variant parameters, Model Compiler
 version, build fingerprint, and exact versioned S3 MPK. These records currently
-cover compilation and MPK validation only; DevKit correctness and performance
-results will be added by the later Kerrigan workflow.
+cover compilation and MPK validation. A trusted host can publish a benchmarker's
+schema-validated, fingerprinted performance result as a child of that compile run with
+`model-registry publish-benchmark`; automated DevKit collection remains deferred
+to the later Kerrigan workflow.
 
 See [the architecture](docs/architecture.md),
-[adding a model](docs/adding-a-model.md), and the
+[adding a model](docs/adding-a-model.md), the
+[synthetic benchmarking guide](docs/benchmarking.md), and the
 [SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)
 for repository conventions.

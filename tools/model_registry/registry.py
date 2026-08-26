@@ -114,7 +114,14 @@ class S3ArtifactStore:
         self.bucket = bucket
         self.kms_key_id = (kms_key_id or "").strip()
 
-    def ensure_native_sha256(self, path: Path, key: str, sha256: str) -> S3Object:
+    def ensure_native_sha256(
+        self,
+        path: Path,
+        key: str,
+        sha256: str,
+        *,
+        media_type: str = "application/gzip",
+    ) -> S3Object:
         expected_checksum = base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
         head = self._head(key)
         if (
@@ -144,7 +151,7 @@ class S3ArtifactStore:
             "--server-side-encryption",
             "aws:kms",
             "--content-type",
-            "application/gzip",
+            media_type,
             "--output",
             "json",
             "--no-cli-pager",

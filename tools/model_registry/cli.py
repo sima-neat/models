@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .artifact import verify_mpk
+from .benchmark_publication import publish_benchmark_result
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError
@@ -113,6 +114,22 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("--github-run-attempt", required=True)
     publish.add_argument("--github-run-url", required=True)
     publish.add_argument("--json", action="store_true", dest="json_output")
+
+    publish_benchmark = subcommands.add_parser(
+        "publish-benchmark", help="publish a benchmark run linked to its Vulcan model compilation run"
+    )
+    publish_benchmark.add_argument("--result", type=Path, required=True)
+    publish_benchmark.add_argument("--schema", type=Path)
+    publish_benchmark.add_argument("--api-url", required=True)
+    publish_benchmark.add_argument("--aws-region", default="us-west-2")
+    publish_benchmark.add_argument("--bucket", required=True)
+    publish_benchmark.add_argument("--kms-key-id")
+    publish_benchmark.add_argument("--environment", choices=("staging", "production"), required=True)
+    publish_benchmark.add_argument("--branch", required=True)
+    publish_benchmark.add_argument("--git-sha", required=True)
+    publish_benchmark.add_argument("--github-run-url")
+    publish_benchmark.add_argument("--compile-run-id")
+    publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
 
@@ -304,6 +321,29 @@ def _publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_benchmark(args: argparse.Namespace) -> int:
+    result = publish_benchmark_result(
+        result_path=args.result,
+        schema_path=args.schema,
+        api_url=args.api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_url=args.github_run_url,
+        compile_run_id=args.compile_run_id,
+    )
+    message = (
+        json.dumps(result, sort_keys=True)
+        if args.json_output
+        else f"Published benchmark {result['result_fingerprint']} for {result['model_id']}/{result['variant_id']}"
+    )
+    print(message)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -328,6 +368,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _fetch_previous(args)
         if args.command == "publish":
             return _publish(args)
+        if args.command == "publish-benchmark":
+            return _publish_benchmark(args)
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)
