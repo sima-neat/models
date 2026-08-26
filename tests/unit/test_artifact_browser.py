@@ -288,6 +288,7 @@ def test_detail_layout_can_focus_the_selected_model() -> None:
     assert 'class="detail-layout-toggle"' in script
     assert 'aria-pressed="${state.detailLayout === "focused"}"' in script
     assert '.workspace[data-detail-layout="focused"]' in styles
+    assert '.workspace[data-detail-layout="focused"] .result-list { width: calc(100% + 30px); }' in styles
     assert "@media (max-width: 840px)" in styles
     assert ".detail-layout-toggle { display: none; }" in styles
 

@@ -105,6 +105,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 
 .workspace { display: grid; grid-template-columns: minmax(620px, 1.25fr) minmax(390px, .75fr); align-items: start; border-bottom: 1px solid var(--line); }
 .workspace[data-detail-layout="focused"] { grid-template-columns: minmax(270px, .42fr) minmax(620px, 1.58fr); }
+.workspace[data-detail-layout="focused"] .result-list { width: calc(100% + 30px); }
 .workspace[data-detail-layout="focused"] .run-row { grid-template-columns: minmax(150px, 1fr) minmax(110px, .55fr) 18px; }
 .workspace[data-detail-layout="focused"] .run-branch, .workspace[data-detail-layout="focused"] .run-compiler { display: none; }
 .results-pane { min-width: 0; padding: 24px 30px 40px 0; border-right: 1px solid var(--line); }
