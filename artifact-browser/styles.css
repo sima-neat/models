@@ -152,7 +152,10 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .model-source-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .model-source-link svg { width: 20px; fill: currentColor; }
 .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 36px; }
-.detail-tags span { padding: 6px 10px; border: 1px solid var(--line); color: var(--ink-soft); background: var(--surface); font-size: 13px; }
+.detail-tag { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); color: var(--ink-soft); background: var(--surface); font-size: 13px; }
+.detail-tag svg { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: var(--ink-faint); stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.detail-tag-branch svg { stroke: var(--blue); }
+.detail-tag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-content section { padding: 28px 0; border-top: 1px solid var(--line); }
 .detail-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 17px; }
 .detail-section-title h3 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }

@@ -288,3 +288,15 @@ def test_detail_layout_can_focus_the_selected_model() -> None:
     assert '.workspace[data-detail-layout="focused"]' in styles
     assert "@media (max-width: 840px)" in styles
     assert ".detail-layout-toggle { display: none; }" in styles
+
+
+def test_model_metadata_tags_use_semantic_icons() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    for icon in ("branch", "precision", "compiler", "modelType", "architecture", "task"):
+        assert f"{icon}: `<svg" in script
+    assert "detailTag(icons.branch, branchName(run.git_ref), \"branch\")" in script
+    assert 'class="detail-tag detail-tag-${kind}"' in script
+    assert ".detail-tag svg" in styles
+    assert ".detail-tag-branch svg { stroke: var(--blue); }" in styles
