@@ -21,7 +21,12 @@ def test_repository_benchmark_runtime_is_fully_pinned() -> None:
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {"board": "modalix", "os_type": "elxr", "platform_version": "2.1.3"}
     assert runtime["neat_core"] == {"version": "0.4.0", "install_target": "core@v0.4.0"}
-    assert runtime["benchmarker"]["vulcan"]["tag"] == "611dd0d8e173"
+    assert runtime["benchmarker"]["vulcan"] == {
+        "environment": "stg",
+        "name": "models-utils/benchmarker",
+        "branch": "feat/resnet50-post-compile-benchmark",
+        "tag": "244c03323cef",
+    }
 
 
 def test_benchmark_runtime_rejects_mutable_artifact_tag(tmp_path: Path) -> None:
