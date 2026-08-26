@@ -36,12 +36,19 @@ def _read(opener: OpenUrl, url: str) -> bytes:
 
 
 def validate_latest_index(value: Any, *, branch: str | None = None) -> dict[str, Any]:
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
-        raise ValidationError("latest.json must be a schema-version 1 object")
+    if not isinstance(value, dict) or value.get("schema_version") not in {1, 2}:
+        raise ValidationError("latest.json must be a supported schema-version 1 or 2 object")
     if value.get("repository") != "sima-neat/models":
         raise ValidationError("latest.json repository must be sima-neat/models")
     if branch is not None and value.get("branch") != branch:
         raise ValidationError("latest.json branch does not match the requested branch")
+    if value["schema_version"] == 2:
+        taxonomy = value.get("taxonomy")
+        if not isinstance(taxonomy, dict) or taxonomy.get("version") != 1 or taxonomy.get("path") != "taxonomy.json":
+            raise ValidationError("latest.json schema version 2 requires taxonomy version 1 at taxonomy.json")
+        digest = taxonomy.get("sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValidationError("latest.json taxonomy sha256 must be a lowercase SHA-256 digest")
     models = value.get("models")
     if not isinstance(models, dict):
         raise ValidationError("latest.json models must be an object")
@@ -100,8 +107,7 @@ def fetch_previous_index(
                 _read(opener, marker_url)
             except (HTTPError, OSError, URLError, TimeoutError) as marker_error:
                 raise ModelRegistryError(
-                    f"could not read previous latest.json: HTTP {exc.code}; "
-                    "models prefix is also unavailable"
+                    f"could not read previous latest.json: HTTP {exc.code}; models prefix is also unavailable"
                 ) from marker_error
             return None
         raise ModelRegistryError(f"could not read previous latest.json: HTTP {exc.code}") from exc

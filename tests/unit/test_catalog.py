@@ -19,6 +19,7 @@ from model_registry.errors import ValidationError
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
 
 
 def _write_model(repository: Path, model_id: str, *, declared_id: str | None = None) -> None:
@@ -34,6 +35,10 @@ def _write_model(repository: Path, model_id: str, *, declared_id: str | None = N
 def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
     (tmp_path / "schemas" / "model.schema.json").write_text(SCHEMA.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "taxonomies").mkdir()
+    (tmp_path / "taxonomies" / "model-taxonomy-v1.yaml").write_text(
+        TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     _write_model(tmp_path, "alpha")
     _write_model(tmp_path, "bravo")
     return tmp_path
@@ -119,9 +124,7 @@ def test_global_compile_inputs_select_every_model(catalog_repository: Path, path
         "tools/runtime/execute.py",
     ],
 )
-def test_orchestration_and_publication_paths_do_not_select_models(
-    catalog_repository: Path, path: str
-) -> None:
+def test_orchestration_and_publication_paths_do_not_select_models(catalog_repository: Path, path: str) -> None:
     assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
 
 
@@ -189,9 +192,7 @@ def test_matrix_excludes_explicitly_unsupported_variants(catalog_repository: Pat
 
 def test_explicit_unsupported_variant_fails_with_evidence(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
-    catalog["alpha"]["compile_variants"][0].update(
-        {"status": "unsupported", "reason": "compiler zeroed weights"}
-    )
+    catalog["alpha"]["compile_variants"][0].update({"status": "unsupported", "reason": "compiler zeroed weights"})
     with pytest.raises(
         ValidationError,
         match=r"requested variant id\(s\) are unsupported: fixture \(alpha: compiler zeroed weights\)",
@@ -201,9 +202,7 @@ def test_explicit_unsupported_variant_fails_with_evidence(catalog_repository: Pa
 
 def test_requested_variant_builds_supported_models_and_skips_unsupported_models(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
-    catalog["alpha"]["compile_variants"][0].update(
-        {"status": "unsupported", "reason": "compiler limitation"}
-    )
+    catalog["alpha"]["compile_variants"][0].update({"status": "unsupported", "reason": "compiler limitation"})
     matrix = build_matrix(catalog, ["alpha", "bravo"], ["fixture"])
     assert [(entry["model_id"], entry["variant_id"]) for entry in matrix["include"]] == [("bravo", "fixture")]
 

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Browse, inspect, and download verified SiMa.ai model artifacts." />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <title>SiMa.ai Model Registry</title>
+    <script>
+      (() => {
+        if (location.pathname === "/models") {
+          location.replace(`/models/${location.search}${location.hash}`);
+          return;
+        }
+        let stored = null;
+        try {
+          stored = localStorage.getItem("sima-neat-artifact-theme");
+        } catch {
+          // Storage is optional; use the system preference when unavailable.
+        }
+        const theme = stored || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to artifact results</a>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="SiMa.ai Model Registry home">
+        <img class="brand-mark" src="favicon.svg" alt="" aria-hidden="true" />
+        <span><b>SiMa.ai</b> Model Registry</span>
+      </a>
+      <div class="topbar-actions">
+        <span class="environment"><i></i> <span id="environment-name">Registry</span></span>
+        <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch color theme"></button>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-header" aria-labelledby="page-title">
+        <h1 id="page-title">Find a model</h1>
+        <div class="registry-line"><span id="registry-status" class="status-dot loading"></span><span id="registry-copy">Connecting to registry…</span></div>
+      </section>
+
+      <section class="toolbar" aria-label="Search and filter models">
+        <div class="toolbar-primary">
+          <label class="search-field">
+          <span class="sr-only">Search models</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15A7.5 7.5 0 1 1 4 11.5a7.5 7.5 0 0 1 15 0Z" /></svg>
+          <input id="search" type="search" placeholder="Search models, tasks, or architectures…" autocomplete="off" />
+          <kbd>/</kbd>
+          </label>
+          <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-drawer">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10m-7 5h4" /></svg>
+            <span>Filters</span><span id="filter-count" class="filter-count" hidden>0</span>
+          </button>
+        </div>
+        <div id="filter-drawer" class="filter-drawer" hidden>
+          <div class="filters">
+          <label><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
+          <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
+          <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
+          <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
+          <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
+          <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
+          <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
+          <button id="clear-filters" class="text-button" type="button">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="results-pane">
+          <div class="section-heading">
+            <h2 id="result-title">Builds</h2>
+            <span id="result-count" aria-live="polite">—</span>
+          </div>
+          <div id="result-list" class="result-list" aria-busy="true"></div>
+          <button id="load-more" class="load-more" type="button" hidden>Load earlier builds</button>
+        </div>
+        <aside id="detail-pane" class="detail-pane" aria-label="Selected artifact details">
+          <div class="detail-empty">
+            <h2>No build selected</h2>
+            <p>Select a build to inspect provenance, validation results, checksums, and downloads.</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="config.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

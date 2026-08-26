@@ -5,7 +5,7 @@ import json
 import tarfile
 from pathlib import Path
 
-from model_registry.registry import S3Object, canonical_sha256, publish_compilations
+from model_registry.registry import S3Object, canonical_sha256, publish_compilations, publish_taxonomy
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -87,6 +87,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
 
     assert result["count"] == 1
     assert [path for _, path, _, _ in calls] == [
+        "/v1/repositories/sima-neat/models/taxonomies/1",
         "/v1/runs",
         "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-model",
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
@@ -94,7 +95,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/compile/mpk-validation",
         "/v1/runs/00000000-0000-4000-8000-000000000001/finalize",
     ]
-    create = calls[0][2]
+    taxonomy = calls[0][2]
+    assert taxonomy is not None
+    assert taxonomy["taxonomy"]["tasks"]["image_classification"]["display_name"] == "Image Classification"
+    assert canonical_sha256(taxonomy["taxonomy"]) == taxonomy["canonical_sha256"]
+    create = calls[1][2]
     assert create is not None
     assert create["run_type"] == "model_compile"
     assert create["metadata"] == {
@@ -103,10 +108,18 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "artifact_kind": "mpk",
         "github_run_id": "1234",
     }
-    parameters = calls[2][2]["parameters"]
+    assert create["model_categories"] == {
+        "taxonomy_version": 1,
+        "model_type": "vision",
+        "tasks": ["image_classification"],
+        "modalities": {"inputs": ["image"], "outputs": ["class_scores"]},
+        "architecture": {"id": "resnet_50", "paradigm": "cnn", "variant": "imagenet_1k"},
+        "tags": [],
+    }
+    parameters = calls[3][2]["parameters"]
     assert parameters["compiler_version"] == "2.1.3"
     assert parameters["target"] == "modalix"
-    artifact = calls[3][2]
+    artifact = calls[4][2]
     assert artifact["s3_version_id"] == "version-1"
     assert artifact["s3_key"].startswith("models/feature%2Fmodels/aaaaaaaaaaaa/")
     assert store.objects[0][1] == artifact["s3_key"]
@@ -134,8 +147,10 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
         artifact_store=FakeStore(),
     )
 
-    assert result == {"count": 0, "runs": []}
-    assert calls == []
+    assert result["count"] == 0
+    assert result["runs"] == []
+    assert result["taxonomy"]["version"] == 1
+    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/1"]
 
 
 def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Path) -> None:
@@ -167,3 +182,19 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
         return calls
 
     assert publish("1") == publish("2")
+
+
+def test_publish_taxonomy_is_independent_of_model_compilation() -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    result = publish_taxonomy(
+        repository=ROOT,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        request=lambda *args: calls.append(args) or {"stored": True},
+    )
+
+    assert result["version"] == 1
+    assert result["registry"] == {"stored": True}
+    assert len(calls) == 1
+    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/1")

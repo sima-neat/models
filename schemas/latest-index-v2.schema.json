@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/latest-index-v2.schema.json",
+  "title": "SiMa Neat model latest index v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repository", "branch", "catalog_tag", "updated_at", "taxonomy", "models"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "repository": {"const": "sima-neat/models"},
+    "branch": {"type": "string", "minLength": 1},
+    "catalog_tag": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "taxonomy": {"$ref": "#/$defs/taxonomyReference"},
+    "models": {"type": "object", "additionalProperties": {"$ref": "#/$defs/model"}}
+  },
+  "$defs": {
+    "taxonomyId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "taxonomyIdSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/taxonomyId"}
+    },
+    "taxonomyReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "path", "sha256"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "path": {"const": "taxonomy.json"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "modalities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "outputs"],
+      "properties": {
+        "inputs": {"$ref": "#/$defs/taxonomyIdSet"},
+        "outputs": {"$ref": "#/$defs/taxonomyIdSet"}
+      }
+    },
+    "architectureComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "architecture_id"],
+      "properties": {
+        "role": {"$ref": "#/$defs/taxonomyId"},
+        "architecture_id": {"$ref": "#/$defs/taxonomyId"}
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "paradigm"],
+      "properties": {
+        "id": {"$ref": "#/$defs/taxonomyId"},
+        "paradigm": {"$ref": "#/$defs/taxonomyId"},
+        "variant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/architectureComponent"}
+        }
+      }
+    },
+    "categorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_version", "model_type", "tasks", "modalities", "architecture", "tags"],
+      "properties": {
+        "taxonomy_version": {"type": "integer", "minimum": 1},
+        "model_type": {"$ref": "#/$defs/taxonomyId"},
+        "tasks": {"$ref": "#/$defs/taxonomyIdSet"},
+        "modalities": {"$ref": "#/$defs/modalities"},
+        "architecture": {"$ref": "#/$defs/architecture"},
+        "tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/taxonomyId"}
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "description", "latest_tag", "artifact_branch", "built_at", "variants"],
+      "properties": {
+        "display_name": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "categorization": {"$ref": "#/$defs/categorization"},
+        "latest_tag": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+        "artifact_branch": {"type": "string", "minLength": 1},
+        "built_at": {"type": "string", "format": "date-time"},
+        "build_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "variants": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/variant"}}
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "mpk", "sha256", "size_bytes", "compiler_version", "compiler_label", "source_sha256"],
+      "properties": {
+        "target": {"type": "string", "minLength": 1},
+        "mpk": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "compiler_version": {"type": "string", "minLength": 1},
+        "compiler_label": {"type": "string", "minLength": 1},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "calibration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

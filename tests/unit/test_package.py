@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import tarfile
@@ -69,7 +70,7 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     assert result["commit_folder"] == GIT_SHA[:12]
     root_metadata = json.loads((destination / "metadata.json").read_text(encoding="utf-8"))
     assert root_metadata["name"] == "gh:sima-neat/models"
-    assert root_metadata["resources"] == ["catalog.json"]
+    assert root_metadata["resources"] == ["catalog.json", "taxonomy.json"]
     assert root_metadata["selectable-resources"][0]["resource"].endswith("_mpk.tar.gz")
     assert len(root_metadata["selectable-resources"][0]["checksum"]) == 64
     assert root_metadata["selectable-resources"][0]["resource"].startswith(
@@ -77,13 +78,29 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     )
 
     latest = json.loads((destination / "latest.json").read_text(encoding="utf-8"))
-    latest_schema = json.loads((ROOT / "schemas" / "latest-index-v1.schema.json").read_text(encoding="utf-8"))
+    latest_schema = json.loads((ROOT / "schemas" / "latest-index-v2.schema.json").read_text(encoding="utf-8"))
     Draft202012Validator(latest_schema, format_checker=FormatChecker()).validate(latest)
+    assert latest["schema_version"] == 2
+    assert latest["taxonomy"]["path"] == "taxonomy.json"
+    assert latest["models"]["resnet_50"]["categorization"] == {
+        "taxonomy_version": 1,
+        "model_type": "vision",
+        "tasks": ["image_classification"],
+        "modalities": {"inputs": ["image"], "outputs": ["class_scores"]},
+        "architecture": {"id": "resnet_50", "paradigm": "cnn", "variant": "imagenet_1k"},
+        "tags": [],
+    }
     assert latest["catalog_tag"] == GIT_SHA[:12]
     assert latest["models"]["resnet_50"]["latest_tag"] == GIT_SHA[:12]
     assert latest["models"]["resnet_50"]["artifact_branch"] == "develop"
     assert latest["models"]["resnet_50"]["built_at"]
     assert len(latest["models"]["resnet_50"]["build_fingerprint"]) == 64
+    taxonomy = json.loads((destination / "taxonomy.json").read_text(encoding="utf-8"))
+    assert taxonomy["tasks"]["image_classification"]["display_name"] == "Image Classification"
+    assert latest["taxonomy"]["sha256"] == hashlib.sha256((destination / "taxonomy.json").read_bytes()).hexdigest()
+
+    catalog_model = next(item for item in result["models"] if item["id"] == "resnet_50")
+    assert catalog_model["categorization"]["architecture"]["paradigm"] == "cnn"
 
     model_metadata = json.loads((destination / "resnet_50" / "metadata.json").read_text(encoding="utf-8"))
     assert model_metadata["name"] == "gh:sima-neat/models/resnet_50"
@@ -162,6 +179,7 @@ def test_package_carries_forward_pointers_without_copying_unchanged_mpk(tmp_path
     assert latest["catalog_tag"] == next_sha[:12]
     assert latest["models"]["resnet_50"]["latest_tag"] == GIT_SHA[:12]
     assert latest["models"]["resnet_50"]["artifact_branch"] == "main"
+    assert latest["models"]["resnet_50"]["categorization"]["tasks"] == ["image_classification"]
     metadata = json.loads((destination / "metadata.json").read_text(encoding="utf-8"))
     assert "/models/main/aaaaaaaaaaaa/resnet_50/" in metadata["selectable-resources"][0]["resource"]
 

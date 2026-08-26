@@ -31,6 +31,7 @@ by URI, byte size, and SHA-256.
 deps/                    Repository-wide toolchain dependency pins
 docs/                    Architecture, contribution, benchmark, and release policy
 schemas/                 Versioned model and result JSON Schemas
+taxonomies/              Versioned sanctioned model categories and display labels
 tools/model_registry/    Shared host-side CLI and lifecycle implementation
 tools/runtime/           Shared ARM64/Neat device-side runners
 models/<model-id>/       Declarative metadata and genuinely model-specific assets
@@ -89,6 +90,9 @@ The root `metadata.json` exposes compiled model variants as selectable
 resources so users can choose one or more. Each `<model-id>/metadata.json`
 provides a stable direct-install target for that model. `catalog.json` carries
 the same inventory for automation without interactive `sima-cli` selection.
+`taxonomy.json` carries the canonical category vocabulary used by schema-version
+2 models. Its checksum and version are recorded in `latest.json`; catalog and
+registry records store canonical category IDs rather than copied display labels.
 
 For staging builds that produce new MPKs, the workflow also creates one
 artifact-registry run per compiled model variant after S3 publication. It

@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from .errors import SourcePolicyError, ValidationError
 from .source import SourceSpec
+from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
 MODEL_FILE = "model.yaml"
 SCHEMA_RELATIVE_PATH = Path("schemas/model.schema.json")
@@ -80,6 +81,7 @@ def validate_model(
     model_dir: str | Path,
     model: dict[str, Any],
     schema_path: str | Path | None = None,
+    taxonomy_path: str | Path | None = None,
 ) -> None:
     directory = Path(model_dir).expanduser().resolve()
     schema_file = find_schema(directory, schema_path)
@@ -93,6 +95,12 @@ def validate_model(
     if errors:
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
+
+    taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path)) if model["schema_version"] == 2 else {}
+    try:
+        validate_model_categorization(model, taxonomy)
+    except ValidationError as exc:
+        raise ValidationError(f"{directory}: {exc}") from exc
 
     model_id = str(model["id"])
     if directory.name != model_id:
@@ -124,7 +132,8 @@ def validate_model(
 def load_and_validate_model(
     model_dir: str | Path,
     schema_path: str | Path | None = None,
+    taxonomy_path: str | Path | None = None,
 ) -> dict[str, Any]:
     model = load_model(model_dir)
-    validate_model(model_dir, model, schema_path)
+    validate_model(model_dir, model, schema_path, taxonomy_path)
     return model

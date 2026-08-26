@@ -15,7 +15,7 @@ from .fetch import Fetcher
 from .model import load_and_validate_model
 from .package import package_compiled_models
 from .published import fetch_previous_index, validate_latest_index
-from .registry import publish_compilations
+from .registry import publish_compilations, publish_taxonomy
 from .source import SourceSpec
 
 
@@ -23,7 +23,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="model-registry", description="SiMa Neat Model Registry lifecycle tooling")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    validate = subcommands.add_parser("validate", help="validate a model directory against schema v1")
+    validate = subcommands.add_parser("validate", help="validate a model directory against its schema version")
     validate.add_argument("model_dir", type=Path)
     validate.add_argument("--schema", type=Path)
     validate.add_argument("--json", action="store_true", dest="json_output")
@@ -130,6 +130,14 @@ def _parser() -> argparse.ArgumentParser:
     publish_benchmark.add_argument("--github-run-url")
     publish_benchmark.add_argument("--compile-run-id")
     publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
+
+    publish_taxonomy_parser = subcommands.add_parser(
+        "publish-taxonomy", help="publish the canonical model taxonomy to the Vulcan registry"
+    )
+    publish_taxonomy_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    publish_taxonomy_parser.add_argument("--api-url", required=True)
+    publish_taxonomy_parser.add_argument("--aws-region", default="us-west-2")
+    publish_taxonomy_parser.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
 
@@ -344,6 +352,17 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_taxonomy(args: argparse.Namespace) -> int:
+    result = publish_taxonomy(
+        repository=args.repository,
+        api_url=args.api_url,
+        aws_region=args.aws_region,
+    )
+    message = json.dumps(result, sort_keys=True) if args.json_output else f"Published taxonomy v{result['version']}"
+    print(message)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -370,6 +389,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _publish(args)
         if args.command == "publish-benchmark":
             return _publish_benchmark(args)
+        if args.command == "publish-taxonomy":
+            return _publish_taxonomy(args)
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)

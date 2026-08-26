@@ -15,6 +15,12 @@ from urllib.parse import quote
 from .catalog import discover_catalog
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
+from .taxonomy import (
+    canonical_taxonomy_document,
+    load_taxonomy,
+    taxonomy_sha256,
+    validate_model_categorization,
+)
 
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
@@ -200,6 +206,42 @@ class S3ArtifactStore:
             raise RegistryPublicationError(f"S3 returned invalid metadata for {key}") from exc
         return value if isinstance(value, dict) else {}
 
+
+def _publish_taxonomy(client: SigV4RegistryClient, root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    taxonomy = load_taxonomy(root / "taxonomies" / "model-taxonomy-v1.yaml")
+    taxonomy_document = canonical_taxonomy_document(taxonomy)
+    taxonomy_digest = taxonomy_sha256(taxonomy_document)
+    taxonomy_version = taxonomy_document["version"]
+    response_document = client.request(
+        "PUT",
+        f"/v1/repositories/sima-neat/models/taxonomies/{taxonomy_version}",
+        {
+            "schema_version": 1,
+            "canonical_sha256": taxonomy_digest,
+            "taxonomy": taxonomy_document,
+        },
+        f"models-taxonomy-{taxonomy_version}-{taxonomy_digest}",
+    )
+    return taxonomy, {
+        "version": taxonomy_version,
+        "sha256": taxonomy_digest,
+        "registry": response_document,
+    }
+
+
+def publish_taxonomy(
+    *,
+    repository: str | Path,
+    api_url: str,
+    aws_region: str,
+    request: Request | None = None,
+) -> JsonObject:
+    root = Path(repository).expanduser().resolve()
+    client = SigV4RegistryClient(api_url, aws_region, request=request)
+    _, result = _publish_taxonomy(client, root)
+    return result
+
+
 def _require_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValidationError(f"compile result {field} must be a non-empty string")
@@ -242,6 +284,7 @@ def publish_compilations(
     catalog = discover_catalog(root)
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
+    taxonomy, taxonomy_result = _publish_taxonomy(client, root)
     branch_key = quote(branch, safe="")
     commit_tag = git_sha[:12]
     published: list[JsonObject] = []
@@ -279,6 +322,7 @@ def publish_compilations(
         source_sha = _require_sha256(provenance.get("source_sha256"), "source_sha256")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
         model = catalog[model_id]
+        categorization = validate_model_categorization(model, taxonomy)
         variant = variants[variant_id]
         parameters = {
             "schema_version": 1,
@@ -333,6 +377,7 @@ def publish_compilations(
                     "artifact_kind": "mpk",
                     "github_run_id": github_run_id,
                 },
+                **({"model_categories": categorization} if categorization is not None else {}),
             },
             f"{stable_key}-create",
         )
@@ -395,4 +440,8 @@ def publish_compilations(
         )
         published.append({"model_id": model_id, "variant_id": variant_id, "run_id": run_id, "s3_key": stored.key})
 
-    return {"count": len(published), "runs": published}
+    return {
+        "count": len(published),
+        "runs": published,
+        "taxonomy": {"version": taxonomy_result["version"], "sha256": taxonomy_result["sha256"]},
+    }

@@ -7,10 +7,12 @@ import pytest
 import yaml
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model, load_model, validate_model
+from model_registry.taxonomy import load_taxonomy, validate_model_categorization
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
 
 
 def test_valid_fixture_passes() -> None:
@@ -73,9 +75,51 @@ def test_yaml_uses_safe_loader(tmp_path: Path) -> None:
 
 def test_catalog_model_is_valid() -> None:
     model = load_and_validate_model(ROOT / "models" / "resnet_50", SCHEMA)
+    assert model["schema_version"] == 2
+    assert model["tasks"] == ["image_classification"]
+    categorization = validate_model_categorization(model, load_taxonomy(TAXONOMY))
+    assert categorization is not None
+    assert categorization["architecture"] == {
+        "id": "resnet_50",
+        "paradigm": "cnn",
+        "variant": "imagenet_1k",
+    }
     assert model["source"]["sha256"] == "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     variants = {variant["id"]: variant for variant in model["compile_variants"]}
     assert set(variants) == {"modalix_bf16", "modalix_int8"}
     assert variants["modalix_bf16"]["parameters"]["precision"] == "bf16"
     assert variants["modalix_int8"]["parameters"]["precision"] == "int8"
     assert variants["modalix_int8"]["parameters"]["calibration_samples"] == 8
+
+
+def test_unknown_task_fails_semantic_validation() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["tasks"] = ["unknown_task"]
+    with pytest.raises(ValidationError, match="tasks references unknown taxonomy ID"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+def test_incompatible_model_type_and_architecture_fail() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["model_type"] = "llm"
+    model["tasks"] = ["text_generation"]
+    model["modalities"] = {"inputs": ["text"], "outputs": ["text"]}
+    with pytest.raises(ValidationError, match="architecture 'resnet_50' is not compatible"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+def test_v1_model_cannot_partially_adopt_categorization() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["schema_version"] = 1
+    with pytest.raises(ValidationError, match="categorization fields require model schema_version 2"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+def test_duplicate_component_roles_fail() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["architecture"]["components"] = [
+        {"role": "encoder", "architecture_id": "clip_vit_l_14"},
+        {"role": "encoder", "architecture_id": "llama_2"},
+    ]
+    with pytest.raises(ValidationError, match=r"architecture.components\[1\].role duplicates"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)

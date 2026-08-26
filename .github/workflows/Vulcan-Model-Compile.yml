@@ -8,6 +8,7 @@ on:
       - "models/**"
       - "schemas/**"
       - "training/yolo26_tiny_drone/**"
+      - "taxonomies/**"
       - "tools/model_registry/**"
       - "tools/runtime/**"
       - "pyproject.toml"
@@ -18,6 +19,7 @@ on:
       - "models/**"
       - "schemas/**"
       - "training/yolo26_tiny_drone/**"
+      - "taxonomies/**"
       - "tools/model_registry/**"
       - "tools/runtime/**"
       - "pyproject.toml"
@@ -131,7 +133,8 @@ jobs:
           base_branch="$(jq -er '.base_branch' <<< "$resolution")"
           merge_base="$(jq -er '.merge_base' <<< "$resolution")"
           comparison_base="$merge_base"
-          if [[ "${EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$EVENT_BEFORE" =~ ^0+$ ]]; then
+          if [[ "${EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$EVENT_BEFORE" =~ ^0+$ ]] && \
+             git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
             comparison_base="$EVENT_BEFORE"
           fi
           echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
@@ -156,12 +159,6 @@ jobs:
             --json)"
           found="$(jq -er '.found' <<< "$result")"
           source_branch="$(jq -r '.source_branch // ""' <<< "$result")"
-          if [[ "$found" != "true" && "$EVENT_NAME" != "workflow_dispatch" && \
-                "$CURRENT_BRANCH" != "develop" && "$CURRENT_BRANCH" != "main" ]]; then
-            echo "Neither $CURRENT_BRANCH nor resolved base $FALLBACK_BRANCH has a published catalog." >&2
-            echo "Build the base branch first or dispatch this workflow with an explicit base_branch." >&2
-            exit 1
-          fi
           echo "found=$found" >> "$GITHUB_OUTPUT"
           echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
           if [[ "$found" == "true" ]]; then
@@ -436,6 +433,50 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  publish-taxonomy:
+    name: Publish model taxonomy
+    needs: [select, resolve-vulcan-config]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.select.outputs.vulcan_environment == 'staging'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install registry tooling
+        run: python -m pip install .
+
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-taxonomy-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish canonical taxonomy
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          model-registry publish-taxonomy \
+            --repository . \
+            --api-url "$REGISTRY_API_URL" \
+            --aws-region "$AWS_REGION"
+
   package:
     name: Build sima-cli model catalog
     needs: [select, compile]
@@ -566,7 +607,7 @@ jobs:
           jq -e \
             --arg branch "$GITHUB_REF_NAME" \
             --arg tag "${GITHUB_SHA:0:12}" \
-            '.schema_version == 1 and .repository == "sima-neat/models" and .branch == $branch and .catalog_tag == $tag' \
+            '.schema_version == 2 and .repository == "sima-neat/models" and .branch == $branch and .catalog_tag == $tag' \
             dist/latest.json >/dev/null
           encryption=(--sse aws:kms)
           if [[ -n "$KMS_KEY_ID" ]]; then

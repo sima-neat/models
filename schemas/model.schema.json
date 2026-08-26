@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.neat.sima.ai/model-registry/model-v1.schema.json",
-  "title": "SiMa Neat Model Registry model.yaml v1",
+  "$id": "https://schemas.neat.sima.ai/model-registry/model.schema.json",
+  "title": "SiMa Neat Model Registry model.yaml",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,10 +23,25 @@
     "maturity"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
+    "taxonomy_version": {"type": "integer", "minimum": 1},
+    "model_type": {"$ref": "#/$defs/taxonomyId"},
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/taxonomyId"}
+    },
+    "modalities": {"$ref": "#/$defs/modalities"},
+    "architecture": {"$ref": "#/$defs/architecture"},
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/taxonomyId"}
+    },
     "owners": {
       "type": "array",
       "minItems": 1,
@@ -49,7 +64,54 @@
     "tests": {"$ref": "#/$defs/tests"},
     "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": 2}}, "required": ["schema_version"]},
+      "then": {
+        "required": ["taxonomy_version", "model_type", "tasks", "modalities", "architecture"]
+      }
+    }
+  ],
   "$defs": {
+    "taxonomyId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "taxonomyIdSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/taxonomyId"}
+    },
+    "modalities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "outputs"],
+      "properties": {
+        "inputs": {"$ref": "#/$defs/taxonomyIdSet"},
+        "outputs": {"$ref": "#/$defs/taxonomyIdSet"}
+      }
+    },
+    "architectureComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "architecture_id"],
+      "properties": {
+        "role": {"$ref": "#/$defs/taxonomyId"},
+        "architecture_id": {"$ref": "#/$defs/taxonomyId"}
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/taxonomyId"},
+        "variant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/architectureComponent"}
+        }
+      }
+    },
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "immutableSource": {
       "type": "object",

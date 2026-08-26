@@ -27,6 +27,7 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
     assert "deps/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in workflow["on"]["pull_request"]["paths"]
+    assert "taxonomies/**" in push_trigger["paths"]
 
 
 def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
@@ -106,12 +107,18 @@ def test_publication_uses_standard_branch_manifest_and_latest_workflows() -> Non
 
 def test_only_feature_branch_publication_can_seed_a_partial_catalog() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    previous_script = next(
+        step["run"]
+        for step in workflow["jobs"]["select"]["steps"]
+        if step.get("name") == "Resolve immutable previous model catalog"
+    )
     package_script = next(
         step["run"]
         for step in workflow["jobs"]["package"]["steps"]
         if step.get("name") == "Generate root and per-model package metadata"
     )
 
+    assert "Neither $CURRENT_BRANCH nor resolved base" not in previous_script
     assert 'if [[ "$GITHUB_REF_NAME" != "main" && "$GITHUB_REF_NAME" != "develop" ]]' in package_script
     assert "package_args+=(--allow-partial-catalog)" in package_script
 
@@ -142,6 +149,18 @@ def test_staging_publication_records_new_compilations_in_registry() -> None:
     assert publish_index < retain_index
 
 
+def test_taxonomy_publication_does_not_require_a_model_compile() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = workflow["jobs"]["publish-taxonomy"]
+
+    assert job["needs"] == ["select", "resolve-vulcan-config"]
+    assert "needs.select.outputs.count" not in job["if"]
+    assert "needs.select.outputs.vulcan_environment == 'staging'" in job["if"]
+    assert job["permissions"]["id-token"] == "write"
+    publish = next(step for step in job["steps"] if step.get("name") == "Publish canonical taxonomy")
+    assert "model-registry publish-taxonomy" in publish["run"]
+
+
 def test_shared_latest_metadata_waits_for_the_complete_matrix() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
@@ -169,6 +188,7 @@ def test_new_branch_uses_merge_base_instead_of_full_catalog_fallback() -> None:
 
     assert "model-registry resolve-base" in base_script
     assert 'comparison_base="$merge_base"' in base_script
+    assert 'git cat-file -e "${EVENT_BEFORE}^{commit}"' in base_script
     assert "model-registry matrix --repository ." in matrix_script
     assert '--base "$COMPARISON_BASE" --head "$HEAD_SHA"' in matrix_script
     assert 'elif [[ "$BASE_SHA" =~ ^0+$ ]]' not in matrix_script

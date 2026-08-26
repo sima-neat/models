@@ -56,10 +56,11 @@ assembled and published with the standard Vulcan branch layout:
 models/
   <url-encoded-branch>/
     latest.tag                         # 12-character catalog commit
-    latest.json                        # per-model latest build index
+    latest.json                        # per-model latest build and category index
     <12-character-commit>/
       metadata.json                    # selectable model catalog
       catalog.json                     # machine-readable catalog
+      taxonomy.json                    # canonical searchable category vocabulary
       latest.json                      # immutable copy of the index
       manifest.json                    # Vulcan checksums and S3 keys
       <changed-model-id>/
@@ -85,7 +86,7 @@ sima-cli neat install --stg models/resnet_50@develop:latest --install-dir ./comp
 
 Only affected models are recompiled. `latest.tag` remains a plain-text pointer
 to the newest complete catalog for existing Vulcan consumers. The versioned
-[`latest.json`](schemas/latest-index-v1.schema.json) maps each model to its own
+[`latest.json`](schemas/latest-index-v2.schema.json) maps each model to its own
 build tag, build time, source/compiler provenance, and artifact branch. Root
 catalog metadata uses immutable URLs from that index, while a direct
 `models/<model-id>@<branch>:latest` install resolves the model's build tag.
@@ -110,6 +111,7 @@ to the later Kerrigan workflow.
 
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), the
-[synthetic benchmarking guide](docs/benchmarking.md), and the
+[synthetic benchmarking guide](docs/benchmarking.md), the
+[model taxonomy](docs/model-taxonomy.md), and the
 [SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)
 for repository conventions.

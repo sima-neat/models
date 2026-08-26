@@ -16,9 +16,13 @@
    Branches such as `main` are rejected because they are mutable.
 3. Describe the ONNX interface and preprocessing explicitly. Do not rely on a
    model card changing independently of this repository.
-4. Declare surgery as `type: none` or point at a model-local hook. Keep generic
+4. New models use schema version 2 and reference sanctioned categories from
+   `taxonomies/model-taxonomy-v1.yaml`. Declare a model type, one or more tasks,
+   semantic input/output modalities, and an architecture ID. Add a reviewed
+   taxonomy entry instead of inventing a free-form authoritative category.
+5. Declare surgery as `type: none` or point at a model-local hook. Keep generic
    transformations in shared tooling.
-5. Add a model-specific compile recipe and declare it on each variant. Recipes
+6. Add a model-specific compile recipe and declare it on each variant. Recipes
    use this command-line contract:
 
    ```text
@@ -28,14 +32,14 @@
    The recipe may perform model-specific surgery, quantization, and compilation,
    and must leave exactly one `*_mpk.tar.gz` in the output directory. It must not
    download an unpinned model or silently select a different compiler.
-6. Declare targets and recipe parameters explicitly. Do not add a compiler pin
+7. Declare targets and recipe parameters explicitly. Do not add a compiler pin
    to a model variant: all variants use the repository-wide Model Compiler
    version in `deps/manifest.json`. Unknown fields are rejected so misspellings
    cannot silently change a build. When qualification proves a declared
    combination unusable, set `status: unsupported` and record the evidence in
    `reason`; the matrix and packager will retain the contract but exclude that
    artifact. Do not use unsupported status for a merely untested variant.
-7. Validate, fetch, and inspect the resulting CI matrix:
+8. Validate, fetch, and inspect the resulting CI matrix:
 
    ```bash
    model-registry validate models/<model-id>

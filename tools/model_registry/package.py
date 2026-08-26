@@ -11,6 +11,7 @@ from .catalog import discover_catalog, model_build_fingerprint
 from .errors import ValidationError
 from .fetch import sha256_file
 from .published import artifact_url, validate_latest_index
+from .taxonomy import canonical_taxonomy_document, load_taxonomy, validate_model_categorization
 
 
 def _size_text(size_bytes: int) -> str:
@@ -79,6 +80,8 @@ def package_compiled_models(
         raise ValidationError("branch must not be empty")
 
     catalog = discover_catalog(root)
+    taxonomy = load_taxonomy(root / "taxonomies" / "model-taxonomy-v1.yaml")
+    categorizations = {model_id: validate_model_categorization(model, taxonomy) for model_id, model in catalog.items()}
     version = git_sha[:12]
     previous_models: dict[str, Any] = {}
     if previous_index is not None:
@@ -178,6 +181,7 @@ def package_compiled_models(
             index_models[model_id] = {
                 "display_name": model["display_name"],
                 "description": model["description"],
+                **({"categorization": categorizations[model_id]} if categorizations[model_id] is not None else {}),
                 "latest_tag": version,
                 "artifact_branch": branch,
                 "built_at": max(built_at_values),
@@ -210,6 +214,13 @@ def package_compiled_models(
                 raise ValidationError(
                     f"{model_id}: previous variants do not match the current catalog; rebuild the model"
                 )
+            entry = dict(entry)
+            entry["display_name"] = model["display_name"]
+            entry["description"] = model["description"]
+            if categorizations[model_id] is None:
+                entry.pop("categorization", None)
+            else:
+                entry["categorization"] = categorizations[model_id]
             index_models[model_id] = entry
 
     packaged_models: list[dict[str, Any]] = []
@@ -222,6 +233,7 @@ def package_compiled_models(
                     "id": model_id,
                     "display_name": entry["display_name"],
                     "variant_id": variant_id,
+                    **({"categorization": entry["categorization"]} if entry.get("categorization") else {}),
                     "target": variant["target"],
                     "mpk": variant["mpk"],
                     "artifact_url": url,
@@ -259,20 +271,27 @@ def package_compiled_models(
             ),
         )
 
+    taxonomy_path = output / "taxonomy.json"
+    _write_json(taxonomy_path, canonical_taxonomy_document(taxonomy))
+    taxonomy_digest, taxonomy_size = sha256_file(taxonomy_path)
+    taxonomy_reference = {"version": taxonomy["version"], "path": "taxonomy.json", "sha256": taxonomy_digest}
+
     latest_index = {
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": "sima-neat/models",
         "branch": branch,
         "catalog_tag": version,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "taxonomy": taxonomy_reference,
         "models": index_models,
     }
     _write_json(output / "latest.json", latest_index)
     catalog_document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": "sima-neat/models",
         "commit": git_sha,
         "commit_folder": version,
+        "taxonomy": taxonomy_reference,
         "models": packaged_models,
     }
     _write_json(output / "catalog.json", catalog_document)
@@ -283,10 +302,10 @@ def package_compiled_models(
             name="gh:sima-neat/models",
             version=version,
             description="SiMa Neat compiled model MPK catalog",
-            resources=["catalog.json"],
-            checksums={"catalog.json": catalog_digest},
+            resources=["catalog.json", "taxonomy.json"],
+            checksums={"catalog.json": catalog_digest, "taxonomy.json": taxonomy_digest},
             selectables=root_selectables,
-            size_bytes=catalog_size + sum(item["size_bytes"] for item in packaged_models),
+            size_bytes=taxonomy_size + catalog_size + sum(item["size_bytes"] for item in packaged_models),
         ),
     )
     return catalog_document
