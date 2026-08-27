@@ -18,4 +18,4 @@ metrics:
   - tracking_latency_ms
   - overlay_latency_ms
   - end_to_end_latency_ms
-note: Preserve per-stage and end-to-end latency evidence when the registry artifact is requalified on a DevKit.
+note: Use the bounded runner settings above to keep DevKit requalification within the workflow timeout while preserving per-stage and end-to-end latency evidence.
