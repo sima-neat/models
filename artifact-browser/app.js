@@ -202,6 +202,11 @@ function catalogCacheKey() {
   return `sima-neat-model-catalog:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${search}:${JSON.stringify(categories)}`;
 }
 
+function branchCatalogCacheKey() {
+  const repo = state.repository;
+  return `sima-neat-model-branches:${state.apiBase}:${repo.organization}/${repo.name}`;
+}
+
 function branchPreferenceKey() {
   const repo = state.repository;
   return `sima-neat-model-branch:${state.apiBase}:${repo.organization}/${repo.name}`;
@@ -224,6 +229,26 @@ function writeBranchPreference(branch) {
   }
 }
 
+function readCachedBranches() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(branchCatalogCacheKey()));
+    return cached && Array.isArray(cached.branches) ? cached.branches : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedBranches() {
+  try {
+    localStorage.setItem(branchCatalogCacheKey(), JSON.stringify({
+      savedAt: new Date().toISOString(),
+      branches: state.availableBranches,
+    }));
+  } catch {
+    // Storage may be disabled; branch discovery still works for this page load.
+  }
+}
+
 function readCachedCatalog() {
   try {
     const cached = JSON.parse(localStorage.getItem(catalogCacheKey()));
@@ -239,7 +264,6 @@ function writeCachedCatalog() {
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
       savedAt: new Date().toISOString(),
       runs: state.runs,
-      branches: state.availableBranches,
       cursor: state.cursor,
       hasMore: state.hasMore,
       taxonomy: state.taxonomy,
@@ -348,14 +372,35 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
   state.runs = append ? [...state.runs, ...payload.runs] : payload.runs;
   state.availableBranches = [...new Set([
     ...state.availableBranches,
-    ...(payload.branches || []),
     ...payload.runs.map((run) => branchName(run.git_ref)),
   ])].sort();
   state.cursor = payload.next_cursor ?? payload.cursor ?? null;
   state.hasMore = Boolean(payload.has_more ?? payload.hasMore);
   populateFilters({ persistBranchFallback: cache });
   renderRuns();
-  if (cache) writeCachedCatalog();
+  if (cache) {
+    writeCachedCatalog();
+    writeCachedBranches();
+  }
+}
+
+async function loadBranches() {
+  const repo = state.repository;
+  const payload = await api(
+    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/branches`,
+  );
+  if (!Array.isArray(payload.branches)) throw new Error("The registry did not return a branch catalog.");
+  const branches = [...new Set(payload.branches.map((branch) => {
+    if (typeof branch === "string") return branch;
+    const gitRef = String(branch?.git_ref || "");
+    return gitRef.startsWith("refs/heads/") ? gitRef.slice("refs/heads/".length) : "";
+  }).filter(Boolean))].sort();
+  if (!branches.length && state.availableBranches.length) {
+    throw new Error("The registry returned an empty branch catalog; keeping saved branches.");
+  }
+  state.availableBranches = branches;
+  populateFilters({ persistBranchFallback: true });
+  writeCachedBranches();
 }
 
 function setTheme(theme) {
@@ -850,20 +895,6 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   try {
     const payload = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/runs?${query}`);
     if (requestId !== state.runsRequestId) return;
-    if (!append && branch && !payload.runs.length && !elements.search.value.trim()
-      && !Object.values(categoryFilters()).some(Boolean)) {
-      const knownBranches = new Set([
-        ...(payload.branches || []),
-        ...state.availableBranches,
-      ]);
-      knownBranches.delete(branch);
-      state.availableBranches = [...knownBranches].sort();
-      const fallbackBranch = branch !== DEFAULT_BRANCH && knownBranches.has(DEFAULT_BRANCH) ? DEFAULT_BRANCH : "";
-      state.preferredBranch = fallbackBranch;
-      writeBranchPreference(fallbackBranch);
-      await loadRuns({ branch: fallbackBranch, limit: fallbackBranch ? 50 : 200 });
-      return;
-    }
     applyCatalog(payload, { append });
   } catch (error) {
     if (requestId === state.runsRequestId) throw error;
@@ -890,8 +921,10 @@ async function initialize() {
   }
 
   const cached = readCachedCatalog();
+  const cachedBranches = readCachedBranches();
+  if (cachedBranches) state.availableBranches = cachedBranches;
   if (cached) {
-    state.availableBranches = Array.isArray(cached.branches) ? cached.branches : [];
+    if (!cachedBranches && Array.isArray(cached.branches)) state.availableBranches = cached.branches;
     state.taxonomy = cached.taxonomy || null;
     if (state.taxonomy) populateCategoryFilters();
     applyCatalog({
@@ -902,21 +935,21 @@ async function initialize() {
   }
 
   try {
-    try {
-      await loadTaxonomy();
-    } catch (error) {
+    const [taxonomyResult, branchResult] = await Promise.allSettled([loadTaxonomy(), loadBranches()]);
+    if (taxonomyResult.status === "rejected") {
       setCategoryFiltersDisabled(true);
-      showToast(`Category filters are temporarily unavailable. ${error.message}`, true);
+      showToast(`Category filters are temporarily unavailable. ${taxonomyResult.reason.message}`, true);
+    }
+    if (branchResult.status === "rejected") {
+      showToast(`Branch catalog is temporarily unavailable. ${branchResult.reason.message}`, true);
     }
     if (activeFilterCount()) setFilterDrawer(true);
-    if (cached) {
-      await loadRuns({ branch: state.preferredBranch });
+    if (cached || branchResult.status === "fulfilled" || state.availableBranches.length) {
+      await loadRuns({ branch: elements["branch-filter"].value });
     } else {
-      // The first broad page discovers branch choices. If it is incomplete,
-      // switch to branch-aware pagination so the cursor matches the visible list.
+      // Older or temporarily unavailable registries can still infer branches
+      // from a broad runs page without making that page authoritative.
       await loadRuns({ branch: "", limit: 200 });
-      const selectedBranch = elements["branch-filter"].value;
-      if (selectedBranch && state.hasMore) await loadRuns({ branch: selectedBranch });
     }
     elements["result-title"].textContent = state.repository.name === "models" ? "Models" : state.repository.name;
   } catch (error) {

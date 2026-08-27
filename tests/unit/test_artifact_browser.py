@@ -135,8 +135,21 @@ def test_branch_filter_defaults_to_main_and_persists_user_selection() -> None:
     assert "readBranchPreference" in script
     assert "writeBranchPreference(state.preferredBranch)" in script
     assert "branches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH" in script
-    assert 'knownBranches.has(DEFAULT_BRANCH) ? DEFAULT_BRANCH : ""' in script
-    assert "limit: fallbackBranch ? 50 : 200" in script
+
+
+def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert "/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/branches" in script
+    assert "branchCatalogCacheKey" in script
+    assert "readCachedBranches" in script
+    assert "writeCachedBranches" in script
+    assert "Promise.allSettled([loadTaxonomy(), loadBranches()])" in script
+    assert "The registry returned an empty branch catalog; keeping saved branches." in script
+    assert "knownBranches.delete(branch)" not in script
+    assert "...(payload.branches || [])" not in script
+    assert 'path == "/v1/repositories/sima-neat/models/branches"' in preview
 
 
 def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
@@ -144,7 +157,7 @@ def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
 
     assert 'query.set("git_ref", `refs/heads/${branch}`)' in script
     assert "availableBranches" in script
-    assert "await loadRuns({ branch: state.preferredBranch })" in script
+    assert 'await loadRuns({ branch: elements["branch-filter"].value })' in script
     assert 'elements["load-more"].hidden = !state.hasMore' in script
 
 

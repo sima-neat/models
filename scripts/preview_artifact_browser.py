@@ -78,7 +78,15 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
         if path == "/v1/repositories/sima-neat/models/runs":
-            self._json({"runs": [run], "branches": ["feat/resnet50-post-compile-benchmark"], "has_more": False})
+            self._json({"runs": [run], "has_more": False})
+            return
+        if path == "/v1/repositories/sima-neat/models/branches":
+            self._json({"branches": [{
+                "name": "feat/resnet50-post-compile-benchmark",
+                "git_ref": "refs/heads/feat/resnet50-post-compile-benchmark",
+                "latest_run_at": run["created_at"],
+                "run_count": 1,
+            }]})
             return
         if path == "/v1/repositories/sima-neat/models/taxonomies/latest":
             self._json({"taxonomy": {"document": {

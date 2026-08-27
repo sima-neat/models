@@ -52,15 +52,18 @@ The default is the WAF-protected public staging registry at
 `artifacts-registry.stg.neat.sima.ai` endpoint is reserved for IAM-signed
 publisher traffic and rejects direct public reads.
 
-The initial view uses one paginated runs request and saves the latest catalog in
-browser storage so repeat visits can render immediately while refreshing. Full
+The initial view loads the repository branch catalog independently from the
+paginated runs request and caches both so repeat visits can render immediately
+while refreshing. If branch discovery is temporarily unavailable, the browser
+keeps saved branches and can infer additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
 model and variant names together with category names; secondary branch,
 compiler, type, task, architecture, paradigm, and input facets are collapsed by
 default and display an active-filter count when used.
 The branch filter defaults to `main`. A branch selected by the user is saved per
-registry and repository in browser storage; if that branch disappears, the
-portal falls back to `main` (or all branches when `main` is unavailable).
+registry and repository in browser storage. The dedicated branch catalog, not a
+limited runs page, determines whether the portal falls back to `main` (or all
+branches when `main` is unavailable).
 Pagination is branch-aware, so **Load earlier builds** is shown only when the
 registry reports another page for the currently selected branch.
