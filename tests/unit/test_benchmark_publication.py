@@ -115,7 +115,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
         f"/v1/runs/{BENCHMARK_RUN_ID}/parameters",
         f"/v1/runs/{BENCHMARK_RUN_ID}/artifacts/performance-result",
         f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/performance/model-synthetic",
-        f"/v1/runs/{BENCHMARK_RUN_ID}/measurements:batch",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/measurements/batch",
         f"/v1/runs/{BENCHMARK_RUN_ID}/finalize",
     ]
     create = calls[0][2]

@@ -294,7 +294,7 @@ def publish_benchmark_result(
     if measurements:
         client.request(
             "POST",
-            f"/v1/runs/{run_id}/measurements:batch",
+            f"/v1/runs/{run_id}/measurements/batch",
             {"measurements": measurements},
             f"{stable_key}-measurements",
         )
