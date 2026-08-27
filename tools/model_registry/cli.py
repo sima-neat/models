@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .artifact import verify_mpk
-from .benchmark_manifest import make_resnet50_benchmark_manifest
+from .benchmark_manifest import make_benchmark_manifest
 from .benchmark_publication import publish_benchmark_result
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
@@ -76,14 +76,15 @@ def _parser() -> argparse.ArgumentParser:
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
     benchmark_manifest = subcommands.add_parser(
-        "make-benchmark-manifest", help="generate the direct-DevKit ResNet-50 benchmark manifest"
+        "make-benchmark-manifest", help="generate a direct-DevKit benchmark manifest for one compiled model"
     )
     benchmark_manifest.add_argument("--repository", type=Path, default=Path.cwd())
     benchmark_manifest.add_argument("--compiled-dir", type=Path, required=True)
     benchmark_manifest.add_argument("--output", type=Path, required=True)
     benchmark_manifest.add_argument("--branch", required=True)
     benchmark_manifest.add_argument("--git-sha", required=True)
-    benchmark_manifest.add_argument("--variant", default="modalix_bf16")
+    benchmark_manifest.add_argument("--model", required=True)
+    benchmark_manifest.add_argument("--variant", required=True)
     benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
 
     mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
@@ -296,12 +297,13 @@ def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
 
 
 def _make_benchmark_manifest(args: argparse.Namespace) -> int:
-    result = make_resnet50_benchmark_manifest(
+    result = make_benchmark_manifest(
         repository=args.repository,
         compiled_dir=args.compiled_dir,
         output_path=args.output,
         branch=args.branch,
         git_sha=args.git_sha,
+        model_id=args.model,
         variant_id=args.variant,
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"])

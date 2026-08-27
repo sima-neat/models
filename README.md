@@ -104,11 +104,12 @@ Successful staging compilations are also written through the IAM-authenticated
 Vulcan Artifact Registry API as one immutable run per newly compiled variant.
 Each record links the model source checksum, variant parameters, Model Compiler
 version, build fingerprint, and exact versioned S3 MPK. For staging feature
-branches, a successful ResNet-50 BF16 compilation continues onto a resolved
-Modalix GitHub runner. The runner verifies the manifest-pinned platform, installs
-the pinned benchmarker and Neat runtime, and returns a schema-v2 result and log.
-A trusted hosted job publishes both under the model's S3 hierarchy and records an
-immutable `model_benchmark` child of the compile run.
+branches, the workflow discovers the Modalix compile artifacts actually produced
+by the current run and benchmarks each one on the resolved Modalix GitHub runner.
+The runner verifies the manifest-pinned platform, installs the pinned benchmarker
+and Neat runtime, and returns a schema-v2 result and log for each model variant. A
+trusted hosted job publishes every completed result under its model's S3 hierarchy
+and records an immutable `model_benchmark` child of the matching compile run.
 
 See [the architecture](docs/architecture.md),
 [adding a model](docs/adding-a-model.md), the

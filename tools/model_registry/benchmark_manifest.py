@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
+
+IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
@@ -18,31 +21,34 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def make_resnet50_benchmark_manifest(
+def make_benchmark_manifest(
     *,
     repository: str | Path,
     compiled_dir: str | Path,
     output_path: str | Path,
     branch: str,
     git_sha: str,
-    variant_id: str = "modalix_bf16",
+    model_id: str,
+    variant_id: str,
 ) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
     output = Path(output_path).expanduser().resolve()
-    if variant_id != "modalix_bf16":
-        raise ValidationError(f"unsupported initial ResNet-50 benchmark variant: {variant_id}")
+    if IDENTIFIER.fullmatch(model_id) is None:
+        raise ValidationError(f"invalid benchmark model id: {model_id}")
+    if IDENTIFIER.fullmatch(variant_id) is None:
+        raise ValidationError(f"invalid benchmark variant id: {variant_id}")
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
 
-    variant_dir = compiled / "resnet_50" / variant_id
+    variant_dir = compiled / model_id / variant_id
     compile_result = _load_json(variant_dir / "compile-result.json", "compile result")
     publication = _load_json(variant_dir / "registry-publication.json", "registry publication")
     runs = publication.get("runs")
     if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
         raise ValidationError("registry publication must contain exactly one run")
     published = runs[0]
-    if published.get("model_id") != "resnet_50" or published.get("variant_id") != variant_id:
+    if published.get("model_id") != model_id or published.get("variant_id") != variant_id:
         raise ValidationError("registry publication model/variant does not match the requested benchmark")
 
     archive = compile_result.get("archive")
@@ -59,7 +65,7 @@ def make_resnet50_benchmark_manifest(
     manifest = {
         "schema_version": 1,
         "model": {
-            "id": "resnet_50",
+            "id": model_id,
             "variant_id": variant_id,
             "path": str((variant_dir / archive).resolve()),
             "sha256": sha256,

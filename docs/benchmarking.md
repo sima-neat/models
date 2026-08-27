@@ -184,8 +184,9 @@ build and verify the package without publishing. Trusted branch pushes publish
 under the isolated `models-utils/benchmarker` Vulcan namespace and advance that branch's
 benchmarker-specific `latest.tag`.
 
-The compile workflow automates this first for `resnet_50/modalix_bf16`. It resolves
-the approved Modalix GitHub runner group, verifies the DevKit platform against
-`deps/manifest.json`, installs the immutable benchmarker package (which verifies
-its Neat dependency), runs the benchmark directly on that DevKit runner, and
-publishes the returned JSON and log from a separate trusted hosted job.
+The compile workflow inventories the `compiled-model-*` artifacts produced by the
+current run and intersects them with its selected Modalix compile matrix. It then
+resolves the approved Modalix GitHub runner group, verifies the DevKit platform
+against `deps/manifest.json`, and benchmarks each discovered model variant directly
+on that runner. A separate trusted hosted job publishes every completed JSON result
+and log, including successes from a partially failed benchmark matrix.

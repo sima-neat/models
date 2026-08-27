@@ -66,7 +66,6 @@ jobs:
       model_compiler_version: ${{ steps.compiler.outputs.version }}
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       publishable: ${{ steps.matrix.outputs.publishable }}
-      benchmark_selected: ${{ steps.matrix.outputs.benchmark_selected }}
       base_branch: ${{ steps.base.outputs.base_branch }}
       previous_found: ${{ steps.previous.outputs.found }}
       previous_source_branch: ${{ steps.previous.outputs.source_branch }}
@@ -222,8 +221,6 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
-          benchmark_selected="$(jq -r 'any(.include[]; .model_id == "resnet_50" and .variant_id == "modalix_bf16")' <<< "$matrix")"
-          echo "benchmark_selected=$benchmark_selected" >> "$GITHUB_OUTPUT"
           echo "Selected $count model variant(s)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain pull-request safety boundary
@@ -428,21 +425,65 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  resolve-benchmark-runner:
-    name: Resolve benchmark DevKit runner
-    if: github.event_name != 'pull_request'
-    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
-
-  benchmark-resnet50:
-    name: Benchmark ResNet-50 BF16 on DevKit
-    needs: [select, compile, resolve-vulcan-config, resolve-benchmark-runner]
+  discover-benchmark-matrix:
+    name: Discover compiled models to benchmark
+    needs: [select, compile]
     if: >-
+      always() &&
       github.event_name != 'pull_request' &&
-      needs.compile.result == 'success' &&
+      needs.select.result == 'success' &&
       needs.select.outputs.publishable == 'true' &&
       needs.select.outputs.vulcan_environment == 'staging' &&
       github.ref_name != 'main' && github.ref_name != 'develop' &&
-      needs.select.outputs.benchmark_selected == 'true'
+      needs.compile.result != 'cancelled' && needs.compile.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      count: ${{ steps.artifacts.outputs.count }}
+      matrix: ${{ steps.artifacts.outputs.matrix }}
+    steps:
+      - name: Build matrix from compiled artifacts
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED_MATRIX: ${{ needs.select.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          selected = json.loads(os.environ["SELECTED_MATRIX"]).get("include", [])
+          artifacts = json.loads((Path(os.environ["RUNNER_TEMP"]) / "artifacts.json").read_text()).get("artifacts", [])
+          available = {artifact["name"] for artifact in artifacts if not artifact.get("expired", False)}
+          compiled = [
+              entry
+              for entry in selected
+              if entry.get("target") == "modalix"
+              and f"compiled-model-{entry['model_id']}-{entry['variant_id']}" in available
+          ]
+          print(f"count={len(compiled)}")
+          print("matrix=" + json.dumps({"include": compiled}, separators=(",", ":")))
+          PY
+
+  resolve-benchmark-runner:
+    name: Resolve benchmark DevKit runner
+    needs: discover-benchmark-matrix
+    if: needs.discover-benchmark-matrix.outputs.count != '0'
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+
+  benchmark:
+    name: Benchmark ${{ matrix.model_id }} (${{ matrix.variant_id }}) on DevKit
+    needs: [select, discover-benchmark-matrix, resolve-vulcan-config, resolve-benchmark-runner]
+    if: needs.discover-benchmark-matrix.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover-benchmark-matrix.outputs.matrix) }}
     runs-on:
       group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
       labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.select.outputs.vulcan_environment }}"]
@@ -450,14 +491,17 @@ jobs:
     permissions:
       actions: read
       contents: read
+    env:
+      MODEL_ID: ${{ matrix.model_id }}
+      VARIANT_ID: ${{ matrix.variant_id }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
 
-      - name: Download the compiled ResNet-50 output
+      - name: Download the compiled model output
         uses: actions/download-artifact@v7
         with:
-          name: compiled-model-resnet_50-modalix_bf16
+          name: compiled-model-${{ matrix.model_id }}-${{ matrix.variant_id }}
           path: _compiled
 
       - name: Install registry tooling in an isolated environment
@@ -500,7 +544,8 @@ jobs:
             --output _benchmark/performance-test.json \
             --branch "$GITHUB_REF_NAME" \
             --git-sha "$GITHUB_SHA" \
-            --variant modalix_bf16
+            --model "$MODEL_ID" \
+            --variant "$VARIANT_ID"
           set -o pipefail
           "$HOME/pyneat/bin/benchmarker" \
             --manifest _benchmark/performance-test.json \
@@ -511,17 +556,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-resnet_50-modalix_bf16
+          name: benchmark-${{ matrix.model_id }}-${{ matrix.variant_id }}
           path: |
             _benchmark/performance-result-v2.json
             _benchmark/benchmark.log
           if-no-files-found: error
           retention-days: 14
 
-  publish-resnet50-benchmark:
-    name: Publish ResNet-50 benchmark to Vulcan
-    needs: [select, benchmark-resnet50, resolve-vulcan-config]
-    if: needs.benchmark-resnet50.result == 'success'
+  publish-benchmarks:
+    name: Publish completed benchmarks to Vulcan
+    needs: [select, benchmark, resolve-vulcan-config]
+    if: >-
+      always() &&
+      needs.select.result == 'success' &&
+      needs.resolve-vulcan-config.result == 'success' &&
+      needs.benchmark.result != 'skipped'
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -537,14 +586,14 @@ jobs:
       - run: python -m pip install .
       - uses: actions/download-artifact@v7
         with:
-          name: benchmark-resnet_50-modalix_bf16
-          path: _benchmark
+          pattern: benchmark-*
+          path: _benchmarks
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
           role-session-name: models-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Publish schema-v2 result and log
+      - name: Publish every completed schema-v2 result and log
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
@@ -552,17 +601,22 @@ jobs:
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
         run: |
           set -euo pipefail
-          model-registry publish-benchmark \
-            --result _benchmark/performance-result-v2.json \
-            --log _benchmark/benchmark.log \
-            --api-url "$REGISTRY_API_URL" \
-            --aws-region "$AWS_REGION" \
-            --bucket "$ARTIFACT_BUCKET" \
-            --kms-key-id "$KMS_KEY_ID" \
-            --environment staging \
-            --branch "$GITHUB_REF_NAME" \
-            --git-sha "$GITHUB_SHA" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          mapfile -t results < <(find _benchmarks -type f -name performance-result-v2.json -print | sort)
+          (( ${#results[@]} > 0 )) || { echo "No completed benchmark results were downloaded" >&2; exit 1; }
+          for result in "${results[@]}"; do
+            log="$(dirname "$result")/benchmark.log"
+            model-registry publish-benchmark \
+              --result "$result" \
+              --log "$log" \
+              --api-url "$REGISTRY_API_URL" \
+              --aws-region "$AWS_REGION" \
+              --bucket "$ARTIFACT_BUCKET" \
+              --kms-key-id "$KMS_KEY_ID" \
+              --environment staging \
+              --branch "$GITHUB_REF_NAME" \
+              --git-sha "$GITHUB_SHA" \
+              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          done
 
   resolve-vulcan-config:
     name: Resolve Vulcan publication config
