@@ -5,7 +5,15 @@ import json
 import tarfile
 from pathlib import Path
 
-from model_registry.registry import S3Object, canonical_sha256, publish_compilations, publish_taxonomy
+import pytest
+from model_registry.registry import (
+    RegistryPublicationError,
+    S3Object,
+    SigV4RegistryClient,
+    canonical_sha256,
+    publish_compilations,
+    publish_taxonomy,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,6 +65,15 @@ def _packaged_result(tmp_path: Path) -> Path:
 
 def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
+
+
+def test_registry_errors_identify_the_failed_endpoint() -> None:
+    def reject(method: str, path: str, body: dict | None, key: str) -> dict:
+        raise RegistryPublicationError("artifact registry HTTP 403 unknown_error: request rejected")
+
+    client = SigV4RegistryClient("https://registry.example.invalid", "us-west-2", request=reject)
+    with pytest.raises(RegistryPublicationError, match=r"POST /v1/runs: artifact registry HTTP 403"):
+        client.request("POST", "/v1/runs", {}, "create")
 
 
 def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:

@@ -43,7 +43,10 @@ class SigV4RegistryClient:
         self._request = request or self._curl_request
 
     def request(self, method: str, path: str, body: JsonObject | None, idempotency_key: str) -> JsonObject:
-        return self._request(method, path, body, idempotency_key)
+        try:
+            return self._request(method, path, body, idempotency_key)
+        except RegistryPublicationError as exc:
+            raise RegistryPublicationError(f"{method} {path}: {exc}") from exc
 
     def _curl_request(self, method: str, path: str, body: JsonObject | None, idempotency_key: str) -> JsonObject:
         access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
