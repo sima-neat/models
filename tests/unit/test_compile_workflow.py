@@ -327,12 +327,13 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
         if step.get("name") == "Check out the trusted source revision for registry tooling"
     )
     assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
-    assert checkout["with"]["clean"] == "false"
+    assert checkout["with"]["path"] == "_registry_source"
     publication = next(
         step for step in stage["steps"] if step.get("name") == "Register an unpublished compilation for benchmarking"
     )
     assert publication["if"] == "steps.publication.outputs.required == 'true'"
     assert "model-registry publish" in publication["run"]
+    assert '--repository _registry_source' in publication["run"]
     assert '--dist-dir _compiled' in publication["run"]
     assert '--github-run-id "$SOURCE_RUN_ID"' in publication["run"]
     assert '--github-run-attempt "$SOURCE_RUN_ATTEMPT"' in publication["run"]
