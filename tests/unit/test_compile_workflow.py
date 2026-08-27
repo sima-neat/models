@@ -273,38 +273,82 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     assert "--calibration-sha256" in verify_step["run"]
 
 
-def test_benchmarks_are_discovered_from_successful_compile_artifacts() -> None:
+def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    discovery = workflow["jobs"]["discover-benchmark-matrix"]
-    resolver = workflow["jobs"]["resolve-benchmark-runner"]
-    benchmark = workflow["jobs"]["benchmark"]
+    compile_job = workflow["jobs"]["compile"]
+    dispatch = next(
+        step
+        for step in compile_job["steps"]
+        if step.get("name") == "Start this model benchmark without waiting for the compile matrix"
+    )
+
+    assert compile_job["permissions"]["actions"] == "write"
+    assert "matrix.target == 'modalix'" in dispatch["if"]
+    assert "github.ref_name != 'main'" in dispatch["if"]
+    assert "github.ref_name != 'develop'" in dispatch["if"]
+    assert "gh workflow run Vulcan-Model-Compile.yml" in dispatch["run"]
+    assert "-f operation=benchmark" in dispatch["run"]
+    assert '-f source_run_id="$GITHUB_RUN_ID"' in dispatch["run"]
+    assert '-f source_sha="$GITHUB_SHA"' in dispatch["run"]
+    assert '-f model_id="${{ matrix.model_id }}"' in dispatch["run"]
+    assert '-f variant_id="${{ matrix.variant_id }}"' in dispatch["run"]
+    retain_index = next(
+        index
+        for index, step in enumerate(compile_job["steps"])
+        if step.get("name") == "Retain the validated model output for packaging"
+    )
+    assert retain_index < compile_job["steps"].index(dispatch)
+    assert "discover-benchmark-matrix" not in workflow["jobs"]
+    assert "inputs.operation || 'compile'" in workflow["concurrency"]["group"]
+
+
+def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    stage = workflow["jobs"]["stage-dispatched-benchmark"]
+
+    assert "inputs.operation == 'benchmark'" in stage["if"]
+    verify = next(step for step in stage["steps"] if step.get("name") == "Verify the source run and compiled artifact")
+    assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
+    assert ".head_sha == $sha" in verify["run"]
+    download = next(step for step in stage["steps"] if step.get("uses") == "actions/download-artifact@v7")
+    assert download["with"]["name"] == "compiled-model-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+    assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
+    upload = next(step for step in stage["steps"] if step.get("uses") == "actions/upload-artifact@v7")
+    assert upload["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+
+
+def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    resolver = workflow["jobs"]["resolve-dispatched-benchmark-runner"]
+    benchmark = workflow["jobs"]["benchmark-dispatched-model"]
     steps = benchmark["steps"]
 
-    discovery_script = discovery["steps"][0]["run"]
-    assert 'actions/runs/$GITHUB_RUN_ID/artifacts' in discovery_script
-    assert 'f"compiled-model-{entry[\'model_id\']}-{entry[\'variant_id\']}" in available' in discovery_script
-    assert 'entry.get("target") == "modalix"' in discovery_script
-    assert discovery["outputs"]["matrix"] == "${{ steps.artifacts.outputs.matrix }}"
-    assert resolver["needs"] == "discover-benchmark-matrix"
-    assert "needs.discover-benchmark-matrix.outputs.count != '0'" in resolver["if"]
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
-    assert benchmark["runs-on"]["group"] == "${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}"
-    assert benchmark["strategy"]["matrix"] == "${{ fromJSON(needs.discover-benchmark-matrix.outputs.matrix) }}"
-    assert benchmark["strategy"]["max-parallel"] == "1"
+    assert benchmark["needs"] == ["stage-dispatched-benchmark", "resolve-dispatched-benchmark-runner"]
+    assert benchmark["runs-on"]["group"] == (
+        "${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
+    )
     assert benchmark["runs-on"]["labels"] == [
         "self-hosted",
         "Linux",
         "ARM64",
         "modalix",
-        "vulcan-${{ needs.select.outputs.vulcan_environment }}",
+        "vulcan-${{ inputs.environment }}",
     ]
-    download = next(step for step in steps if step.get("name") == "Download the compiled model output")
-    assert download["with"]["name"] == "compiled-model-${{ matrix.model_id }}-${{ matrix.variant_id }}"
+    checkout = next(step for step in steps if step.get("name") == "Check out the trusted revision")
+    assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
+    download = next(step for step in steps if step.get("name") == "Download the staged compiled model output")
+    assert download["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
     install = next(step for step in steps if step.get("name") == "Install pinned benchmarker and Neat dependency")
     execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
     assert "resolve-benchmark-runtime" in runtime["run"]
     assert "/etc/buildinfo" in runtime["run"]
+    assert "sed -n 's/^DISTRO_VERSION=//p'" not in runtime["run"]
+    assert "^[[:space:]]*DISTRO_VERSION[[:space:]]*=" in runtime["run"]
+    assert 'gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)' in runtime["run"]
+    assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime["run"]
+    assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime["run"]
     assert "sima-cli neat install" in install["run"]
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
@@ -313,17 +357,18 @@ def test_benchmarks_are_discovered_from_successful_compile_artifacts() -> None:
     assert "kerrigan" not in WORKFLOW.read_text(encoding="utf-8").lower()
 
 
-def test_completed_dynamic_benchmarks_are_published_from_a_hosted_runner() -> None:
+def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    publish = workflow["jobs"]["publish-benchmarks"]
+    publish = workflow["jobs"]["publish-dispatched-benchmark"]
 
     assert publish["runs-on"] == "ubuntu-latest"
-    assert publish["needs"] == ["select", "benchmark", "resolve-vulcan-config"]
+    assert publish["needs"] == ["benchmark-dispatched-model", "resolve-dispatched-benchmark-config"]
     download = next(step for step in publish["steps"] if step.get("uses") == "actions/download-artifact@v7")
-    assert download["with"]["pattern"] == "benchmark-*"
+    assert download["with"]["name"] == "benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     publication = next(
         step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v2 result and log"
     )
     assert "find _benchmarks -type f -name performance-result-v2.json" in publication["run"]
     assert 'for result in "${results[@]}"' in publication["run"]
     assert "model-registry publish-benchmark" in publication["run"]
+    assert '--git-sha "$SOURCE_SHA"' in publication["run"]

@@ -43,6 +43,28 @@ on:
         description: Optional base branch for changed-model selection and artifact inheritance
         required: false
         type: string
+      operation:
+        description: Internal workflow mode; benchmark is dispatched by a completed compile leg
+        required: true
+        default: compile
+        type: choice
+        options: [compile, benchmark]
+      source_run_id:
+        description: Internal source workflow run containing the compiled-model artifact
+        required: false
+        type: string
+      source_sha:
+        description: Internal source revision used to compile the model
+        required: false
+        type: string
+      model_id:
+        description: Internal model ID for a dispatched benchmark
+        required: false
+        type: string
+      variant_id:
+        description: Internal variant ID for a dispatched benchmark
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -51,12 +73,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-compile-${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'staging' }}
+  group: model-compile-${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'staging' }}-${{ inputs.operation || 'compile' }}-${{ inputs.model_id || 'catalog' }}-${{ inputs.variant_id || 'all' }}
   cancel-in-progress: false
 
 jobs:
   select:
     name: Select model variants
+    if: inputs.operation != 'benchmark'
     runs-on: ubuntu-latest
     outputs:
       count: ${{ steps.matrix.outputs.count }}
@@ -235,6 +258,7 @@ jobs:
     if: github.event_name != 'pull_request' && needs.select.outputs.count != '0'
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
+      actions: write
       contents: read
       id-token: write
     strategy:
@@ -425,83 +449,116 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  discover-benchmark-matrix:
-    name: Discover compiled models to benchmark
-    needs: [select, compile]
+      - name: Start this model benchmark without waiting for the compile matrix
+        if: >-
+          needs.select.outputs.publishable == 'true' &&
+          needs.select.outputs.vulcan_environment == 'staging' &&
+          matrix.target == 'modalix' &&
+          github.ref_name != 'main' && github.ref_name != 'develop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run Vulcan-Model-Compile.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            -f operation=benchmark \
+            -f environment="${{ needs.select.outputs.vulcan_environment }}" \
+            -f source_run_id="$GITHUB_RUN_ID" \
+            -f source_sha="$GITHUB_SHA" \
+            -f model_id="${{ matrix.model_id }}" \
+            -f variant_id="${{ matrix.variant_id }}"
+
+  stage-dispatched-benchmark:
+    name: Stage ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark input
     if: >-
-      always() &&
-      github.event_name != 'pull_request' &&
-      needs.select.result == 'success' &&
-      needs.select.outputs.publishable == 'true' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
-      github.ref_name != 'main' && github.ref_name != 'develop' &&
-      needs.compile.result != 'cancelled' && needs.compile.result != 'skipped'
+      inputs.operation == 'benchmark' &&
+      inputs.environment == 'staging' &&
+      inputs.source_run_id != '' && inputs.source_sha != '' &&
+      inputs.model_id != '' && inputs.variant_id != ''
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
-    outputs:
-      count: ${{ steps.artifacts.outputs.count }}
-      matrix: ${{ steps.artifacts.outputs.matrix }}
     steps:
-      - name: Build matrix from compiled artifacts
-        id: artifacts
+      - name: Verify the source run and compiled artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          SELECTED_MATRIX: ${{ needs.select.outputs.matrix }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MODEL_ID: ${{ inputs.model_id }}
+          VARIANT_ID: ${{ inputs.variant_id }}
         run: |
           set -euo pipefail
-          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-          from pathlib import Path
+          run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
+          jq -e --arg sha "$SOURCE_SHA" \
+            '.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch")' \
+            <<< "$run_json" >/dev/null
+          artifact_name="compiled-model-$MODEL_ID-$VARIANT_ID"
+          artifact_count="$(
+            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
+              jq --arg artifact "$artifact_name" \
+                '[.artifacts[] | select(.name == $artifact and (.expired | not))] | length'
+          )"
+          test "$artifact_count" = "1"
 
-          selected = json.loads(os.environ["SELECTED_MATRIX"]).get("include", [])
-          artifacts = json.loads((Path(os.environ["RUNNER_TEMP"]) / "artifacts.json").read_text()).get("artifacts", [])
-          available = {artifact["name"] for artifact in artifacts if not artifact.get("expired", False)}
-          compiled = [
-              entry
-              for entry in selected
-              if entry.get("target") == "modalix"
-              and f"compiled-model-{entry['model_id']}-{entry['variant_id']}" in available
-          ]
-          print(f"count={len(compiled)}")
-          print("matrix=" + json.dumps({"include": compiled}, separators=(",", ":")))
-          PY
+      - name: Download this compiled model from its source run
+        uses: actions/download-artifact@v7
+        with:
+          name: compiled-model-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          path: _compiled
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
 
-  resolve-benchmark-runner:
-    name: Resolve benchmark DevKit runner
-    needs: discover-benchmark-matrix
-    if: needs.discover-benchmark-matrix.outputs.count != '0'
+      - name: Retain benchmark input independently of compile-run cleanup
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          path: _compiled
+          if-no-files-found: error
+          retention-days: 1
+
+  resolve-dispatched-benchmark-runner:
+    name: Resolve dispatched benchmark DevKit runner
+    if: inputs.operation == 'benchmark' && inputs.environment == 'staging'
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
 
-  benchmark:
-    name: Benchmark ${{ matrix.model_id }} (${{ matrix.variant_id }}) on DevKit
-    needs: [select, discover-benchmark-matrix, resolve-vulcan-config, resolve-benchmark-runner]
-    if: needs.discover-benchmark-matrix.outputs.count != '0'
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix: ${{ fromJSON(needs.discover-benchmark-matrix.outputs.matrix) }}
+  resolve-dispatched-benchmark-config:
+    name: Resolve dispatched benchmark Vulcan config
+    if: inputs.operation == 'benchmark' && inputs.environment == 'staging'
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ inputs.environment }}
+    secrets: inherit
+
+  benchmark-dispatched-model:
+    name: Benchmark ${{ inputs.model_id }} (${{ inputs.variant_id }}) on DevKit
+    needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner]
+    if: inputs.operation == 'benchmark' && inputs.environment == 'staging'
     runs-on:
-      group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.select.outputs.vulcan_environment }}"]
+      group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
+      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ inputs.environment }}"]
     timeout-minutes: 45
     permissions:
       actions: read
       contents: read
     env:
-      MODEL_ID: ${{ matrix.model_id }}
-      VARIANT_ID: ${{ matrix.variant_id }}
+      MODEL_ID: ${{ inputs.model_id }}
+      VARIANT_ID: ${{ inputs.variant_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
 
-      - name: Download the compiled model output
+      - name: Download the staged compiled model output
         uses: actions/download-artifact@v7
         with:
-          name: compiled-model-${{ matrix.model_id }}-${{ matrix.variant_id }}
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}
           path: _compiled
 
       - name: Install registry tooling in an isolated environment
@@ -516,8 +573,25 @@ jobs:
           runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository .)"
           platform_version="$(jq -er '.devkit.platform_version' <<< "$runtime")"
           neat_version="$(jq -er '.neat_core.version' <<< "$runtime")"
-          actual_platform="$(sed -n 's/^DISTRO_VERSION=//p' /etc/buildinfo)"
-          test "$actual_platform" = "$platform_version"
+          actual_platform="$(
+            awk -F= '
+              /^[[:space:]]*DISTRO_VERSION[[:space:]]*=/ {
+                value = $2
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                print value
+                exit
+              }
+            ' /etc/buildinfo
+          )"
+          if [[ -z "$actual_platform" ]]; then
+            echo "Could not read DISTRO_VERSION from /etc/buildinfo" >&2
+            exit 1
+          fi
+          if [[ "$actual_platform" != "$platform_version" ]]; then
+            echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
+            exit 1
+          fi
+          echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
           echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
 
@@ -543,7 +617,7 @@ jobs:
             --compiled-dir _compiled \
             --output _benchmark/performance-test.json \
             --branch "$GITHUB_REF_NAME" \
-            --git-sha "$GITHUB_SHA" \
+            --git-sha "$SOURCE_SHA" \
             --model "$MODEL_ID" \
             --variant "$VARIANT_ID"
           set -o pipefail
@@ -556,29 +630,31 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-${{ matrix.model_id }}-${{ matrix.variant_id }}
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}
           path: |
             _benchmark/performance-result-v2.json
             _benchmark/benchmark.log
           if-no-files-found: error
           retention-days: 14
 
-  publish-benchmarks:
-    name: Publish completed benchmarks to Vulcan
-    needs: [select, benchmark, resolve-vulcan-config]
+  publish-dispatched-benchmark:
+    name: Publish ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark to Vulcan
+    needs: [benchmark-dispatched-model, resolve-dispatched-benchmark-config]
     if: >-
       always() &&
-      needs.select.result == 'success' &&
-      needs.resolve-vulcan-config.result == 'success' &&
-      needs.benchmark.result != 'skipped'
+      inputs.operation == 'benchmark' &&
+      needs.benchmark-dispatched-model.result == 'success' &&
+      needs.resolve-dispatched-benchmark-config.result == 'success'
     runs-on: ubuntu-latest
-    environment: ${{ needs.select.outputs.vulcan_environment }}
+    environment: ${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -586,19 +662,20 @@ jobs:
       - run: python -m pip install .
       - uses: actions/download-artifact@v7
         with:
-          pattern: benchmark-*
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}
           path: _benchmarks
       - uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
           role-session-name: models-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish every completed schema-v2 result and log
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
+          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           mapfile -t results < <(find _benchmarks -type f -name performance-result-v2.json -print | sort)
@@ -614,8 +691,31 @@ jobs:
               --kms-key-id "$KMS_KEY_ID" \
               --environment staging \
               --branch "$GITHUB_REF_NAME" \
-              --git-sha "$GITHUB_SHA" \
+              --git-sha "$SOURCE_SHA" \
               --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          done
+
+  cleanup-dispatched-benchmark-artifacts:
+    name: Clean up dispatched benchmark artifacts
+    needs: publish-dispatched-benchmark
+    if: always() && needs.publish-dispatched-benchmark.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete benchmark input and evidence from GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_ID: ${{ inputs.model_id }}
+          VARIANT_ID: ${{ inputs.variant_id }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$VARIANT_ID\" or .name == \"benchmark-$MODEL_ID-$VARIANT_ID\") | .id" |
+          while read -r artifact_id; do
+            [[ -n "$artifact_id" ]] || continue
+            gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
           done
 
   resolve-vulcan-config:
