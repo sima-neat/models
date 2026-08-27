@@ -392,6 +392,8 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
 
     assert publish["runs-on"] == "ubuntu-latest"
     assert publish["needs"] == ["benchmark-dispatched-model", "resolve-dispatched-benchmark-config"]
+    checkout = next(step for step in publish["steps"] if step.get("uses") == "actions/checkout@v6")
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     download = next(step for step in publish["steps"] if step.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == "benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     publication = next(

@@ -786,7 +786,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_sha }}
+          # Publication tooling must come from the trusted workflow revision.
+          # The older source SHA remains the benchmark's provenance below.
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
