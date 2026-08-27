@@ -120,6 +120,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     ]
     create = calls[0][2]
     assert create is not None
+    assert create["schema_version"] == 1
     assert create["run_type"] == "model_benchmark"
     assert create["parent_run_id"] == COMPILE_RUN_ID
     assert create["run_fingerprint"] == published["result_fingerprint"]

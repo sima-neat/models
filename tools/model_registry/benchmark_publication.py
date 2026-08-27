@@ -161,7 +161,9 @@ def publish_benchmark_result(
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
 
     create_body: JsonObject = {
-        "schema_version": result["schema_version"],
+        # This is the registry run-envelope schema version, not the benchmark
+        # result artifact's independently versioned schema.
+        "schema_version": 1,
         "run_type": "model_benchmark",
         "parent_run_id": parent_run_id,
         "commit_sha": commit_sha,
