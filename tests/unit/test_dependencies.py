@@ -17,7 +17,7 @@ def test_repository_model_compiler_dependency_is_pinned() -> None:
     }
 
 
-def test_repository_benchmark_runtime_is_fully_pinned() -> None:
+def test_repository_benchmark_runtime_uses_branch_latest() -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["platform-version"] == "2.1.3"
     assert "platform_version" not in manifest["devkit"]
@@ -29,18 +29,28 @@ def test_repository_benchmark_runtime_is_fully_pinned() -> None:
         "environment": "stg",
         "name": "models-utils/benchmarker",
         "branch": "feat/resnet50-post-compile-benchmark",
-        "tag": "244c03323cef",
+        "tag": "latest",
     }
 
 
-def test_benchmark_runtime_rejects_mutable_artifact_tag(tmp_path: Path) -> None:
+def test_benchmark_runtime_accepts_an_immutable_artifact_tag(tmp_path: Path) -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    manifest["benchmarker"]["vulcan"]["tag"] = "latest"
+    manifest["benchmarker"]["vulcan"]["tag"] = "fe4bc16544b1"
     path = tmp_path / "deps" / "manifest.json"
     path.parent.mkdir()
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="immutable"):
+    assert resolve_benchmark_runtime(tmp_path)["benchmarker"]["vulcan"]["tag"] == "fe4bc16544b1"
+
+
+def test_benchmark_runtime_rejects_an_unversioned_artifact_tag(tmp_path: Path) -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["benchmarker"]["vulcan"]["tag"] = "nightly"
+    path = tmp_path / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="latest or an immutable"):
         resolve_benchmark_runtime(tmp_path)
 
 

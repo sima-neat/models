@@ -41,7 +41,10 @@ benchmarker --version
 The package declares `core@v0.4.0` in its own package metadata. Its installer
 checks the DevKit platform, installs that Core package through `sima-cli` when
 pyneat 0.4.0 is not already satisfied, and installs the benchmarker wheel into
-the resulting `~/pyneat` environment.
+the resulting `~/pyneat` environment. CI resolves `latest` from the configured
+feature branch first and falls back to `develop:latest` when that branch does
+not have an installable benchmarker package. The installed benchmarker and
+pyneat versions are verified before execution.
 
 For a downloaded package payload, the equivalent manual installation is:
 

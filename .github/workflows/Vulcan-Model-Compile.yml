@@ -644,7 +644,18 @@ jobs:
           branch="$(jq -er '.benchmarker.vulcan.branch' <<< "$BENCHMARK_RUNTIME")"
           tag="$(jq -er '.benchmarker.vulcan.tag' <<< "$BENCHMARK_RUNTIME")"
           expected_version="$(jq -er '.benchmarker.version' <<< "$BENCHMARK_RUNTIME")"
-          sima-cli neat install --env "$environment" "$name@$branch:$tag"
+          primary_target="$name@$branch:$tag"
+          if sima-cli neat install --env "$environment" "$primary_target"; then
+            echo "Installed benchmarker from $primary_target."
+          elif [[ "$tag" == "latest" && "$branch" != "develop" ]]; then
+            fallback_target="$name@develop:latest"
+            echo "Failed to install $primary_target; falling back to $fallback_target." >&2
+            sima-cli neat install --env "$environment" "$fallback_target"
+            echo "Installed benchmarker from $fallback_target."
+          else
+            echo "Failed to install benchmarker from $primary_target; no fallback is configured." >&2
+            exit 1
+          fi
           "$HOME/pyneat/bin/python" -c 'import pyneat, os; assert pyneat.__version__.split("+", 1)[0] == os.environ["NEAT_VERSION"]'
           "$HOME/pyneat/bin/benchmarker" --version | grep -E " ${expected_version}(\\+|$)"
 
