@@ -340,6 +340,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "modalix",
         "vulcan-${{ inputs.environment }}",
     ]
+    assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
     checkout = next(step for step in steps if step.get("name") == "Check out the trusted revision")
     assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
     download = next(step for step in steps if step.get("name") == "Download the staged compiled model output")

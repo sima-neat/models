@@ -590,6 +590,7 @@ jobs:
       MODEL_ID: ${{ inputs.model_id }}
       VARIANT_ID: ${{ inputs.variant_id }}
       SOURCE_SHA: ${{ inputs.source_sha }}
+      SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
