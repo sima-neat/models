@@ -78,7 +78,7 @@ def test_package_installer_uses_declared_core_dependency() -> None:
         "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@v0.4.0"}},
     }
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
-    assert '"${SIMA_CLI_BIN}" neat install "${CORE_TARGET}"' in script
+    assert '"${SIMA_CLI_BIN}" neat install -t minimal "${CORE_TARGET}"' in script
     assert '"${PYNEAT_PYTHON}" -m pip install --no-deps --force-reinstall' in script
     subprocess.run(["bash", "-n", str(INSTALL_SCRIPT)], check=True)
     subprocess.run(["bash", "-n", str(BUILD_SCRIPT)], check=True)

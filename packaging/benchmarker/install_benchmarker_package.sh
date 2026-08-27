@@ -80,7 +80,7 @@ if [[ "${BENCHMARKER_SKIP_CORE_INSTALL:-0}" != "1" ]] && \
     exit 1
   }
   echo "Installing benchmarker dependency: ${CORE_TARGET}"
-  "${SIMA_CLI_BIN}" neat install "${CORE_TARGET}"
+  "${SIMA_CLI_BIN}" neat install -t minimal "${CORE_TARGET}"
   PYNEAT_PYTHON="$(detect_pyneat_python || true)"
 fi
 
