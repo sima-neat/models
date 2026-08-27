@@ -284,9 +284,9 @@ def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
 
     assert compile_job["permissions"]["actions"] == "write"
     assert "needs.select.outputs.publishable" not in dispatch["if"]
+    assert "needs.select.outputs.vulcan_environment == 'staging'" in dispatch["if"]
     assert "matrix.target == 'modalix'" in dispatch["if"]
-    assert "github.ref_name != 'main'" in dispatch["if"]
-    assert "github.ref_name != 'develop'" in dispatch["if"]
+    assert "github.ref_name" not in dispatch["if"]
     assert "gh workflow run" not in dispatch["run"]
     assert 'method="POST"' in dispatch["run"]
     assert "/actions/workflows/Vulcan-Model-Compile.yml/dispatches" in dispatch["run"]

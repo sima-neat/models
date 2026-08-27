@@ -452,8 +452,7 @@ jobs:
       - name: Start this model benchmark without waiting for the compile matrix
         if: >-
           needs.select.outputs.vulcan_environment == 'staging' &&
-          matrix.target == 'modalix' &&
-          github.ref_name != 'main' && github.ref_name != 'develop'
+          matrix.target == 'modalix'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
