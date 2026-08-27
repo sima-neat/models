@@ -380,4 +380,5 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     assert "find _benchmarks -type f -name performance-result-v2.json" in publication["run"]
     assert 'for result in "${results[@]}"' in publication["run"]
     assert "model-registry publish-benchmark" in publication["run"]
+    assert "--schema schemas/performance-result-v2.schema.json" in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]

@@ -738,6 +738,7 @@ jobs:
             model-registry publish-benchmark \
               --result "$result" \
               --log "$log" \
+              --schema schemas/performance-result-v2.schema.json \
               --api-url "$REGISTRY_API_URL" \
               --aws-region "$AWS_REGION" \
               --bucket "$ARTIFACT_BUCKET" \
