@@ -6,6 +6,11 @@ configuration:
   precision: int8
   tessellation_owner: mla
   tracker_profile: tiny_drone
+benchmark:
+  mode: bounded_runner
+  warmup_samples: 1
+  samples: 5
+  trials: 3
 metrics:
   - model_inference_latency_ms
   - preprocessing_latency_ms

@@ -33,8 +33,10 @@
       "additionalProperties": false,
       "required": ["samples"],
       "properties": {
+        "mode": {"enum": ["bounded_runner"]},
         "samples": {"type": "integer", "minimum": 1},
         "trials": {"type": "integer", "minimum": 1, "maximum": 100, "default": 3},
+        "warmup_samples": {"type": "integer", "minimum": 1},
         "include_plugin_latency": {"type": "boolean", "default": false},
         "original_width": {"type": "integer", "minimum": 1},
         "original_height": {"type": "integer", "minimum": 1}

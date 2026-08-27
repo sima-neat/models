@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
     [
         ("resnet_50", "modalix_bf16"),
         ("ssd_mobilenet_v1", "modalix_int8_tess_mla"),
+        ("yolo26_tiny_drone", "modalix_int8_tessellation_mla"),
     ],
 )
 def test_generates_direct_devkit_manifest_for_compiled_model(
@@ -59,3 +60,17 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["path"].endswith(f"/{model_id}/{variant_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
+    if model_id == "yolo26_tiny_drone":
+        assert manifest["benchmark"] == {
+            "mode": "bounded_runner",
+            "warmup_samples": 1,
+            "samples": 5,
+            "trials": 3,
+            "include_plugin_latency": False,
+        }
+    else:
+        assert manifest["benchmark"] == {
+            "samples": 1000,
+            "trials": 3,
+            "include_plugin_latency": False,
+        }

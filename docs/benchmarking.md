@@ -1,8 +1,8 @@
 # Synthetic model benchmarking
 
 The Models benchmark runner measures one compiled MPK on a Modalix DevKit using
-deterministic synthetic inputs and the installed public `pyneat.Model.benchmark()`
-API. It measures the logical model route represented by the MPK; it does not
+deterministic synthetic inputs and public pyneat APIs. It measures the logical
+model route represented by the MPK; it does not
 measure camera or network ingest, application decode/NMS, overlays, Insight, or
 model accuracy.
 
@@ -110,6 +110,23 @@ must use distinct benchmark manifests and result identities.
 
 When `trials` is omitted, the runner uses three trials.
 
+Models whose inference time makes `Model.benchmark()`'s fixed internal warmup
+budget impractical can opt into a bounded public `ModelRunner` measurement in
+their `tests/performance.yaml`:
+
+```yaml
+benchmark:
+  mode: bounded_runner
+  warmup_samples: 1
+  samples: 5
+  trials: 3
+```
+
+Bounded mode executes exactly the configured warmups, latency samples, and
+throughput samples per trial. It uses synthetic tensors matching the MPK input
+specifications and records measured latency percentiles, throughput, board
+power, and energy. Input geometry overrides are not supported in this mode.
+
 ## Run
 
 ```bash
@@ -121,10 +138,11 @@ benchmarker \
 The output follows
 [`performance-result-v2.schema.json`](../schemas/performance-result-v2.schema.json)
 and is written atomically. Average latency and throughput are available from
-Neat 0.4.0. Percentiles are marked `unsupported` until the installed public
-BenchmarkReport exposes them. Missing power telemetry is `unavailable`, never a
-numeric zero. Every metric includes its mean, minimum, maximum, population
-standard deviation, sample count, and an availability reason.
+Neat 0.4.0. Percentiles are marked `unsupported` for the default
+`Model.benchmark()` path; bounded runner measurements include them. Missing
+power telemetry is `unavailable`, never a numeric zero. Every metric includes
+its mean, minimum, maximum, population standard deviation, sample count, and an
+availability reason.
 
 Power is total board PMBus rail power during Neat's throughput phase. It is not
 isolated MLA power and no idle baseline is subtracted. When telemetry is

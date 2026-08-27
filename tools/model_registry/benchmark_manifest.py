@@ -5,10 +5,18 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+DEFAULT_BENCHMARK = {
+    "samples": 1000,
+    "trials": 3,
+    "include_plugin_latency": False,
+}
+BOUNDED_RUNNER_FIELDS = {"mode", "samples", "trials", "warmup_samples"}
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
@@ -19,6 +27,36 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValidationError(f"{description} must be a JSON object: {path}")
     return value
+
+
+def _benchmark_configuration(root: Path, model_id: str) -> dict[str, Any]:
+    path = root / "models" / model_id / "tests" / "performance.yaml"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValidationError(f"could not read benchmark configuration {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValidationError(f"benchmark configuration must be a mapping: {path}")
+    configured = document.get("benchmark")
+    if configured is None:
+        return dict(DEFAULT_BENCHMARK)
+    if not isinstance(configured, dict):
+        raise ValidationError(f"benchmark must be a mapping: {path}")
+    unknown = sorted(set(configured) - BOUNDED_RUNNER_FIELDS)
+    if unknown:
+        raise ValidationError(f"benchmark contains unknown field(s): {', '.join(unknown)}")
+    if configured.get("mode") != "bounded_runner":
+        raise ValidationError("benchmark.mode must be bounded_runner")
+    values = {name: configured.get(name) for name in ("samples", "trials", "warmup_samples")}
+    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in values.values()):
+        raise ValidationError("benchmark samples, trials, and warmup_samples must be positive integers")
+    if values["trials"] > 100:
+        raise ValidationError("benchmark.trials must be <= 100")
+    return {
+        "mode": "bounded_runner",
+        **values,
+        "include_plugin_latency": False,
+    }
 
 
 def make_benchmark_manifest(
@@ -75,7 +113,7 @@ def make_benchmark_manifest(
             "platform_version": runtime["devkit"]["platform_version"],
             "neat_version": runtime["neat_core"]["version"],
         },
-        "benchmark": {"samples": 1000, "trials": 3, "include_plugin_latency": False},
+        "benchmark": _benchmark_configuration(root, model_id),
         "provenance": {
             "compile_run_id": compile_run_id,
             "models_commit": git_sha.lower(),

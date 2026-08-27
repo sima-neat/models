@@ -148,6 +148,71 @@ def fake_pyneat() -> ModuleType:
     return module
 
 
+def add_bounded_runner(runtime: ModuleType) -> None:
+    class RunOptions:
+        startup_preflight = True
+        board_power_enabled = False
+
+        def enable_board_power(self) -> None:
+            self.board_power_enabled = True
+
+    class MeasureOptions:
+        pass
+
+    class MeasurementScope:
+        def __init__(self, throughput: bool) -> None:
+            self.throughput = throughput
+
+        def stop(self) -> Any:
+            payload = {
+                "measurement": {
+                    "end_to_end": {"avg_ms": 4.5, "p50_ms": 4.4, "p95_ms": 4.7},
+                    "throughput_inferences_per_s": 222.0,
+                },
+                "graph_metrics": {
+                    "power": {"total_avg_watts": 7.5, "energy_joules": 0.2},
+                },
+            }
+            return SimpleNamespace(to_json=lambda: json.dumps(payload))
+
+    class Runner:
+        def __init__(self, options: RunOptions) -> None:
+            self.options = options
+            self.run_calls = 0
+            self.push_calls = 0
+            self.pull_calls = 0
+            self.closed = False
+
+        def run(self, inputs: list[Any], timeout_ms: int) -> None:
+            self.run_calls += 1
+
+        def start_measurement(self, options: MeasureOptions) -> MeasurementScope:
+            return MeasurementScope("throughput" in options.title)
+
+        def push(self, inputs: list[Any]) -> bool:
+            self.push_calls += 1
+            return True
+
+        def pull(self, timeout_ms: int) -> object:
+            self.pull_calls += 1
+            return object()
+
+        def close(self) -> None:
+            self.closed = True
+
+    runtime.runners = []
+    model_type = runtime.Model
+
+    def build(self: Any, inputs: list[Any], *, run_options: RunOptions) -> Runner:
+        runner = Runner(run_options)
+        runtime.runners.append(runner)
+        return runner
+
+    model_type.build = build
+    runtime.RunOptions = RunOptions
+    runtime.MeasureOptions = MeasureOptions
+
+
 def validate(schema_name: str, value: dict[str, Any]) -> None:
     schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(value)
@@ -272,6 +337,43 @@ def test_measured_power_includes_cross_trial_statistics_and_energy_per_inference
     assert result["metrics"]["energy_joules"]["value"] == 3.75
     assert result["metrics"]["energy_per_inference_joules"]["value"] == pytest.approx(0.15)
     assert result["metrics"]["energy_per_inference_joules"]["standard_deviation"] == pytest.approx(0.05)
+    validate("performance-result-v2.schema.json", result)
+
+
+def test_bounded_runner_uses_explicit_warmup_and_sample_counts(tmp_path: Path) -> None:
+    mpk = tmp_path / "model.tar.gz"
+    manifest = make_manifest(mpk, make_mpk(mpk), trials=3)
+    manifest["benchmark"] = {
+        "mode": "bounded_runner",
+        "warmup_samples": 1,
+        "samples": 5,
+        "trials": 3,
+        "include_plugin_latency": False,
+    }
+    validate("performance-test-v1.schema.json", manifest)
+    runtime = fake_pyneat()
+    add_bounded_runner(runtime)
+
+    result = benchmark.run_benchmark(
+        manifest,
+        pyneat=runtime,
+        actual_platform="2.1.3",
+        power_preflight={"status": "available", "reason": None},
+    )
+
+    assert runtime.models[0].calls == 0
+    assert len(runtime.runners) == 3
+    assert all(runner.run_calls == 6 for runner in runtime.runners)
+    assert all(runner.push_calls == 5 and runner.pull_calls == 5 for runner in runtime.runners)
+    assert all(runner.options.startup_preflight is False for runner in runtime.runners)
+    assert all(runner.options.board_power_enabled for runner in runtime.runners)
+    assert all(runner.closed for runner in runtime.runners)
+    assert result["configuration"]["mode"] == "bounded_runner"
+    assert result["configuration"]["warmup_samples"] == 1
+    assert result["metrics"]["latency_p50_ms"]["value"] == 4.4
+    assert result["metrics"]["latency_p95_ms"]["value"] == 4.7
+    assert result["metrics"]["avg_power_watts"]["value"] == 7.5
+    assert result["power_measurement"]["source"] == "pyneat.ModelRunner.measure"
     validate("performance-result-v2.schema.json", result)
 
 

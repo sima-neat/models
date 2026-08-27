@@ -15,6 +15,7 @@ import re
 import sys
 import tarfile
 import tempfile
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -147,9 +148,20 @@ def load_manifest(path: Path) -> dict[str, Any]:
     benchmark = _require_mapping(manifest.get("benchmark"), "benchmark")
     _reject_unknown(
         benchmark,
-        {"samples", "trials", "include_plugin_latency", "original_width", "original_height"},
+        {
+            "mode",
+            "samples",
+            "trials",
+            "warmup_samples",
+            "include_plugin_latency",
+            "original_width",
+            "original_height",
+        },
         "benchmark",
     )
+    mode = benchmark.get("mode")
+    if mode is not None and mode != "bounded_runner":
+        raise ConfigurationError("benchmark.mode must be bounded_runner when provided")
     _require_positive_int(benchmark.get("samples"), "benchmark.samples")
     trials = benchmark.get("trials", DEFAULT_TRIALS)
     _require_positive_int(trials, "benchmark.trials")
@@ -164,6 +176,10 @@ def load_manifest(path: Path) -> dict[str, Any]:
     if width is not None:
         _require_positive_int(width, "benchmark.original_width")
         _require_positive_int(height, "benchmark.original_height")
+    if mode == "bounded_runner":
+        _require_positive_int(benchmark.get("warmup_samples"), "benchmark.warmup_samples")
+        if width is not None:
+            raise ConfigurationError("bounded_runner does not support original input geometry overrides")
 
     options = manifest.get("model_options", {})
     _require_mapping(options, "model_options")
@@ -598,6 +614,193 @@ def execute_trials(
     return completed
 
 
+def _synthetic_runner_inputs(model: Any) -> list[Any]:
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise CompatibilityError("bounded_runner requires numpy in the pyneat environment") from exc
+
+    dtype_map = {
+        "float32": np.float32,
+        "float16": np.float16,
+        "uint8": np.uint8,
+        "int8": np.int8,
+        "uint16": np.uint16,
+        "int16": np.int16,
+        "uint32": np.uint32,
+        "int32": np.int32,
+        "uint64": np.uint64,
+        "int64": np.int64,
+    }
+    inputs = []
+    try:
+        specs = model.input_specs()
+    except Exception as exc:
+        raise ModelError(f"could not inspect model input specifications: {exc}") from exc
+    if not specs:
+        raise ModelError("bounded_runner requires at least one model input")
+    for index, spec in enumerate(specs):
+        shape = list(getattr(spec, "shape", []))
+        if not shape or any(not isinstance(size, int) or isinstance(size, bool) or size <= 0 for size in shape):
+            raise ModelError(f"model input {index} has an unsupported shape: {shape}")
+        dtypes = list(getattr(spec, "dtypes", []))
+        if not dtypes:
+            raise ModelError(f"model input {index} does not declare a dtype")
+        dtype_name = getattr(dtypes[0], "name", str(dtypes[0])).split(".")[-1].lower()
+        dtype = dtype_map.get(dtype_name)
+        if dtype is None:
+            raise ModelError(f"model input {index} has an unsupported dtype: {dtype_name}")
+        inputs.append(np.zeros(tuple(shape), dtype=dtype))
+    return inputs
+
+
+def _bounded_measure_options(
+    pyneat: ModuleType,
+    *,
+    title: str,
+    logical_batch_size: int,
+    include_plugin_latency: bool,
+    include_power: bool,
+) -> Any:
+    options = pyneat.MeasureOptions()
+    options.duration_ms = 120000
+    options.warmup_ms = 0
+    options.timeout_ms = 120000
+    options.include_plugin_latency = include_plugin_latency
+    options.include_edge_latency = False
+    options.include_message_latency = False
+    options.include_power = include_power
+    options.logical_batch_size = logical_batch_size
+    options.title = title
+    options.input = "synthetic"
+    return options
+
+
+def _measurement_payload(report: Any, description: str) -> dict[str, Any]:
+    try:
+        value = json.loads(report.to_json())
+    except (AttributeError, TypeError, json.JSONDecodeError) as exc:
+        raise BenchmarkExecutionError(f"{description} did not return a JSON measurement report") from exc
+    if not isinstance(value, dict):
+        raise BenchmarkExecutionError(f"{description} measurement report must be an object")
+    return value
+
+
+def execute_bounded_trials(
+    pyneat: ModuleType,
+    model: Any,
+    benchmark: dict[str, Any],
+    *,
+    logical_batch_size: int,
+    include_power: bool,
+    results: list[dict[str, Any]] | None = None,
+    on_trial_complete: Callable[[int], None] | None = None,
+) -> list[dict[str, Any]]:
+    inputs = _synthetic_runner_inputs(model)
+    samples = benchmark["samples"]
+    warmup_samples = benchmark["warmup_samples"]
+    trials = benchmark.get("trials", DEFAULT_TRIALS)
+    include_plugin_latency = benchmark.get("include_plugin_latency", False)
+    completed = results if results is not None else []
+
+    for trial_index in range(1, trials + 1):
+        runner = None
+        try:
+            run_options = pyneat.RunOptions()
+            run_options.startup_preflight = False
+            if include_power:
+                run_options.enable_board_power()
+            runner = model.build(inputs, run_options=run_options)
+            for _ in range(warmup_samples):
+                runner.run(inputs, timeout_ms=120000)
+
+            latency_scope = runner.start_measurement(
+                _bounded_measure_options(
+                    pyneat,
+                    title=f"NEAT bounded latency trial {trial_index}",
+                    logical_batch_size=logical_batch_size,
+                    include_plugin_latency=include_plugin_latency,
+                    include_power=False,
+                )
+            )
+            for _ in range(samples):
+                runner.run(inputs, timeout_ms=120000)
+            latency = _measurement_payload(latency_scope.stop(), "latency")
+
+            outputs: list[Any] = []
+            pull_errors: list[Exception] = []
+
+            def pull_outputs() -> None:
+                try:
+                    for _ in range(samples):
+                        outputs.append(runner.pull(120000))
+                except Exception as exc:  # Keep the worker error for the controlling thread.
+                    pull_errors.append(exc)
+
+            throughput_scope = runner.start_measurement(
+                _bounded_measure_options(
+                    pyneat,
+                    title=f"NEAT bounded throughput trial {trial_index}",
+                    logical_batch_size=logical_batch_size,
+                    include_plugin_latency=include_plugin_latency,
+                    include_power=include_power,
+                )
+            )
+            puller = threading.Thread(target=pull_outputs, name=f"benchmark-pull-{trial_index}")
+            puller.daemon = True
+            puller.start()
+            for _ in range(samples):
+                if not runner.push(inputs):
+                    raise BenchmarkExecutionError("throughput measured push failed")
+            puller.join(timeout=125)
+            if puller.is_alive():
+                raise BenchmarkExecutionError("throughput output collection timed out")
+            if pull_errors:
+                raise pull_errors[0]
+            if len(outputs) != samples:
+                raise BenchmarkExecutionError(
+                    f"throughput measured output count mismatch: expected {samples}, found {len(outputs)}"
+                )
+            throughput = _measurement_payload(throughput_scope.stop(), "throughput")
+        except BenchmarkToolError:
+            raise
+        except Exception as exc:
+            raise BenchmarkExecutionError(f"trial {trial_index} failed: {exc}") from exc
+        finally:
+            if runner is not None:
+                runner.close()
+
+        latency_stats = latency.get("measurement", {}).get("end_to_end", {})
+        throughput_measurement = throughput.get("measurement", {})
+        power = throughput.get("graph_metrics", {}).get("power", {})
+        latency_avg = _finite_positive(latency_stats.get("avg_ms"))
+        throughput_fps = _finite_positive(throughput_measurement.get("throughput_inferences_per_s"))
+        if latency_avg is None or throughput_fps is None:
+            raise BenchmarkExecutionError(
+                f"trial {trial_index} did not produce positive latency and throughput"
+            )
+        completed.append(
+            {
+                "trial": trial_index,
+                "latency_avg_ms": latency_avg,
+                "latency_p50_ms": _finite_positive(latency_stats.get("p50_ms")),
+                "latency_p95_ms": _finite_positive(latency_stats.get("p95_ms")),
+                "throughput_fps": throughput_fps,
+                "avg_power_watts": _finite_positive(power.get("total_avg_watts")),
+                "energy_joules": _finite_positive(power.get("energy_joules")),
+                "energy_per_inference_joules": None,
+            }
+        )
+        print(
+            f"trial={trial_index}/{trials} samples={samples} warmup={warmup_samples} "
+            f"latency_ms={latency_avg:.3f} throughput_fps={throughput_fps:.6f}",
+            flush=True,
+        )
+        if on_trial_complete is not None:
+            on_trial_complete(trial_index)
+    return completed
+
+
 def metric(
     trials: list[dict[str, Any]],
     field: str,
@@ -634,7 +837,7 @@ def metric(
 
 def _configuration(manifest: dict[str, Any]) -> dict[str, Any]:
     benchmark = manifest["benchmark"]
-    return {
+    configuration = {
         "samples": benchmark["samples"],
         "trials": benchmark.get("trials", DEFAULT_TRIALS),
         "include_plugin_latency": benchmark.get("include_plugin_latency", False),
@@ -642,6 +845,10 @@ def _configuration(manifest: dict[str, Any]) -> dict[str, Any]:
         "original_height": benchmark.get("original_height"),
         "model_options": manifest.get("model_options", {}),
     }
+    if benchmark.get("mode") == "bounded_runner":
+        configuration["mode"] = "bounded_runner"
+        configuration["warmup_samples"] = benchmark["warmup_samples"]
+    return configuration
 
 
 def benchmark_identity_document(result: dict[str, Any]) -> dict[str, Any] | None:
@@ -695,6 +902,8 @@ def _partial_configuration(manifest: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(samples, int) or isinstance(samples, bool) or samples <= 0:
         return None
     trials = benchmark.get("trials", DEFAULT_TRIALS)
+    mode = benchmark.get("mode")
+    warmup_samples = benchmark.get("warmup_samples")
     include_plugin_latency = benchmark.get("include_plugin_latency", False)
     width, height = benchmark.get("original_width"), benchmark.get("original_height")
     model_options = manifest.get("model_options", {})
@@ -703,13 +912,22 @@ def _partial_configuration(manifest: dict[str, Any]) -> dict[str, Any] | None:
         or isinstance(trials, bool)
         or not 1 <= trials <= 100
         or not isinstance(include_plugin_latency, bool)
+        or mode not in {None, "bounded_runner"}
+        or (
+            mode == "bounded_runner"
+            and (
+                not isinstance(warmup_samples, int)
+                or isinstance(warmup_samples, bool)
+                or warmup_samples <= 0
+            )
+        )
         or (width is None) != (height is None)
         or (width is not None and (not isinstance(width, int) or isinstance(width, bool) or width <= 0))
         or (height is not None and (not isinstance(height, int) or isinstance(height, bool) or height <= 0))
         or not isinstance(model_options, dict)
     ):
         return None
-    return {
+    configuration = {
         "samples": samples,
         "trials": trials,
         "include_plugin_latency": include_plugin_latency,
@@ -717,6 +935,10 @@ def _partial_configuration(manifest: dict[str, Any]) -> dict[str, Any] | None:
         "original_height": height,
         "model_options": model_options,
     }
+    if mode == "bounded_runner":
+        configuration["mode"] = mode
+        configuration["warmup_samples"] = warmup_samples
+    return configuration
 
 
 def _result_base(
@@ -771,7 +993,11 @@ def _result_base(
         "power_measurement": {
             "scope": "board_pmbus_rails",
             "phase": "throughput",
-            "source": "pyneat.Model.benchmark",
+            "source": (
+                "pyneat.ModelRunner.measure"
+                if _partial_mapping(manifest.get("benchmark")).get("mode") == "bounded_runner"
+                else "pyneat.Model.benchmark"
+            ),
             "idle_baseline_subtracted": False,
             "telemetry_preflight": telemetry,
         },
@@ -863,17 +1089,30 @@ def run_benchmark(
     logical_inferences = manifest["benchmark"]["samples"] * batch_size
     power_reason = preflight.get("reason") or "runtime_did_not_return_metric"
     try:
-        execute_trials(
-            runtime,
-            model,
-            manifest["benchmark"],
-            results=trials,
-            on_trial_complete=lambda trial: record_temperature_sample(
+        def trial_callback(trial: int) -> None:
+            record_temperature_sample(
                 result["environment"],
                 phase="trial_complete",
                 trial=trial,
-            ),
-        )
+            )
+        if manifest["benchmark"].get("mode") == "bounded_runner":
+            execute_bounded_trials(
+                runtime,
+                model,
+                manifest["benchmark"],
+                logical_batch_size=batch_size,
+                include_power=preflight.get("status") == "available",
+                results=trials,
+                on_trial_complete=trial_callback,
+            )
+        else:
+            execute_trials(
+                runtime,
+                model,
+                manifest["benchmark"],
+                results=trials,
+                on_trial_complete=trial_callback,
+            )
     finally:
         for trial in trials:
             if trial["energy_joules"] is not None:
