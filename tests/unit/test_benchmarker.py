@@ -202,7 +202,43 @@ def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Pa
     assert result["model"]["resolved"]["input_specs"][0]["dtypes"] == ["Float32"]
     assert runtime.models[0].options.decode_type is runtime.BoxDecodeType.YoloV26
     assert runtime.models[0].options.top_k == 100
+    assert [sample["phase"] for sample in result["environment"]["temperature_samples"]] == [
+        "start",
+        "trial_complete",
+        "trial_complete",
+        "end",
+    ]
+    assert [sample["trial"] for sample in result["environment"]["temperature_samples"]] == [
+        None,
+        1,
+        2,
+        None,
+    ]
     validate("performance-result-v2.schema.json", result)
+
+
+def test_temperature_snapshot_disambiguates_duplicate_sensor_labels(tmp_path: Path) -> None:
+    for index, source in enumerate(("sima_thermal", "soc_thermal")):
+        sensor = tmp_path / f"hwmon{index}"
+        sensor.mkdir()
+        (sensor / "name").write_text(source, encoding="utf-8")
+        (sensor / "temp1_input").write_text(str(58000 + index * 1000), encoding="utf-8")
+        (sensor / "temp1_label").write_text("temp1", encoding="utf-8")
+
+    assert benchmark._temperature_snapshot(tmp_path) == [
+        {
+            "sensor_id": "hwmon0/temp1",
+            "sensor": "temp1",
+            "source": "sima_thermal",
+            "celsius": 58.0,
+        },
+        {
+            "sensor_id": "hwmon1/temp1",
+            "sensor": "temp1",
+            "source": "soc_thermal",
+            "celsius": 59.0,
+        },
+    ]
 
 
 def test_measured_power_includes_cross_trial_statistics_and_energy_per_inference(tmp_path: Path) -> None:

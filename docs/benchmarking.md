@@ -133,8 +133,12 @@ compiled batch size.
 
 Each result records a deterministic identity, resolved model route and output
 topology, board/platform/kernel/Core information, CPU governor, and start/end
-load and temperature observations. Invalid manifests and runtime failures also
-produce schema-valid error reports at `--output`.
+load and temperature observations. Schema-v2 results also record a timestamped
+temperature sample at benchmark start, after every completed trial, and at
+benchmark end. Temperature readings include the hwmon sensor ID and source so
+duplicate kernel labels such as `temp1` remain distinguishable. Invalid
+manifests and runtime failures also produce schema-valid error reports at
+`--output`.
 
 ## Publish a result to Vulcan
 

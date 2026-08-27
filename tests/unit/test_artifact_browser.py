@@ -264,6 +264,47 @@ def test_model_card_links_to_the_exact_compiled_github_source() -> None:
     assert ".model-source-link:focus-visible" in styles
 
 
+def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'test.name === "mpk-validation" && test.status === "passed"' in script
+    assert 'class="mpk-validation-mark" tabindex="0" role="img"' in script
+    assert "MPK package integrity verified: archive structure, checksum, and build provenance match." in script
+    assert '<h3>Validation</h3>' not in script
+    assert ".detail-title-actions" in styles
+    assert ".model-source-link, .huggingface-source-link, .benchmark-shortcut, .artifact-download-shortcut, .mpk-validation-mark { width: 38px; height: 38px" in styles
+    assert ".detail-title-actions > [data-tooltip]:hover::after" in styles
+
+
+def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert "const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup)" in script
+    assert 'data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results"' in script
+    assert 'id="benchmark-section" class="benchmark-section" tabindex="-1"' in script
+    assert 'querySelector("#benchmark-section")' in script
+    assert 'benchmark.scrollIntoView({' in script
+    assert 'matchMedia("(prefers-reduced-motion: reduce)").matches' in script
+    assert ".benchmark-shortcut:focus-visible" in styles
+
+
+def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'class="artifact-download-shortcut"' in script
+    assert 'aria-label="Download model artifact"' in script
+    assert 'data-tooltip="Download model artifact"' in script
+    assert '<dl class="artifact-metadata">' in script
+    assert '<dt>File size</dt>' in script
+    assert '<dt>SHA-256</dt>' in script
+    assert 'class="download-button"' not in script
+    assert 'class="artifact-main"' not in script
+    assert ".artifact-download-shortcut:focus-visible" in styles
+
+
 def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
@@ -272,12 +313,18 @@ def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
     assert "function trustedHuggingFaceUrl" in script
     assert 'url.hostname !== "huggingface.co"' in script
     assert "function huggingFaceSourceLink" in script
+    assert 'sourceReference.startsWith("hf://")' in script
     assert "input.metadata?.model_card" in script
     assert "hf:\\/\\/(models|datasets|spaces)" in script
-    assert 'class="source-model-card"' in script
+    assert 'class="huggingface-source-link"' in script
     assert 'target="_blank" rel="noreferrer"' in script
-    assert "Open the original model card on Hugging Face" in script
-    assert ".source-model-card:focus-visible" in styles
+    assert "Open source ONNX model card on Hugging Face" in script
+    assert 'data-tooltip="Open source ONNX model card on Hugging Face"' in script
+    assert "Official no-border logo from https://huggingface.co/brand" in script
+    assert 'viewBox="0 0 95 88"' in script
+    assert 'fill="#FFD21E"' in script
+    assert ".huggingface-source-link:focus-visible" in styles
+    assert ".huggingface-source-link svg { width: 20px; height: 19px; }" in styles
     assert "https://huggingface.co/onnx-community/resnet-50-ONNX" in preview
 
 
@@ -289,10 +336,18 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
     assert "new Map([[1, adaptV1], [2, adaptV2]])" in adapters
     assert "/benchmarks/latest" in script
-    assert 'class="trial-chart"' in script
+    assert 'class="trial-chart benchmark-chart"' in script
+    assert "data-trial-metric" in script
+    assert "availableTrialMetrics" in script
+    assert "data-temperature-sensor" not in script
+    assert 'item.sensor.toLowerCase() === "temp1"' in script
+    assert 'class="temperature-line"' in script
     assert 'role="img"' in script
     assert 'class="sr-only"' in script
     assert ".chart-points circle" in styles
+    assert ".temperature-line" in styles
+    assert "temperature_samples" in adapters
+    assert "sensor_id" in adapters
 
 
 def test_detail_layout_can_focus_the_selected_model() -> None:

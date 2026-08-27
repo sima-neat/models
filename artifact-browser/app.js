@@ -15,6 +15,17 @@ const initialQuery = new URLSearchParams(location.search);
 const initialSearch = initialQuery.get("q") || "";
 const initialIncludeHistory = initialQuery.get("history") === "1";
 const DETAIL_LAYOUT_KEY = "sima-neat-model-detail-layout";
+const TRIAL_METRICS = {
+  latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
+  latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
+  latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
+  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
+  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  energy_joules: { label: "Trial energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
+  energy_per_inference_joules: {
+    label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower",
+  },
+};
 
 const state = {
   apiBase: configuredApiBase,
@@ -29,6 +40,7 @@ const state = {
   detailCache: new Map(),
   taxonomy: null,
   detailLayout: readDetailLayout(),
+  trialMetric: "latency_avg_ms",
   categorySelection: Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, initialQuery.get(queryName) || ""]),
   ),
@@ -51,6 +63,9 @@ const icons = {
   copy: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`,
   external: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5m0-5-8 8M19 14v5H5V5h5"/></svg>`,
   github: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.75a9.25 9.25 0 0 0-2.92 18.03c.46.08.63-.2.63-.45v-1.8c-2.57.56-3.11-1.09-3.11-1.09-.42-1.07-1.03-1.35-1.03-1.35-.84-.58.06-.57.06-.57.93.07 1.42.96 1.42.96.83 1.42 2.17 1.01 2.7.77.08-.6.32-1.01.59-1.24-2.05-.23-4.21-1.03-4.21-4.57 0-1.01.36-1.83.95-2.48-.1-.23-.41-1.17.09-2.44 0 0 .78-.25 2.54.95A8.8 8.8 0 0 1 12 7.1a8.7 8.7 0 0 1 2.31.31c1.76-1.2 2.53-.95 2.53-.95.51 1.27.19 2.21.1 2.44.59.65.95 1.47.95 2.48 0 3.55-2.17 4.33-4.23 4.56.33.29.63.85.63 1.72v2.67c0 .25.16.54.63.45A9.25 9.25 0 0 0 12 2.75Z"/></svg>`,
+  // Official no-border logo from https://huggingface.co/brand.
+  huggingFace: `<svg viewBox="0 0 95 88" aria-hidden="true"><path fill="#FFD21E" d="M47.21 76.5a34.75 34.75 0 1 0 0-69.5 34.75 34.75 0 0 0 0 69.5Z"/><path fill="#FF9D0B" d="M81.96 41.75a34.75 34.75 0 1 0-69.5 0 34.75 34.75 0 0 0 69.5 0Zm-73.5 0a38.75 38.75 0 1 1 77.5 0 38.75 38.75 0 0 1-77.5 0Z"/><path fill="#3A3B45" d="M58.5 32.3c1.28.44 1.78 3.06 3.07 2.38a5 5 0 1 0-6.76-2.07c.61 1.15 2.55-.72 3.7-.32ZM34.95 32.3c-1.28.44-1.79 3.06-3.07 2.38a5 5 0 1 1 6.76-2.07c-.61 1.15-2.56-.72-3.7-.32Z"/><path fill="#FF323D" d="M46.96 56.29c9.83 0 13-8.76 13-13.26 0-2.34-1.57-1.6-4.09-.36-2.33 1.15-5.46 2.74-8.9 2.74-7.19 0-13-6.88-13-2.38s3.16 13.26 13 13.26Z"/><path fill="#3A3B45" fill-rule="evenodd" d="M39.43 54a8.7 8.7 0 0 1 5.3-4.49c.4-.12.81.57 1.24 1.28.4.68.82 1.37 1.24 1.37.45 0 .9-.68 1.33-1.35.45-.7.89-1.38 1.32-1.25a8.61 8.61 0 0 1 5 4.17c3.73-2.94 5.1-7.74 5.1-10.7 0-2.34-1.57-1.6-4.09-.36l-.14.07c-2.31 1.15-5.39 2.67-8.77 2.67s-6.45-1.52-8.77-2.67c-2.6-1.29-4.23-2.1-4.23.29 0 3.05 1.46 8.06 5.47 10.97Z" clip-rule="evenodd"/><path fill="#FF9D0B" d="M70.71 37a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM24.21 37a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM17.52 48c-1.62 0-3.06.66-4.07 1.87a5.97 5.97 0 0 0-1.33 3.76 7.1 7.1 0 0 0-1.94-.3c-1.55 0-2.95.59-3.94 1.66a5.8 5.8 0 0 0-.8 7 5.3 5.3 0 0 0-1.79 2.82c-.24.9-.48 2.8.8 4.74a5.22 5.22 0 0 0-.37 5.02c1.02 2.32 3.57 4.14 8.52 6.1 3.07 1.22 5.89 2 5.91 2.01a44.33 44.33 0 0 0 10.93 1.6c5.86 0 10.05-1.8 12.46-5.34 3.88-5.69 3.33-10.9-1.7-15.92-2.77-2.78-4.62-6.87-5-7.77-.78-2.66-2.84-5.62-6.25-5.62a5.7 5.7 0 0 0-4.6 2.46c-1-1.26-1.98-2.25-2.86-2.82A7.4 7.4 0 0 0 17.52 48Zm0 4c.51 0 1.14.22 1.82.65 2.14 1.36 6.25 8.43 7.76 11.18.5.92 1.37 1.31 2.14 1.31 1.55 0 2.75-1.53.15-3.48-3.92-2.93-2.55-7.72-.68-8.01.08-.02.17-.02.24-.02 1.7 0 2.45 2.93 2.45 2.93s2.2 5.52 5.98 9.3c3.77 3.77 3.97 6.8 1.22 10.83-1.88 2.75-5.47 3.58-9.16 3.58-3.81 0-7.73-.9-9.92-1.46-.11-.03-13.45-3.8-11.76-7 .28-.54.75-.76 1.34-.76 2.38 0 6.7 3.54 8.57 3.54.41 0 .7-.17.83-.6.79-2.85-12.06-4.05-10.98-8.17.2-.73.71-1.02 1.44-1.02 3.14 0 10.2 5.53 11.68 5.53.11 0 .2-.03.24-.1.74-1.2.33-2.04-4.9-5.2-5.21-3.16-8.88-5.06-6.8-7.33.24-.26.58-.38 1-.38 3.17 0 10.66 6.82 10.66 6.82s2.02 2.1 3.25 2.1c.28 0 .52-.1.68-.38.86-1.46-8.06-8.22-8.56-11.01-.34-1.9.24-2.85 1.31-2.85Z"/><path fill="#FFD21E" d="M38.6 76.69c2.75-4.04 2.55-7.07-1.22-10.84-3.78-3.77-5.98-9.3-5.98-9.3s-.82-3.2-2.69-2.9c-1.87.3-3.24 5.08.68 8.01 3.91 2.93-.78 4.92-2.29 2.17-1.5-2.75-5.62-9.82-7.76-11.18-2.13-1.35-3.63-.6-3.13 2.2.5 2.79 9.43 9.55 8.56 11-.87 1.47-3.93-1.71-3.93-1.71s-9.57-8.71-11.66-6.44c-2.08 2.27 1.59 4.17 6.8 7.33 5.23 3.16 5.64 4 4.9 5.2-.75 1.2-12.28-8.53-13.36-4.4-1.08 4.11 11.77 5.3 10.98 8.15-.8 2.85-9.06-5.38-10.74-2.18-1.7 3.21 11.65 6.98 11.76 7.01 4.3 1.12 15.25 3.49 19.08-2.12Z"/><path fill="#FF9D0B" d="M77.4 48c1.62 0 3.07.66 4.07 1.87a5.97 5.97 0 0 1 1.33 3.76 7.1 7.1 0 0 1 1.95-.3c1.55 0 2.95.59 3.94 1.66a5.8 5.8 0 0 1 .8 7 5.3 5.3 0 0 1 1.78 2.82c.24.9.48 2.8-.8 4.74a5.22 5.22 0 0 1 .37 5.02c-1.02 2.32-3.57 4.14-8.51 6.1-3.08 1.22-5.9 2-5.92 2.01a44.33 44.33 0 0 1-10.93 1.6c-5.86 0-10.05-1.8-12.46-5.34-3.88-5.69-3.33-10.9 1.7-15.92 2.78-2.78 4.63-6.87 5.01-7.77.78-2.66 2.83-5.62 6.24-5.62a5.7 5.7 0 0 1 4.6 2.46c1-1.26 1.98-2.25 2.87-2.82A7.4 7.4 0 0 1 77.4 48Zm0 4c-.51 0-1.13.22-1.82.65-2.13 1.36-6.25 8.43-7.76 11.18a2.43 2.43 0 0 1-2.14 1.31c-1.54 0-2.75-1.53-.14-3.48 3.91-2.93 2.54-7.72.67-8.01a1.54 1.54 0 0 0-.24-.02c-1.7 0-2.45 2.93-2.45 2.93s-2.2 5.52-5.97 9.3c-3.78 3.77-3.98 6.8-1.22 10.83 1.87 2.75 5.47 3.58 9.15 3.58 3.82 0 7.73-.9 9.93-1.46.1-.03 13.45-3.8 11.76-7-.29-.54-.75-.76-1.34-.76-2.38 0-6.71 3.54-8.57 3.54-.42 0-.71-.17-.83-.6-.8-2.85 12.05-4.05 10.97-8.17-.19-.73-.7-1.02-1.44-1.02-3.14 0-10.2 5.53-11.68 5.53-.1 0-.19-.03-.23-.1-.74-1.2-.34-2.04 4.88-5.2 5.23-3.16 8.9-5.06 6.8-7.33-.23-.26-.57-.38-.98-.38-3.18 0-10.67 6.82-10.67 6.82s-2.02 2.1-3.24 2.1a.74.74 0 0 1-.68-.38c-.87-1.46 8.05-8.22 8.55-11.01.34-1.9-.24-2.85-1.31-2.85Z"/><path fill="#FFD21E" d="M56.33 76.69c-2.75-4.04-2.56-7.07 1.22-10.84 3.77-3.77 5.97-9.3 5.97-9.3s.82-3.2 2.7-2.9c1.86.3 3.23 5.08-.68 8.01-3.92 2.93.78 4.92 2.28 2.17 1.51-2.75 5.63-9.82 7.76-11.18 2.13-1.35 3.64-.6 3.13 2.2-.5 2.79-9.42 9.55-8.55 11 .86 1.47 3.92-1.71 3.92-1.71s9.58-8.71 11.66-6.44c2.08 2.27-1.58 4.17-6.8 7.33-5.23 3.16-5.63 4-4.9 5.2.75 1.2 12.28-8.53 13.36-4.4 1.08 4.11-11.76 5.3-10.97 8.15.8 2.85 9.05-5.38 10.74-2.18 1.69 3.21-11.65 6.98-11.76 7.01-4.31 1.12-15.26 3.49-19.08-2.12Z"/></svg>`,
+  benchmark: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V13M12 19V5M19 19V9"/></svg>`,
   branch: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.25"/><circle cx="18" cy="7" r="2.25"/><circle cx="6" cy="19" r="2.25"/><path d="M6 7.25v9.5M8.25 17c5.25-.5 3.5-8.5 7.5-9.6"/></svg>`,
   precision: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14M4.5 7.5 7 5l2.5 2.5M14 5h4.5v6H14zM14 14h4.5v5H14z"/></svg>`,
   compiler: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m12 0h4M2 15h4m12 0h4M10 10h4v4h-4z"/></svg>`,
@@ -85,6 +100,13 @@ function githubModelUrl(run, modelId) {
   return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
 }
 
+function mpkValidationMark(tests = []) {
+  const passed = tests.some((test) => test.name === "mpk-validation" && test.status === "passed");
+  if (!passed) return "";
+  const message = "MPK package integrity verified: archive structure, checksum, and build provenance match.";
+  return `<span class="mpk-validation-mark" tabindex="0" role="img" aria-label="${message}" data-tooltip="${message}">✓</span>`;
+}
+
 function trustedHuggingFaceUrl(value = "") {
   try {
     const url = new URL(String(value));
@@ -96,6 +118,8 @@ function trustedHuggingFaceUrl(value = "") {
 }
 
 function huggingFaceSourceLink(input = {}) {
+  const sourceReference = String(input.source_reference || "");
+  if (!sourceReference.startsWith("hf://") && !trustedHuggingFaceUrl(sourceReference)) return null;
   const declaredModelCard = trustedHuggingFaceUrl(input.metadata?.model_card);
   if (declaredModelCard) {
     return { href: declaredModelCard, label: declaredModelCard.replace(/^https:\/\//, "").replace(/\/$/, "") };
@@ -112,11 +136,9 @@ function huggingFaceSourceLink(input = {}) {
 }
 
 function sourceInputPanel(input) {
-  const huggingFace = huggingFaceSourceLink(input);
   return `<section><div class="detail-section-title"><h3>Source input</h3></div><div class="source-block">
     <strong>${escapeHtml(input.name)}</strong>
     <p>${escapeHtml(input.source_reference || input.input_type)}</p>
-    ${huggingFace ? `<a class="source-model-card" href="${escapeHtml(huggingFace.href)}" target="_blank" rel="noreferrer" aria-label="Open the original model card on Hugging Face">${escapeHtml(huggingFace.label)} ${icons.external}</a>` : ""}
     <div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div>
   </div></section>`;
 }
@@ -489,9 +511,21 @@ function metricCard(label, metric, digits = 2) {
   return `<div class="benchmark-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
+function availableTrialMetrics(trials) {
+  return Object.keys(TRIAL_METRICS).filter((field) => (
+    trials.filter((trial) => Number.isFinite(trial.metrics[field])).length >= 2
+  ));
+}
+
 function trialChart(trials) {
-  if (trials.length < 2) return "";
-  const values = trials.map((trial) => trial.latencyMs);
+  const available = availableTrialMetrics(trials);
+  if (!available.length) return "";
+  const field = available.includes(state.trialMetric) ? state.trialMetric : available[0];
+  const definition = TRIAL_METRICS[field];
+  const measuredTrials = trials
+    .filter((trial) => Number.isFinite(trial.metrics[field]))
+    .map((trial) => ({ ...trial, value: trial.metrics[field] * definition.scale }));
+  const values = measuredTrials.map((trial) => trial.value);
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
   const spread = maximum - minimum || Math.max(maximum * 0.05, 0.1);
@@ -509,24 +543,73 @@ function trialChart(trials) {
     const label = low + fraction * (high - low);
     return `<line x1="${position}" y1="${top - 8}" x2="${position}" y2="${height - 25}"/><text x="${position}" y="${height - 7}">${label.toFixed(2)}</text>`;
   }).join("");
-  const points = trials.map((trial, index) => {
+  const points = measuredTrials.map((trial, index) => {
     const y = top + index * row;
-    return `<text class="trial-label" x="0" y="${y + 4}">Trial ${trial.number}</text><circle cx="${x(trial.latencyMs)}" cy="${y}" r="6"/><text class="trial-value" x="${Math.min(x(trial.latencyMs) + 11, width - 55)}" y="${y + 4}">${trial.latencyMs.toFixed(2)}</text>`;
+    return `<text class="trial-label" x="0" y="${y + 4}">Trial ${trial.number}</text><circle cx="${x(trial.value)}" cy="${y}" r="6"/><text class="trial-value" x="${Math.min(x(trial.value) + 11, width - 55)}" y="${y + 4}">${trial.value.toFixed(definition.digits)}</text>`;
   }).join("");
-  return `<figure class="trial-chart"><figcaption>Latency consistency <span>milliseconds · lower is better</span></figcaption><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Average latency in milliseconds for ${trials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>Latency by benchmark trial</caption><thead><tr><th>Trial</th><th>Average latency in milliseconds</th></tr></thead><tbody>${trials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.latencyMs}</td></tr>`).join("")}</tbody></table></figure>`;
+  const options = available.map((metric) => (
+    `<option value="${metric}"${metric === field ? " selected" : ""}>${escapeHtml(TRIAL_METRICS[metric].label)}</option>`
+  )).join("");
+  return `<figure class="trial-chart benchmark-chart"><figcaption><span class="chart-title">Trial comparison</span><label class="chart-control"><span>Metric</span><select data-trial-metric>${options}</select></label></figcaption><p class="chart-note">${escapeHtml(definition.unit)} · ${definition.direction} is better</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)} for ${measuredTrials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>${escapeHtml(definition.label)} by benchmark trial</caption><thead><tr><th>Trial</th><th>${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)}</th></tr></thead><tbody>${measuredTrials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.value}</td></tr>`).join("")}</tbody></table></figure>`;
+}
+
+function temperatureChart(series) {
+  if (!series.length) return "";
+  const hottest = (candidates) => [...candidates].sort((left, right) => (
+    Math.max(...right.samples.map((sample) => sample.celsius))
+    - Math.max(...left.samples.map((sample) => sample.celsius))
+  ))[0];
+  const temp1 = series.filter((item) => item.sensor.toLowerCase() === "temp1");
+  const selected = hottest(temp1.length ? temp1 : series);
+  const samples = selected.samples;
+  const temperatures = samples.map((sample) => sample.celsius);
+  const startTime = Math.min(...samples.map((sample) => sample.timestamp));
+  const endTime = Math.max(...samples.map((sample) => sample.timestamp));
+  const elapsed = Math.max(endTime - startTime, 1000);
+  const minimum = Math.min(...temperatures);
+  const maximum = Math.max(...temperatures);
+  const spread = maximum - minimum || 1;
+  const low = minimum - Math.max(spread * .25, .5);
+  const high = maximum + Math.max(spread * .25, .5);
+  const width = 640;
+  const height = 190;
+  const left = 48;
+  const right = 24;
+  const top = 18;
+  const bottom = 35;
+  const x = (timestamp) => left + ((timestamp - startTime) / elapsed) * (width - left - right);
+  const y = (celsius) => top + ((high - celsius) / (high - low)) * (height - top - bottom);
+  const grid = [0, .5, 1].map((fraction) => {
+    const celsius = low + (1 - fraction) * (high - low);
+    const position = top + fraction * (height - top - bottom);
+    return `<line x1="${left}" y1="${position}" x2="${width - right}" y2="${position}"/><text class="temperature-axis-label" x="${left - 8}" y="${position + 4}">${celsius.toFixed(1)}°</text>`;
+  }).join("");
+  const path = samples.map((sample, index) => `${index ? "L" : "M"}${x(sample.timestamp)} ${y(sample.celsius)}`).join(" ");
+  const points = samples.map((sample) => {
+    const label = sample.trial ? `Trial ${sample.trial}` : sample.phase;
+    return `<circle cx="${x(sample.timestamp)}" cy="${y(sample.celsius)}" r="5"><title>${escapeHtml(label)}: ${sample.celsius.toFixed(2)} °C</title></circle>`;
+  }).join("");
+  const ticks = [0, .5, 1].map((fraction) => {
+    const seconds = (elapsed * fraction) / 1000;
+    const position = left + fraction * (width - left - right);
+    return `<text x="${position}" y="${height - 8}">${seconds.toFixed(0)}s</text>`;
+  }).join("");
+  const legacy = selected.legacy && samples.length === 2;
+  return `<figure class="temperature-chart benchmark-chart"><figcaption><span class="chart-title">Temperature ${legacy ? "change" : "over benchmark"}</span><span class="chart-series-label">${escapeHtml(selected.label)}</span></figcaption><p class="chart-note">${legacy ? "Start/end snapshots only" : `${samples.length} samples`} · ${minimum.toFixed(1)}–${maximum.toFixed(1)} °C</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Temperature in degrees Celsius for ${escapeHtml(selected.label)}"><g class="chart-grid">${grid}${ticks}</g><path class="temperature-line" d="${path}"/><g class="temperature-points">${points}</g></svg><table class="sr-only"><caption>Temperature samples for ${escapeHtml(selected.label)}</caption><thead><tr><th>Elapsed time</th><th>Temperature in degrees Celsius</th></tr></thead><tbody>${samples.map((sample) => `<tr><td>${((sample.timestamp - startTime) / 1000).toFixed(1)} seconds</td><td>${sample.celsius}</td></tr>`).join("")}</tbody></table></figure>`;
 }
 
 function benchmarkPanel(payload) {
   if (!payload) return `<section><div class="detail-section-title"><h3>Benchmark</h3></div><p class="muted-message">No completed benchmark is linked to this compilation yet.</p></section>`;
   const adapted = adaptBenchmarkResult(payload.result);
   if (adapted.kind === "unsupported") {
-    return `<section><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${escapeHtml(adapted.schemaVersion)}</span></div><p class="muted-message">This benchmark schema is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}</section>`;
+    return `<section id="benchmark-section" tabindex="-1"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${escapeHtml(adapted.schemaVersion)}</span></div><p class="muted-message">This benchmark schema is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}</section>`;
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
-  return `<section class="benchmark-section"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${benchmark.schemaVersion}</span></div>
+  return `<section id="benchmark-section" class="benchmark-section" tabindex="-1"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${benchmark.schemaVersion}</span></div>
     <div class="benchmark-summary">${metricCard("Average latency", benchmark.metrics.latency)}${metricCard("Throughput", benchmark.metrics.throughput, 1)}${metricCard("Board power", benchmark.metrics.power)}${metricCard("Energy / inference", benchmark.metrics.energy, 4)}</div>
     ${trialChart(benchmark.trials)}
+    ${temperatureChart(benchmark.temperatureSeries)}
     <dl class="benchmark-context">${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
   </section>`;
 }
@@ -538,26 +621,27 @@ function renderDetail(detail) {
   const parameters = provenance.parameters?.parameters || {};
   const input = provenance.inputs?.[0];
   const tests = detail.tests.test_results || [];
-  const measurements = detail.metrics.measurements || [];
   const model = run.metadata?.model_id || run.run_type;
   const variant = run.metadata?.variant_id || "default";
   const precision = parameters.compile_parameters?.precision;
   const categories = run.model_categories || {};
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
+  const benchmarkMarkup = benchmarkPanel(detail.benchmark);
+  const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
+  const primaryArtifact = artifacts[0];
+  const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div>${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" title="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download="${escapeHtml(primaryArtifact.name)}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
     <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
 
     <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
-      ${artifacts.length ? artifacts.map((artifact) => `<div class="artifact-item">
-        <div class="artifact-icon" aria-hidden="true">MPK</div>
-        <div class="artifact-main"><strong>${escapeHtml(artifact.name)}</strong><small>${escapeHtml(formatBytes(artifact.size_bytes))} · ${escapeHtml(artifact.media_type || artifact.artifact_type)}</small></div>
-        <button class="download-button" type="button" data-download="${escapeHtml(artifact.name)}" data-run-id="${run.id}">${icons.download}<span>Download</span></button>
-        <div class="artifact-checksum"><span>SHA-256</span><code>${escapeHtml(artifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(artifact.sha256)}" aria-label="Copy artifact checksum">${icons.copy}</button></div>
-      </div>`).join("") : `<p class="muted-message">No downloadable artifacts were registered for this run.</p>`}
+      ${artifacts.length ? artifacts.map((artifact) => `<dl class="artifact-metadata">
+        <div><dt>File size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd></div>
+        <div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(artifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(artifact.sha256)}" aria-label="Copy artifact checksum">${icons.copy}</button></dd></div>
+      </dl>`).join("") : `<p class="muted-message">No artifact metadata was registered for this run.</p>`}
     </section>
 
     <section><div class="detail-section-title"><h3>Build provenance</h3></div><dl class="key-grid">
@@ -573,12 +657,7 @@ function renderDetail(detail) {
 
     ${input ? sourceInputPanel(input) : ""}
 
-    <section><div class="detail-section-title"><h3>Validation</h3><span>${tests.length}</span></div>
-      <div class="test-list">${tests.length ? tests.map((test) => `<div><span class="test-mark ${escapeHtml(test.status)}">${test.status === "passed" ? "✓" : "!"}</span><p><strong>${escapeHtml(test.name)}</strong><small>${escapeHtml(test.suite)}${test.duration_ms ? ` · ${escapeHtml(test.duration_ms)} ms` : ""}</small></p><span>${escapeHtml(test.status)}</span></div>`).join("") : `<p class="muted-message">No validation records.</p>`}</div>
-      ${measurements.length ? `<p class="measurement-note">${measurements.length} performance measurement${measurements.length === 1 ? "" : "s"} recorded.</p>` : ""}
-    </section>
-
-    ${benchmarkPanel(detail.benchmark)}
+    ${benchmarkMarkup}
 
     ${Object.keys(parameters.compile_parameters || {}).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters.compile_parameters, null, 2))}</pre></details>` : ""}
   </div>`;
@@ -590,8 +669,11 @@ function errorPanel(message, title = "Registry unavailable", { closable = false 
 
 async function downloadArtifact(runId, name, button) {
   const prior = button.innerHTML;
+  const priorLabel = button.getAttribute("aria-label");
   button.disabled = true;
-  button.innerHTML = `<span class="spinner"></span><span>Preparing…</span>`;
+  button.setAttribute("aria-busy", "true");
+  button.setAttribute("aria-label", "Preparing model artifact download");
+  button.innerHTML = `<span class="spinner"></span>`;
   try {
     const payload = await api(`/v1/runs/${runId}/artifacts/${encodeURIComponent(name)}`);
     if (!payload.artifact?.download_url) throw new Error("The registry did not return a download URL.");
@@ -601,6 +683,8 @@ async function downloadArtifact(runId, name, button) {
     showToast(error.message, true);
   } finally {
     button.disabled = false;
+    button.removeAttribute("aria-busy");
+    if (priorLabel) button.setAttribute("aria-label", priorLabel);
     button.innerHTML = prior;
   }
 }
@@ -801,6 +885,17 @@ elements["detail-pane"].addEventListener("click", (event) => {
   if (copy) copyText(copy.dataset.copy);
   const download = event.target.closest("[data-download]");
   if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
+  if (event.target.closest("[data-scroll-benchmark]")) {
+    const benchmark = elements["detail-pane"].querySelector("#benchmark-section");
+    if (benchmark) {
+      benchmark.focus({ preventScroll: true });
+      benchmark.scrollIntoView({
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+    return;
+  }
   if (event.target.closest(".detail-layout-toggle")) {
     state.detailLayout = state.detailLayout === "focused" ? "balanced" : "focused";
     try { localStorage.setItem(DETAIL_LAYOUT_KEY, state.detailLayout); } catch { /* Storage is optional. */ }
@@ -815,6 +910,14 @@ elements["detail-pane"].addEventListener("click", (event) => {
     history.replaceState({}, "", url);
     renderRuns();
     elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No build selected</h2><p>Select a build to inspect provenance, validation results, checksums, and downloads.</p></div>`;
+  }
+});
+elements["detail-pane"].addEventListener("change", (event) => {
+  const trialMetric = event.target.closest("[data-trial-metric]");
+  if (trialMetric && TRIAL_METRICS[trialMetric.value]) {
+    state.trialMetric = trialMetric.value;
+    if (state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
+    return;
   }
 });
 elements["load-more"].addEventListener("click", () => loadRuns({

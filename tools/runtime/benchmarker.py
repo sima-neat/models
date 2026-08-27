@@ -15,6 +15,7 @@ import re
 import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -289,9 +290,9 @@ def _build_information(path: Path = Path("/etc/buildinfo")) -> dict[str, str]:
     return result
 
 
-def _temperature_snapshot() -> list[dict[str, Any]]:
+def _temperature_snapshot(hwmon_root: Path = Path("/sys/class/hwmon")) -> list[dict[str, Any]]:
     readings: list[dict[str, Any]] = []
-    for input_path in sorted(Path("/sys/class/hwmon").glob("hwmon*/temp*_input")):
+    for input_path in sorted(hwmon_root.glob("hwmon*/temp*_input")):
         try:
             celsius = float(input_path.read_text(encoding="utf-8").strip()) / 1000.0
         except (OSError, UnicodeDecodeError, ValueError):
@@ -300,7 +301,15 @@ def _temperature_snapshot() -> list[dict[str, Any]]:
             continue
         prefix = input_path.name.removesuffix("_input")
         label = _read_text(input_path.with_name(f"{prefix}_label")) or prefix
-        readings.append({"sensor": label, "celsius": celsius})
+        source = _read_text(input_path.parent / "name") or input_path.parent.name
+        readings.append(
+            {
+                "sensor_id": f"{input_path.parent.name}/{prefix}",
+                "sensor": label,
+                "source": source,
+                "celsius": celsius,
+            }
+        )
     return readings
 
 
@@ -327,12 +336,42 @@ def runtime_environment(actual_platform: str | None, actual_neat: str | None) ->
         "cpu_governor": _read_text(Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")),
         "build_information": _build_information(),
     }
+    start = runtime_observation()
     return {
         "fingerprint_version": 1,
         "fingerprint": canonical_sha256(stable),
         **stable,
-        "observations": {"start": runtime_observation(), "end": None},
+        "observations": {"start": start, "end": None},
+        "temperature_samples": [_temperature_sample(start, phase="start")],
     }
+
+
+def _temperature_sample(
+    observation: dict[str, Any],
+    *,
+    phase: str,
+    trial: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "timestamp_utc": observation["timestamp_utc"],
+        "phase": phase,
+        "trial": trial,
+        "temperatures_c": observation["temperatures_c"],
+    }
+
+
+def record_temperature_sample(
+    environment: dict[str, Any],
+    *,
+    phase: str,
+    trial: int | None = None,
+    observation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    captured = observation or runtime_observation()
+    environment.setdefault("temperature_samples", []).append(
+        _temperature_sample(captured, phase=phase, trial=trial)
+    )
+    return captured
 
 
 def power_telemetry_preflight(device_paths: tuple[Path, ...] = POWER_DEVICE_PATHS) -> dict[str, Any]:
@@ -516,6 +555,7 @@ def execute_trials(
     benchmark: dict[str, Any],
     *,
     results: list[dict[str, Any]] | None = None,
+    on_trial_complete: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
     trials = benchmark.get("trials", DEFAULT_TRIALS)
     completed = results if results is not None else []
@@ -553,6 +593,8 @@ def execute_trials(
                 "energy_per_inference_joules": None,
             }
         )
+        if on_trial_complete is not None:
+            on_trial_complete(trial_index)
     return completed
 
 
@@ -821,7 +863,17 @@ def run_benchmark(
     logical_inferences = manifest["benchmark"]["samples"] * batch_size
     power_reason = preflight.get("reason") or "runtime_did_not_return_metric"
     try:
-        execute_trials(runtime, model, manifest["benchmark"], results=trials)
+        execute_trials(
+            runtime,
+            model,
+            manifest["benchmark"],
+            results=trials,
+            on_trial_complete=lambda trial: record_temperature_sample(
+                result["environment"],
+                phase="trial_complete",
+                trial=trial,
+            ),
+        )
     finally:
         for trial in trials:
             if trial["energy_joules"] is not None:
@@ -857,7 +909,8 @@ def run_benchmark(
                 reason=power_reason,
             ),
         }
-    result["environment"]["observations"]["end"] = runtime_observation()
+    end_observation = record_temperature_sample(result["environment"], phase="end")
+    result["environment"]["observations"]["end"] = end_observation
     result["status"] = "passed"
     return result
 
@@ -905,7 +958,8 @@ def _partial_model_path(manifest: dict[str, Any]) -> Path | None:
 def _record_error(result: dict[str, Any], exc: Exception, classification: str) -> None:
     result["failure_classification"] = classification
     result["error"] = {"type": type(exc).__name__, "message": str(exc)}
-    result["environment"]["observations"]["end"] = runtime_observation()
+    end_observation = record_temperature_sample(result["environment"], phase="end")
+    result["environment"]["observations"]["end"] = end_observation
 
 
 def main(argv: list[str] | None = None) -> int:

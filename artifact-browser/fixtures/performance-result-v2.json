@@ -32,7 +32,21 @@
     "original_height": null,
     "model_options": {}
   },
-  "environment": {"board_model": "Modalix", "fingerprint": "preview-devkit"},
+  "environment": {
+    "board_model": "Modalix",
+    "fingerprint": "preview-devkit",
+    "observations": {
+      "start": {"timestamp_utc": "2026-08-26T19:42:31Z", "load_average": [0.3, 0.2, 0.1], "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 57.8}]},
+      "end": {"timestamp_utc": "2026-08-26T19:42:55Z", "load_average": [0.8, 0.3, 0.1], "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 61.5}]}
+    },
+    "temperature_samples": [
+      {"timestamp_utc": "2026-08-26T19:42:31Z", "phase": "start", "trial": null, "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 57.8}, {"sensor_id": "hwmon1/temp1", "sensor": "temp1", "source": "soc_thermal", "celsius": 56.9}]},
+      {"timestamp_utc": "2026-08-26T19:42:38Z", "phase": "trial_complete", "trial": 1, "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 59.1}, {"sensor_id": "hwmon1/temp1", "sensor": "temp1", "source": "soc_thermal", "celsius": 57.8}]},
+      {"timestamp_utc": "2026-08-26T19:42:44Z", "phase": "trial_complete", "trial": 2, "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 60.2}, {"sensor_id": "hwmon1/temp1", "sensor": "temp1", "source": "soc_thermal", "celsius": 58.6}]},
+      {"timestamp_utc": "2026-08-26T19:42:51Z", "phase": "trial_complete", "trial": 3, "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 61.3}, {"sensor_id": "hwmon1/temp1", "sensor": "temp1", "source": "soc_thermal", "celsius": 59.4}]},
+      {"timestamp_utc": "2026-08-26T19:42:55Z", "phase": "end", "trial": null, "temperatures_c": [{"sensor_id": "hwmon0/temp1", "sensor": "TOP RTSN-13", "source": "sima_thermal", "celsius": 61.5}, {"sensor_id": "hwmon1/temp1", "sensor": "temp1", "source": "soc_thermal", "celsius": 59.6}]}
+    ]
+  },
   "power_measurement": {"scope": "board_pmbus_rails", "phase": "throughput"},
   "metrics": {
     "latency_avg_ms": {"status": "measured", "reason": null, "unit": "ms", "aggregation": "mean", "value": 5.84, "minimum": 5.77, "maximum": 5.93, "standard_deviation": 0.066, "sample_count": 3},
@@ -44,9 +58,9 @@
     "energy_per_inference_joules": {"status": "measured", "reason": null, "unit": "J/inference", "aggregation": "mean", "value": 0.04916, "minimum": 0.0489, "maximum": 0.0494, "standard_deviation": 0.000205, "sample_count": 3}
   },
   "trials": [
-    {"trial": 1, "latency_avg_ms": 5.77, "throughput_fps": 173.0},
-    {"trial": 2, "latency_avg_ms": 5.82, "throughput_fps": 171.1},
-    {"trial": 3, "latency_avg_ms": 5.93, "throughput_fps": 169.8}
+    {"trial": 1, "latency_avg_ms": 5.77, "latency_p50_ms": null, "latency_p95_ms": null, "throughput_fps": 173.0, "avg_power_watts": 8.31, "energy_joules": 48.9, "energy_per_inference_joules": 0.0489},
+    {"trial": 2, "latency_avg_ms": 5.82, "latency_p50_ms": null, "latency_p95_ms": null, "throughput_fps": 171.1, "avg_power_watts": 8.4, "energy_joules": 49.18, "energy_per_inference_joules": 0.04918},
+    {"trial": 3, "latency_avg_ms": 5.93, "latency_p50_ms": null, "latency_p95_ms": null, "throughput_fps": 169.8, "avg_power_watts": 8.55, "energy_joules": 49.4, "energy_per_inference_joules": 0.0494}
   ],
   "orchestration": {
     "provider": "github-actions-devkit-runner",
