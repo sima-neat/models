@@ -17,7 +17,7 @@ def test_repository_model_compiler_dependency_is_pinned() -> None:
     }
 
 
-def test_repository_benchmark_runtime_uses_branch_latest() -> None:
+def test_repository_benchmark_runtime_uses_develop_latest() -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["platform-version"] == "2.1.3"
     assert "platform_version" not in manifest["devkit"]
@@ -28,7 +28,7 @@ def test_repository_benchmark_runtime_uses_branch_latest() -> None:
     assert runtime["benchmarker"]["vulcan"] == {
         "environment": "stg",
         "name": "models-utils/benchmarker",
-        "branch": "feat/resnet50-post-compile-benchmark",
+        "branch": "develop",
         "tag": "latest",
     }
 

@@ -3,7 +3,7 @@
   "benchmarker": {
     "version": "0.2.0",
     "vulcan": {
-      "branch": "feat/resnet50-post-compile-benchmark",
+      "branch": "develop",
       "environment": "stg",
       "name": "models-utils/benchmarker",
       "tag": "latest"
