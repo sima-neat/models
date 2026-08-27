@@ -181,11 +181,15 @@ def test_browser_uses_refined_search_first_layout() -> None:
 def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="filter-toggle"' in html
     assert 'aria-expanded="false"' in html
     assert 'id="filter-drawer" class="filter-drawer" hidden' in html
     assert 'id="filter-count"' in html
+    assert "--filter-surface: color-mix(in srgb, var(--surface) 88%, var(--blue-soft))" in styles
+    assert "background: var(--filter-surface)" in styles
+    assert "box-shadow: 0 0 0 100vmax var(--filter-surface)" in styles
     assert 'id="status-filter"' not in html
     assert 'class="run-status' not in script
     assert 'class="status-label' not in script
@@ -350,6 +354,43 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert "sensor_id" in adapters
 
 
+def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="compare-button"' in html
+    assert 'id="compare-dialog" class="compare-dialog"' in html
+    assert 'aria-labelledby="compare-title" aria-describedby="compare-description"' in html
+    assert "compareSelection: new Map()" in script
+    assert 'data-compare-run-id="${run.id}"' in script
+    assert "state.compareSelection.size ? [...state.compareSelection.values()] : filteredRuns()" in script
+    assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
+    assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
+    assert "adaptBenchmarkResult(detail.benchmark.result)" in script
+    assert '<th scope="col">Artifact size</th>' in script
+    assert '<th scope="col">p95</th>' in script
+    assert '<th scope="col">Throughput</th>' in script
+    assert 'elements["compare-dialog"].showModal()' in script
+    assert ".comparison-table-wrap" in styles
+    assert "position: sticky; left: 0" in styles
+    assert ".compare-select input:focus-visible + span" in styles
+
+
+def test_focused_model_layout_collapses_list_metadata_without_overflow() -> None:
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert '.workspace[data-detail-layout="focused"] .results-pane { overflow: hidden; padding-right: 0; }' in styles
+    assert '.workspace[data-detail-layout="focused"] .section-heading { gap: 8px; padding-right: 16px; }' in styles
+    assert '.workspace[data-detail-layout="focused"] .compare-button #compare-label { display: none; }' in styles
+    assert '.workspace[data-detail-layout="focused"] .run-entry { grid-template-columns: 34px minmax(0, 1fr); }' in styles
+    assert '.workspace[data-detail-layout="focused"] .run-row { grid-template-columns: minmax(0, 1fr); gap: 0; }' in styles
+    assert '.run-row { width: 100%; min-width: 0;' in styles
+    assert 'width: calc(100% + 30px)' not in styles
+    assert '.workspace[data-detail-layout="focused"] .run-date,' in styles
+    assert '.workspace[data-detail-layout="focused"] .row-arrow { display: none; }' in styles
+
+
 def test_detail_layout_can_focus_the_selected_model() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
@@ -360,7 +401,7 @@ def test_detail_layout_can_focus_the_selected_model() -> None:
     assert 'class="detail-layout-toggle"' in script
     assert 'aria-pressed="${state.detailLayout === "focused"}"' in script
     assert '.workspace[data-detail-layout="focused"]' in styles
-    assert '.workspace[data-detail-layout="focused"] .result-list { width: calc(100% + 30px); }' in styles
+    assert '.workspace[data-detail-layout="focused"] .results-pane { overflow: hidden; padding-right: 0; }' in styles
     assert "@media (max-width: 840px)" in styles
     assert ".detail-layout-toggle { display: none; }" in styles
 

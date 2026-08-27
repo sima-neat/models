@@ -82,7 +82,14 @@
         <div class="results-pane">
           <div class="section-heading">
             <h2 id="result-title">Builds</h2>
-            <span id="result-count" aria-live="polite">—</span>
+            <div class="result-heading-actions">
+              <span id="result-count" aria-live="polite">—</span>
+              <button id="compare-button" class="compare-button" type="button" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M16 4v16M4 8h8m0 8H4m8-5h8m-8 6h8" /></svg>
+                <span id="compare-label">Compare visible</span>
+                <span id="compare-count" class="compare-count" hidden>0</span>
+              </button>
+            </div>
           </div>
           <div id="result-list" class="result-list" aria-busy="true"></div>
           <button id="load-more" class="load-more" type="button" hidden>Load more builds</button>
@@ -95,6 +102,20 @@
         </aside>
       </section>
     </main>
+
+    <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title" aria-describedby="compare-description">
+      <div class="compare-dialog-shell">
+        <header class="compare-dialog-header">
+          <div>
+            <p class="kicker">Model comparison</p>
+            <h2 id="compare-title">Compare builds</h2>
+            <p id="compare-description">Artifact and benchmark measurements for the selected builds.</p>
+          </div>
+          <button id="compare-close" class="compare-close" type="button" aria-label="Close comparison">×</button>
+        </header>
+        <div id="compare-content" class="compare-content" aria-live="polite"></div>
+      </div>
+    </dialog>
 
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <script src="config.js"></script>

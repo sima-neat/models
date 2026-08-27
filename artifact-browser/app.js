@@ -38,6 +38,8 @@ const state = {
   selectedId: new URLSearchParams(location.search).get("run"),
   preferredBranch: null,
   detailCache: new Map(),
+  comparisonCache: new Map(),
+  compareSelection: new Map(),
   taxonomy: null,
   detailLayout: readDetailLayout(),
   trialMetric: "latency_avg_ms",
@@ -52,6 +54,8 @@ const elements = Object.fromEntries(
     "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
     "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
+    "compare-button", "compare-label", "compare-count", "compare-dialog", "compare-close", "compare-content",
+    "compare-title", "compare-description",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -437,11 +441,32 @@ function populateFilters({ persistBranchFallback = false } = {}) {
   updateFilterDisclosure();
 }
 
+function comparisonRuns() {
+  return state.compareSelection.size ? [...state.compareSelection.values()] : filteredRuns();
+}
+
+function updateCompareAction() {
+  const selectedCount = state.compareSelection.size;
+  const visibleCount = filteredRuns().length;
+  const count = selectedCount || visibleCount;
+  elements["compare-button"].disabled = count === 0;
+  elements["compare-label"].textContent = selectedCount ? "Compare selected" : "Compare visible";
+  elements["compare-count"].textContent = count;
+  elements["compare-count"].hidden = count === 0;
+  elements["compare-button"].setAttribute(
+    "aria-label",
+    selectedCount
+      ? `Compare ${selectedCount} selected build${selectedCount === 1 ? "" : "s"}`
+      : `Compare ${visibleCount} visible build${visibleCount === 1 ? "" : "s"}`,
+  );
+}
+
 function renderRuns() {
   const runs = filteredRuns();
   elements["result-count"].textContent = `${runs.length}${state.hasMore ? "+" : ""} build${runs.length === 1 ? "" : "s"}`;
   elements["result-list"].setAttribute("aria-busy", "false");
   elements["load-more"].hidden = !state.hasMore;
+  updateCompareAction();
 
   if (!runs.length) {
     elements["result-list"].innerHTML = `<div class="no-results"><span>0</span><h3>No matching artifacts</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
@@ -452,14 +477,114 @@ function renderRuns() {
     const model = run.metadata?.model_id || run.run_type.replaceAll("_", " ");
     const variant = run.metadata?.variant_id || "default artifact";
     const selected = run.id === state.selectedId;
-    return `<button class="run-row${selected ? " selected" : ""}" type="button" data-run-id="${run.id}" aria-pressed="${selected}">
+    const compared = state.compareSelection.has(run.id);
+    if (compared) state.compareSelection.set(run.id, run);
+    const compareLabel = `${model} ${variant}`;
+    return `<div class="run-entry${compared ? " compared" : ""}">
+      <label class="compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
+        <input type="checkbox" data-compare-run-id="${run.id}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(compareLabel)} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />
+        <span aria-hidden="true">✓</span>
+      </label>
+      <button class="run-row${selected ? " selected" : ""}" type="button" data-run-id="${run.id}" aria-pressed="${selected}">
       <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(variant)}</small></span>
       <span class="run-branch"><small>Branch</small>${escapeHtml(branchName(run.git_ref))}</span>
       <span class="run-compiler"><small>Compiler</small>${escapeHtml(run.toolchain_version || "—")}</span>
       <span class="run-date"><small>${escapeHtml(shortSha(run.commit_sha))}</small>${escapeHtml(formatDate(run.finished_at || run.created_at))}</span>
       <span class="row-arrow">${icons.arrow}</span>
-    </button>`;
+      </button>
+    </div>`;
   }).join("");
+}
+
+function comparisonMetric(metric, digits = 2) {
+  if (!metric || !Number.isFinite(metric.value)) {
+    return `<span class="comparison-unavailable" title="Not measured">—</span>`;
+  }
+  return `<span class="comparison-value">${escapeHtml(Number(metric.value).toFixed(digits))}<small>${escapeHtml(metric.unit || "")}</small></span>`;
+}
+
+function comparisonEntryFromDetail(run, detail) {
+  const summary = detail?.summary || null;
+  const adapted = detail?.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : { kind: "missing" };
+  return {
+    run: summary?.run || run,
+    artifacts: summary?.artifacts || [],
+    benchmark: adapted.kind === "supported" ? adapted.value : null,
+  };
+}
+
+async function loadComparisonEntry(run) {
+  const detail = state.detailCache.get(run.id);
+  if (detail) return comparisonEntryFromDetail(run, detail);
+  if (state.comparisonCache.has(run.id)) return state.comparisonCache.get(run.id);
+
+  const request = Promise.all([
+    api(`/v1/runs/${run.id}`).catch(() => null),
+    api(`/v1/runs/${run.id}/benchmarks/latest`).catch((error) => {
+      if (error.status === 404) return null;
+      return null;
+    }),
+  ]).then(([summary, benchmark]) => comparisonEntryFromDetail(run, { summary, benchmark }));
+  state.comparisonCache.set(run.id, request);
+  return request;
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+function renderComparisonTable(entries) {
+  const rows = entries.map(({ run, artifacts, benchmark }) => {
+    const model = run.metadata?.model_id || run.run_type?.replaceAll("_", " ") || "Unknown model";
+    const variant = run.metadata?.variant_id || "default artifact";
+    const artifactBytes = artifacts.reduce((total, artifact) => (
+      total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
+    ), 0);
+    return `<tr>
+      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(variant)}</small></th>
+      <td>${escapeHtml(branchName(run.git_ref))}</td>
+      <td>${escapeHtml(run.toolchain_version || "—")}</td>
+      <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
+      <td>${comparisonMetric(benchmark?.metrics.latency)}</td>
+      <td>${comparisonMetric(benchmark?.metrics.latencyP50)}</td>
+      <td>${comparisonMetric(benchmark?.metrics.latencyP95)}</td>
+      <td>${comparisonMetric(benchmark?.metrics.throughput, 1)}</td>
+      <td>${comparisonMetric(benchmark?.metrics.power)}</td>
+      <td>${comparisonMetric(benchmark?.metrics.energy, 4)}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="comparison-table-wrap"><table class="comparison-table">
+    <caption class="sr-only">Artifact sizes and benchmark measurements for ${entries.length} builds</caption>
+    <thead><tr>
+      <th scope="col">Model / variant</th><th scope="col">Branch</th><th scope="col">Compiler</th>
+      <th scope="col">Artifact size</th><th scope="col">Avg latency</th><th scope="col">p50</th>
+      <th scope="col">p95</th><th scope="col">Throughput</th><th scope="col">Board power</th><th scope="col">Energy / inference</th>
+    </tr></thead><tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+async function openComparison() {
+  const runs = comparisonRuns();
+  if (!runs.length) return;
+  const selected = state.compareSelection.size > 0;
+  elements["compare-title"].textContent = `Compare ${runs.length} build${runs.length === 1 ? "" : "s"}`;
+  elements["compare-description"].textContent = selected
+    ? "Showing your selected builds. Empty benchmark cells mean that measurement is unavailable."
+    : "Showing all builds currently visible in the list. Empty benchmark cells mean that measurement is unavailable.";
+  elements["compare-content"].innerHTML = `<div class="comparison-loading" role="status"><span class="spinner"></span> Loading artifact and benchmark data…</div>`;
+  elements["compare-dialog"].showModal();
+  const entries = await mapWithConcurrency(runs, 6, loadComparisonEntry);
+  if (elements["compare-dialog"].open) elements["compare-content"].innerHTML = renderComparisonTable(entries);
 }
 
 function detailSkeleton() {
@@ -875,6 +1000,28 @@ elements["result-list"].addEventListener("click", (event) => {
   if (run) selectRun(run.dataset.runId);
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
   if (event.target.closest('[data-action="retry"]')) initialize();
+});
+elements["result-list"].addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-compare-run-id]");
+  if (!checkbox) return;
+  const run = state.runs.find((item) => item.id === checkbox.dataset.compareRunId);
+  if (!run) return;
+  if (checkbox.checked) state.compareSelection.set(run.id, run);
+  else state.compareSelection.delete(run.id);
+  checkbox.closest(".run-entry")?.classList.toggle("compared", checkbox.checked);
+  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${run.metadata?.model_id || run.run_type} ${run.metadata?.variant_id || "default artifact"} ${checkbox.checked ? "from" : "to"} comparison`);
+  checkbox.closest("label")?.setAttribute("title", `${checkbox.checked ? "Remove from" : "Add to"} comparison`);
+  updateCompareAction();
+});
+elements["compare-button"].addEventListener("click", () => {
+  openComparison().catch((error) => {
+    elements["compare-dialog"].close();
+    showToast(error.message, true);
+  });
+});
+elements["compare-close"].addEventListener("click", () => elements["compare-dialog"].close());
+elements["compare-dialog"].addEventListener("click", (event) => {
+  if (event.target === elements["compare-dialog"]) elements["compare-dialog"].close();
 });
 elements["detail-pane"].addEventListener("click", (event) => {
   if (event.target.closest('[data-action="retry"]') && state.selectedId) {
