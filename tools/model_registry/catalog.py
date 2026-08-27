@@ -20,6 +20,9 @@ MODEL_COMPILE_INPUT_PATHS = {
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md"}
+# Benchmark dispatch currently follows the compile matrix, so configuration
+# changes must invalidate reuse even though they do not alter the MPK bytes.
+_MODEL_BENCHMARK_CONFIGURATION = Path("tests/performance.yaml")
 
 
 def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
@@ -140,7 +143,10 @@ def _build_input_files(root: Path, model_id: str) -> list[Path]:
         for item in model_dir.rglob("*")
         if item.is_file()
         and item.name not in _IGNORED_MODEL_BUILD_NAMES
-        and "tests" not in item.relative_to(model_dir).parts
+        and (
+            "tests" not in item.relative_to(model_dir).parts
+            or item.relative_to(model_dir) == _MODEL_BENCHMARK_CONFIGURATION
+        )
     )
     symlinks = sorted(item for item in candidates if item.is_symlink())
     if symlinks:

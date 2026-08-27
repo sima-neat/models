@@ -308,14 +308,45 @@ def test_build_fingerprint_ignores_non_transforming_registry_tooling_changes(
     assert model_build_fingerprint(catalog_repository, "alpha", "2.1.3") == first
 
 
-def test_build_fingerprint_ignores_model_documentation_and_test_descriptions(catalog_repository: Path) -> None:
+def test_build_fingerprint_ignores_model_documentation_and_non_benchmark_tests(catalog_repository: Path) -> None:
     first = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "README.md").write_text("documentation only\n", encoding="utf-8")
     (model_dir / "tests").mkdir()
-    (model_dir / "tests" / "performance.yaml").write_text("samples: 100\n", encoding="utf-8")
+    (model_dir / "tests" / "correctness.yaml").write_text("samples: 100\n", encoding="utf-8")
 
     assert model_build_fingerprint(catalog_repository, "alpha", "2.1.3") == first
+
+
+def test_build_fingerprint_invalidates_benchmark_configuration_changes(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "tests").mkdir()
+    benchmark = model_dir / "tests" / "performance.yaml"
+    benchmark.write_text("benchmark:\n  samples: 100\n", encoding="utf-8")
+    first = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+
+    benchmark.write_text("benchmark:\n  samples: 5\n", encoding="utf-8")
+
+    assert model_build_fingerprint(catalog_repository, "alpha", "2.1.3") != first
+
+
+def test_matrix_reruns_model_when_benchmark_configuration_changes(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "tests").mkdir()
+    benchmark = model_dir / "tests" / "performance.yaml"
+    benchmark.write_text("benchmark:\n  samples: 100\n", encoding="utf-8")
+    previous_fingerprint = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
+    benchmark.write_text("benchmark:\n  samples: 5\n", encoding="utf-8")
+
+    matrix = build_matrix(
+        discover_catalog(catalog_repository),
+        ["alpha"],
+        repository=catalog_repository,
+        compiler_version="2.1.3",
+        previous_models={"alpha": {"build_fingerprint": previous_fingerprint}},
+    )
+
+    assert [(entry["model_id"], entry["variant_id"]) for entry in matrix["include"]] == [("alpha", "fixture")]
 
 
 def test_matrix_reuses_model_with_matching_build_fingerprint(catalog_repository: Path) -> None:
