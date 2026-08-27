@@ -455,18 +455,60 @@ jobs:
           matrix.target == 'modalix' &&
           github.ref_name != 'main' && github.ref_name != 'develop'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
+          BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
+          BENCHMARK_VARIANT_ID: ${{ matrix.variant_id }}
         run: |
           set -euo pipefail
-          gh workflow run Vulcan-Model-Compile.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
-            -f operation=benchmark \
-            -f environment="${{ needs.select.outputs.vulcan_environment }}" \
-            -f source_run_id="$GITHUB_RUN_ID" \
-            -f source_sha="$GITHUB_SHA" \
-            -f model_id="${{ matrix.model_id }}" \
-            -f variant_id="${{ matrix.variant_id }}"
+          "$MODEL_COMPILER_PYTHON" - <<'PY'
+          import json
+          import os
+          import ssl
+          import urllib.error
+          import urllib.request
+
+          import certifi
+
+          payload = {
+              "ref": os.environ["GITHUB_REF_NAME"],
+              "inputs": {
+                  "operation": "benchmark",
+                  "environment": os.environ["BENCHMARK_ENVIRONMENT"],
+                  "source_run_id": os.environ["GITHUB_RUN_ID"],
+                  "source_sha": os.environ["GITHUB_SHA"],
+                  "model_id": os.environ["BENCHMARK_MODEL_ID"],
+                  "variant_id": os.environ["BENCHMARK_VARIANT_ID"],
+              },
+          }
+          endpoint = (
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+              "/actions/workflows/Vulcan-Model-Compile.yml/dispatches"
+          )
+          request = urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              tls = ssl.create_default_context(cafile=certifi.where())
+              with urllib.request.urlopen(request, context=tls, timeout=30) as response:
+                  if response.status != 204:
+                      raise SystemExit(f"Workflow dispatch returned HTTP {response.status}")
+          except urllib.error.HTTPError as error:
+              detail = error.read().decode(errors="replace")
+              raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
+          print(
+              "Dispatched benchmark for "
+              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_VARIANT_ID']}"
+          )
+          PY
 
   stage-dispatched-benchmark:
     name: Stage ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark input

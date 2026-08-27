@@ -287,12 +287,16 @@ def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
     assert "matrix.target == 'modalix'" in dispatch["if"]
     assert "github.ref_name != 'main'" in dispatch["if"]
     assert "github.ref_name != 'develop'" in dispatch["if"]
-    assert "gh workflow run Vulcan-Model-Compile.yml" in dispatch["run"]
-    assert "-f operation=benchmark" in dispatch["run"]
-    assert '-f source_run_id="$GITHUB_RUN_ID"' in dispatch["run"]
-    assert '-f source_sha="$GITHUB_SHA"' in dispatch["run"]
-    assert '-f model_id="${{ matrix.model_id }}"' in dispatch["run"]
-    assert '-f variant_id="${{ matrix.variant_id }}"' in dispatch["run"]
+    assert "gh workflow run" not in dispatch["run"]
+    assert 'method="POST"' in dispatch["run"]
+    assert "/actions/workflows/Vulcan-Model-Compile.yml/dispatches" in dispatch["run"]
+    assert '"operation": "benchmark"' in dispatch["run"]
+    assert '"source_run_id": os.environ["GITHUB_RUN_ID"]' in dispatch["run"]
+    assert '"source_sha": os.environ["GITHUB_SHA"]' in dispatch["run"]
+    assert '"model_id": os.environ["BENCHMARK_MODEL_ID"]' in dispatch["run"]
+    assert '"variant_id": os.environ["BENCHMARK_VARIANT_ID"]' in dispatch["run"]
+    dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    compile(dispatch_python, "<benchmark-dispatch>", "exec")
     retain_index = next(
         index
         for index, step in enumerate(compile_job["steps"])
