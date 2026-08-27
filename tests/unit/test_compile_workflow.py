@@ -311,6 +311,9 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     stage = workflow["jobs"]["stage-dispatched-benchmark"]
 
+    assert stage["needs"] == "resolve-dispatched-benchmark-config"
+    assert stage["environment"] == "${{ inputs.environment }}"
+    assert stage["permissions"]["id-token"] == "write"
     assert "inputs.operation == 'benchmark'" in stage["if"]
     verify = next(step for step in stage["steps"] if step.get("name") == "Verify the source run and compiled artifact")
     assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
@@ -318,6 +321,22 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     download = next(step for step in stage["steps"] if step.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == "compiled-model-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
+    checkout = next(
+        step
+        for step in stage["steps"]
+        if step.get("name") == "Check out the trusted source revision for registry tooling"
+    )
+    assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
+    assert checkout["with"]["clean"] == "false"
+    publication = next(
+        step for step in stage["steps"] if step.get("name") == "Register an unpublished compilation for benchmarking"
+    )
+    assert publication["if"] == "steps.publication.outputs.required == 'true'"
+    assert "model-registry publish" in publication["run"]
+    assert '--dist-dir _compiled' in publication["run"]
+    assert '--github-run-id "$SOURCE_RUN_ID"' in publication["run"]
+    assert '--github-run-attempt "$SOURCE_RUN_ATTEMPT"' in publication["run"]
+    assert 'registry-publication.json' in publication["run"]
     upload = next(step for step in stage["steps"] if step.get("uses") == "actions/upload-artifact@v7")
     assert upload["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
 

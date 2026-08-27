@@ -512,17 +512,21 @@ jobs:
 
   stage-dispatched-benchmark:
     name: Stage ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark input
+    needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.operation == 'benchmark' &&
       inputs.environment == 'staging' &&
       inputs.source_run_id != '' && inputs.source_sha != '' &&
       inputs.model_id != '' && inputs.variant_id != ''
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     permissions:
       actions: read
       contents: read
+      id-token: write
     steps:
       - name: Verify the source run and compiled artifact
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
@@ -535,6 +539,8 @@ jobs:
           jq -e --arg sha "$SOURCE_SHA" \
             '.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch")' \
             <<< "$run_json" >/dev/null
+          echo "branch=$(jq -er '.head_branch' <<< "$run_json")" >> "$GITHUB_OUTPUT"
+          echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
           artifact_name="compiled-model-$MODEL_ID-$VARIANT_ID"
           artifact_count="$(
             gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
@@ -550,6 +556,78 @@ jobs:
           path: _compiled
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
+
+      - name: Check whether the compilation is already registered
+        id: publication
+        env:
+          MODEL_ID: ${{ inputs.model_id }}
+          VARIANT_ID: ${{ inputs.variant_id }}
+        run: |
+          publication="_compiled/$MODEL_ID/$VARIANT_ID/registry-publication.json"
+          if [[ -f "$publication" ]]; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the trusted source revision for registry tooling
+        if: steps.publication.outputs.required == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          clean: false
+
+      - name: Set up registry publication tooling
+        if: steps.publication.outputs.required == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install registry publication tooling
+        if: steps.publication.outputs.required == 'true'
+        run: python -m pip install .
+
+      - name: Configure artifact-registry publisher credentials
+        if: steps.publication.outputs.required == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Register an unpublished compilation for benchmarking
+        if: steps.publication.outputs.required == 'true'
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
+          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.attempt }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MODEL_ID: ${{ inputs.model_id }}
+          VARIANT_ID: ${{ inputs.variant_id }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          result="$(model-registry publish \
+            --repository . \
+            --dist-dir _compiled \
+            --api-url "$REGISTRY_API_URL" \
+            --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" \
+            --kms-key-id "$KMS_KEY_ID" \
+            --environment staging \
+            --branch "$SOURCE_BRANCH" \
+            --git-sha "$SOURCE_SHA" \
+            --github-run-id "$SOURCE_RUN_ID" \
+            --github-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+            --json)"
+          python -c 'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
+          printf '%s\n' "$result" > "_compiled/$MODEL_ID/$VARIANT_ID/registry-publication.json"
 
       - name: Retain benchmark input independently of compile-run cleanup
         uses: actions/upload-artifact@v7
