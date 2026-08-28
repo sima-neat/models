@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER = ROOT / "artifact-browser"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-browser.yml"
-PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "developer-docs-pages.yml"
+DOCS_WORKFLOW = ROOT / ".github" / "workflows" / "developer-docs.yml"
 PORTAL_ASSEMBLER = ROOT / "website" / "scripts" / "assemble-portal.mjs"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.ts"
 DOCS_STYLES = ROOT / "website" / "src" / "css" / "custom.css"
@@ -104,19 +104,19 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "fingerprintedAssets" in assemble
 
 
-def test_github_pages_publishes_the_same_combined_portal() -> None:
-    workflow = yaml.load(PAGES_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
+    workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     build = workflow["jobs"]["build"]
-    develop_publish_condition = "github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'"
 
-    assert workflow["permissions"]["pages"] == "read"
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"build"}
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
-    configure = next(step for step in build["steps"] if step.get("uses") == "actions/configure-pages@v5")
-    upload = next(step for step in build["steps"] if step.get("uses") == "actions/upload-pages-artifact@v4")
-    assert configure["if"] == develop_publish_condition
-    assert upload["if"] == develop_publish_condition
-    assert upload["with"]["path"] == "website/portal-build"
-    assert workflow["jobs"]["deploy"]["if"] == develop_publish_condition
+    portal_build = next(step for step in build["steps"] if step.get("run") == "npm run build:portal")
+    assert portal_build["env"] == {
+        "DOCS_SITE_URL": "https://developer-stg.sima.ai",
+        "DOCS_BASE_URL": "/models/",
+    }
+    assert not any("pages" in step.get("uses", "") for step in build["steps"])
 
 
 def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
