@@ -19,3 +19,12 @@ def test_local_markdown_links_resolve() -> None:
             if not resolved.exists():
                 failures.append(f"{document.relative_to(ROOT)} -> {target}")
     assert not failures, "broken local Markdown links:\n" + "\n".join(failures)
+
+
+def test_bounded_runner_documents_dynamic_image_geometry() -> None:
+    text = (ROOT / "docs" / "benchmarking.md").read_text(encoding="utf-8")
+
+    assert "original_width: 1280" in text
+    assert "original_height: 720" in text
+    assert "For image inputs with dynamic spatial dimensions" in text
+    assert "Input geometry overrides are not supported" not in text

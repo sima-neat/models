@@ -120,12 +120,17 @@ benchmark:
   warmup_samples: 1
   samples: 5
   trials: 3
+  original_width: 1280
+  original_height: 720
 ```
 
 Bounded mode executes exactly the configured warmups, latency samples, and
 throughput samples per trial. It uses synthetic tensors matching the MPK input
 specifications and records measured latency percentiles, throughput, board
-power, and energy. Input geometry overrides are not supported in this mode.
+power, and energy. For image inputs with dynamic spatial dimensions,
+`original_width` and `original_height` materialize representative source
+geometry before preprocessing. Inputs with static spatial dimensions continue
+to use the shape declared by the MPK.
 
 ## Run
 
