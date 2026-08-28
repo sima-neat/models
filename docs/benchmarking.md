@@ -66,7 +66,8 @@ machine-readable reason. Group changes require a fresh login session.
 
 ## Create a benchmark manifest
 
-The input follows [`performance-test-v1.schema.json`](../schemas/performance-test-v1.schema.json):
+The input follows
+[`performance-test-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-test-v1.schema.json):
 
 ```json
 {
@@ -141,7 +142,7 @@ benchmarker \
 ```
 
 The output follows
-[`performance-result-v2.schema.json`](../schemas/performance-result-v2.schema.json)
+[`performance-result-v2.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result-v2.schema.json)
 and is written atomically. Average latency and throughput are available from
 Neat 0.4.0. Percentiles are marked `unsupported` for the default
 `Model.benchmark()` path; bounded runner measurements include them. Missing

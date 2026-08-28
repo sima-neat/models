@@ -24,6 +24,10 @@ model-registry fetch models/resnet_50
 python -m pytest
 ```
 
+Start with the [developer documentation](docs/README.md) for the end-to-end
+model contribution path, the field-level `model.yaml` contract, local testing,
+and the GitHub review checklist.
+
 ## Vulcan compilation
 
 [`Vulcan-Model-Compile.yml`](.github/workflows/Vulcan-Model-Compile.yml) validates
@@ -111,8 +115,8 @@ and Neat runtime, and returns a schema-v2 result and log for each model variant.
 trusted hosted job publishes every completed result under its model's S3 hierarchy
 and records an immutable `model_benchmark` child of the matching compile run.
 
-See [the architecture](docs/architecture.md),
-[adding a model](docs/adding-a-model.md), the
+See [the developer documentation](docs/README.md),
+[the architecture](docs/architecture.md), the
 [synthetic benchmarking guide](docs/benchmarking.md), the
 [model taxonomy](docs/model-taxonomy.md), and the
 [SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f4efe5"/>
+  <path stroke="#d9d2c4" stroke-width="1" d="M0 90h1200M0 180h1200M0 270h1200M0 360h1200M0 450h1200M0 540h1200M90 0v630M180 0v630M270 0v630M360 0v630M450 0v630M540 0v630M630 0v630M720 0v630M810 0v630M900 0v630M990 0v630M1080 0v630"/>
+  <rect x="82" y="74" width="56" height="56" fill="#1d2735"/>
+  <rect x="146" y="74" width="56" height="56" fill="#1d2735"/>
+  <rect x="82" y="138" width="56" height="56" fill="#1d2735"/>
+  <rect x="146" y="138" width="56" height="56" fill="#dc7138"/>
+  <text x="82" y="310" fill="#1d2735" font-family="Georgia, serif" font-size="82">Model Registry</text>
+  <text x="82" y="390" fill="#4d5866" font-family="Arial, sans-serif" font-size="34">Developer documentation</text>
+  <text x="82" y="510" fill="#9d4528" font-family="Arial, sans-serif" font-size="24" letter-spacing="4">DESCRIBE · VERIFY · QUALIFY</text>
+</svg>

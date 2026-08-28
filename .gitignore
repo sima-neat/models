@@ -9,6 +9,8 @@ __pycache__/
 .model-registry-cache/
 build/
 dist/
+node_modules/
+.docusaurus/
 *.onnx
 *.squashfs
 *.tar
