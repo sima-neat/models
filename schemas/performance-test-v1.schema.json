@@ -46,10 +46,22 @@
       "type": "object",
       "propertyNames": {"pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
       "additionalProperties": {
-        "type": ["string", "number", "integer", "boolean", "null"]
+        "$ref": "#/$defs/modelOptionValue"
       },
       "default": {}
     },
     "provenance": {"type": "object", "default": {}}
+  },
+  "$defs": {
+    "modelOptionValue": {
+      "anyOf": [
+        {"type": ["string", "number", "integer", "boolean", "null"]},
+        {
+          "type": "object",
+          "propertyNames": {"pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+          "additionalProperties": {"$ref": "#/$defs/modelOptionValue"}
+        }
+      ]
+    }
   }
 }

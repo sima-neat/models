@@ -178,18 +178,9 @@ def load_manifest(path: Path) -> dict[str, Any]:
         _require_positive_int(height, "benchmark.original_height")
     if mode == "bounded_runner":
         _require_positive_int(benchmark.get("warmup_samples"), "benchmark.warmup_samples")
-        if width is not None:
-            raise ConfigurationError("bounded_runner does not support original input geometry overrides")
 
-    options = manifest.get("model_options", {})
-    _require_mapping(options, "model_options")
-    for name, option_value in options.items():
-        if not isinstance(name, str) or not OPTION_NAME.fullmatch(name):
-            raise ConfigurationError(f"invalid model option name: {name!r}")
-        if option_value is not None and not isinstance(option_value, (str, int, float, bool)):
-            raise ConfigurationError(f"model_options.{name} must be a scalar")
-        if isinstance(option_value, float) and not math.isfinite(option_value):
-            raise ConfigurationError(f"model_options.{name} must be finite")
+    options = _require_mapping(manifest.get("model_options", {}), "model_options")
+    _validate_model_options(options)
     _require_mapping(manifest.get("provenance", {}), "provenance")
     return manifest
 
@@ -481,20 +472,41 @@ def resolve_pyneat_reference(pyneat: ModuleType, reference: str) -> Any:
     return value
 
 
+def _validate_model_options(options: dict[str, Any], path: str = "model_options") -> None:
+    for name, option_value in options.items():
+        if not isinstance(name, str) or not OPTION_NAME.fullmatch(name):
+            raise ConfigurationError(f"invalid model option name: {name!r}")
+        option_path = f"{path}.{name}"
+        if isinstance(option_value, dict):
+            _validate_model_options(option_value, option_path)
+        elif option_value is not None and not isinstance(option_value, (str, int, float, bool)):
+            raise ConfigurationError(f"{option_path} must be a scalar or mapping")
+        elif isinstance(option_value, float) and not math.isfinite(option_value):
+            raise ConfigurationError(f"{option_path} must be finite")
+
+
+def _apply_model_options(pyneat: ModuleType, target: Any, options: dict[str, Any], path: str) -> None:
+    for name, value in options.items():
+        option_path = f"{path}.{name}"
+        if not hasattr(target, name):
+            raise CompatibilityError(f"installed pyneat {path} has no field {name!r}")
+        if isinstance(value, dict):
+            _apply_model_options(pyneat, getattr(target, name), value, option_path)
+            continue
+        resolved = (
+            resolve_pyneat_reference(pyneat, value.removeprefix("pyneat:"))
+            if isinstance(value, str) and value.startswith("pyneat:")
+            else value
+        )
+        setattr(target, name, resolved)
+
+
 def build_model(pyneat: ModuleType, model_path: Path, options: dict[str, Any]) -> Any:
     try:
         if not options:
             return pyneat.Model(str(model_path))
         model_options = pyneat.ModelOptions()
-        for name, value in options.items():
-            if not hasattr(model_options, name):
-                raise CompatibilityError(f"installed pyneat ModelOptions has no field {name!r}")
-            resolved = (
-                resolve_pyneat_reference(pyneat, value.removeprefix("pyneat:"))
-                if isinstance(value, str) and value.startswith("pyneat:")
-                else value
-            )
-            setattr(model_options, name, resolved)
+        _apply_model_options(pyneat, model_options, options, "ModelOptions")
         return pyneat.Model(str(model_path), model_options)
     except BenchmarkToolError:
         raise
@@ -614,7 +626,7 @@ def execute_trials(
     return completed
 
 
-def _synthetic_runner_inputs(model: Any) -> list[Any]:
+def _synthetic_runner_inputs(pyneat: ModuleType, model: Any, benchmark: dict[str, Any]) -> list[Any]:
     try:
         import numpy as np
     except ImportError as exc:
@@ -641,6 +653,20 @@ def _synthetic_runner_inputs(model: Any) -> list[Any]:
         raise ModelError("bounded_runner requires at least one model input")
     for index, spec in enumerate(specs):
         shape = list(getattr(spec, "shape", []))
+        image_format = getattr(spec, "image_format", None)
+        width, height = benchmark.get("original_width"), benchmark.get("original_height")
+        if (
+            image_format is not None
+            and width is not None
+            and height is not None
+            and any(not isinstance(size, int) or isinstance(size, bool) or size <= 0 for size in shape)
+        ):
+            if len(shape) == 2:
+                shape = [height, width]
+            elif len(shape) == 3 and shape[-1] in {1, 3, 4}:
+                shape = [height, width, shape[-1]]
+            elif len(shape) == 3 and shape[0] in {1, 3, 4}:
+                shape = [shape[0], height, width]
         if not shape or any(not isinstance(size, int) or isinstance(size, bool) or size <= 0 for size in shape):
             raise ModelError(f"model input {index} has an unsupported shape: {shape}")
         dtypes = list(getattr(spec, "dtypes", []))
@@ -650,7 +676,10 @@ def _synthetic_runner_inputs(model: Any) -> list[Any]:
         dtype = dtype_map.get(dtype_name)
         if dtype is None:
             raise ModelError(f"model input {index} has an unsupported dtype: {dtype_name}")
-        inputs.append(np.zeros(tuple(shape), dtype=dtype))
+        array = np.zeros(tuple(shape), dtype=dtype)
+        if image_format is not None and hasattr(pyneat, "Tensor"):
+            array = pyneat.Tensor.from_numpy(array, copy=True, image_format=image_format)
+        inputs.append(array)
     return inputs
 
 
@@ -696,7 +725,7 @@ def execute_bounded_trials(
     results: list[dict[str, Any]] | None = None,
     on_trial_complete: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
-    inputs = _synthetic_runner_inputs(model)
+    inputs = _synthetic_runner_inputs(pyneat, model, benchmark)
     samples = benchmark["samples"]
     warmup_samples = benchmark["warmup_samples"]
     trials = benchmark.get("trials", DEFAULT_TRIALS)

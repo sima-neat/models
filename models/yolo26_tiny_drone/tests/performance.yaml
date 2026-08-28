@@ -8,9 +8,25 @@ configuration:
   tracker_profile: tiny_drone
 benchmark:
   mode: bounded_runner
-  warmup_samples: 1
-  samples: 5
+  warmup_samples: 10
+  samples: 100
   trials: 3
+  include_plugin_latency: false
+  original_width: 1280
+  original_height: 720
+model_options:
+  preprocess:
+    kind: pyneat:InputKind.Image
+    enable: pyneat:AutoFlag.On
+    color_convert:
+      input_format: pyneat:PreprocessColorFormat.BGR
+    preset: pyneat:NormalizePreset.COCO_YOLO
+  decode_type: pyneat:BoxDecodeType.YoloV26
+  decode_type_option: pyneat:BoxDecodeTypeOption.GroupedByRoleLogit
+  num_classes: 1
+  score_threshold: 0.05
+  nms_iou_threshold: 0.60
+  top_k: 100
 metrics:
   - model_inference_latency_ms
   - preprocessing_latency_ms
@@ -18,4 +34,4 @@ metrics:
   - tracking_latency_ms
   - overlay_latency_ms
   - end_to_end_latency_ms
-note: Use the bounded runner settings above to keep DevKit requalification within the workflow timeout while preserving per-stage and end-to-end latency evidence.
+note: Benchmark the fused image preprocessing and YOLOv26 BoxDecode route used by the application.

@@ -16,7 +16,15 @@ DEFAULT_BENCHMARK = {
     "trials": 3,
     "include_plugin_latency": False,
 }
-BOUNDED_RUNNER_FIELDS = {"mode", "samples", "trials", "warmup_samples"}
+BOUNDED_RUNNER_FIELDS = {
+    "mode",
+    "samples",
+    "trials",
+    "warmup_samples",
+    "include_plugin_latency",
+    "original_width",
+    "original_height",
+}
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
@@ -29,7 +37,7 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def _benchmark_configuration(root: Path, model_id: str) -> dict[str, Any]:
+def _performance_configuration(root: Path, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     path = root / "models" / model_id / "tests" / "performance.yaml"
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -37,9 +45,12 @@ def _benchmark_configuration(root: Path, model_id: str) -> dict[str, Any]:
         raise ValidationError(f"could not read benchmark configuration {path}: {exc}") from exc
     if not isinstance(document, dict):
         raise ValidationError(f"benchmark configuration must be a mapping: {path}")
+    model_options = document.get("model_options", {})
+    if not isinstance(model_options, dict):
+        raise ValidationError(f"model_options must be a mapping: {path}")
     configured = document.get("benchmark")
     if configured is None:
-        return dict(DEFAULT_BENCHMARK)
+        return dict(DEFAULT_BENCHMARK), model_options
     if not isinstance(configured, dict):
         raise ValidationError(f"benchmark must be a mapping: {path}")
     unknown = sorted(set(configured) - BOUNDED_RUNNER_FIELDS)
@@ -47,16 +58,32 @@ def _benchmark_configuration(root: Path, model_id: str) -> dict[str, Any]:
         raise ValidationError(f"benchmark contains unknown field(s): {', '.join(unknown)}")
     if configured.get("mode") != "bounded_runner":
         raise ValidationError("benchmark.mode must be bounded_runner")
-    values = {name: configured.get(name) for name in ("samples", "trials", "warmup_samples")}
-    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in values.values()):
-        raise ValidationError("benchmark samples, trials, and warmup_samples must be positive integers")
-    if values["trials"] > 100:
+    samples = configured.get("samples")
+    trials = configured.get("trials", DEFAULT_BENCHMARK["trials"])
+    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in (samples, trials)):
+        raise ValidationError("benchmark samples and trials must be positive integers")
+    if trials > 100:
         raise ValidationError("benchmark.trials must be <= 100")
-    return {
-        "mode": "bounded_runner",
-        **values,
-        "include_plugin_latency": False,
+    result = {
+        "samples": samples,
+        "trials": trials,
+        "include_plugin_latency": configured.get("include_plugin_latency", False),
     }
+    if not isinstance(result["include_plugin_latency"], bool):
+        raise ValidationError("benchmark.include_plugin_latency must be a boolean")
+    width, height = configured.get("original_width"), configured.get("original_height")
+    if (width is None) != (height is None):
+        raise ValidationError("benchmark.original_width and original_height must be provided together")
+    if width is not None:
+        if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in (width, height)):
+            raise ValidationError("benchmark original_width and original_height must be positive integers")
+        result.update({"original_width": width, "original_height": height})
+    warmup_samples = configured.get("warmup_samples")
+    if not isinstance(warmup_samples, int) or isinstance(warmup_samples, bool) or warmup_samples <= 0:
+        raise ValidationError("benchmark.warmup_samples must be a positive integer")
+    result.update({"mode": "bounded_runner", "warmup_samples": warmup_samples})
+
+    return result, model_options
 
 
 def make_benchmark_manifest(
@@ -100,6 +127,7 @@ def make_benchmark_manifest(
         raise ValidationError("registry publication run_id must be a non-empty string")
 
     runtime = resolve_benchmark_runtime(root)
+    benchmark, model_options = _performance_configuration(root, model_id)
     manifest = {
         "schema_version": 1,
         "model": {
@@ -113,7 +141,7 @@ def make_benchmark_manifest(
             "platform_version": runtime["devkit"]["platform_version"],
             "neat_version": runtime["neat_core"]["version"],
         },
-        "benchmark": _benchmark_configuration(root, model_id),
+        "benchmark": benchmark,
         "provenance": {
             "compile_run_id": compile_run_id,
             "models_commit": git_sha.lower(),
@@ -122,6 +150,8 @@ def make_benchmark_manifest(
             "execution_provider": "github-actions-devkit-runner",
         },
     }
+    if model_options:
+        manifest["model_options"] = model_options
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"manifest": str(output), "compile_run_id": compile_run_id, "model_path": manifest["model"]["path"]}

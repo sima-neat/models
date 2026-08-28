@@ -63,10 +63,26 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     if model_id == "yolo26_tiny_drone":
         assert manifest["benchmark"] == {
             "mode": "bounded_runner",
-            "warmup_samples": 1,
-            "samples": 5,
+            "warmup_samples": 10,
+            "samples": 100,
             "trials": 3,
             "include_plugin_latency": False,
+            "original_width": 1280,
+            "original_height": 720,
+        }
+        assert manifest["model_options"] == {
+            "preprocess": {
+                "kind": "pyneat:InputKind.Image",
+                "enable": "pyneat:AutoFlag.On",
+                "color_convert": {"input_format": "pyneat:PreprocessColorFormat.BGR"},
+                "preset": "pyneat:NormalizePreset.COCO_YOLO",
+            },
+            "decode_type": "pyneat:BoxDecodeType.YoloV26",
+            "decode_type_option": "pyneat:BoxDecodeTypeOption.GroupedByRoleLogit",
+            "num_classes": 1,
+            "score_threshold": 0.05,
+            "nms_iou_threshold": 0.60,
+            "top_k": 100,
         }
     else:
         assert manifest["benchmark"] == {

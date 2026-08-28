@@ -88,11 +88,19 @@ def fake_pyneat() -> ModuleType:
     module = ModuleType("pyneat")
     module.__version__ = "0.4.0+unit-test"
     module.BoxDecodeType = SimpleNamespace(YoloV26=object())
+    module.InputKind = SimpleNamespace(Image=object())
+    module.PreprocessColorFormat = SimpleNamespace(BGR=object())
     module.models = []
 
     class ModelOptions:
         decode_type = None
         top_k = None
+
+        def __init__(self) -> None:
+            self.preprocess = SimpleNamespace(
+                kind=None,
+                color_convert=SimpleNamespace(input_format=None),
+            )
 
     class BenchmarkOptions:
         num_samples = 100
@@ -146,6 +154,87 @@ def fake_pyneat() -> ModuleType:
     module.BenchmarkOptions = BenchmarkOptions
     module.Model = Model
     return module
+
+
+def test_build_model_applies_nested_model_options(tmp_path: Path) -> None:
+    runtime = fake_pyneat()
+    model = benchmark.build_model(
+        runtime,
+        tmp_path / "model.tar.gz",
+        {
+            "preprocess": {
+                "kind": "pyneat:InputKind.Image",
+                "color_convert": {"input_format": "pyneat:PreprocessColorFormat.BGR"},
+            },
+            "decode_type": "pyneat:BoxDecodeType.YoloV26",
+        },
+    )
+
+    assert model.options.preprocess.kind is runtime.InputKind.Image
+    assert model.options.preprocess.color_convert.input_format is runtime.PreprocessColorFormat.BGR
+    assert model.options.decode_type is runtime.BoxDecodeType.YoloV26
+
+
+def test_bounded_runner_materializes_dynamic_image_geometry() -> None:
+    runtime = fake_pyneat()
+    image_format = object()
+    wrapped: list[tuple[Any, bool, Any]] = []
+
+    class Tensor:
+        @staticmethod
+        def from_numpy(array: Any, *, copy: bool, image_format: Any) -> Any:
+            wrapped.append((array, copy, image_format))
+            return "image-tensor"
+
+    runtime.Tensor = Tensor
+    model = runtime.Model("model.tar.gz")
+    model.input_specs = lambda: [
+        SimpleNamespace(
+            shape=[-1, -1, 3],
+            dtypes=[SimpleNamespace(name="UInt8")],
+            image_format=image_format,
+        )
+    ]
+
+    inputs = benchmark._synthetic_runner_inputs(
+        runtime,
+        model,
+        {"original_width": 1920, "original_height": 1080},
+    )
+
+    assert inputs == ["image-tensor"]
+    assert wrapped[0][0].shape == (1080, 1920, 3)
+    assert wrapped[0][1:] == (True, image_format)
+
+
+def test_bounded_runner_preserves_static_image_geometry() -> None:
+    runtime = fake_pyneat()
+    image_format = object()
+    wrapped: list[Any] = []
+
+    class Tensor:
+        @staticmethod
+        def from_numpy(array: Any, *, copy: bool, image_format: Any) -> Any:
+            wrapped.append(array)
+            return "image-tensor"
+
+    runtime.Tensor = Tensor
+    model = runtime.Model("model.tar.gz")
+    model.input_specs = lambda: [
+        SimpleNamespace(
+            shape=[640, 640, 3],
+            dtypes=[SimpleNamespace(name="UInt8")],
+            image_format=image_format,
+        )
+    ]
+
+    benchmark._synthetic_runner_inputs(
+        runtime,
+        model,
+        {"original_width": 1280, "original_height": 720},
+    )
+
+    assert wrapped[0].shape == (640, 640, 3)
 
 
 def add_bounded_runner(runtime: ModuleType) -> None:
