@@ -3,6 +3,14 @@
 set -euo pipefail
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESOLVER="${PACKAGE_DIR}/resolve_model_compiler_python.sh"
+
+if [[ ! -f "${RESOLVER}" ]]; then
+  echo "Missing Model Compiler environment resolver: ${RESOLVER}" >&2
+  exit 1
+fi
+# shellcheck source=resolve_model_compiler_python.sh
+source "${RESOLVER}"
 
 wheel_count="$(find "${PACKAGE_DIR}" -maxdepth 1 -type f -name 'sima_neat_model_registry-*.whl' | wc -l | tr -d ' ')"
 wheel_path="$(find "${PACKAGE_DIR}" -maxdepth 1 -type f -name 'sima_neat_model_registry-*.whl' | sort | head -n 1)"
@@ -11,47 +19,10 @@ if [[ "${wheel_count}" != "1" || -z "${wheel_path}" ]]; then
   exit 1
 fi
 
-is_model_compiler_python() {
-  local candidate="$1"
-  [[ -x "${candidate}" ]] || return 1
-  "${candidate}" - <<'PY' >/dev/null 2>&1
-import sys
-import afe  # noqa: F401
-
-raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
-PY
-}
-
-find_model_compiler_python() {
-  local candidate=""
-
-  if [[ -n "${MODEL_COMPILER_PYTHON:-}" ]]; then
-    if is_model_compiler_python "${MODEL_COMPILER_PYTHON}"; then
-      printf '%s\n' "${MODEL_COMPILER_PYTHON}"
-      return
-    fi
-    echo "MODEL_COMPILER_PYTHON does not identify a Python 3.10+ environment with afe installed: ${MODEL_COMPILER_PYTHON}" >&2
-    return 1
-  fi
-
-  for candidate in \
-    "${VIRTUAL_ENV:-}/bin/python" \
-    "/sdk-extensions/model-compiler/bin/python" \
-    "/sdk-add-on/model-compiler/bin/python" \
-    "${HOME}/sdk-extensions/model-compiler/bin/python" \
-    "$(command -v python 2>/dev/null || true)" \
-    "$(command -v python3 2>/dev/null || true)"; do
-    if is_model_compiler_python "${candidate}"; then
-      printf '%s\n' "${candidate}"
-      return
-    fi
-  done
-  return 1
-}
-
-if ! MODEL_COMPILER_PYTHON_BIN="$(find_model_compiler_python)"; then
+if ! MODEL_COMPILER_PYTHON_BIN="$(resolve_model_compiler_python)"; then
   echo "Model Compiler Python was not found." >&2
-  echo "Install or activate Model Compiler first, or set MODEL_COMPILER_PYTHON to its bin/python path." >&2
+  echo "Install or activate Model Compiler in NEAT SDK or standalone mode." >&2
+  echo "For a custom layout, set MODEL_COMPILER_HOME or MODEL_COMPILER_PYTHON." >&2
   exit 1
 fi
 

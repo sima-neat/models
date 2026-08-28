@@ -21,6 +21,7 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
     assert "artifact_folder: model-registry" in text
     assert text.count("artifact_namespace: models-utils") == 2
     assert "artifact_pattern: model-registry-dist" in text
+    assert "min_artifact_count: 4" in text
     assert "vulcan-publish-artifacts.yml@main" in text
     assert "vulcan-update-latest-artifacts.yml@main" in text
     assert "github.event_name != 'pull_request'" in text

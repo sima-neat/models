@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -10,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "scripts" / "build_model_registry_vulcan_package.sh"
 INSTALL_SCRIPT = ROOT / "packaging" / "model-registry" / "install_model_registry_package.sh"
+RESOLVER = ROOT / "packaging" / "model-registry" / "resolve_model_compiler_python.sh"
 
 
 def fake_sima_cli(path: Path) -> None:
@@ -29,6 +31,37 @@ version = sys.argv[sys.argv.index("--version") + 1]
         encoding="utf-8",
     )
     path.chmod(0o755)
+
+
+def fake_model_compiler(path: Path) -> Path:
+    bin_dir = path / "bin"
+    bin_dir.mkdir(parents=True)
+    python = bin_dir / "python"
+    python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python.chmod(0o755)
+    (bin_dir / "mla-masm").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "mla-masm").chmod(0o755)
+    return python
+
+
+def resolve_with(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, **environment}
+    for name in (
+        "MODEL_COMPILER_HOME",
+        "MODEL_COMPILER_PYTHON",
+        "NEAT_SDK_EXTENSIONS_DIR",
+        "SIMA_SDK_EXTENSIONS_DIR",
+        "VIRTUAL_ENV",
+    ):
+        if name not in environment:
+            env.pop(name, None)
+    return subprocess.run(
+        ["/bin/bash", "-c", f"source {shlex.quote(str(RESOLVER))}; resolve_model_compiler_python"],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
 
 
 def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
@@ -63,15 +96,22 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata == {"name": "gh:sima-neat/models/model-registry", "version": "0.1.0+unit"}
     assert (output / "install_model_registry_package.sh").stat().st_mode & 0o111
+    assert (output / "resolve_model_compiler_python.sh").stat().st_mode & 0o111
 
 
 def test_installer_uses_the_model_compiler_environment_without_changing_dependencies() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    resolver = RESOLVER.read_text(encoding="utf-8")
 
-    assert '"/sdk-extensions/model-compiler/bin/python"' in script
-    assert '"/sdk-add-on/model-compiler/bin/python"' in script
-    assert '"${HOME}/sdk-extensions/model-compiler/bin/python"' in script
-    assert "import afe" in script
+    assert 'source "${RESOLVER}"' in script
+    assert '"/sdk-extensions/model-compiler/bin/python"' in resolver
+    assert '"/sdk-add-on/model-compiler/bin/python"' in resolver
+    assert '"${HOME}/sima-sdk-extensions/model-compiler/bin/python"' in resolver
+    assert '"${HOME}/sdk-extensions/model-compiler/bin/python"' in resolver
+    assert "NEAT_SDK_EXTENSIONS_DIR" in resolver
+    assert "MODEL_COMPILER_HOME" in resolver
+    assert "import afe" in resolver
+    assert '"${candidate_bin}/mla-masm"' in resolver
     assert "-m pip install --no-deps --force-reinstall" in script
     assert '"${MODEL_COMPILER_PYTHON_BIN}" -m model_registry --help' in script
     assert "python" not in script.split("-m pip install", 1)[1].splitlines()[0].replace(
@@ -81,4 +121,56 @@ def test_installer_uses_the_model_compiler_environment_without_changing_dependen
     assert ".local/bin/model-registry" not in script
     assert "publish-benchmark" in script
     subprocess.run(["bash", "-n", str(INSTALL_SCRIPT)], check=True)
+    subprocess.run(["bash", "-n", str(RESOLVER)], check=True)
     subprocess.run(["bash", "-n", str(BUILD_SCRIPT)], check=True)
+
+
+def test_resolver_supports_explicit_model_compiler_python(tmp_path: Path) -> None:
+    python = fake_model_compiler(tmp_path / "compiler")
+    result = resolve_with({"MODEL_COMPILER_PYTHON": str(python)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)
+
+
+def test_resolver_supports_standalone_model_compiler_home(tmp_path: Path) -> None:
+    compiler = tmp_path / "standalone" / "model-compiler"
+    python = fake_model_compiler(compiler)
+    result = resolve_with({"MODEL_COMPILER_HOME": str(compiler)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)
+
+
+def test_resolver_prefers_an_active_model_compiler_environment(tmp_path: Path) -> None:
+    active = tmp_path / "active-model-compiler"
+    python = fake_model_compiler(active)
+    result = resolve_with({"VIRTUAL_ENV": str(active)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)
+
+
+def test_resolver_supports_configured_neat_sdk_extensions(tmp_path: Path) -> None:
+    extensions = tmp_path / "custom-sdk-extensions"
+    python = fake_model_compiler(extensions / "model-compiler")
+    result = resolve_with({"NEAT_SDK_EXTENSIONS_DIR": str(extensions)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)
+
+
+def test_resolver_supports_default_neat_sdk_host_layout(tmp_path: Path) -> None:
+    python = fake_model_compiler(tmp_path / "sima-sdk-extensions" / "model-compiler")
+    result = resolve_with({"HOME": str(tmp_path)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)
+
+
+def test_resolver_supports_default_standalone_user_layout(tmp_path: Path) -> None:
+    python = fake_model_compiler(tmp_path / "sdk-extensions" / "model-compiler")
+    result = resolve_with({"HOME": str(tmp_path)})
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(python)

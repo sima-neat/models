@@ -44,6 +44,8 @@ mkdir -p "${OUT_DIR}"
 
 install -m 0755 "${ROOT_DIR}/packaging/model-registry/install_model_registry_package.sh" \
   "${OUT_DIR}/install_model_registry_package.sh"
+install -m 0755 "${ROOT_DIR}/packaging/model-registry/resolve_model_compiler_python.sh" \
+  "${OUT_DIR}/resolve_model_compiler_python.sh"
 
 SIMA_CLI_CHECK_FOR_UPDATE=0 "${SIMA_CLI_BIN}" packages build "${OUT_DIR}" \
   --name "gh:sima-neat/models/model-registry" \
