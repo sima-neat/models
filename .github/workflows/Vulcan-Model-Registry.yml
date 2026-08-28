@@ -1,6 +1,6 @@
-name: Vulcan Model Registry
+name: Model Registry Contributor Tool
 
-run-name: Model Registry (${{ inputs.environment || 'staging' }}) - ${{ github.ref_name }}
+run-name: Model Registry Contributor Tool (${{ inputs.environment || 'staging' }}) - ${{ github.ref_name }}
 
 on:
   pull_request:

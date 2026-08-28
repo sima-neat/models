@@ -8,6 +8,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Registry.yml"
 
 def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.startswith("name: Model Registry Contributor Tool\n")
     for path in (
         "tools/model_registry/**",
         "packaging/model-registry/**",
