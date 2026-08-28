@@ -4,24 +4,41 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .artifact import verify_mpk
-from .benchmark_manifest import make_benchmark_manifest
-from .benchmark_publication import publish_benchmark_result
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model
-from .package import package_compiled_models
-from .published import fetch_previous_index, validate_latest_index
-from .registry import publish_compilations, publish_taxonomy
+from .published import validate_latest_index
 from .source import SourceSpec
 
+AUTHOR_COMMANDS = frozenset(
+    {
+        "fetch",
+        "fetch-calibration",
+        "matrix",
+        "resolve-compiler",
+        "validate",
+        "validate-catalog",
+        "verify-mpk",
+    }
+)
 
-def _parser() -> argparse.ArgumentParser:
+
+def tool_version() -> str:
+    try:
+        return version("sima-neat-model-registry")
+    except PackageNotFoundError:
+        return "source"
+
+
+def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="model-registry", description="SiMa Neat Model Registry lifecycle tooling")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     validate = subcommands.add_parser("validate", help="validate a model directory against its schema version")
@@ -163,6 +180,14 @@ def _parser() -> argparse.ArgumentParser:
     publish_taxonomy_parser.add_argument("--api-url", required=True)
     publish_taxonomy_parser.add_argument("--aws-region", default="us-west-2")
     publish_taxonomy_parser.add_argument("--json", action="store_true", dest="json_output")
+
+    if author_safe:
+        for command in tuple(subcommands.choices):
+            if command not in AUTHOR_COMMANDS:
+                del subcommands.choices[command]
+        subcommands._choices_actions = [
+            choice for choice in subcommands._choices_actions if choice.dest in AUTHOR_COMMANDS
+        ]
     return parser
 
 
@@ -297,6 +322,8 @@ def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
 
 
 def _make_benchmark_manifest(args: argparse.Namespace) -> int:
+    from .benchmark_manifest import make_benchmark_manifest
+
     result = make_benchmark_manifest(
         repository=args.repository,
         compiled_dir=args.compiled_dir,
@@ -330,6 +357,8 @@ def _verify_mpk(args: argparse.Namespace) -> int:
 
 
 def _package(args: argparse.Namespace) -> int:
+    from .package import package_compiled_models
+
     result = package_compiled_models(
         args.repository,
         args.compiled_dir,
@@ -346,6 +375,8 @@ def _package(args: argparse.Namespace) -> int:
 
 
 def _fetch_previous(args: argparse.Namespace) -> int:
+    from .published import fetch_previous_index
+
     index = fetch_previous_index(args.environment, args.branch, args.output_file)
     source_branch = args.branch if index is not None else None
     if index is None and args.fallback_branch and args.fallback_branch != args.branch:
@@ -361,6 +392,8 @@ def _fetch_previous(args: argparse.Namespace) -> int:
 
 
 def _publish(args: argparse.Namespace) -> int:
+    from .registry import publish_compilations
+
     result = publish_compilations(
         repository=args.repository,
         dist_dir=args.dist_dir,
@@ -381,6 +414,8 @@ def _publish(args: argparse.Namespace) -> int:
 
 
 def _publish_benchmark(args: argparse.Namespace) -> int:
+    from .benchmark_publication import publish_benchmark_result
+
     result = publish_benchmark_result(
         result_path=args.result,
         log_path=args.log,
@@ -405,6 +440,8 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
 
 
 def _publish_taxonomy(args: argparse.Namespace) -> int:
+    from .registry import publish_taxonomy
+
     result = publish_taxonomy(
         repository=args.repository,
         api_url=args.api_url,
@@ -415,8 +452,8 @@ def _publish_taxonomy(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = _parser()
+def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
+    parser = _parser(author_safe=author_safe)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
@@ -454,6 +491,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return _main(argv, author_safe=False)
+
+
+def author_main(argv: Sequence[str] | None = None) -> int:
+    return _main(argv, author_safe=True)
 
 
 if __name__ == "__main__":

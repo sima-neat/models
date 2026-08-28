@@ -1,12 +1,50 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from model_registry import cli
 from model_registry.cli import main
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_author_parser_exposes_only_supported_model_contributor_commands() -> None:
+    parser = cli._parser(author_safe=True)
+    subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+
+    assert set(subcommands.choices) == cli.AUTHOR_COMMANDS
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "fetch-previous",
+        "make-benchmark-manifest",
+        "package",
+        "publish",
+        "publish-benchmark",
+        "publish-taxonomy",
+        "resolve-base",
+        "resolve-benchmark-runtime",
+    ],
+)
+def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.author_main([command])
+
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_repository_cli_retains_ci_only_commands() -> None:
+    parser = cli._parser()
+    subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+
+    assert {"package", "publish", "publish-benchmark", "publish-taxonomy"} <= set(subcommands.choices)
 
 
 def test_validate_json_output(capsys) -> None:

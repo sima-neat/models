@@ -1,0 +1,158 @@
+name: Vulcan Model Registry
+
+run-name: Model Registry (${{ inputs.environment || 'staging' }}) - ${{ github.ref_name }}
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/Vulcan-Model-Registry.yml"
+      - "packaging/model-registry/**"
+      - "scripts/build_model_registry_vulcan_package.sh"
+      - "tests/unit/test_cli.py"
+      - "tests/unit/test_model_registry_package.py"
+      - "tests/unit/test_model_registry_workflow.py"
+      - "tools/model_registry/**"
+      - "pyproject.toml"
+  push:
+    branches:
+      - "**"
+    paths:
+      - ".github/workflows/Vulcan-Model-Registry.yml"
+      - "packaging/model-registry/**"
+      - "scripts/build_model_registry_vulcan_package.sh"
+      - "tests/unit/test_cli.py"
+      - "tests/unit/test_model_registry_package.py"
+      - "tests/unit/test_model_registry_workflow.py"
+      - "tools/model_registry/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Vulcan environment used for package publication
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: model-registry-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SIMA_CLI_CHECK_FOR_UPDATE: "0"
+
+jobs:
+  resolve-vulcan-config:
+    name: Resolve Vulcan Config
+    if: ${{ github.event_name != 'pull_request' }}
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ inputs.environment || 'staging' }}
+
+  build:
+    name: Build Model Registry Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build and test tooling
+        run: python -m pip install -e '.[dev]'
+
+      - name: Install sima-cli
+        run: |
+          set -euo pipefail
+          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+          sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"
+          "${sima_cli}" packages build --help >/dev/null
+          echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"
+
+      - name: Test model-registry contracts
+        run: |
+          python -m pytest \
+            tests/unit/test_cli.py \
+            tests/unit/test_model_registry_package.py \
+            tests/unit/test_model_registry_workflow.py
+
+      - name: Build wheel and Vulcan metadata
+        run: scripts/build_model_registry_vulcan_package.sh
+
+      - name: Verify package installer and author command surface
+        run: |
+          set -euo pipefail
+          export MODEL_REGISTRY_INSTALL_ROOT="${RUNNER_TEMP}/model-registry-install"
+          export MODEL_REGISTRY_BIN_DIR="${RUNNER_TEMP}/model-registry-bin"
+          bash dist/model-registry/install_model_registry_package.sh
+          model_registry="${MODEL_REGISTRY_BIN_DIR}/model-registry"
+          "${model_registry}" --version
+          help_text="$("${model_registry}" --help)"
+          module_help_text="$("${MODEL_REGISTRY_INSTALL_ROOT}/venv/bin/python" -m model_registry --help)"
+          test "${help_text}" = "${module_help_text}"
+          for command in validate validate-catalog fetch fetch-calibration matrix resolve-compiler verify-mpk; do
+            grep -q "${command}" <<< "${help_text}"
+          done
+          for command in package publish publish-benchmark publish-taxonomy; do
+            if grep -Eq "(^|[,{[:space:]])${command}([,}[:space:]]|$)" <<< "${help_text}"; then
+              echo "author CLI unexpectedly exposes ${command}" >&2
+              exit 1
+            fi
+          done
+          python -m json.tool dist/model-registry/metadata.json >/dev/null
+
+      - name: Upload package payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-registry-dist
+          path: dist/model-registry/*
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Publish Model Registry to Vulcan
+    if: ${{ github.event_name != 'pull_request' }}
+    needs:
+      - resolve-vulcan-config
+      - build
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
+    with:
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+      artifact_namespace: models-utils
+      artifact_folder: model-registry
+      artifact_pattern: model-registry-dist
+      artifact_glob: "*"
+      min_artifact_count: 3
+
+  promote-latest:
+    name: Promote Model Registry latest tag
+    if: ${{ github.event_name != 'pull_request' && github.ref_type == 'branch' }}
+    needs:
+      - resolve-vulcan-config
+      - publish
+    uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
+    with:
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      artifact_namespace: models-utils
+      artifact_folder: model-registry
