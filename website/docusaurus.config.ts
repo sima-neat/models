@@ -19,7 +19,9 @@ const config: Config = {
   baseUrl,
   organizationName: 'sima-neat',
   projectName: 'models',
-  trailingSlash: false,
+  // Vulcan's /models CloudFront behavior rewrites clean routes to
+  // <route>/index.html, so the static artifact must use directory indexes.
+  trailingSlash: true,
   onBrokenLinks: 'throw',
   storage: {
     type: 'localStorage',

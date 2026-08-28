@@ -122,6 +122,8 @@ def test_github_pages_publishes_the_same_combined_portal() -> None:
 def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
 
+    assert "trailingSlash: true" in config
+    assert "trailingSlash: false" not in config
     assert "namespace: false" in config
     assert "className: 'navbar__catalog-item'" in config
     assert 'href="${baseUrl}">Models</a>' in config
