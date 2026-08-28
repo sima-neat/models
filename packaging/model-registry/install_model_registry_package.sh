@@ -26,19 +26,15 @@ if ! MODEL_COMPILER_PYTHON_BIN="$(resolve_model_compiler_python)"; then
   exit 1
 fi
 
-# Model Compiler owns this environment's dependency versions. In particular,
-# sima-accelerator-mode pins jsonschema. Installing the contributor tool with
-# --no-deps prevents pip from upgrading or replacing compiler dependencies.
+# Model Compiler owns this environment's dependency versions. Installing the
+# contributor tool with --no-deps prevents pip from upgrading or replacing
+# compiler dependencies.
 "${MODEL_COMPILER_PYTHON_BIN}" -m pip install --no-deps --force-reinstall "${wheel_path}"
 
 "${MODEL_COMPILER_PYTHON_BIN}" - <<'PY'
 import certifi  # noqa: F401
-from importlib.metadata import version
 import yaml  # noqa: F401
-
-jsonschema_version = version("jsonschema")
-if jsonschema_version != "4.18.4":
-    raise SystemExit(f"Model Compiler requires jsonschema 4.18.4, found {jsonschema_version}")
+from jsonschema import Draft202012Validator, FormatChecker  # noqa: F401
 PY
 
 MODEL_REGISTRY_BIN="$(dirname "${MODEL_COMPILER_PYTHON_BIN}")/model-registry"

@@ -87,7 +87,7 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         metadata = wheel.read(metadata_name).decode()
         assert "Name: sima-neat-model-registry" in metadata
         assert "Version: 0.1.0+unit" in metadata
-        assert "Requires-Dist: jsonschema==4.18.4" in metadata
+        assert "Requires-Dist: jsonschema<5,>=4.18.4" in metadata
         assert "model_registry/cli.py" in names
         for ci_module in ("benchmark_manifest", "benchmark_publication", "package", "registry"):
             assert f"model_registry/{ci_module}.py" not in names
@@ -139,6 +139,8 @@ def test_installer_uses_the_model_compiler_environment_without_changing_dependen
     assert "import afe" in resolver
     assert '"${candidate_bin}/mla-masm"' in resolver
     assert "-m pip install --no-deps --force-reinstall" in script
+    assert "from jsonschema import Draft202012Validator, FormatChecker" in script
+    assert 'version("jsonschema")' not in script
     assert '"${MODEL_COMPILER_PYTHON_BIN}" -m model_registry --help' in script
     assert "python" not in script.split("-m pip install", 1)[1].splitlines()[0].replace(
         '"${MODEL_COMPILER_PYTHON_BIN}"', ""
