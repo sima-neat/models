@@ -362,6 +362,7 @@ function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   try {
     localStorage.setItem("sima-neat-artifact-theme", theme);
+    localStorage.setItem("theme", theme);
   } catch {
     // Storage may be disabled; theme selection still works for this page load.
   }

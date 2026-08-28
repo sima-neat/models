@@ -148,6 +148,11 @@ surgery:
 Generic download, checksum, cache, MPK validation, and publication behavior
 belongs under `tools/`, not in model code.
 
+The model recipe is the developer-facing compilation interface. The
+author-safe `model-registry` package provides validation, verified input
+handling, matrix inspection, and artifact checks; it is not a model-author
+publishing client. CI retains the separate packaging and publication commands.
+
 Each model owns a Python compile recipe with this interface:
 
 ```text
@@ -192,7 +197,9 @@ Do not mark an untested or temporarily failing variant unsupported.
 
 ## 8. Validate the contribution
 
-Run the focused checks first, then the catalog and repository checks:
+Run the model-owned recipe and benchmark flow from
+[Local development and testing](local-development.md). Use these internal,
+non-publishing repository checks before and after that work:
 
 ```bash
 model-registry validate models/<model-id>
@@ -201,18 +208,18 @@ model-registry fetch-calibration models/<model-id>
 model-registry matrix --repository . --changed-path models/<model-id>/model.yaml
 model-registry resolve-compiler --repository .
 model-registry validate-catalog --repository .
-python -m ruff check .
-python -m pytest
 ```
 
 `fetch-calibration` reports that no calibration is required when status is not
 `ready`. Inspect the matrix JSON and confirm that it contains every intended
 supported variant and no unintended model.
 
-Compilation can only be reproduced locally when the exact pinned Model
-Compiler environment is available. Follow the optional procedure in
-[Local development and testing](local-development.md); otherwise, stop after
-host-side validation and describe the unrun compiler checks in the pull request.
+When the exact pinned Model Compiler environment and a compatible Modalix
+DevKit are available, continue through local compilation, MPK verification, and
+the declared performance test in
+[Local development and testing](local-development.md). If either environment is
+unavailable, stop at the last completed stage and state exactly which compiler
+or DevKit checks were not run in the pull request.
 
 ## 9. Submit the change
 
@@ -221,9 +228,5 @@ commit contains only the model directory and, when necessary, a separately
 reviewable taxonomy update. Never commit downloaded models, calibration or test
 datasets, MPKs, compiler intermediates, logs, credentials, or signed URLs.
 
-On a pull request, GitHub-hosted jobs validate the complete catalog and build
-the deterministic matrix. Contributor-controlled recipes are not run on a
-self-hosted runner. Trusted branch pushes compile changed supported variants;
-successful staging compilation can then dispatch Modalix benchmark work and
-publish immutable provenance. Passing local checks is therefore the start of
-qualification, not the final release decision.
+See [Contributing with Git and GitHub](contributing.md) for the submission and
+automation boundary. Model authors never publish registry state directly.

@@ -31,6 +31,8 @@ def test_developer_index_covers_the_contribution_path() -> None:
 def test_local_guide_uses_supported_validation_commands() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 
+    assert "sima-cli neat install --stg models-utils/model-registry@develop:latest" in text
+    assert "python -m pip install -e" not in text
     for command in (
         "model-registry validate ",
         "model-registry validate-catalog ",
@@ -43,6 +45,30 @@ def test_local_guide_uses_supported_validation_commands() -> None:
         assert command in text
 
 
+def test_local_guide_covers_the_complete_local_qualification_loop() -> None:
+    text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
+
+    for expected in (
+        "Compile locally from `model.yaml`",
+        "Model Compiler Python APIs available",
+        "compile.py --model <verified-source>",
+        "model-registry verify-mpk",
+        "Benchmark locally on a Modalix DevKit",
+        "type dk || type devkit-run",
+        "benchmarker \\",
+        "performance-result.json",
+        "Finish the local review",
+    ):
+        assert expected in text
+
+    assert "Compilation is intentionally model-owned" in text
+    assert "does not provide a public compile command" in text.replace("\n", " ")
+    assert "commit either file" in text
+    assert "Vulcan" not in text
+    assert "What CI repeats" not in text
+    assert "GitHub-hosted runner" not in text
+
+
 def test_bounded_runner_documents_dynamic_image_geometry() -> None:
     text = (ROOT / "docs" / "benchmarking.md").read_text(encoding="utf-8")
 
@@ -50,3 +76,27 @@ def test_bounded_runner_documents_dynamic_image_geometry() -> None:
     assert "original_height: 720" in text
     assert "For image inputs with dynamic spatial dimensions" in text
     assert "Input geometry overrides are not supported" not in text
+
+
+def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
+    overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    local = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
+    benchmarking = (ROOT / "docs" / "benchmarking.md").read_text(encoding="utf-8")
+
+    assert "models-utils/model-registry@develop:latest" in overview
+    assert "models-utils/model-registry@develop:latest" in local
+    assert "Compilation is intentionally model-owned" in local
+    assert "Model authors do not publish benchmark results directly" in benchmarking
+    assert "reserved for CI" in contributing
+    assert "git push --set-upstream origin HEAD" in contributing
+    assert "authors do not invoke those publication steps themselves" in contributing
+
+    author_guides = local + benchmarking
+    for command in (
+        "model-registry publish ",
+        "model-registry publish-benchmark ",
+        "model-registry publish-taxonomy ",
+        "model-registry package ",
+    ):
+        assert command not in author_guides

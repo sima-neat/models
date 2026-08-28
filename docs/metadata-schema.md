@@ -234,7 +234,9 @@ performance settings and result semantics.
 
 ## Validation behavior
 
-Run validation from the repository root:
+Run validation from the repository root. The author-safe `model-registry`
+package is read-only in these commands; validation does not compile or publish
+the model.
 
 ```bash
 model-registry validate models/<model-id>

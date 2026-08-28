@@ -9,6 +9,11 @@ from jsonschema import Draft202012Validator, FormatChecker
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER = ROOT / "artifact-browser"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-browser.yml"
+PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "developer-docs-pages.yml"
+PORTAL_ASSEMBLER = ROOT / "website" / "scripts" / "assemble-portal.mjs"
+DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.ts"
+DOCS_STYLES = ROOT / "website" / "src" / "css" / "custom.css"
+DOCS_THEME_TOGGLE = ROOT / "website" / "src" / "theme" / "ColorModeToggle" / "index.tsx"
 
 
 def test_artifact_browser_assets_exist() -> None:
@@ -52,6 +57,11 @@ def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
 
     assert 'class="brand" href="./"' in html
     assert 'class="brand" href="/"' not in html
+    assert '<nav class="product-nav" aria-label="Model Registry">' in html
+    assert '<span aria-current="page">Models</span>' in html
+    assert '<a href="./docs">Developer docs</a>' in html
+    assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
+    assert '>GitHub</a>' not in html
 
 
 def test_browser_redirects_the_extensionless_models_route_before_loading_assets() -> None:
@@ -79,19 +89,77 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert publish["s3_prefix"] == "models"
     assert publish["cloudfront_paths"] == "/models /models/*"
 
+    build = workflow["jobs"]["build"]
+    assert build["steps"][-1]["with"]["path"] == "website/portal-build/"
+    assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
 
-def test_staging_deployment_fingerprints_mutable_browser_assets() -> None:
-    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assemble = next(
-        step["run"]
-        for step in workflow["jobs"]["build"]["steps"]
-        if step.get("name") == "Assemble static site"
-    )
 
-    assert 'revision="${GITHUB_SHA:0:12}"' in assemble
+def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
+    assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
+
+    assert "process.env.GITHUB_SHA" in assemble
     for asset in ("app", "benchmark-adapters", "styles", "config"):
-        assert f"{asset}.${{revision}}" in assemble
-    assert "sed -i" in assemble
+        assert f"'{asset}'" in assemble
+    assert "cpSync(docsBuild, output, {recursive: true})" in assemble
+    assert "fingerprintedAssets" in assemble
+
+
+def test_github_pages_publishes_the_same_combined_portal() -> None:
+    workflow = yaml.load(PAGES_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    build = workflow["jobs"]["build"]
+
+    assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
+    upload = next(step for step in build["steps"] if step.get("uses") == "actions/upload-pages-artifact@v4")
+    assert upload["with"]["path"] == "website/portal-build"
+
+
+def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
+    config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
+
+    assert "namespace: false" in config
+    assert "className: 'navbar__catalog-item'" in config
+    assert 'href="${baseUrl}">Models</a>' in config
+    assert "label: 'YAML reference'" not in config
+    assert "label: 'GitHub'" not in config
+    assert 'Staging registry' in config
+    assert "showLastUpdateAuthor" not in config
+    assert "showLastUpdateTime" not in config
+
+
+def test_docs_catalog_navigation_reloads_the_assembled_portal() -> None:
+    placeholder = (ROOT / "website" / "src" / "pages" / "index.tsx").read_text(encoding="utf-8")
+    browser_mark = (BROWSER / "favicon.svg").read_text(encoding="utf-8")
+    docs_mark = (ROOT / "website" / "static" / "img" / "mark.svg").read_text(encoding="utf-8")
+    docs_favicon = (ROOT / "website" / "static" / "img" / "favicon.svg").read_text(encoding="utf-8")
+
+    assert "window.location.replace(catalogUrl)" in placeholder
+    assert browser_mark == docs_mark
+    assert browser_mark == docs_favicon
+
+
+def test_developer_docs_use_the_catalog_visual_system() -> None:
+    browser_styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    docs_styles = DOCS_STYLES.read_text(encoding="utf-8")
+    config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
+
+    for color in ("#f7f8f9", "#f1f3f5", "#ffffff", "#20262c", "#5f6972", "#dfe3e6", "#376f9f"):
+        assert color in browser_styles
+        assert color in docs_styles
+    assert "font-size: clamp(2rem, 3vw, 2.65rem)" in docs_styles
+    assert "style: 'light'" in config
+
+
+def test_developer_docs_use_the_catalog_theme_toggle_behavior() -> None:
+    toggle = DOCS_THEME_TOGGLE.read_text(encoding="utf-8")
+    styles = DOCS_STYLES.read_text(encoding="utf-8")
+
+    assert "document.documentElement.dataset.theme === 'dark'" in toggle
+    assert "const nextMode = dark ? 'light' : 'dark'" in toggle
+    assert "onChange(nextMode)" in toggle
+    assert "Switch to ${nextMode} mode" in toggle
+    assert "portal-theme-icon--sun" in toggle
+    assert "portal-theme-icon--moon" in toggle
+    assert ".portal-theme-toggle" in styles
 
 
 def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
@@ -157,6 +225,8 @@ def test_browser_has_persistent_dual_theme_and_accessibility_controls() -> None:
     assert "prefers-color-scheme: dark" in html
     assert "sima-neat-artifact-theme" in html
     assert "sima-neat-artifact-theme" in script
+    assert 'localStorage.getItem("theme")' in html
+    assert 'localStorage.setItem("theme", theme)' in script
     assert "Storage is optional; use the system preference when unavailable." in html
     assert "Storage may be disabled; theme selection still works for this page load." in script
     assert 'class="skip-link"' in html
@@ -168,7 +238,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert "Manrope:wght@400;500;600;700" in html
+    assert "Roboto:wght@400;500;600;700" in html
     assert "IBM+Plex+Mono" in html
     assert '<h1 class="sr-only">Model Registry</h1>' in html
     assert "Search models, tasks, or architectures" in html

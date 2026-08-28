@@ -30,7 +30,7 @@ compiled batch sizes fails validation.
 
 ## Install on a DevKit
 
-Install the published package from Vulcan:
+Install the benchmarker package on the DevKit:
 
 ```bash
 sima-cli neat install --stg models-utils/benchmarker@develop:latest
@@ -41,10 +41,8 @@ benchmarker --version
 The package declares `core@v0.4.0` in its own package metadata. Its installer
 checks the DevKit platform, installs that Core package through `sima-cli` when
 pyneat 0.4.0 is not already satisfied, and installs the benchmarker wheel into
-the resulting `~/pyneat` environment. CI resolves `latest` from the configured
-feature branch first and falls back to `develop:latest` when that branch does
-not have an installable benchmarker package. The installed benchmarker and
-pyneat versions are verified before execution.
+the resulting `~/pyneat` environment. Verify the installed benchmarker and
+pyneat versions before execution.
 
 For a downloaded package payload, the equivalent manual installation is:
 
@@ -88,11 +86,14 @@ The input follows
     "include_plugin_latency": false
   },
   "provenance": {
-    "models_commit": "<git SHA>",
-    "compile_run_id": "<Vulcan run UUID>"
+    "models_commit": "<git SHA>"
   }
 }
 ```
+
+For a local benchmark, keep the local Git SHA when available and record any
+uncommitted state separately. Automation may add registry provenance later; a
+model author does not need or create that publication identity.
 
 Model options are declarative. Enum values use an explicit public pyneat
 reference; ordinary strings remain ordinary strings:
@@ -141,6 +142,10 @@ benchmarker \
   --output /workspace/results/performance-result.json
 ```
 
+Run this against the exact MPK that passed local compiler validation. Preserve
+the JSON result and benchmark log outside Git. Local results are developer
+evidence; they are not registry publications.
+
 The output follows
 [`performance-result-v2.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result-v2.schema.json)
 and is written atomically. Average latency and throughput are available from
@@ -164,34 +169,17 @@ duplicate kernel labels such as `temp1` remain distinguishable. Invalid
 manifests and runtime failures also produce schema-valid error reports at
 `--output`.
 
-## Publish a result to Vulcan
+## Publication boundary
 
-The DevKit benchmarker never receives registry credentials. From a trusted host
-with repository tooling and AWS session credentials, publish the validated
-result as a benchmark run linked to its originating compile run:
+Model authors do not publish benchmark results directly. The DevKit benchmarker
+has no registry credentials, and `model-registry publish-benchmark` is reserved
+for CI. Keep local results outside Git and include only a concise summary with
+the contribution.
 
-```bash
-model-registry publish-benchmark \
-  --result /workspace/results/performance-result.json \
-  --log /workspace/results/benchmark.log \
-  --api-url "$VULCAN_ARTIFACT_REGISTRY_API_URL" \
-  --aws-region us-west-2 \
-  --bucket "$VULCAN_ARTIFACT_BUCKET" \
-  --environment staging \
-  --branch "$(git branch --show-current)" \
-  --git-sha "$(git rev-parse HEAD)" \
-  --compile-run-id '<Vulcan compile run UUID>' \
-  --json
-```
+## Develop the benchmarker itself
 
-`--compile-run-id` may be omitted when the manifest supplied
-`provenance.compile_run_id`. Publication revalidates the result schema and its
-canonical fingerprint, creates an idempotent `model_benchmark` child run,
-uploads the complete JSON report, records the measured values in Vulcan's
-measurement index, and finalizes the child run. A separate run is required
-because the originating `model_compile` run is immutable after finalization.
-
-## Local development
+This section applies only when changing the benchmarker implementation, not
+when adding or testing a model.
 
 Local tests use a fake public pyneat module and synthetic MPK fixtures, so they
 run without Modalix hardware or a Linux ARM64 wheel:
@@ -203,21 +191,11 @@ python -m pip install -e '.[dev]'
 python -m pytest tests/unit/test_benchmarker.py
 ```
 
-Build the wheel and sima-cli/Vulcan package locally with:
+Build its package locally with:
 
 ```bash
 scripts/build_benchmarker_vulcan_package.sh
 ```
 
-Changes to the benchmarker source, schemas, dependency declaration, packaging,
-or workflow trigger `.github/workflows/Vulcan-Benchmarker.yml`. Pull requests
-build and verify the package without publishing. Trusted branch pushes publish
-under the isolated `models-utils/benchmarker` Vulcan namespace and advance that branch's
-benchmarker-specific `latest.tag`.
-
-The compile workflow inventories the `compiled-model-*` artifacts produced by the
-current run and intersects them with its selected Modalix compile matrix. It then
-resolves the approved Modalix GitHub runner group, verifies the DevKit platform
-against `deps/manifest.json`, and benchmarks each discovered model variant directly
-on that runner. A separate trusted hosted job publishes every completed JSON result
-and log, including successes from a partially failed benchmark matrix.
+Packaging and publication workflow details belong to repository automation and
+are outside this contributor guide.

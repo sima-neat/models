@@ -2,7 +2,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-const siteUrl = process.env.DOCS_SITE_URL?.trim() || 'https://crispy-dollop-km416j7.pages.github.io';
+const siteUrl = process.env.DOCS_SITE_URL?.trim() || 'http://localhost:4173';
 const basePath = process.env.DOCS_BASE_URL?.trim().replace(/^\/+|\/+$/g, '') ?? '';
 const baseUrl = basePath ? `/${basePath}/` : '/';
 
@@ -21,6 +21,10 @@ const config: Config = {
   projectName: 'models',
   trailingSlash: false,
   onBrokenLinks: 'throw',
+  storage: {
+    type: 'localStorage',
+    namespace: false,
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -36,8 +40,6 @@ const config: Config = {
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/sima-neat/models/edit/develop/docs/',
-          showLastUpdateAuthor: true,
-          showLastUpdateTime: true,
         },
         blog: false,
         theme: {
@@ -68,25 +70,27 @@ const config: Config = {
       },
       items: [
         {
+          type: 'html',
+          position: 'left',
+          className: 'navbar__catalog-item',
+          value: `<a class="navbar__link" href="${baseUrl}">Models</a>`,
+        },
+        {
           type: 'docSidebar',
           sidebarId: 'developerGuide',
           position: 'left',
-          label: 'Developer guide',
+          label: 'Developer docs',
         },
         {
-          to: '/docs/metadata-schema',
-          label: 'YAML reference',
-          position: 'left',
-        },
-        {
-          href: 'https://github.com/sima-neat/models',
-          label: 'GitHub',
+          type: 'html',
           position: 'right',
+          className: 'navbar__environment-item',
+          value: '<span class="navbar__environment"><i></i>Staging registry</span>',
         },
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light',
       links: [
         {
           title: 'Start here',
@@ -101,7 +105,6 @@ const config: Config = {
           items: [
             {label: 'model.yaml', to: '/docs/metadata-schema'},
             {label: 'Taxonomy', to: '/docs/model-taxonomy'},
-            {label: 'Architecture', to: '/docs/architecture'},
           ],
         },
         {

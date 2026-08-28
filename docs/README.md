@@ -1,43 +1,64 @@
-# Model Registry developer documentation
+import ContributionPath from '@site/src/components/ContributionPath';
 
-Use this documentation when adding a model or changing the model lifecycle. The
-shortest path for a new model is:
+# Contribute a model
 
-1. Read [Adding a model](adding-a-model.md) and confirm that the source,
-   license, and intended Modalix variants are suitable.
-2. Use the [`model.yaml` reference](metadata-schema.md) to describe the model
-   without relying on mutable upstream documentation.
-3. Follow [Local development and testing](local-development.md) until the model
-   and complete catalog validate locally.
-4. Complete the checklist in [Contributing with Git and GitHub](contributing.md)
-   before opening a pull request.
+Take a model from a pinned source to a review-ready contribution: describe it
+in `model.yaml`, compile it locally, benchmark the resulting MPK on a Modalix
+DevKit, and submit the files through Git. CI repeats the qualification flow
+from the committed revision.
+
+## Workflow
+
+A successful contribution moves through five traceable stages, with each stage
+producing the verified input or evidence required by the next. Select a stage
+in the infographic to open its detailed guide.
+
+<ContributionPath />
+
+By the time you open the pull request, the model contract is complete, each
+tested variant produces one valid MPK, and the exact MPK has a machine-readable
+benchmark result. If an environment was unavailable, record the missing check
+instead of implying that it passed.
+
+## Before you begin
+
+You need a checkout of the Models repository, `sima-cli`, and the
+repository-pinned Model Compiler installed through the NEAT SDK or as a
+standalone tool. A compatible Modalix DevKit is required for the benchmarking
+stage.
+
+Install the author-safe contributor command into the Model Compiler
+environment:
+
+```bash
+sima-cli neat install --stg models-utils/model-registry@develop:latest
+model-registry --version
+```
+
+The installer finds the compiler environment and preserves its dependencies.
+The command can validate, fetch, inspect variants, and verify MPKs; it cannot
+publish registry artifacts.
+
+Continue with [Local development and testing](local-development.md) if you need
+the complete environment setup.
 
 ## Guides
 
-| Guide | Use it for |
-| --- | --- |
-| [Adding a model](adding-a-model.md) | The end-to-end model contribution path |
-| [`model.yaml` reference](metadata-schema.md) | Field intent, constraints, and examples |
-| [Local development and testing](local-development.md) | Environment setup, validation, fetches, tests, and optional compilation |
-| [Contributing with Git and GitHub](contributing.md) | Commit contents, pull requests, CI, and review evidence |
-| [Model taxonomy](model-taxonomy.md) | Sanctioned category IDs and taxonomy changes |
-| [Synthetic model benchmarking](benchmarking.md) | Benchmark manifests, DevKit execution, and results |
-| [Architecture](architecture.md) | Repository boundaries, trust model, and publication lifecycle |
+- [Adding a model](adding-a-model.md) — model directory, source, recipe, and
+  test declarations.
+- [`model.yaml` reference](metadata-schema.md) — field-level contracts and
+  validation requirements.
+- [Model taxonomy](model-taxonomy.md) — sanctioned category IDs.
+- [Local development and testing](local-development.md) — validation, input
+  fetching, compilation, MPK verification, and common failures.
+- [Synthetic model benchmarking](benchmarking.md) — DevKit setup, manifests,
+  execution, and results.
+- [Contributing with Git and GitHub](contributing.md) — pre-commit review, pull
+  request evidence, and CI behavior.
 
-The JSON Schemas under [`schemas/`](https://github.com/sima-neat/models/tree/develop/schemas)
-and the taxonomy files under
-[`taxonomies/`](https://github.com/sima-neat/models/tree/develop/taxonomies) are authoritative. The guides explain how to
-work with those contracts; they do not replace them.
-
-## Where validation happens
-
-| Stage | What it proves | Typical environment |
-| --- | --- | --- |
-| Local validation | YAML, schema, taxonomy, paths, source policy, checksums, matrix selection, and host-side tests | Developer workstation |
-| Compilation | The pinned recipe produces exactly one valid MPK with the repository compiler version | Trusted Vulcan Model Compiler runner |
-| Benchmarking | The compiled route executes on the pinned Neat and Modalix platform and produces performance evidence | Modalix DevKit runner |
-| Promotion | Required evidence, provenance, licensing, and maturity are acceptable for release | Maintainer review and protected workflows |
-
-A locally valid model is ready for review, not automatically qualified for
-release. Pull requests never execute contributor-controlled model recipes on a
-self-hosted runner.
+The JSON Schemas under
+[`schemas/`](https://github.com/sima-neat/models/tree/develop/schemas) and the
+taxonomy files under
+[`taxonomies/`](https://github.com/sima-neat/models/tree/develop/taxonomies)
+are authoritative. These guides explain how to work with those contracts; they
+do not replace them.

@@ -16,6 +16,9 @@ by URI, byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
+| Model-owned `compile.py` | Developer-facing local compile entry point. Reads one declared YAML variant and emits one MPK. |
+| DevKit `benchmarker` | Developer-facing local performance entry point for the exact compiled MPK. |
+| `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, matrix inspection, and MPK checks. CI uses the full internal command surface for packaging, provenance, and publication. |
 | GitHub Actions | Selects changed models, invokes lifecycle commands, and reports status. Untrusted pull requests use validation only. |
 | Vulcan | Creates ephemeral, pinned Model Compiler runners and provides staging artifact storage and registry APIs. |
 | Model Compiler runner | Verifies inputs, prepares and compiles one declared variant, and emits checksummed result manifests. |
@@ -29,7 +32,8 @@ by URI, byte size, and SHA-256.
 ```text
 .github/workflows/       Validation, compilation, DevKit, and publication workflows
 deps/                    Repository-wide toolchain dependency pins
-docs/                    Architecture, contribution, benchmark, and release policy
+design-doc/              Internal architecture and lifecycle design documents
+docs/                    Developer contribution, metadata, and benchmark guides
 schemas/                 Versioned model and result JSON Schemas
 taxonomies/              Versioned sanctioned model categories and display labels
 tools/model_registry/    Shared host-side CLI and lifecycle implementation
@@ -47,6 +51,13 @@ directly consumable `*_mpk.tar.gz`, not an ONNX or compiler intermediate.
 The canonical product name is **Model Registry**. Code and paths use
 `model-registry` or `model_registry`. The word `modelzoo` is used only when
 documenting compatibility with an existing external CLI or legacy service.
+
+Model authors install the non-publishing `model-registry` command through
+`sima-cli`; its installer resolves the Model Compiler environment and installs
+alongside it without replacing compiler-owned dependencies. Local model
+execution remains `compile.py` followed by `benchmarker`. Registry packaging
+and publication remain automation-only operations and are absent from the
+contributor command surface.
 
 ## Lifecycle
 

@@ -16,7 +16,7 @@
   --red: #b6473d;
   --red-soft: #f7e8e4;
   --amber: #a86712;
-  --font-body: "Manrope", "Helvetica Neue", sans-serif;
+  --font-body: "Roboto", "Helvetica Neue", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --shadow: 0 8px 24px rgba(31, 42, 50, 0.10);
 }
@@ -53,9 +53,14 @@ button { color: inherit; }
 .skip-link:focus { transform: translateY(0); }
 
 .topbar { height: 60px; padding: 0 clamp(22px, 4vw, 70px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface-raised); position: sticky; top: 0; z-index: 20; }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-size: 0.9375rem; }
-.brand b { font-weight: 700; }
+.topbar-primary { min-width: 0; display: flex; align-items: center; gap: clamp(22px, 3vw, 42px); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-size: 0.88rem; font-weight: 700; letter-spacing: -0.01em; }
 .brand-mark { display: block; width: 25px; height: 26px; object-fit: contain; }
+.product-nav { display: flex; align-items: stretch; align-self: stretch; gap: 24px; }
+.product-nav a, .product-nav span { display: flex; align-items: center; position: relative; color: var(--ink-soft); font-size: 0.88rem; font-weight: 700; letter-spacing: -0.01em; text-decoration: none; white-space: nowrap; }
+.product-nav a:hover { color: var(--ink); }
+.product-nav [aria-current="page"] { color: var(--ink); }
+.product-nav [aria-current="page"]::after { height: 2px; position: absolute; right: 0; bottom: -1px; left: 0; background: var(--blue); content: ""; }
 .topbar-actions { display: flex; align-items: center; gap: 22px; }
 .environment { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
 .environment i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
@@ -320,6 +325,10 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 @media (max-width: 610px) {
   .topbar { height: 60px; padding-inline: 18px; }
   .environment { display: none; }
+  .brand span { display: none; }
+  .topbar-primary { gap: 18px; }
+  .product-nav { gap: 16px; }
+  .product-nav a, .product-nav span { font-size: 0.8125rem; }
   main { padding-inline: 18px; }
   .toolbar-primary { gap: 12px; }
   .filter-toggle { padding-left: 6px; }

@@ -1,24 +1,55 @@
 # Local development and testing
 
-This guide covers checks that a contributor can run before opening a pull
-request. Commands assume the repository root as the current directory.
+This guide covers the complete local qualification loop: validate `model.yaml`,
+fetch immutable inputs, compile a declared variant, benchmark the resulting MPK
+on a Modalix DevKit, and review the local evidence. Commands assume the
+repository root as the current directory.
 
-## Set up the environment
+## Local-first qualification loop
 
-Python 3.10 or newer is required; Python 3.12 matches the current GitHub
-workflow. Create an isolated environment and install the registry plus
-development dependencies:
+For each supported variant, complete this sequence before opening a pull
+request:
+
+1. Validate the model directory and complete catalog.
+2. Fetch and checksum the declared source and calibration snapshot.
+3. Confirm the pinned compiler and YAML-derived compile matrix.
+4. Compile the variant in the pinned Model Compiler environment.
+5. Validate the generated MPK.
+6. Run the declared performance test on a compatible Modalix DevKit.
+7. Review the machine-readable result and retain the result and log outside the
+   repository.
+
+## Install the contributor tool
+
+Install the repository-pinned Model Compiler before installing
+`model-registry`. The contributor package deliberately installs into that
+compiler environment so validation and compilation use one compatible Python
+environment:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[dev]'
+sima-cli neat install --stg models-utils/model-registry@develop:latest
+model-registry --version
 model-registry --help
 ```
 
-The editable install exposes the `model-registry` command while keeping changes
-to `tools/model_registry/` live. Re-run the install if dependency metadata
-changes.
+The installer finds an active Model Compiler virtual environment, a Model
+Compiler installed with the NEAT SDK, or the standard standalone installation.
+For a custom location, identify the environment explicitly:
+
+```bash
+MODEL_COMPILER_HOME=/path/to/model-compiler \
+  sima-cli neat install --stg models-utils/model-registry@develop:latest
+```
+
+`MODEL_COMPILER_PYTHON` may instead point directly to its Python executable.
+The installer preserves the compiler environment's existing dependencies and
+places `model-registry` beside its Python executable. Activate that environment
+or invoke the executable from its `bin` directory if it is not already on
+`PATH`.
+
+This is an author-safe command surface for validation, verified downloads,
+matrix inspection, and MPK checks. It cannot package or publish models,
+taxonomy, or benchmark results; those operations remain CI-only.
 
 ## Validate one model
 
@@ -37,8 +68,8 @@ Validate the complete catalog before submitting:
 model-registry validate-catalog --repository .
 ```
 
-This is the same catalog validation entry point used before CI considers a
-compile matrix.
+Run this after validating the individual model so repository-wide contracts are
+checked too.
 
 ## Fetch and verify immutable inputs
 
@@ -86,40 +117,52 @@ model-registry matrix --repository . --models <model-id> --variants <variant-id>
 
 Changes below `models/<model-id>/` select that model. Repository-wide compile
 inputs such as `deps/` can select the full catalog. Some models also declare
-additional build inputs outside their model directory. CI combines changed-path
-selection with build fingerprints and the previous published index, so an
-unchanged fingerprint can reuse an immutable build.
+additional build inputs outside their model directory.
 
-## Run host-side checks
-
-Run lint and the complete unit suite:
-
-```bash
-python -m ruff check .
-python -m pytest
-```
-
-For a quick documentation/model iteration, useful focused checks are:
-
-```bash
-python -m pytest tests/unit/test_docs.py
-python -m pytest tests/unit/test_model.py tests/unit/test_catalog.py tests/unit/test_cli.py
-```
-
-These tests do not compile a model or exercise Modalix hardware. They validate
-host-side contracts with fixtures and fakes.
-
-## Optional local compilation
+## Compile locally from `model.yaml`
 
 Full compilation is only possible in an environment containing the exact Model
 Compiler version reported by `model-registry resolve-compiler`. A normal Python
 virtual environment is not that compiler environment.
 
+Model Compiler does not consume the registry's `model.yaml` directly. The
+manifest declares the supported variants, their parameters, and the
+model-local `recipe`. The recipe reads the selected variant from `model.yaml`
+and translates that declarative contract into model-specific importer,
+quantization, surgery, tessellation, and compiler calls.
+
+Compilation is intentionally model-owned; `model-registry` does not provide a
+public compile command. Use the model recipe directly:
+
+```text
+compile.py --model <verified-source> --output-dir <new-directory> --variant <variant-id>
+```
+
 When the pinned environment is available:
 
-1. Run `model-registry fetch ... --json` and take the returned verified `path`.
-2. Choose a supported variant from the matrix.
-3. Invoke the model recipe with a new output directory:
+1. Resolve the compiler version and choose a supported variant from the matrix.
+2. Activate that exact locally installed Model Compiler environment using its
+   installation instructions, then verify that its Python APIs and compiler
+   executable are available:
+
+   ```bash
+   python -c 'import afe; print("Model Compiler Python APIs available")'
+   command -v mla-masm
+   ```
+
+3. Fetch the source as JSON and take the returned verified `path`:
+
+   ```bash
+   model-registry fetch models/<model-id> --json
+   model-registry fetch-calibration models/<model-id> --json
+   ```
+
+   When calibration is ready, set `CALIBRATION_PATH` to the verified path
+   returned by `fetch-calibration`. Recipes that need the snapshot use that
+   preverified input.
+
+4. Invoke the recipe declared by the selected `compile_variants` entry, using a
+   new output directory:
 
    ```bash
    python models/<model-id>/compile.py \
@@ -128,7 +171,7 @@ When the pinned environment is available:
      --variant <variant-id>
    ```
 
-4. Verify that the directory contains exactly one `*_mpk.tar.gz` and validate
+5. Verify that the directory contains exactly one `*_mpk.tar.gz` and validate
    it:
 
    ```bash
@@ -137,20 +180,87 @@ When the pinned environment is available:
 
 Use a location outside the repository or an ignored build directory. Never
 commit the MPK or compiler intermediates. If the pinned compiler environment is
-not available, record compilation as not run in the pull request rather than
-claiming local qualification.
+not available, stop after validation rather than claiming a successful
+local compile.
 
-## What CI adds
+## Benchmark locally on a Modalix DevKit
 
-Pull requests repeat catalog validation and matrix construction on a
-GitHub-hosted runner. They do not run contributor-controlled recipes on Vulcan.
-After a trusted push, selected variants run in the pinned self-hosted Model
-Compiler environment. The workflow verifies source and calibration inputs,
-executes the declared recipe, requires exactly one MPK, validates it, packages
-provenance, and can dispatch staging benchmarks to a Modalix DevKit.
+Benchmark the exact MPK produced above using the performance declaration in
+`models/<model-id>/tests/performance.yaml`. The benchmark measures the compiled
+model route with deterministic synthetic inputs; it does not establish model
+accuracy or measure application preprocessing and postprocessing.
 
-See [Contributing with Git and GitHub](contributing.md) for the review checklist
-and [Architecture](architecture.md) for the full trust boundary.
+### 1. Check the DevKit environment
+
+The DevKit must match the versions from `deps/manifest.json`. When working from
+a NEAT SDK, confirm that its DevKit runner is available and keep the MPK,
+manifest, and result paths under `/workspace`:
+
+```bash
+bash -lic 'type dk || type devkit-run'
+```
+
+Non-Python programs launched through the SDK runner must be ARM64. The
+benchmarker itself runs in the DevKit's installed `pyneat` environment. If the
+SDK runner is unavailable, use a direct DevKit shell and copy the same assets
+there explicitly.
+
+### 2. Install and verify the benchmarker on the DevKit
+
+```bash
+sima-cli neat install --stg models-utils/benchmarker@develop:latest
+source ~/pyneat/bin/activate
+benchmarker --version
+```
+
+### 3. Create the local benchmark manifest
+
+Copy the compiled `*_mpk.tar.gz` under `/workspace`, calculate its SHA-256, and
+create `/workspace/benchmark-test.json` using the manifest shown in
+[Synthetic model benchmarking](benchmarking.md#create-a-benchmark-manifest).
+For a local run, `provenance.compile_run_id` may be omitted. Keep `model.id`,
+`model.variant_id`, compatibility versions, sample counts, and any
+bounded-runner geometry consistent with `model.yaml`, `deps/manifest.json`, and
+the model's `tests/performance.yaml`.
+
+### 4. Run on the DevKit and retain evidence
+
+From a DevKit shell:
+
+```bash
+source ~/pyneat/bin/activate
+mkdir -p /workspace/results
+benchmarker \
+  --manifest /workspace/benchmark-test.json \
+  --output /workspace/results/performance-result.json \
+  2>&1 | tee /workspace/results/benchmark.log
+```
+
+From a NEAT SDK, prefer its `dk` or `devkit-run` mechanism to execute the same
+files under `/workspace`; use direct SSH only when that runner is unavailable.
+
+Confirm that the command exits successfully and that
+`performance-result.json` reports a successful result with the expected model,
+variant, platform, Neat version, and measured sample count. Retain the JSON and
+log outside the repository, but do not commit either file.
+
+See [Synthetic model benchmarking](benchmarking.md) for manifest fields,
+bounded-runner behavior, power telemetry, and result semantics.
+
+## Finish the local review
+
+Before leaving the local workflow, confirm:
+
+- the model and complete catalog validate;
+- each intended supported variant appears in the matrix;
+- each locally tested variant produces exactly one valid MPK;
+- the DevKit benchmark succeeds for that exact MPK;
+- the reported model, variant, versions, and sample count are correct; and
+- fetched inputs, MPKs, result JSON, and logs remain outside the repository.
+
+When this checklist passes, continue to
+[Contributing with Git and GitHub](contributing.md) for commit, push, pull
+request, and submission guidance.
 
 ## Common failures
 
@@ -161,5 +271,5 @@ and [Architecture](architecture.md) for the full trust boundary.
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
 | Source host or URL rejected | Use a full-commit Hugging Face resource or an approved GitHub release asset. |
 | Referenced file does not exist | Keep recipe, surgery, and test paths relative to and inside the model directory. |
-| Variant missing from the matrix | Check its `status`, requested IDs, changed path, and whether CI can reuse its build fingerprint. |
+| Variant missing from the matrix | Check its `status`, requested IDs, and changed path. |
 | More than one MPK produced | Clean the new output directory and make the recipe emit exactly one archive. |

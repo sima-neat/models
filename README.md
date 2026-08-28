@@ -13,16 +13,24 @@ recipes consume verified sources and must emit exactly one directly consumable
 `*_mpk.tar.gz`; common discovery, downloading, runner selection, MPK validation,
 checksumming, and publication remain shared.
 
+`model-registry` is an author-safe `sima-cli` package for local validation,
+verified input handling, variant inspection, and MPK checks. It is not a direct
+registry publishing client. Model authors compile with the model-owned
+`compile.py` and run performance tests with the DevKit `benchmarker`; CI keeps
+the separate packaging and publication command surface.
+
 ## Local setup
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[dev]'
+sima-cli neat install --stg models-utils/model-registry@develop:latest
+model-registry --version
 model-registry validate models/resnet_50
 model-registry fetch models/resnet_50
-python -m pytest
 ```
+
+Install the repository-pinned Model Compiler first. The package installer finds
+its NEAT SDK or standalone environment and installs `model-registry` there
+without replacing compiler-owned dependencies.
 
 Start with the [developer documentation](docs/README.md) for the end-to-end
 model contribution path, the field-level `model.yaml` contract, local testing,
@@ -116,8 +124,8 @@ trusted hosted job publishes every completed result under its model's S3 hierarc
 and records an immutable `model_benchmark` child of the matching compile run.
 
 See [the developer documentation](docs/README.md),
-[the architecture](docs/architecture.md), the
+[the Model Registry design](design-doc/model-registry-architecture.md), the
 [synthetic benchmarking guide](docs/benchmarking.md), the
 [model taxonomy](docs/model-taxonomy.md), and the
-[SSD-MobileNet matrix qualification plan](docs/ssd-mobilenet-precision-matrix-plan.md)
+[SSD-MobileNet matrix qualification plan](design-doc/ssd-mobilenet-precision-matrix-plan.md)
 for repository conventions.

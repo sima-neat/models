@@ -12,12 +12,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Contracts and reference',
-      items: ['metadata-schema', 'model-taxonomy', 'architecture', 'benchmarking'],
-    },
-    {
-      type: 'category',
-      label: 'Qualification plans',
-      items: ['ssd-mobilenet-precision-matrix-plan'],
+      items: ['metadata-schema', 'model-taxonomy', 'benchmarking'],
     },
   ],
 };

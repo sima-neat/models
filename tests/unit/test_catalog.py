@@ -59,7 +59,7 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
         ("models/alpha/model.yaml", ["alpha"]),
         ("models/alpha/compile.py", ["alpha"]),
         ("models/deleted/model.yaml", []),
-        ("docs/architecture.md", []),
+        ("design-doc/model-registry-architecture.md", []),
     ],
 )
 def test_model_local_added_modified_and_deleted_paths(catalog_repository: Path, path: str, expected: list[str]) -> None:

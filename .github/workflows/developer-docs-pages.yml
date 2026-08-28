@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/developer-docs-pages.yml"
+      - "artifact-browser/**"
       - "docs/**"
       - "website/**"
   push:
@@ -11,6 +12,7 @@ on:
       - develop
     paths:
       - ".github/workflows/developer-docs-pages.yml"
+      - "artifact-browser/**"
       - "docs/**"
       - "website/**"
   workflow_dispatch: {}
@@ -53,18 +55,18 @@ jobs:
         working-directory: website
         run: npm run typecheck
 
-      - name: Build Docusaurus
+      - name: Build unified Model Registry portal
         working-directory: website
         env:
           DOCS_SITE_URL: ${{ steps.pages.outputs.origin }}
           DOCS_BASE_URL: ${{ steps.pages.outputs.base_path }}
-        run: npm run build
+        run: npm run build:portal
 
       - name: Upload GitHub Pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v4
         with:
-          path: website/build
+          path: website/portal-build
 
   deploy:
     name: Publish developer documentation

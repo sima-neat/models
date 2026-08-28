@@ -5,7 +5,7 @@ The browser calls the registry directly; there is no application backend,
 credential handling, or proxy middleware. Downloads use the temporary URL
 returned by the registry directly.
 
-Run from the Models repository:
+For an app-only development loop, run from the Models repository:
 
 ```bash
 npx --yes serve artifact-browser --listen 4173
@@ -23,6 +23,19 @@ window.MODEL_REGISTRY_CONFIG = Object.freeze({
 });
 ```
 
+To test the catalog together with the Docusaurus developer documentation, use
+the unified build:
+
+```bash
+npm ci --prefix website
+npm run typecheck --prefix website
+npm run build:portal --prefix website
+npm run serve:portal --prefix website
+```
+
+Open <http://localhost:4173> for the catalog and
+<http://localhost:4173/docs> for the developer guide.
+
 To preview the complete ResNet-50 schema-v2 benchmark UI without a registry or
 DevKit connection, run:
 
@@ -37,7 +50,8 @@ to exercise other metric values or availability states.
 
 ## Staging deployment
 
-Changes to `artifact-browser/**` on `main` are published by
+Changes to `artifact-browser/**`, `docs/**`, or `website/**` on `main` are
+assembled into one static portal and published by
 `vulcan-model-browser.yml` to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
