@@ -1,8 +1,7 @@
-@import '@fontsource-variable/manrope';
-@import '@fontsource-variable/newsreader';
+@import '@fontsource-variable/roboto';
 
 :root {
-  --site-font-display: 'Newsreader Variable', Georgia, serif;
+  --site-font-display: 'Roboto Variable', sans-serif;
   --site-paper: oklch(97.5% 0.011 85);
   --site-paper-muted: oklch(81% 0.018 83);
   --site-ink: oklch(20% 0.025 250);
@@ -20,7 +19,7 @@
   --ifm-color-primary-lightest: oklch(70% 0.13 50);
   --ifm-background-color: var(--site-paper);
   --ifm-background-surface-color: oklch(94.5% 0.014 85);
-  --ifm-font-family-base: 'Manrope Variable', 'Avenir Next', sans-serif;
+  --ifm-font-family-base: 'Roboto Variable', sans-serif;
   --ifm-heading-font-family: var(--site-font-display);
   --ifm-heading-font-weight: 560;
   --ifm-code-font-size: 88%;

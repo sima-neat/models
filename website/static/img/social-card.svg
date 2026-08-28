@@ -5,7 +5,7 @@
   <rect x="146" y="74" width="56" height="56" fill="#1d2735"/>
   <rect x="82" y="138" width="56" height="56" fill="#1d2735"/>
   <rect x="146" y="138" width="56" height="56" fill="#dc7138"/>
-  <text x="82" y="310" fill="#1d2735" font-family="Georgia, serif" font-size="82">Model Registry</text>
-  <text x="82" y="390" fill="#4d5866" font-family="Arial, sans-serif" font-size="34">Developer documentation</text>
-  <text x="82" y="510" fill="#9d4528" font-family="Arial, sans-serif" font-size="24" letter-spacing="4">DESCRIBE · VERIFY · QUALIFY</text>
+  <text x="82" y="310" fill="#1d2735" font-family="Roboto, sans-serif" font-size="82" font-weight="500">Model Registry</text>
+  <text x="82" y="390" fill="#4d5866" font-family="Roboto, sans-serif" font-size="34">Developer documentation</text>
+  <text x="82" y="510" fill="#9d4528" font-family="Roboto, sans-serif" font-size="24" font-weight="600" letter-spacing="4">DESCRIBE · VERIFY · QUALIFY</text>
 </svg>
