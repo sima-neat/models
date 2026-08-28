@@ -314,6 +314,7 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert stage["needs"] == "resolve-dispatched-benchmark-config"
     assert stage["environment"] == "${{ inputs.environment }}"
     assert stage["permissions"]["id-token"] == "write"
+    assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
     assert "inputs.operation == 'benchmark'" in stage["if"]
     verify = next(step for step in stage["steps"] if step.get("name") == "Verify the source run and compiled artifact")
     assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
@@ -361,12 +362,15 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "vulcan-${{ inputs.environment }}",
     ]
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
+    assert benchmark["env"]["SOURCE_BRANCH"] == (
+        "${{ needs.stage-dispatched-benchmark.outputs.source_branch }}"
+    )
     checkout = next(step for step in steps if step.get("name") == "Check out the trusted revision")
     assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
     download = next(step for step in steps if step.get("name") == "Download the staged compiled model output")
     assert download["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
-    install = next(step for step in steps if step.get("name") == "Install pinned benchmarker and Neat dependency")
+    install = next(step for step in steps if step.get("name") == "Install branch benchmarker and Neat dependency")
     execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
     assert "resolve-benchmark-runtime" in runtime["run"]
     assert "/etc/buildinfo" in runtime["run"]
@@ -376,9 +380,9 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime["run"]
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime["run"]
     assert "sima-cli neat install" in install["run"]
-    assert 'primary_target="$name@$branch:$tag"' in install["run"]
-    assert 'fallback_target="$name@develop:latest"' in install["run"]
-    assert '[[ "$tag" == "latest" && "$branch" != "develop" ]]' in install["run"]
+    assert 'primary_target="$name@$SOURCE_BRANCH:latest"' in install["run"]
+    assert 'fallback_target="$name@$fallback_branch:$fallback_tag"' in install["run"]
+    assert '[[ "$primary_target" != "$fallback_target" ]]' in install["run"]
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
     assert '--variant "$VARIANT_ID"' in execute["run"]

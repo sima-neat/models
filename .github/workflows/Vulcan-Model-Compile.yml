@@ -523,6 +523,8 @@ jobs:
       actions: read
       contents: read
       id-token: write
+    outputs:
+      source_branch: ${{ steps.source.outputs.branch }}
     steps:
       - name: Verify the source run and compiled artifact
         id: source
@@ -667,6 +669,7 @@ jobs:
     env:
       MODEL_ID: ${{ inputs.model_id }}
       VARIANT_ID: ${{ inputs.variant_id }}
+      SOURCE_BRANCH: ${{ needs.stage-dispatched-benchmark.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
     steps:
@@ -715,19 +718,19 @@ jobs:
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
           echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
 
-      - name: Install pinned benchmarker and Neat dependency
+      - name: Install branch benchmarker and Neat dependency
         run: |
           set -euo pipefail
           environment="$(jq -er '.benchmarker.vulcan.environment' <<< "$BENCHMARK_RUNTIME")"
           name="$(jq -er '.benchmarker.vulcan.name' <<< "$BENCHMARK_RUNTIME")"
-          branch="$(jq -er '.benchmarker.vulcan.branch' <<< "$BENCHMARK_RUNTIME")"
-          tag="$(jq -er '.benchmarker.vulcan.tag' <<< "$BENCHMARK_RUNTIME")"
+          fallback_branch="$(jq -er '.benchmarker.vulcan.branch' <<< "$BENCHMARK_RUNTIME")"
+          fallback_tag="$(jq -er '.benchmarker.vulcan.tag' <<< "$BENCHMARK_RUNTIME")"
           expected_version="$(jq -er '.benchmarker.version' <<< "$BENCHMARK_RUNTIME")"
-          primary_target="$name@$branch:$tag"
+          primary_target="$name@$SOURCE_BRANCH:latest"
+          fallback_target="$name@$fallback_branch:$fallback_tag"
           if sima-cli neat install --env "$environment" "$primary_target"; then
             echo "Installed benchmarker from $primary_target."
-          elif [[ "$tag" == "latest" && "$branch" != "develop" ]]; then
-            fallback_target="$name@develop:latest"
+          elif [[ "$primary_target" != "$fallback_target" ]]; then
             echo "Failed to install $primary_target; falling back to $fallback_target." >&2
             sima-cli neat install --env "$environment" "$fallback_target"
             echo "Installed benchmarker from $fallback_target."
