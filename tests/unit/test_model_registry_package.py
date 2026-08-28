@@ -52,6 +52,7 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         metadata = wheel.read(metadata_name).decode()
         assert "Name: sima-neat-model-registry" in metadata
         assert "Version: 0.1.0+unit" in metadata
+        assert "Requires-Dist: jsonschema==4.18.4" in metadata
         assert "model_registry/cli.py" in names
         for ci_module in ("benchmark_manifest", "benchmark_publication", "package", "registry"):
             assert f"model_registry/{ci_module}.py" not in names
@@ -64,14 +65,20 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     assert (output / "install_model_registry_package.sh").stat().st_mode & 0o111
 
 
-def test_installer_uses_an_isolated_environment_and_user_launcher() -> None:
+def test_installer_uses_the_model_compiler_environment_without_changing_dependencies() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
-    assert '${HOME}/.local/share/sima-neat/model-registry' in script
-    assert '"${PYTHON_BIN}" -m venv "${INSTALL_ROOT}/venv"' in script
-    assert "-m pip install --upgrade --force-reinstall" in script
-    assert '"${BIN_DIR}/model-registry"' in script
-    assert '"${INSTALL_ROOT}/venv/bin/python" -m model_registry --help' in script
+    assert '"/sdk-extensions/model-compiler/bin/python"' in script
+    assert '"/sdk-add-on/model-compiler/bin/python"' in script
+    assert '"${HOME}/sdk-extensions/model-compiler/bin/python"' in script
+    assert "import afe" in script
+    assert "-m pip install --no-deps --force-reinstall" in script
+    assert '"${MODEL_COMPILER_PYTHON_BIN}" -m model_registry --help' in script
+    assert "python" not in script.split("-m pip install", 1)[1].splitlines()[0].replace(
+        '"${MODEL_COMPILER_PYTHON_BIN}"', ""
+    )
+    assert "-m venv" not in script
+    assert ".local/bin/model-registry" not in script
     assert "publish-benchmark" in script
     subprocess.run(["bash", "-n", str(INSTALL_SCRIPT)], check=True)
     subprocess.run(["bash", "-n", str(BUILD_SCRIPT)], check=True)

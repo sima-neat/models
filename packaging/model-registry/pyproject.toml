@@ -9,7 +9,7 @@ description = "Author-safe local tooling for SiMa Neat model contributions"
 requires-python = ">=3.10"
 dependencies = [
   "certifi>=2025.1.31",
-  "jsonschema>=4.18.4,<5",
+  "jsonschema==4.18.4",
   "PyYAML>=6.0,<7",
 ]
 
