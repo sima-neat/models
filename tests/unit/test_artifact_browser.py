@@ -107,10 +107,16 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
 def test_github_pages_publishes_the_same_combined_portal() -> None:
     workflow = yaml.load(PAGES_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     build = workflow["jobs"]["build"]
+    develop_publish_condition = "github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'"
 
+    assert workflow["permissions"]["pages"] == "read"
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
+    configure = next(step for step in build["steps"] if step.get("uses") == "actions/configure-pages@v5")
     upload = next(step for step in build["steps"] if step.get("uses") == "actions/upload-pages-artifact@v4")
+    assert configure["if"] == develop_publish_condition
+    assert upload["if"] == develop_publish_condition
     assert upload["with"]["path"] == "website/portal-build"
+    assert workflow["jobs"]["deploy"]["if"] == develop_publish_condition
 
 
 def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:

@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  pages: read
 
 concurrency:
   group: github-pages-developer-docs
@@ -36,7 +37,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
         id: pages
         uses: actions/configure-pages@v5
 
@@ -63,14 +64,14 @@ jobs:
         run: npm run build:portal
 
       - name: Upload GitHub Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
         uses: actions/upload-pages-artifact@v4
         with:
           path: website/portal-build
 
   deploy:
     name: Publish developer documentation
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
     needs: build
     permissions:
       pages: write
