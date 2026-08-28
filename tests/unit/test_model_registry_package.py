@@ -8,6 +8,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "scripts" / "build_model_registry_vulcan_package.sh"
 INSTALL_SCRIPT = ROOT / "packaging" / "model-registry" / "install_model_registry_package.sh"
@@ -97,6 +99,30 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     assert metadata == {"name": "gh:sima-neat/models/model-registry", "version": "0.1.0+unit"}
     assert (output / "install_model_registry_package.sh").stat().st_mode & 0o111
     assert (output / "resolve_model_compiler_python.sh").stat().st_mode & 0o111
+
+
+@pytest.mark.parametrize(
+    "unsafe_output",
+    (
+        str(ROOT),
+        f"{ROOT}/",
+        str(ROOT / ".." / ROOT.name),
+        str(ROOT.parent),
+    ),
+)
+def test_package_build_rejects_repository_root_and_ancestors(unsafe_output: str) -> None:
+    result = subprocess.run(
+        [str(BUILD_SCRIPT), unsafe_output],
+        cwd=ROOT,
+        env={**os.environ, "MODEL_REGISTRY_BUILD_PYTHON": sys.executable},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "Refusing unsafe model-registry output directory" in result.stderr
+    assert (ROOT / "pyproject.toml").is_file()
 
 
 def test_installer_uses_the_model_compiler_environment_without_changing_dependencies() -> None:

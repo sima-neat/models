@@ -2,18 +2,26 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${1:-${ROOT_DIR}/dist/model-registry}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT_DIR_INPUT="${1:-${ROOT_DIR}/dist/model-registry}"
 PYTHON_BIN="${MODEL_REGISTRY_BUILD_PYTHON:-python3}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 BASE_VERSION="0.1.0"
 
-case "${OUT_DIR}" in
-  ""|"/"|"${ROOT_DIR}")
-    echo "Refusing unsafe model-registry output directory: ${OUT_DIR}" >&2
-    exit 2
-    ;;
-esac
+if ! OUT_DIR="$("${PYTHON_BIN}" - "${ROOT_DIR}" "${OUT_DIR_INPUT}" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=True)
+output = Path(sys.argv[2]).expanduser().resolve(strict=False)
+if output == root or output in root.parents:
+    print(f"Refusing unsafe model-registry output directory: {output}", file=sys.stderr)
+    raise SystemExit(2)
+print(output)
+PY
+)"; then
+  exit 2
+fi
 
 if [[ -n "${MODEL_REGISTRY_PACKAGE_VERSION:-}" ]]; then
   PACKAGE_VERSION="${MODEL_REGISTRY_PACKAGE_VERSION}"
