@@ -17,16 +17,6 @@ on:
   push:
     branches:
       - "**"
-    paths:
-      - ".github/workflows/Vulcan-Benchmarker.yml"
-      - "packaging/benchmarker/**"
-      - "schemas/performance-*-v1.schema.json"
-      - "scripts/build_benchmarker_vulcan_package.sh"
-      - "tools/runtime/benchmarker.py"
-      - "tests/unit/test_benchmarker.py"
-      - "tests/unit/test_benchmarker_package.py"
-      - "tests/unit/test_benchmarker_workflow.py"
-      - "pyproject.toml"
   workflow_dispatch:
     inputs:
       environment:

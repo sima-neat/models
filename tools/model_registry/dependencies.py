@@ -77,8 +77,8 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     missing = [field for field in required if not isinstance(vulcan.get(field), str) or not vulcan[field]]
     if missing:
         raise ValidationError(f"benchmarker.vulcan is missing: {', '.join(missing)}")
-    if IMMUTABLE_VULCAN_TAG.fullmatch(vulcan["tag"]) is None:
-        raise ValidationError("benchmarker.vulcan.tag must be an immutable 12-40 character git SHA")
+    if vulcan["tag"] != "latest" and IMMUTABLE_VULCAN_TAG.fullmatch(vulcan["tag"]) is None:
+        raise ValidationError("benchmarker.vulcan.tag must be latest or an immutable 12-40 character git SHA")
 
     return {
         "devkit": {

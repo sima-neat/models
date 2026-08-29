@@ -6,7 +6,7 @@
       "branch": "develop",
       "environment": "stg",
       "name": "models-utils/benchmarker",
-      "tag": "11739b8f4f73"
+      "tag": "latest"
     }
   },
   "devkit": {

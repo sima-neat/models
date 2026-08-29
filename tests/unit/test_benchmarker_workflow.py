@@ -6,15 +6,19 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Benchmarker.yml"
 
 
-def test_benchmarker_workflow_is_change_scoped_and_publishes_subpackage() -> None:
+def test_benchmarker_workflow_publishes_every_branch_commit() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
+    pull_request_block = text.split("  pull_request:", 1)[1].split("  push:", 1)[0]
+    push_block = text.split("  push:", 1)[1].split("  workflow_dispatch:", 1)[0]
     for path in (
         "tools/runtime/benchmarker.py",
         "packaging/benchmarker/**",
         "scripts/build_benchmarker_vulcan_package.sh",
         "schemas/performance-*-v1.schema.json",
     ):
-        assert f'      - "{path}"' in text
+        assert f'      - "{path}"' in pull_request_block
+    assert '      - "**"' in push_block
+    assert "paths:" not in push_block
     assert "scripts/build_benchmarker_vulcan_package.sh" in text
     assert "artifact_folder: benchmarker" in text
     assert text.count("artifact_namespace: models-utils") == 2
