@@ -159,8 +159,14 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
         item for item in measurements["measurements"] if item["name"] == "model.mla_memory.peak_delta"
     )
     assert mla_memory["unit"] == "MiB"
-    assert mla_memory["aggregation"] == "maximum"
+    assert mla_memory["aggregation"] == "max"
+    assert mla_memory["dimensions"]["result_aggregation"] == "maximum"
     assert mla_memory["direction"] == "lower"
+    model_load = next(
+        item for item in measurements["measurements"] if item["name"] == "model.initialization.load"
+    )
+    assert model_load["aggregation"] == "raw"
+    assert model_load["dimensions"]["result_aggregation"] == "single"
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -249,3 +255,29 @@ def test_rejects_tampered_benchmark_identity(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="identity fingerprint"):
         load_benchmark_result(path)
+
+
+def test_rejects_metric_aggregation_the_registry_cannot_represent(tmp_path: Path) -> None:
+    path = valid_result(tmp_path)
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["metrics"]["latency_avg_ms"]["aggregation"] = "harmonic_mean"
+    path.write_text(json.dumps(result), encoding="utf-8")
+    calls = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        return {"run_id": BENCHMARK_RUN_ID}
+
+    with pytest.raises(ValidationError, match="cannot be represented by the Vulcan registry"):
+        publish_benchmark_result(
+            result_path=path,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            environment="staging",
+            branch="feature/benchmark",
+            git_sha="a" * 40,
+            request=request,
+            artifact_store=FakeStore(),
+        )
+    assert calls == []

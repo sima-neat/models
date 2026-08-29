@@ -60,7 +60,15 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["path"].endswith(f"/{model_id}/{variant_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
-    if model_id == "yolo26_tiny_drone":
+    if model_id == "resnet_50":
+        assert manifest["benchmark"] == {
+            "mode": "bounded_runner",
+            "warmup_samples": 100,
+            "samples": 1000,
+            "trials": 3,
+            "include_plugin_latency": False,
+        }
+    elif model_id == "yolo26_tiny_drone":
         assert manifest["benchmark"] == {
             "mode": "bounded_runner",
             "warmup_samples": 10,

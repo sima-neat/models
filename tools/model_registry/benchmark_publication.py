@@ -17,6 +17,26 @@ from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 
+REGISTRY_AGGREGATION_ALIASES = {
+    "first": "raw",
+    "last": "raw",
+    "maximum": "max",
+    "minimum": "min",
+    "single": "raw",
+}
+REGISTRY_AGGREGATIONS = {
+    "raw",
+    "min",
+    "max",
+    "mean",
+    "median",
+    "p50",
+    "p90",
+    "p95",
+    "p99",
+    "sum",
+}
+
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
     return {
@@ -112,6 +132,16 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         metric = result["metrics"].get(field)
         if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
             continue
+        result_aggregation = metric["aggregation"]
+        aggregation = REGISTRY_AGGREGATION_ALIASES.get(result_aggregation, result_aggregation)
+        if aggregation not in REGISTRY_AGGREGATIONS:
+            raise ValidationError(
+                f"benchmark metric {field} uses aggregation {result_aggregation!r}, "
+                "which cannot be represented by the Vulcan registry"
+            )
+        metric_dimensions = dict(dimensions)
+        if aggregation != result_aggregation:
+            metric_dimensions["result_aggregation"] = result_aggregation
         values.append(
             {
                 "measurement_key": f"{fingerprint}-{field}",
@@ -120,8 +150,8 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
                 "value": metric["value"],
                 "direction": direction,
                 "sample_count": metric["sample_count"],
-                "aggregation": metric["aggregation"],
-                "dimensions": dimensions,
+                "aggregation": aggregation,
+                "dimensions": metric_dimensions,
             }
         )
     return values
@@ -155,6 +185,7 @@ def publish_benchmark_result(
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
     variant_id = result["model"]["variant_id"]
+    measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
     stable_digest = hashlib.sha256(
         f"{parent_run_id}:{fingerprint}:{execution_digest}".encode()
@@ -293,7 +324,6 @@ def publish_benchmark_result(
         test_body,
         f"{stable_key}-test-result",
     )
-    measurements = _measurements(result, fingerprint)
     if measurements:
         client.request(
             "POST",
