@@ -1,12 +1,6 @@
 schema_version: 1
 status: pending
-reason: A bounded-runner baseline will be recorded after this metric profile reaches a pinned compiler build.
-benchmark:
-  mode: bounded_runner
-  warmup_samples: 100
-  samples: 1000
-  trials: 3
-  include_plugin_latency: false
+reason: A real-DevKit baseline will be recorded after this metric profile reaches a pinned compiler build.
 metrics:
   - latency_avg_ms
   - latency_p50_ms
