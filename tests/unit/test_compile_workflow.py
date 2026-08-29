@@ -383,6 +383,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert 'primary_target="$name@$SOURCE_BRANCH:latest"' in install["run"]
     assert 'fallback_target="$name@$fallback_branch:$fallback_tag"' in install["run"]
     assert '[[ "$primary_target" != "$fallback_target" ]]' in install["run"]
+    assert 'getattr(benchmarker, "RESULT_SCHEMA_VERSION", None) == 3' in install["run"]
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
     assert '--variant "$VARIANT_ID"' in execute["run"]

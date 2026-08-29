@@ -384,6 +384,8 @@ class MlaMemorySampler:
         self.values: list[int] = []
         self.baseline_bytes: int | None = None
         self.final_bytes: int | None = None
+        self.terminal_failure_reason: str | None = None
+        self.last_read_failure_reason: str | None = None
         self.attempts = 0
         self.failures: dict[str, int] = {}
         self._stop = threading.Event()
@@ -397,9 +399,11 @@ class MlaMemorySampler:
             if value is None:
                 key = reason or "read_error"
                 self.failures[key] = self.failures.get(key, 0) + 1
+                self.last_read_failure_reason = key
                 return None
             self.values.append(value)
             self.final_bytes = value
+            self.last_read_failure_reason = None
             return value
 
     def start(self) -> None:
@@ -416,7 +420,9 @@ class MlaMemorySampler:
             return
         self._stop.set()
         self._thread.join(timeout=max(self.interval_seconds * 2, 1.0))
-        self.sample()
+        if self.sample() is None:
+            with self._lock:
+                self.terminal_failure_reason = self.last_read_failure_reason or "read_error"
         self._thread = None
 
     def _reason(self) -> str:
@@ -431,6 +437,7 @@ class MlaMemorySampler:
             values = list(self.values)
             baseline = self.baseline_bytes
             final = self.final_bytes
+            terminal_failure_reason = self.terminal_failure_reason
             attempts = self.attempts
             failures = dict(self.failures)
         details = {
@@ -472,9 +479,16 @@ class MlaMemorySampler:
                 "details": details,
             }
 
+        final_measurement = (
+            _unavailable_measurement("MiB", "last", terminal_failure_reason)
+            if terminal_failure_reason is not None
+            else measured(final_mib, "last", mib)
+        )
+        if terminal_failure_reason is not None:
+            final_measurement["details"] = details
         absolute = {
             "mla_memory_peak_mib": measured(max(mib), "maximum", mib),
-            "mla_memory_final_mib": measured(final_mib, "last", mib),
+            "mla_memory_final_mib": final_measurement,
         }
         if baseline is None:
             baseline_reason = self._reason()

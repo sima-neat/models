@@ -740,6 +740,7 @@ jobs:
           fi
           "$HOME/pyneat/bin/python" -c 'import pyneat, os; assert pyneat.__version__.split("+", 1)[0] == os.environ["NEAT_VERSION"]'
           "$HOME/pyneat/bin/benchmarker" --version | grep -E " ${expected_version}(\\+|$)"
+          "$HOME/pyneat/bin/python" -c 'import benchmarker; assert getattr(benchmarker, "RESULT_SCHEMA_VERSION", None) == 3, "installed benchmarker cannot emit schema-v3 results"'
 
       - name: Generate manifest and run benchmark
         run: |

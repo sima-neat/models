@@ -380,6 +380,23 @@ def test_mla_sampler_treats_zero_as_valid_and_preserves_intermittent_failures() 
     assert measurement["details"]["read_failures"] == {"read_error": 1}
 
 
+def test_mla_sampler_marks_failed_terminal_sample_unavailable() -> None:
+    mib = 1024 * 1024
+    outcomes = iter([(2 * mib, None), (7 * mib, None), (None, "read_error")])
+    sampler = benchmark.MlaMemorySampler(reader=lambda: next(outcomes), interval_seconds=60)
+    sampler.start()
+    sampler.sample()
+    sampler.stop()
+
+    metrics = sampler.metrics()
+    assert metrics["mla_memory_peak_mib"]["status"] == "measured"
+    assert metrics["mla_memory_peak_mib"]["value"] == 7
+    assert metrics["mla_memory_final_mib"]["status"] == "unavailable"
+    assert metrics["mla_memory_final_mib"]["reason"] == "read_error"
+    assert metrics["mla_memory_final_mib"]["value"] is None
+    assert metrics["mla_memory_final_mib"]["details"]["read_failures"] == {"read_error": 1}
+
+
 def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Path) -> None:
     mpk = tmp_path / "model.tar.gz"
     manifest = make_manifest(mpk, make_mpk(mpk, mla_stages=2, extra_elfs=1))
