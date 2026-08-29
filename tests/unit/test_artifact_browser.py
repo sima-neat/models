@@ -429,7 +429,9 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    assert "new Map([[1, adaptV1], [2, adaptV2]])" in adapters
+    assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3]])" in adapters
+    assert "Object.entries(result.metrics || {})" in adapters
+    assert "Object.entries(trial)" in adapters
     assert "/benchmarks/latest" in script
     assert 'class="trial-chart benchmark-chart"' in script
     assert "data-trial-metric" in script
@@ -443,6 +445,10 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert ".temperature-line" in styles
     assert "temperature_samples" in adapters
     assert "sensor_id" in adapters
+    assert "fallbackMetricLabel" in script
+    assert 'class="benchmark-measurements"' in script
+    assert "mla_memory_peak_delta_mib" in script
+    assert "time_to_first_inference_ms" in script
 
 
 def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
@@ -460,10 +466,15 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
     assert "adaptBenchmarkResult(detail.benchmark.result)" in script
     assert '<th scope="col">Artifact size</th>' in script
-    assert '<th scope="col">p95</th>' in script
-    assert '<th scope="col">Throughput</th>' in script
+    assert "data-comparison-metric" in script
+    assert "benchmark?.measurements[field]" in script
     assert 'elements["compare-dialog"].showModal()' in script
     assert ".comparison-table-wrap" in styles
+    assert 'class="comparison-measurement-control"' in script
+    assert ".comparison-measurement-bar { display: flex; flex: 0 0 auto; justify-content: flex-end" in styles
+    assert ".compare-content { min-height: 0; flex: 1; display: flex; overflow: hidden" in styles
+    assert ".comparison-table thead th { position: sticky; top: 0; z-index: 2" in styles
+    assert "height: min(820px, calc(100vh - 50px))" in styles
     assert "position: sticky; left: 0" in styles
     assert ".compare-select input:focus-visible + span" in styles
 
@@ -509,17 +520,27 @@ def test_model_metadata_tags_use_semantic_icons() -> None:
     assert ".detail-tag-branch svg { stroke: var(--blue); }" in styles
 
 
-def test_local_preview_fixture_is_schema_v2_and_server_is_same_origin() -> None:
-    fixture_path = BROWSER / "fixtures" / "performance-result-v2.json"
-    schema_path = ROOT / "schemas" / "performance-result-v2.schema.json"
+def test_local_preview_fixture_is_extensible_schema_v3_and_server_is_same_origin() -> None:
+    fixture_path = BROWSER / "fixtures" / "performance-result-v3.json"
+    schema_path = ROOT / "schemas" / "performance-result-v3.schema.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     server = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(fixture)
-    assert fixture["schema_version"] == 2
+    prior_v3 = json.loads(json.dumps(fixture))
+    prior_v3["metrics"].pop("model_load_ms")
+    prior_v3["metrics"].pop("time_to_first_inference_ms")
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(prior_v3)
+    assert fixture["schema_version"] == 3
+    assert fixture["metrics"]["mla_memory_peak_delta_mib"]["value"] == 136.5
+    assert fixture["metrics"]["time_to_first_inference_ms"]["value"] == 348.7
+    assert fixture["metrics"]["preview_only_extension_metric"]["unit"] == "mock-units"
+    assert fixture["metrics"]["preview_only_extension_metric"]["details"]["synthetic"] is True
     assert len(fixture["trials"]) == 3
     assert 'apiBase: location.origin' in server
-    assert "/benchmarks/latest" in server
+    assert 'parts[3:] == ["benchmarks", "latest"]' in server
+    assert "PREVIEW_RUNS = (" in server
+    assert "range(len(PREVIEW_RUNS))" in server
     assert "127\\.0\\.0\\.1|localhost" in script

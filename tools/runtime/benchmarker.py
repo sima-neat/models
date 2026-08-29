@@ -16,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -39,7 +40,10 @@ REFERENCE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
 PACKAGE_DISTRIBUTION = "sima-neat-benchmarker"
 DEFAULT_TRIALS = 3
 POWER_DEVICE_PATHS = (Path("/dev/i2c-3"), Path("/dev/i2c-4"))
-RESULT_SCHEMA_VERSION = 2
+MLA_MEMORY_PATH = Path("/dev/simaai-mem")
+MLA_MEMORY_SAMPLE_INTERVAL_SECONDS = 0.1
+MLA_MEMORY_PATTERN = re.compile(r"Total allocated size:\s*(0x[0-9a-fA-F]+)")
+RESULT_SCHEMA_VERSION = 3
 
 
 def tool_version() -> str:
@@ -332,6 +336,165 @@ def runtime_observation() -> dict[str, Any]:
     }
 
 
+def parse_mla_memory_bytes(raw: str) -> int:
+    match = MLA_MEMORY_PATTERN.search(raw)
+    if match is None:
+        raise ValueError("Total allocated size is missing")
+    return int(match.group(1), 16)
+
+
+def read_mla_memory_bytes(path: Path = MLA_MEMORY_PATH) -> tuple[int | None, str | None]:
+    try:
+        return parse_mla_memory_bytes(path.read_text(encoding="utf-8")), None
+    except FileNotFoundError:
+        return None, "device_not_found"
+    except PermissionError:
+        return None, "permission_denied"
+    except (UnicodeDecodeError, ValueError):
+        return None, "parse_error"
+    except OSError:
+        return None, "read_error"
+
+
+def _unavailable_measurement(unit: str, aggregation: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "unit": unit,
+        "aggregation": aggregation,
+        "value": None,
+        "minimum": None,
+        "maximum": None,
+        "standard_deviation": None,
+        "sample_count": 0,
+    }
+
+
+class MlaMemorySampler:
+    """Collect board-wide MLA allocator snapshots around model construction and execution."""
+
+    def __init__(
+        self,
+        *,
+        reader: Callable[[], tuple[int | None, str | None]] | None = None,
+        interval_seconds: float = MLA_MEMORY_SAMPLE_INTERVAL_SECONDS,
+    ) -> None:
+        self.reader = reader or read_mla_memory_bytes
+        self.interval_seconds = interval_seconds
+        self.values: list[int] = []
+        self.baseline_bytes: int | None = None
+        self.final_bytes: int | None = None
+        self.attempts = 0
+        self.failures: dict[str, int] = {}
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def sample(self) -> int | None:
+        with self._lock:
+            value, reason = self.reader()
+            self.attempts += 1
+            if value is None:
+                key = reason or "read_error"
+                self.failures[key] = self.failures.get(key, 0) + 1
+                return None
+            self.values.append(value)
+            self.final_bytes = value
+            return value
+
+    def start(self) -> None:
+        self.baseline_bytes = self.sample()
+        self._thread = threading.Thread(target=self._sample_loop, name="mla-memory-sampler", daemon=True)
+        self._thread.start()
+
+    def _sample_loop(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            self.sample()
+
+    def stop(self) -> None:
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=max(self.interval_seconds * 2, 1.0))
+        self.sample()
+        self._thread = None
+
+    def _reason(self) -> str:
+        if self.baseline_bytes is None and self.failures:
+            return next(iter(self.failures))
+        if not self.values:
+            return "no_valid_samples"
+        return "baseline_unavailable"
+
+    def metrics(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            values = list(self.values)
+            baseline = self.baseline_bytes
+            final = self.final_bytes
+            attempts = self.attempts
+            failures = dict(self.failures)
+        details = {
+            "source": "/dev/simaai-mem:Total allocated size",
+            "scope": "board_allocator",
+            "phase": "model_load_and_benchmark",
+            "sampling_interval_ms": round(self.interval_seconds * 1000),
+            "read_attempts": attempts,
+            "read_failures": failures,
+        }
+        if not values or final is None:
+            unavailable = {
+                key: _unavailable_measurement("MiB", aggregation, self._reason())
+                for key, aggregation in {
+                    "mla_memory_baseline_mib": "first",
+                    "mla_memory_peak_mib": "maximum",
+                    "mla_memory_peak_delta_mib": "maximum",
+                    "mla_memory_final_mib": "last",
+                }.items()
+            }
+            for measurement in unavailable.values():
+                measurement["details"] = details
+            return unavailable
+
+        mib = [value / 1024.0 / 1024.0 for value in values]
+        final_mib = final / 1024.0 / 1024.0
+
+        def measured(value: float, aggregation: str, samples: list[float]) -> dict[str, Any]:
+            return {
+                "status": "measured",
+                "reason": None,
+                "unit": "MiB",
+                "aggregation": aggregation,
+                "value": value,
+                "minimum": min(samples),
+                "maximum": max(samples),
+                "standard_deviation": pstdev(samples),
+                "sample_count": len(samples),
+                "details": details,
+            }
+
+        absolute = {
+            "mla_memory_peak_mib": measured(max(mib), "maximum", mib),
+            "mla_memory_final_mib": measured(final_mib, "last", mib),
+        }
+        if baseline is None:
+            baseline_reason = self._reason()
+            unavailable = {
+                "mla_memory_baseline_mib": _unavailable_measurement("MiB", "first", baseline_reason),
+                "mla_memory_peak_delta_mib": _unavailable_measurement("MiB", "maximum", baseline_reason),
+            }
+            for measurement in unavailable.values():
+                measurement["details"] = details
+            return {**unavailable, **absolute}
+
+        baseline_mib = baseline / 1024.0 / 1024.0
+        deltas = [max(0.0, value - baseline_mib) for value in mib]
+        return {
+            "mla_memory_baseline_mib": measured(baseline_mib, "first", mib),
+            "mla_memory_peak_delta_mib": measured(max(deltas), "maximum", deltas),
+            **absolute,
+        }
+
+
 def runtime_environment(actual_platform: str | None, actual_neat: str | None) -> dict[str, Any]:
     stable = {
         "board_model": _read_text(Path("/proc/device-tree/model")),
@@ -575,6 +738,121 @@ def _finite_positive(value: Any) -> float | None:
         if math.isfinite(result) and result > 0:
             return result
     return None
+
+
+def _single_measurement(
+    value: float,
+    unit: str,
+    *,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": "measured",
+        "reason": None,
+        "unit": unit,
+        "aggregation": "single",
+        "value": value,
+        "minimum": value,
+        "maximum": value,
+        "standard_deviation": 0.0,
+        "sample_count": 1,
+        "details": details,
+    }
+
+
+def _model_source_details(model_path: Path, mounts_path: Path = Path("/proc/mounts")) -> dict[str, Any]:
+    details: dict[str, Any] = {"path": str(model_path)}
+    try:
+        candidates = []
+        for line in mounts_path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) < 3:
+                continue
+            device, mount_point, filesystem_type = fields[:3]
+            try:
+                model_path.relative_to(mount_point)
+            except ValueError:
+                continue
+            candidates.append((len(mount_point), device, mount_point, filesystem_type))
+    except (OSError, UnicodeDecodeError):
+        return details
+    if candidates:
+        _, device, mount_point, filesystem_type = max(candidates)
+        details.update(
+            {
+                "device": device,
+                "mount_point": mount_point,
+                "filesystem_type": filesystem_type,
+            }
+        )
+    return details
+
+
+def measure_startup(
+    pyneat: ModuleType,
+    model: Any,
+    benchmark: dict[str, Any],
+    model_path: Path,
+    *,
+    started_ns: int,
+    model_loaded_ns: int,
+    clock_ns: Callable[[], int],
+) -> dict[str, dict[str, Any]]:
+    source = _model_source_details(model_path)
+    load_ms = (model_loaded_ns - started_ns) / 1_000_000.0
+    model_load = _single_measurement(
+        load_ms,
+        "ms",
+        details={
+            "phase": "pyneat_model_construction",
+            "clock": "monotonic",
+            "cache_state": "uncontrolled_after_sha256_validation",
+            "model_source_pre_read": "sha256_validation",
+            "model_source": source,
+        },
+    )
+    first_result_details = {
+        "phase": "before_model_construction_to_first_synchronous_result",
+        "clock": "monotonic",
+        "cache_state": "uncontrolled_after_sha256_validation",
+        "model_source_pre_read": "sha256_validation",
+        "startup_preflight": True,
+        "includes": ["model_construction", "input_preparation", "graph_build", "first_inference"],
+        "model_source": source,
+    }
+    runner = None
+    try:
+        inputs = _synthetic_runner_inputs(pyneat, model, benchmark)
+        run_options = pyneat.RunOptions()
+        run_options.startup_preflight = True
+        runner = model.build(inputs, run_options=run_options)
+        runner.run(inputs, timeout_ms=120000)
+        first_result_ns = clock_ns()
+    except Exception as exc:
+        unavailable = _unavailable_measurement("ms", "single", "startup_probe_failed")
+        unavailable["details"] = {
+            **first_result_details,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        }
+        return {
+            "model_load_ms": model_load,
+            "time_to_first_inference_ms": unavailable,
+        }
+    finally:
+        if runner is not None:
+            try:
+                runner.close()
+            except Exception:
+                pass
+    return {
+        "model_load_ms": model_load,
+        "time_to_first_inference_ms": _single_measurement(
+            (first_result_ns - started_ns) / 1_000_000.0,
+            "ms",
+            details=first_result_details,
+        ),
+    }
 
 
 def execute_trials(
@@ -1046,6 +1324,16 @@ def _result_base(
             "energy_per_inference_joules": metric(
                 [], "energy_per_inference_joules", "J/inference", "unavailable", reason=power_reason
             ),
+            "model_load_ms": _unavailable_measurement("ms", "single", "benchmark_not_started"),
+            "time_to_first_inference_ms": _unavailable_measurement(
+                "ms", "single", "benchmark_not_started"
+            ),
+            "mla_memory_baseline_mib": _unavailable_measurement("MiB", "first", "benchmark_not_started"),
+            "mla_memory_peak_mib": _unavailable_measurement("MiB", "maximum", "benchmark_not_started"),
+            "mla_memory_peak_delta_mib": _unavailable_measurement(
+                "MiB", "maximum", "benchmark_not_started"
+            ),
+            "mla_memory_final_mib": _unavailable_measurement("MiB", "last", "benchmark_not_started"),
         },
         "trials": [],
         "orchestration": orchestration_context(),
@@ -1082,7 +1370,9 @@ def run_benchmark(
     pyneat: ModuleType | None = None,
     actual_platform: str | None = None,
     power_preflight: dict[str, Any] | None = None,
+    mla_memory_sampler: MlaMemorySampler | None = None,
     result: dict[str, Any] | None = None,
+    clock_ns: Callable[[], int] | None = None,
 ) -> dict[str, Any]:
     model_path = Path(manifest["model"]["path"]).expanduser().resolve()
     if actual_platform is None:
@@ -1111,14 +1401,37 @@ def run_benchmark(
     )
     result["environment"] = runtime_environment(actual_platform, result["compatibility"]["actual_neat_version"])
     update_result_identity(result)
-    model = build_model(runtime, model_path, manifest.get("model_options", {}))
-    result["model"]["resolved"] = resolved_model(model)
     trials = result["trials"]
     batch_size = contract["compiled_batch_size"] or 1
     logical_inferences = manifest["benchmark"]["samples"] * batch_size
     power_reason = preflight.get("reason") or "runtime_did_not_return_metric"
+    memory_sampler = mla_memory_sampler or MlaMemorySampler()
+    startup_metrics = {
+        "model_load_ms": _unavailable_measurement("ms", "single", "benchmark_not_started"),
+        "time_to_first_inference_ms": _unavailable_measurement(
+            "ms", "single", "benchmark_not_started"
+        ),
+    }
+    monotonic_ns = clock_ns or time.perf_counter_ns
+    memory_sampler.start()
     try:
+        startup_started_ns = monotonic_ns()
+        model = build_model(runtime, model_path, manifest.get("model_options", {}))
+        model_loaded_ns = monotonic_ns()
+        startup_metrics = measure_startup(
+            runtime,
+            model,
+            manifest["benchmark"],
+            model_path,
+            started_ns=startup_started_ns,
+            model_loaded_ns=model_loaded_ns,
+            clock_ns=monotonic_ns,
+        )
+        result["model"]["resolved"] = resolved_model(model)
+        memory_sampler.sample()
+
         def trial_callback(trial: int) -> None:
+            memory_sampler.sample()
             record_temperature_sample(
                 result["environment"],
                 phase="trial_complete",
@@ -1143,6 +1456,7 @@ def run_benchmark(
                 on_trial_complete=trial_callback,
             )
     finally:
+        memory_sampler.stop()
         for trial in trials:
             if trial["energy_joules"] is not None:
                 trial["energy_per_inference_joules"] = trial["energy_joules"] / logical_inferences
@@ -1176,6 +1490,8 @@ def run_benchmark(
                 "unavailable",
                 reason=power_reason,
             ),
+            **startup_metrics,
+            **memory_sampler.metrics(),
         }
     end_observation = record_temperature_sample(result["environment"], phase="end")
     result["environment"]["observations"]["end"] = end_observation
@@ -1205,7 +1521,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
     parser.add_argument("--manifest", type=Path, required=True, help="performance-test-v1 JSON manifest")
-    parser.add_argument("--output", type=Path, required=True, help="performance-result-v2 JSON output")
+    parser.add_argument("--output", type=Path, required=True, help="performance-result-v3 JSON output")
     return parser
 
 
@@ -1270,6 +1586,9 @@ def main(argv: list[str] | None = None) -> int:
     atomic_write_json(args.output, result)
     print(f"latency_avg_ms={result['metrics']['latency_avg_ms']['value']}")
     print(f"throughput_fps={result['metrics']['throughput_fps']['value']}")
+    print(f"model_load_ms={result['metrics']['model_load_ms']['value']}")
+    print(f"time_to_first_inference_ms={result['metrics']['time_to_first_inference_ms']['value']}")
+    print(f"mla_memory_peak_delta_mib={result['metrics']['mla_memory_peak_delta_mib']['value']}")
     print(f"report_json={args.output}")
     return 0
 

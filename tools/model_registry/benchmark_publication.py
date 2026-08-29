@@ -42,7 +42,7 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
         version = result.get("schema_version") if isinstance(result, dict) else None
-        if version not in {1, 2}:
+        if version not in {1, 2, 3}:
             raise ValidationError(f"unsupported benchmark result schema version: {version!r}")
         schema = (
             Path(schema_path).expanduser().resolve()
@@ -98,6 +98,9 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         "avg_power_watts": ("board.power.avg", "lower"),
         "energy_joules": ("board.energy", "lower"),
         "energy_per_inference_joules": ("model.energy_per_inference", "lower"),
+        "model_load_ms": ("model.initialization.load", "lower"),
+        "time_to_first_inference_ms": ("model.initialization.time_to_first_inference", "lower"),
+        "mla_memory_peak_delta_mib": ("model.mla_memory.peak_delta", "lower"),
     }
     dimensions = {
         "model_id": result["model"]["id"],
@@ -106,8 +109,8 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
     }
     values = []
     for field, (name, direction) in definitions.items():
-        metric = result["metrics"][field]
-        if metric["status"] != "measured" or metric["value"] is None:
+        metric = result["metrics"].get(field)
+        if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
             continue
         values.append(
             {

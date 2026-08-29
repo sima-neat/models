@@ -1,25 +1,24 @@
-function measured(metric) {
-  return metric?.status === "measured" && Number.isFinite(metric.value)
-    ? {
-      value: metric.value,
-      unit: metric.unit,
-      minimum: metric.minimum,
-      maximum: metric.maximum,
-      standardDeviation: metric.standard_deviation,
-      sampleCount: metric.sample_count,
-    }
-    : null;
+function measurement(key, metric) {
+  if (!metric || typeof metric !== "object") return null;
+  const declaredStatus = ["measured", "unavailable", "unsupported"].includes(metric.status)
+    ? metric.status
+    : "unavailable";
+  const invalidMeasuredValue = declaredStatus === "measured" && !Number.isFinite(metric.value);
+  const status = invalidMeasuredValue ? "unavailable" : declaredStatus;
+  return {
+    key,
+    status,
+    reason: invalidMeasuredValue ? "invalid_value" : (typeof metric.reason === "string" ? metric.reason : null),
+    value: status === "measured" && Number.isFinite(metric.value) ? metric.value : null,
+    unit: typeof metric.unit === "string" ? metric.unit : "",
+    aggregation: typeof metric.aggregation === "string" ? metric.aggregation : "unknown",
+    minimum: finite(metric.minimum),
+    maximum: finite(metric.maximum),
+    standardDeviation: finite(metric.standard_deviation),
+    sampleCount: Number.isInteger(metric.sample_count) ? metric.sample_count : 0,
+    details: metric.details && typeof metric.details === "object" ? metric.details : {},
+  };
 }
-
-const TRIAL_METRIC_FIELDS = [
-  "latency_avg_ms",
-  "latency_p50_ms",
-  "latency_p95_ms",
-  "throughput_fps",
-  "avg_power_watts",
-  "energy_joules",
-  "energy_per_inference_joules",
-];
 
 function finite(value) {
   return Number.isFinite(value) ? value : null;
@@ -75,21 +74,19 @@ function temperatureSeries(result) {
 }
 
 function common(result) {
+  const measurements = Object.fromEntries(Object.entries(result.metrics || {})
+    .map(([key, metric]) => [key, measurement(key, metric)])
+    .filter(([, metric]) => metric));
   return {
     schemaVersion: result.schema_version,
     status: result.status,
     timestamp: result.timestamp_utc,
-    metrics: {
-      latency: measured(result.metrics?.latency_avg_ms),
-      latencyP50: measured(result.metrics?.latency_p50_ms),
-      latencyP95: measured(result.metrics?.latency_p95_ms),
-      throughput: measured(result.metrics?.throughput_fps),
-      power: measured(result.metrics?.avg_power_watts),
-      energy: measured(result.metrics?.energy_per_inference_joules),
-    },
+    measurements,
     trials: (result.trials || []).map((trial) => ({
       number: trial.trial,
-      metrics: Object.fromEntries(TRIAL_METRIC_FIELDS.map((field) => [field, finite(trial[field])])),
+      metrics: Object.fromEntries(Object.entries(trial)
+        .filter(([field]) => field !== "trial")
+        .map(([field, value]) => [field, finite(value)])),
     })).filter((trial) => Number.isInteger(trial.number)),
     temperatureSeries: temperatureSeries(result),
     samples: result.configuration?.samples,
@@ -106,7 +103,11 @@ function adaptV2(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2]]);
+function adaptV3(result) {
+  return { ...common(result), orchestration: result.orchestration || null };
+}
+
+export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3]]);
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

@@ -57,6 +57,7 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "benchmarker/schemas/performance-test-v1.schema.json" in names
         assert "benchmarker/schemas/performance-result-v1.schema.json" in names
         assert "benchmarker/schemas/performance-result-v2.schema.json" in names
+        assert "benchmarker/schemas/performance-result-v3.schema.json" in names
         entry_points = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
         assert "benchmarker = benchmarker:main" in wheel.read(entry_points).decode()
 

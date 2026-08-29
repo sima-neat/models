@@ -147,22 +147,48 @@ the JSON result and benchmark log outside Git. Local results are developer
 evidence; they are not registry publications.
 
 The output follows
-[`performance-result-v2.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result-v2.schema.json)
+[`performance-result-v3.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result-v3.schema.json)
 and is written atomically. Average latency and throughput are available from
 Neat 0.4.0. Percentiles are marked `unsupported` for the default
 `Model.benchmark()` path; bounded runner measurements include them. Missing
 power telemetry is `unavailable`, never a numeric zero. Every metric includes
-its mean, minimum, maximum, population standard deviation, sample count, and an
-availability reason.
+its aggregation, minimum, maximum, population standard deviation, sample count,
+and an availability reason. The v3 metric map is additive: new measurements
+that follow the common metric contract do not require a result-schema bump.
+
+Startup is measured once before the steady-state trials with a public
+`ModelRunner`. `model_load_ms` covers `pyneat.Model(...)` construction.
+`time_to_first_inference_ms` uses the same monotonic start and ends when the
+first synchronous `runner.run(...)` returns, so it also includes synthetic input
+preparation and graph build. The result records the source MPK path and its
+mount/device when Linux exposes them. Filesystem and extracted-package caches
+are not flushed, and checksum validation reads the MPK before the timer starts,
+so the cache state is explicitly `uncontrolled_after_sha256_validation`.
+Compare runs only when their storage placement and cache preparation are
+equivalent. The startup runner explicitly enables Neat startup preflight and
+records that choice in the metric details. A model that cannot use this generic
+startup probe reports time to first inference as `unavailable` without
+invalidating its steady-state benchmark.
 
 Power is total board PMBus rail power during Neat's throughput phase. It is not
 isolated MLA power and no idle baseline is subtracted. When telemetry is
 available, the report also derives energy per logical inference using the
 compiled batch size.
 
+MLA memory is sampled every 100 ms from before model construction until all
+trials finish. The benchmarker uses the same allocator summary as Sentinel:
+the hexadecimal `Total allocated size` value from `/dev/simaai-mem`. It reports
+the baseline, absolute peak, final value, and peak increase over the baseline
+in MiB. `mla_memory_peak_delta_mib` is the primary comparison measurement.
+This is board-wide allocator usage, not process-attributed model memory or MLA
+compute utilization. Keep automated runners workload-isolated and inspect the
+recorded baseline when comparing runs. Device, permission, and parsing failures
+make only the MLA measurements unavailable; they do not invalidate latency or
+throughput results.
+
 Each result records a deterministic identity, resolved model route and output
 topology, board/platform/kernel/Core information, CPU governor, and start/end
-load and temperature observations. Schema-v2 results also record a timestamped
+load and temperature observations. Schema-v3 results also record a timestamped
 temperature sample at benchmark start, after every completed trial, and at
 benchmark end. Temperature readings include the hwmon sensor ID and source so
 duplicate kernel labels such as `temp1` remain distinguishable. Invalid

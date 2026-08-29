@@ -36,6 +36,8 @@ install -m 0644 "${ROOT_DIR}/schemas/performance-result-v1.schema.json" \
   "${SOURCE_ROOT}/benchmarker/schemas/performance-result-v1.schema.json"
 install -m 0644 "${ROOT_DIR}/schemas/performance-result-v2.schema.json" \
   "${SOURCE_ROOT}/benchmarker/schemas/performance-result-v2.schema.json"
+install -m 0644 "${ROOT_DIR}/schemas/performance-result-v3.schema.json" \
+  "${SOURCE_ROOT}/benchmarker/schemas/performance-result-v3.schema.json"
 sed -E "s/^version = \"[^\"]+\"/version = \"${PACKAGE_VERSION}\"/" \
   "${ROOT_DIR}/packaging/benchmarker/pyproject.toml" > "${SOURCE_ROOT}/pyproject.toml"
 
@@ -49,6 +51,7 @@ install -m 0644 "${ROOT_DIR}/packaging/benchmarker/dependencies.json" "${OUT_DIR
 install -m 0644 "${ROOT_DIR}/schemas/performance-test-v1.schema.json" "${OUT_DIR}/"
 install -m 0644 "${ROOT_DIR}/schemas/performance-result-v1.schema.json" "${OUT_DIR}/"
 install -m 0644 "${ROOT_DIR}/schemas/performance-result-v2.schema.json" "${OUT_DIR}/"
+install -m 0644 "${ROOT_DIR}/schemas/performance-result-v3.schema.json" "${OUT_DIR}/"
 
 SIMA_CLI_CHECK_FOR_UPDATE=0 "${SIMA_CLI_BIN}" packages build "${OUT_DIR}" \
   --name "gh:sima-neat/models/benchmarker" \

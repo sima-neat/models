@@ -307,16 +307,93 @@ def validate(schema_name: str, value: dict[str, Any]) -> None:
     Draft202012Validator(schema).validate(value)
 
 
+def sequence_memory_sampler(values: list[int]) -> Any:
+    remaining = iter(values)
+    return benchmark.MlaMemorySampler(
+        reader=lambda: (next(remaining), None),
+        interval_seconds=60,
+    )
+
+
+def test_parses_sentinel_mla_allocator_summary_and_classifies_failures(tmp_path: Path) -> None:
+    assert benchmark.parse_mla_memory_bytes(
+        "| Total buffers allocated: 2 | Total allocated size: 0x01800000 |"
+    ) == 24 * 1024 * 1024
+
+    malformed = tmp_path / "simaai-mem"
+    malformed.write_text("allocator unavailable\n", encoding="utf-8")
+    assert benchmark.read_mla_memory_bytes(malformed) == (None, "parse_error")
+    assert benchmark.read_mla_memory_bytes(tmp_path / "missing") == (None, "device_not_found")
+
+
+def test_mla_sampler_reports_peak_delta_and_sampling_context() -> None:
+    mib = 1024 * 1024
+    sampler = sequence_memory_sampler([10 * mib, 14 * mib, 23 * mib, 18 * mib])
+    sampler.start()
+    sampler.sample()
+    sampler.sample()
+    sampler.stop()
+
+    metrics = sampler.metrics()
+    assert metrics["mla_memory_baseline_mib"]["value"] == 10
+    assert metrics["mla_memory_peak_mib"]["value"] == 23
+    assert metrics["mla_memory_peak_delta_mib"]["value"] == 13
+    assert metrics["mla_memory_final_mib"]["value"] == 18
+    assert metrics["mla_memory_peak_delta_mib"]["aggregation"] == "maximum"
+    assert metrics["mla_memory_peak_delta_mib"]["details"] == {
+        "source": "/dev/simaai-mem:Total allocated size",
+        "scope": "board_allocator",
+        "phase": "model_load_and_benchmark",
+        "sampling_interval_ms": 60000,
+        "read_attempts": 4,
+        "read_failures": {},
+    }
+
+
+def test_mla_sampler_keeps_memory_unavailable_without_turning_it_into_zero() -> None:
+    sampler = benchmark.MlaMemorySampler(
+        reader=lambda: (None, "permission_denied"),
+        interval_seconds=60,
+    )
+    sampler.start()
+    sampler.stop()
+
+    measurement = sampler.metrics()["mla_memory_peak_delta_mib"]
+    assert measurement["status"] == "unavailable"
+    assert measurement["reason"] == "permission_denied"
+    assert measurement["value"] is None
+
+
+def test_mla_sampler_treats_zero_as_valid_and_preserves_intermittent_failures() -> None:
+    mib = 1024 * 1024
+    outcomes = iter([(0, None), (None, "read_error"), (8 * mib, None), (4 * mib, None)])
+    sampler = benchmark.MlaMemorySampler(reader=lambda: next(outcomes), interval_seconds=60)
+    sampler.start()
+    sampler.sample()
+    sampler.sample()
+    sampler.stop()
+
+    measurement = sampler.metrics()["mla_memory_peak_delta_mib"]
+    assert measurement["status"] == "measured"
+    assert measurement["value"] == 8
+    assert measurement["details"]["read_attempts"] == 4
+    assert measurement["details"]["read_failures"] == {"read_error": 1}
+
+
 def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Path) -> None:
     mpk = tmp_path / "model.tar.gz"
     manifest = make_manifest(mpk, make_mpk(mpk, mla_stages=2, extra_elfs=1))
     validate("performance-test-v1.schema.json", manifest)
 
     runtime = fake_pyneat()
+    mib = 1024 * 1024
     result = benchmark.run_benchmark(
         manifest,
         pyneat=runtime,
         actual_platform="2.1.3",
+        mla_memory_sampler=sequence_memory_sampler(
+            [10 * mib, 14 * mib, 15 * mib, 18 * mib, 16 * mib, 12 * mib]
+        ),
         power_preflight={
             "status": "unavailable",
             "reason": "permission_denied",
@@ -344,6 +421,8 @@ def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Pa
     assert result["metrics"]["latency_p50_ms"]["status"] == "unsupported"
     assert result["metrics"]["avg_power_watts"]["status"] == "unavailable"
     assert result["metrics"]["avg_power_watts"]["reason"] == "permission_denied"
+    assert result["metrics"]["mla_memory_peak_delta_mib"]["value"] == 8
+    assert result["metrics"]["mla_memory_peak_delta_mib"]["unit"] == "MiB"
     assert result["identity"]["fingerprint"] is not None
     assert result["environment"]["fingerprint"]
     assert result["power_measurement"]["scope"] == "board_pmbus_rails"
@@ -368,7 +447,92 @@ def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Pa
         2,
         None,
     ]
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
+
+
+def test_measures_model_load_and_time_to_first_inference_with_one_startup_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mpk = tmp_path / "model.tar.gz"
+    manifest = make_manifest(mpk, make_mpk(mpk), trials=2)
+    runtime = fake_pyneat()
+    add_bounded_runner(runtime)
+    clock_values = iter([1_000_000_000, 1_025_000_000, 1_180_000_000])
+    mib = 1024 * 1024
+    startup_order: list[str] = []
+    original_measure_startup = benchmark.measure_startup
+    original_resolved_model = benchmark.resolved_model
+
+    def measured_startup(*args: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
+        startup_order.append("startup")
+        return original_measure_startup(*args, **kwargs)
+
+    def inspected_model(model: Any) -> dict[str, Any]:
+        startup_order.append("resolved_model")
+        return original_resolved_model(model)
+
+    monkeypatch.setattr(benchmark, "measure_startup", measured_startup)
+    monkeypatch.setattr(benchmark, "resolved_model", inspected_model)
+
+    result = benchmark.run_benchmark(
+        manifest,
+        pyneat=runtime,
+        actual_platform="2.1.3",
+        power_preflight={"status": "available", "reason": None},
+        mla_memory_sampler=sequence_memory_sampler(
+            [10 * mib, 14 * mib, 18 * mib, 20 * mib, 16 * mib, 12 * mib]
+        ),
+        clock_ns=lambda: next(clock_values),
+    )
+
+    assert result["metrics"]["model_load_ms"]["value"] == 25.0
+    assert result["metrics"]["model_load_ms"]["aggregation"] == "single"
+    first = result["metrics"]["time_to_first_inference_ms"]
+    assert first["value"] == 180.0
+    assert first["sample_count"] == 1
+    assert first["details"]["includes"] == [
+        "model_construction",
+        "input_preparation",
+        "graph_build",
+        "first_inference",
+    ]
+    assert first["details"]["cache_state"] == "uncontrolled_after_sha256_validation"
+    assert first["details"]["model_source_pre_read"] == "sha256_validation"
+    assert first["details"]["startup_preflight"] is True
+    assert first["details"]["model_source"]["path"] == str(mpk.resolve())
+    assert len(runtime.runners) == 1
+    assert runtime.runners[0].run_calls == 1
+    assert runtime.runners[0].options.startup_preflight is True
+    assert runtime.runners[0].closed
+    assert startup_order == ["startup", "resolved_model"]
+    validate("performance-result-v3.schema.json", result)
+
+
+def test_startup_probe_failure_is_nonfatal(tmp_path: Path) -> None:
+    mpk = tmp_path / "model.tar.gz"
+    manifest = make_manifest(mpk, make_mpk(mpk), trials=1)
+    runtime = fake_pyneat()
+    clock_values = iter([1_000_000_000, 1_010_000_000])
+    mib = 1024 * 1024
+
+    result = benchmark.run_benchmark(
+        manifest,
+        pyneat=runtime,
+        actual_platform="2.1.3",
+        power_preflight={"status": "available", "reason": None},
+        mla_memory_sampler=sequence_memory_sampler(
+            [10 * mib, 14 * mib, 18 * mib, 16 * mib, 12 * mib]
+        ),
+        clock_ns=lambda: next(clock_values),
+    )
+
+    assert result["status"] == "passed"
+    assert result["metrics"]["model_load_ms"]["value"] == 10.0
+    first = result["metrics"]["time_to_first_inference_ms"]
+    assert first["status"] == "unavailable"
+    assert first["reason"] == "startup_probe_failed"
+    assert first["details"]["error_type"] == "AttributeError"
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_temperature_snapshot_disambiguates_duplicate_sensor_labels(tmp_path: Path) -> None:
@@ -426,7 +590,7 @@ def test_measured_power_includes_cross_trial_statistics_and_energy_per_inference
     assert result["metrics"]["energy_joules"]["value"] == 3.75
     assert result["metrics"]["energy_per_inference_joules"]["value"] == pytest.approx(0.15)
     assert result["metrics"]["energy_per_inference_joules"]["standard_deviation"] == pytest.approx(0.05)
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_bounded_runner_uses_explicit_warmup_and_sample_counts(tmp_path: Path) -> None:
@@ -442,28 +606,35 @@ def test_bounded_runner_uses_explicit_warmup_and_sample_counts(tmp_path: Path) -
     validate("performance-test-v1.schema.json", manifest)
     runtime = fake_pyneat()
     add_bounded_runner(runtime)
+    mib = 1024 * 1024
 
     result = benchmark.run_benchmark(
         manifest,
         pyneat=runtime,
         actual_platform="2.1.3",
         power_preflight={"status": "available", "reason": None},
+        mla_memory_sampler=sequence_memory_sampler(
+            [20 * mib, 24 * mib, 28 * mib, 32 * mib, 40 * mib, 36 * mib, 28 * mib]
+        ),
     )
 
     assert runtime.models[0].calls == 0
-    assert len(runtime.runners) == 3
-    assert all(runner.run_calls == 6 for runner in runtime.runners)
-    assert all(runner.push_calls == 5 and runner.pull_calls == 5 for runner in runtime.runners)
-    assert all(runner.options.startup_preflight is False for runner in runtime.runners)
-    assert all(runner.options.board_power_enabled for runner in runtime.runners)
+    assert len(runtime.runners) == 4
+    assert runtime.runners[0].run_calls == 1
+    assert runtime.runners[0].options.startup_preflight is True
+    assert all(runner.run_calls == 6 for runner in runtime.runners[1:])
+    assert all(runner.push_calls == 5 and runner.pull_calls == 5 for runner in runtime.runners[1:])
+    assert all(runner.options.startup_preflight is False for runner in runtime.runners[1:])
+    assert all(runner.options.board_power_enabled for runner in runtime.runners[1:])
     assert all(runner.closed for runner in runtime.runners)
     assert result["configuration"]["mode"] == "bounded_runner"
     assert result["configuration"]["warmup_samples"] == 1
     assert result["metrics"]["latency_p50_ms"]["value"] == 4.4
     assert result["metrics"]["latency_p95_ms"]["value"] == 4.7
     assert result["metrics"]["avg_power_watts"]["value"] == 7.5
+    assert result["metrics"]["mla_memory_peak_delta_mib"]["value"] == 20
     assert result["power_measurement"]["source"] == "pyneat.ModelRunner.measure"
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_rejects_checksum_mismatch(tmp_path: Path) -> None:
@@ -553,7 +724,7 @@ def test_cli_writes_machine_readable_error_result(tmp_path: Path, monkeypatch: p
     assert result["failure_classification"] == "model"
     assert result["model"]["contract"]["name"] == "fixture-model"
     assert result["model"]["contract"]["mla_stage_count"] == 1
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
@@ -584,6 +755,9 @@ def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
     monkeypatch.setenv("SIMA_PLATFORM_VERSION", "2.1.3")
     monkeypatch.setattr(benchmark, "import_pyneat", lambda: runtime)
     monkeypatch.setattr(benchmark, "power_telemetry_preflight", lambda: preflight)
+    mib = 1024 * 1024
+    memory_sampler = sequence_memory_sampler([5 * mib, 11 * mib, 17 * mib, 9 * mib])
+    monkeypatch.setattr(benchmark, "MlaMemorySampler", lambda: memory_sampler)
 
     assert benchmark.main(["--manifest", str(manifest_path), "--output", str(output)]) == 4
     result = json.loads(output.read_text(encoding="utf-8"))
@@ -597,8 +771,10 @@ def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
     assert result["trials"][0]["latency_avg_ms"] == 11.0
     assert result["metrics"]["latency_avg_ms"]["value"] == 11.0
     assert result["metrics"]["latency_avg_ms"]["sample_count"] == 1
+    assert result["metrics"]["mla_memory_peak_delta_mib"]["value"] == 12
+    assert result["metrics"]["mla_memory_peak_delta_mib"]["sample_count"] == 4
     assert result["environment"]["observations"]["end"] is not None
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_cli_writes_schema_valid_error_for_invalid_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -612,7 +788,7 @@ def test_cli_writes_schema_valid_error_for_invalid_manifest(tmp_path: Path, monk
     assert result["status"] == "error"
     assert result["failure_classification"] == "configuration"
     assert result["model"]["id"] is None
-    validate("performance-result-v2.schema.json", result)
+    validate("performance-result-v3.schema.json", result)
 
 
 def test_power_preflight_warns_with_actionable_runtime_user(

@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/performance-result-v3.schema.json",
+  "title": "SiMa Neat synthetic model performance result v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "status", "benchmark_type", "tool", "identity", "timestamp_utc",
+    "model", "compatibility", "configuration", "environment", "power_measurement",
+    "metrics", "trials", "orchestration", "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": 3},
+    "status": {"enum": ["passed", "error"]},
+    "benchmark_type": {"const": "model.synthetic"},
+    "tool": {
+      "type": "object", "required": ["name", "version"], "additionalProperties": false,
+      "properties": {"name": {"const": "benchmarker"}, "version": {"type": "string", "minLength": 1}}
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "canonicalization_version", "fingerprint"],
+      "properties": {
+        "algorithm": {"const": "sha256"},
+        "canonicalization_version": {"const": 3},
+        "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "timestamp_utc": {"type": "string", "format": "date-time"},
+    "failure_classification": {
+      "type": ["string", "null"],
+      "enum": [null, "configuration", "compatibility", "model", "benchmark", "infrastructure"]
+    },
+    "model": {
+      "type": "object", "required": ["id", "variant_id", "path", "sha256", "uri", "contract"],
+      "properties": {
+        "id": {"type": ["string", "null"]}, "variant_id": {"type": ["string", "null"]},
+        "path": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "uri": {"type": ["string", "null"]}, "contract": {"type": ["object", "null"]},
+        "resolved": {"type": "object"}
+      }
+    },
+    "compatibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expected_platform_version", "actual_platform_version", "expected_neat_version", "actual_neat_version"],
+      "properties": {
+        "expected_platform_version": {"type": ["string", "null"]},
+        "actual_platform_version": {"type": ["string", "null"]},
+        "expected_neat_version": {"type": ["string", "null"]},
+        "actual_neat_version": {"type": ["string", "null"]}
+      }
+    },
+    "configuration": {"type": ["object", "null"]},
+    "environment": {"type": "object"},
+    "power_measurement": {"type": "object"},
+    "metrics": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "required": [
+        "latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "throughput_fps",
+        "avg_power_watts", "energy_joules", "energy_per_inference_joules",
+        "mla_memory_baseline_mib", "mla_memory_peak_mib", "mla_memory_peak_delta_mib",
+        "mla_memory_final_mib"
+      ],
+      "properties": {
+        "latency_avg_ms": {"$ref": "#/$defs/metric"},
+        "latency_p50_ms": {"$ref": "#/$defs/metric"},
+        "latency_p95_ms": {"$ref": "#/$defs/metric"},
+        "throughput_fps": {"$ref": "#/$defs/metric"},
+        "avg_power_watts": {"$ref": "#/$defs/metric"},
+        "energy_joules": {"$ref": "#/$defs/metric"},
+        "energy_per_inference_joules": {"$ref": "#/$defs/metric"},
+        "model_load_ms": {"$ref": "#/$defs/metric"},
+        "time_to_first_inference_ms": {"$ref": "#/$defs/metric"},
+        "mla_memory_baseline_mib": {"$ref": "#/$defs/metric"},
+        "mla_memory_peak_mib": {"$ref": "#/$defs/metric"},
+        "mla_memory_peak_delta_mib": {"$ref": "#/$defs/metric"},
+        "mla_memory_final_mib": {"$ref": "#/$defs/metric"}
+      },
+      "additionalProperties": {"$ref": "#/$defs/metric"}
+    },
+    "trials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+        "required": [
+          "trial", "latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "throughput_fps",
+          "avg_power_watts", "energy_joules", "energy_per_inference_joules"
+        ],
+        "properties": {"trial": {"type": "integer", "minimum": 1}},
+        "additionalProperties": {"type": ["number", "null"]}
+      }
+    },
+    "orchestration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "session_id", "task_id", "attempt", "target_correlation_id"],
+      "properties": {
+        "provider": {"enum": ["github-actions-devkit-runner", "manual"]},
+        "session_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "attempt": {"type": ["integer", "null"], "minimum": 1},
+        "target_correlation_id": {"type": ["string", "null"]}
+      }
+    },
+    "provenance": {"type": "object"},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "message"],
+      "properties": {"type": {"type": "string"}, "message": {"type": "string"}}
+    }
+  },
+  "allOf": [{
+    "if": {"properties": {"status": {"const": "error"}}},
+    "then": {"required": ["error"]}
+  }],
+  "$defs": {
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "status", "reason", "unit", "aggregation", "value", "minimum", "maximum",
+        "standard_deviation", "sample_count"
+      ],
+      "properties": {
+        "status": {"enum": ["measured", "unavailable", "unsupported"]},
+        "reason": {"type": ["string", "null"]},
+        "unit": {"type": "string"},
+        "aggregation": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
+        "value": {"type": ["number", "null"]},
+        "minimum": {"type": ["number", "null"]},
+        "maximum": {"type": ["number", "null"]},
+        "standard_deviation": {"type": ["number", "null"], "minimum": 0},
+        "sample_count": {"type": "integer", "minimum": 0},
+        "details": {"type": "object"}
+      },
+      "allOf": [{
+        "if": {"properties": {"status": {"const": "measured"}}},
+        "then": {"properties": {"value": {"type": "number"}}},
+        "else": {"properties": {"value": {"type": "null"}}}
+      }]
+    }
+  }
+}

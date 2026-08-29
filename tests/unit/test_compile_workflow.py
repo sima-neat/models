@@ -386,7 +386,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
     assert '--variant "$VARIANT_ID"' in execute["run"]
-    assert "performance-result-v2.json" in execute["run"]
+    assert "performance-result-v3.json" in execute["run"]
     assert "kerrigan" not in WORKFLOW.read_text(encoding="utf-8").lower()
 
 
@@ -401,10 +401,10 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     download = next(step for step in publish["steps"] if step.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == "benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}"
     publication = next(
-        step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v2 result and log"
+        step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v3 result and log"
     )
-    assert "find _benchmarks -type f -name performance-result-v2.json" in publication["run"]
+    assert "find _benchmarks -type f -name performance-result-v3.json" in publication["run"]
     assert 'for result in "${results[@]}"' in publication["run"]
     assert "model-registry publish-benchmark" in publication["run"]
-    assert "--schema schemas/performance-result-v2.schema.json" in publication["run"]
+    assert "--schema schemas/performance-result-v3.schema.json" in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]

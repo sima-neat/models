@@ -15,17 +15,30 @@ const initialQuery = new URLSearchParams(location.search);
 const initialSearch = initialQuery.get("q") || "";
 const initialIncludeHistory = initialQuery.get("history") === "1";
 const DETAIL_LAYOUT_KEY = "sima-neat-model-detail-layout";
-const TRIAL_METRICS = {
-  latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
+const METRIC_DEFINITIONS = {
+  latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower", summary: true },
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
-  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
-  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher", summary: true },
+  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower", summary: true },
   energy_joules: { label: "Trial energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
   energy_per_inference_joules: {
-    label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower",
+    label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower", summary: true,
   },
+  model_load_ms: { label: "Model load", unit: "ms", digits: 1, scale: 1, direction: "lower" },
+  time_to_first_inference_ms: {
+    label: "Time to first inference", unit: "ms", digits: 1, scale: 1, direction: "lower", summary: true,
+  },
+  mla_memory_baseline_mib: { label: "MLA memory baseline", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
+  mla_memory_peak_mib: { label: "MLA memory peak", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
+  mla_memory_peak_delta_mib: {
+    label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower", summary: true,
+  },
+  mla_memory_final_mib: { label: "MLA memory final", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
 };
+const SUMMARY_METRICS = Object.entries(METRIC_DEFINITIONS)
+  .filter(([, definition]) => definition.summary)
+  .map(([key]) => key);
 
 const state = {
   apiBase: configuredApiBase,
@@ -43,6 +56,8 @@ const state = {
   taxonomy: null,
   detailLayout: readDetailLayout(),
   trialMetric: "latency_avg_ms",
+  comparisonMetric: "latency_avg_ms",
+  comparisonEntries: [],
   categorySelection: Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, initialQuery.get(queryName) || ""]),
   ),
@@ -80,6 +95,30 @@ const icons = {
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+}
+
+function fallbackMetricLabel(key) {
+  const words = String(key).replace(/[._/-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Measurement";
+}
+
+function metricDefinition(key, metric = null) {
+  return METRIC_DEFINITIONS[key] || {
+    label: fallbackMetricLabel(key),
+    unit: metric?.unit || "",
+    digits: 2,
+    scale: 1,
+    direction: "neutral",
+  };
+}
+
+function metricDisplay(metric, definition = metricDefinition(metric?.key || "", metric)) {
+  if (!metric || metric.status !== "measured" || !Number.isFinite(metric.value)) return null;
+  return {
+    value: metric.value * definition.scale,
+    unit: definition.unit || metric.unit,
+    digits: definition.digits,
+  };
 }
 
 function branchName(ref = "") {
@@ -542,11 +581,13 @@ function renderRuns() {
   }).join("");
 }
 
-function comparisonMetric(metric, digits = 2) {
-  if (!metric || !Number.isFinite(metric.value)) {
-    return `<span class="comparison-unavailable" title="Not measured">—</span>`;
+function comparisonMetric(metric, definition) {
+  const display = metricDisplay(metric, definition);
+  if (!display) {
+    const reason = metric?.reason ? metric.reason.replaceAll("_", " ") : "Not measured";
+    return `<span class="comparison-unavailable" title="${escapeHtml(reason)}">—</span>`;
   }
-  return `<span class="comparison-value">${escapeHtml(Number(metric.value).toFixed(digits))}<small>${escapeHtml(metric.unit || "")}</small></span>`;
+  return `<span class="comparison-value">${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit)}</small></span>`;
 }
 
 function comparisonEntryFromDetail(run, detail) {
@@ -590,6 +631,20 @@ async function mapWithConcurrency(items, limit, mapper) {
 }
 
 function renderComparisonTable(entries) {
+  const available = [...new Set(entries.flatMap(({ benchmark }) => Object.keys(benchmark?.measurements || {})))]
+    .filter((key) => entries.some(({ benchmark }) => benchmark?.measurements[key]?.status === "measured"))
+    .sort((left, right) => {
+      const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
+      const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
+      if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
+      return left.localeCompare(right);
+    });
+  const field = available.includes(state.comparisonMetric) ? state.comparisonMetric : available[0];
+  if (field) state.comparisonMetric = field;
+  const sampleMetric = field
+    ? entries.map(({ benchmark }) => benchmark?.measurements[field]).find(Boolean)
+    : null;
+  const definition = field ? metricDefinition(field, sampleMetric) : null;
   const rows = entries.map(({ run, artifacts, benchmark }) => {
     const model = run.metadata?.model_id || run.run_type?.replaceAll("_", " ") || "Unknown model";
     const variant = run.metadata?.variant_id || "default artifact";
@@ -601,20 +656,22 @@ function renderComparisonTable(entries) {
       <td>${escapeHtml(branchName(run.git_ref))}</td>
       <td>${escapeHtml(run.toolchain_version || "—")}</td>
       <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
-      <td>${comparisonMetric(benchmark?.metrics.latency)}</td>
-      <td>${comparisonMetric(benchmark?.metrics.latencyP50)}</td>
-      <td>${comparisonMetric(benchmark?.metrics.latencyP95)}</td>
-      <td>${comparisonMetric(benchmark?.metrics.throughput, 1)}</td>
-      <td>${comparisonMetric(benchmark?.metrics.power)}</td>
-      <td>${comparisonMetric(benchmark?.metrics.energy, 4)}</td>
+      <td>${field ? comparisonMetric(benchmark?.measurements[field], definition) : '<span class="comparison-unavailable">—</span>'}</td>
     </tr>`;
   }).join("");
-  return `<div class="comparison-table-wrap"><table class="comparison-table">
+  const options = available.map((key) => {
+    const item = metricDefinition(key);
+    return `<option value="${escapeHtml(key)}"${key === field ? " selected" : ""}>${escapeHtml(item.label)}</option>`;
+  }).join("");
+  const note = definition
+    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`}`
+    : "No shared measurements are available";
+  return `<div class="comparison-measurement-bar"><div class="comparison-measurement-control"><label class="chart-control"><span>Compare by</span><select data-comparison-metric>${options}</select></label><p>${escapeHtml(note)}</p></div></div>
+  <div class="comparison-table-wrap"><table class="comparison-table">
     <caption class="sr-only">Artifact sizes and benchmark measurements for ${entries.length} builds</caption>
     <thead><tr>
       <th scope="col">Model / variant</th><th scope="col">Branch</th><th scope="col">Compiler</th>
-      <th scope="col">Artifact size</th><th scope="col">Avg latency</th><th scope="col">p50</th>
-      <th scope="col">p95</th><th scope="col">Throughput</th><th scope="col">Board power</th><th scope="col">Energy / inference</th>
+      <th scope="col">Artifact size</th><th scope="col">${escapeHtml(definition?.label || "Measurement")}</th>
     </tr></thead><tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -630,6 +687,7 @@ async function openComparison() {
   elements["compare-content"].innerHTML = `<div class="comparison-loading" role="status"><span class="spinner"></span> Loading artifact and benchmark data…</div>`;
   elements["compare-dialog"].showModal();
   const entries = await mapWithConcurrency(runs, 6, loadComparisonEntry);
+  state.comparisonEntries = entries;
   if (elements["compare-dialog"].open) elements["compare-content"].innerHTML = renderComparisonTable(entries);
 }
 
@@ -677,22 +735,31 @@ function detailTag(icon, value, kind) {
   return `<span class="detail-tag detail-tag-${kind}">${icon}<span>${escapeHtml(value)}</span></span>`;
 }
 
-function metricCard(label, metric, digits = 2) {
-  const value = metric ? `${Number(metric.value).toFixed(digits)} ${metric.unit}` : "Not available";
-  return `<div class="benchmark-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+function metricCard(key, metric) {
+  const definition = metricDefinition(key, metric);
+  const display = metricDisplay(metric, definition);
+  const value = display ? `${display.value.toFixed(display.digits)} ${display.unit}` : "Not available";
+  const reason = !display && metric?.reason ? ` title="${escapeHtml(metric.reason.replaceAll("_", " "))}"` : "";
+  return `<div class="benchmark-metric"${reason}><span>${escapeHtml(definition.label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 function availableTrialMetrics(trials) {
-  return Object.keys(TRIAL_METRICS).filter((field) => (
+  const fields = [...new Set(trials.flatMap((trial) => Object.keys(trial.metrics)))];
+  return fields.filter((field) => (
     trials.filter((trial) => Number.isFinite(trial.metrics[field])).length >= 2
-  ));
+  )).sort((left, right) => {
+    const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
+    const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
+    if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
+    return left.localeCompare(right);
+  });
 }
 
-function trialChart(trials) {
+function trialChart(trials, measurements = {}) {
   const available = availableTrialMetrics(trials);
   if (!available.length) return "";
   const field = available.includes(state.trialMetric) ? state.trialMetric : available[0];
-  const definition = TRIAL_METRICS[field];
+  const definition = metricDefinition(field, measurements[field]);
   const measuredTrials = trials
     .filter((trial) => Number.isFinite(trial.metrics[field]))
     .map((trial) => ({ ...trial, value: trial.metrics[field] * definition.scale }));
@@ -719,9 +786,30 @@ function trialChart(trials) {
     return `<text class="trial-label" x="0" y="${y + 4}">Trial ${trial.number}</text><circle cx="${x(trial.value)}" cy="${y}" r="6"/><text class="trial-value" x="${Math.min(x(trial.value) + 11, width - 55)}" y="${y + 4}">${trial.value.toFixed(definition.digits)}</text>`;
   }).join("");
   const options = available.map((metric) => (
-    `<option value="${metric}"${metric === field ? " selected" : ""}>${escapeHtml(TRIAL_METRICS[metric].label)}</option>`
+    `<option value="${escapeHtml(metric)}"${metric === field ? " selected" : ""}>${escapeHtml(metricDefinition(metric, measurements[metric]).label)}</option>`
   )).join("");
-  return `<figure class="trial-chart benchmark-chart"><figcaption><span class="chart-title">Trial comparison</span><label class="chart-control"><span>Metric</span><select data-trial-metric>${options}</select></label></figcaption><p class="chart-note">${escapeHtml(definition.unit)} · ${definition.direction} is better</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)} for ${measuredTrials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>${escapeHtml(definition.label)} by benchmark trial</caption><thead><tr><th>Trial</th><th>${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)}</th></tr></thead><tbody>${measuredTrials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.value}</td></tr>`).join("")}</tbody></table></figure>`;
+  const direction = definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`;
+  return `<figure class="trial-chart benchmark-chart"><figcaption><span class="chart-title">Trial comparison</span><label class="chart-control"><span>Metric</span><select data-trial-metric>${options}</select></label></figcaption><p class="chart-note">${escapeHtml(definition.unit + direction)}</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)} for ${measuredTrials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>${escapeHtml(definition.label)} by benchmark trial</caption><thead><tr><th>Trial</th><th>${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)}</th></tr></thead><tbody>${measuredTrials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.value}</td></tr>`).join("")}</tbody></table></figure>`;
+}
+
+function measurementTable(measurements) {
+  const entries = Object.entries(measurements)
+    .filter(([key]) => !SUMMARY_METRICS.includes(key))
+    .sort(([left], [right]) => {
+      const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
+      const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
+      if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
+      return left.localeCompare(right);
+    });
+  if (!entries.length) return "";
+  const rows = entries.map(([key, metric]) => {
+    const definition = metricDefinition(key, metric);
+    const display = metricDisplay(metric, definition);
+    const reason = metric.reason ? metric.reason.replaceAll("_", " ") : metric.status;
+    const value = display ? `${display.value.toFixed(display.digits)} ${display.unit}` : reason;
+    return `<tr><th scope="row">${escapeHtml(definition.label)}</th><td>${escapeHtml(value)}</td><td>${escapeHtml(metric.aggregation)}</td><td>${metric.sampleCount}</td></tr>`;
+  }).join("");
+  return `<div class="benchmark-measurements"><h4>Additional measurements</h4><div class="benchmark-measurements-wrap"><table><thead><tr><th scope="col">Measurement</th><th scope="col">Value</th><th scope="col">Statistic</th><th scope="col">Samples</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function temperatureChart(series) {
@@ -777,10 +865,15 @@ function benchmarkPanel(payload) {
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
+  const summary = SUMMARY_METRICS
+    .filter((key) => benchmark.measurements[key])
+    .map((key) => metricCard(key, benchmark.measurements[key]))
+    .join("");
   return `<section id="benchmark-section" class="benchmark-section" tabindex="-1"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${benchmark.schemaVersion}</span></div>
-    <div class="benchmark-summary">${metricCard("Average latency", benchmark.metrics.latency)}${metricCard("Throughput", benchmark.metrics.throughput, 1)}${metricCard("Board power", benchmark.metrics.power)}${metricCard("Energy / inference", benchmark.metrics.energy, 4)}</div>
-    ${trialChart(benchmark.trials)}
+    <div class="benchmark-summary">${summary}</div>
+    ${trialChart(benchmark.trials, benchmark.measurements)}
     ${temperatureChart(benchmark.temperatureSeries)}
+    ${measurementTable(benchmark.measurements)}
     <dl class="benchmark-context">${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
   </section>`;
 }
@@ -1095,11 +1188,17 @@ elements["detail-pane"].addEventListener("click", (event) => {
 });
 elements["detail-pane"].addEventListener("change", (event) => {
   const trialMetric = event.target.closest("[data-trial-metric]");
-  if (trialMetric && TRIAL_METRICS[trialMetric.value]) {
+  if (trialMetric && trialMetric.value) {
     state.trialMetric = trialMetric.value;
     if (state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
     return;
   }
+});
+elements["compare-content"].addEventListener("change", (event) => {
+  const comparisonMetric = event.target.closest("[data-comparison-metric]");
+  if (!comparisonMetric || !comparisonMetric.value) return;
+  state.comparisonMetric = comparisonMetric.value;
+  elements["compare-content"].innerHTML = renderComparisonTable(state.comparisonEntries);
 });
 elements["load-more"].addEventListener("click", () => loadRuns({
   append: true,

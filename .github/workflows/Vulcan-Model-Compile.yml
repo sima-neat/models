@@ -757,7 +757,7 @@ jobs:
           set -o pipefail
           "$HOME/pyneat/bin/benchmarker" \
             --manifest _benchmark/performance-test.json \
-            --output _benchmark/performance-result-v2.json \
+            --output _benchmark/performance-result-v3.json \
             2>&1 | tee _benchmark/benchmark.log
 
       - name: Retain benchmark evidence
@@ -766,7 +766,7 @@ jobs:
         with:
           name: benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}
           path: |
-            _benchmark/performance-result-v2.json
+            _benchmark/performance-result-v3.json
             _benchmark/benchmark.log
           if-no-files-found: error
           retention-days: 14
@@ -805,7 +805,7 @@ jobs:
           aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
           role-session-name: models-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Publish every completed schema-v2 result and log
+      - name: Publish every completed schema-v3 result and log
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
@@ -814,14 +814,14 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          mapfile -t results < <(find _benchmarks -type f -name performance-result-v2.json -print | sort)
+          mapfile -t results < <(find _benchmarks -type f -name performance-result-v3.json -print | sort)
           (( ${#results[@]} > 0 )) || { echo "No completed benchmark results were downloaded" >&2; exit 1; }
           for result in "${results[@]}"; do
             log="$(dirname "$result")/benchmark.log"
             model-registry publish-benchmark \
               --result "$result" \
               --log "$log" \
-              --schema schemas/performance-result-v2.schema.json \
+              --schema schemas/performance-result-v3.schema.json \
               --api-url "$REGISTRY_API_URL" \
               --aws-region "$AWS_REGION" \
               --bucket "$ARTIFACT_BUCKET" \

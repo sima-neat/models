@@ -36,7 +36,7 @@ npm run serve:portal --prefix website
 Open <http://localhost:4173> for the catalog and
 <http://localhost:4173/docs> for the developer guide.
 
-To preview the complete ResNet-50 schema-v2 benchmark UI without a registry or
+To preview the complete ResNet-50 schema-v3 benchmark UI without a registry or
 DevKit connection, run:
 
 ```bash
@@ -44,9 +44,22 @@ python3 scripts/preview_artifact_browser.py
 ```
 
 Open the URL printed by the script. The local server provides a realistic model
-compile, provenance, validation, and three-trial benchmark result. The fixture is
-stored in `artifact-browser/fixtures/performance-result-v2.json` and can be edited
-to exercise other metric values or availability states.
+catalog with fourteen builds spanning multiple models, variants, branches,
+artifact sizes, and benchmark availability states. This intentionally overflows
+the comparison dialog so sticky headers and vertical scrolling can be checked.
+The base three-trial result fixture is stored in
+`artifact-browser/fixtures/performance-result-v3.json` and can be edited to
+exercise other metric values or availability states. Its
+`preview_only_extension_metric` is deliberately synthetic and exists only to
+verify that unknown additive metrics render gracefully.
+
+Benchmark adapters preserve every metric that follows the result contract.
+Known metrics receive curated labels, formatting, and summary placement;
+unknown additive metrics appear automatically under Additional measurements and
+in the comparison measurement selector. Unsupported schema versions still link
+to the raw result instead of guessing at incompatible structures.
+Schema-v3 previews include model-load and time-to-first-inference measurements
+alongside steady-state latency, throughput, power, energy, and MLA memory.
 
 ## Staging deployment
 

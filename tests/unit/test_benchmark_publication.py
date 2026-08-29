@@ -73,6 +73,25 @@ def valid_result(tmp_path: Path) -> Path:
     result["metrics"]["throughput_fps"] = benchmarker.metric(
         [{"throughput_fps": 450.0}, {"throughput_fps": 470.0}], "throughput_fps", "fps", "unavailable"
     )
+    result["metrics"]["model_load_ms"] = benchmarker._single_measurement(
+        125.0, "ms", details={"phase": "pyneat_model_construction"}
+    )
+    result["metrics"]["time_to_first_inference_ms"] = benchmarker._single_measurement(
+        340.0,
+        "ms",
+        details={"phase": "before_model_construction_to_first_synchronous_result"},
+    )
+    result["metrics"]["mla_memory_peak_delta_mib"] = {
+        "status": "measured",
+        "reason": None,
+        "unit": "MiB",
+        "aggregation": "maximum",
+        "value": 128.0,
+        "minimum": 0.0,
+        "maximum": 128.0,
+        "standard_deviation": 32.0,
+        "sample_count": 8,
+    }
     result["environment"]["observations"]["end"] = benchmarker.runtime_observation()
     path = tmp_path / "performance-result.json"
     path.write_text(json.dumps(result), encoding="utf-8")
@@ -132,11 +151,20 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert {item["name"] for item in measurements["measurements"]} == {
         "model.latency.avg",
         "model.throughput",
+        "model.initialization.load",
+        "model.initialization.time_to_first_inference",
+        "model.mla_memory.peak_delta",
     }
+    mla_memory = next(
+        item for item in measurements["measurements"] if item["name"] == "model.mla_memory.peak_delta"
+    )
+    assert mla_memory["unit"] == "MiB"
+    assert mla_memory["aggregation"] == "maximum"
+    assert mla_memory["direction"] == "lower"
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v2.json")
+    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v3.json")
 
 
 def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:
