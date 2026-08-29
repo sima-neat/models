@@ -8,7 +8,6 @@ from typing import Any
 from .errors import ValidationError
 
 MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-IMMUTABLE_VULCAN_TAG = re.compile(r"^[0-9a-f]{12,40}$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -73,12 +72,10 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     vulcan = benchmarker.get("vulcan")
     if not isinstance(vulcan, dict):
         raise ValidationError("benchmarker.vulcan must be an object")
-    required = ("environment", "name", "branch", "tag")
+    required = ("environment", "name")
     missing = [field for field in required if not isinstance(vulcan.get(field), str) or not vulcan[field]]
     if missing:
         raise ValidationError(f"benchmarker.vulcan is missing: {', '.join(missing)}")
-    if vulcan["tag"] != "latest" and IMMUTABLE_VULCAN_TAG.fullmatch(vulcan["tag"]) is None:
-        raise ValidationError("benchmarker.vulcan.tag must be latest or an immutable 12-40 character git SHA")
 
     return {
         "devkit": {
