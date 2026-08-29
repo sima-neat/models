@@ -17,7 +17,7 @@ def test_repository_model_compiler_dependency_is_pinned() -> None:
     }
 
 
-def test_repository_benchmark_runtime_uses_develop_latest() -> None:
+def test_repository_benchmark_runtime_uses_an_immutable_fallback() -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["platform-version"] == "2.1.3"
     assert "platform_version" not in manifest["devkit"]
@@ -29,7 +29,7 @@ def test_repository_benchmark_runtime_uses_develop_latest() -> None:
         "environment": "stg",
         "name": "models-utils/benchmarker",
         "branch": "develop",
-        "tag": "latest",
+        "tag": "11739b8f4f73",
     }
 
 
@@ -43,14 +43,15 @@ def test_benchmark_runtime_accepts_an_immutable_artifact_tag(tmp_path: Path) -> 
     assert resolve_benchmark_runtime(tmp_path)["benchmarker"]["vulcan"]["tag"] == "fe4bc16544b1"
 
 
-def test_benchmark_runtime_rejects_an_unversioned_artifact_tag(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tag", ["latest", "nightly"])
+def test_benchmark_runtime_rejects_an_unversioned_artifact_tag(tmp_path: Path, tag: str) -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    manifest["benchmarker"]["vulcan"]["tag"] = "nightly"
+    manifest["benchmarker"]["vulcan"]["tag"] = tag
     path = tmp_path / "deps" / "manifest.json"
     path.parent.mkdir()
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="latest or an immutable"):
+    with pytest.raises(ValidationError, match="must be an immutable"):
         resolve_benchmark_runtime(tmp_path)
 
 
