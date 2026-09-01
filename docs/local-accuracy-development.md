@@ -95,6 +95,32 @@ The current engine evaluates the saved AFE `.sima` graph on the host. It does
 not execute the compiled MPK on a DevKit; MPK/device correctness remains a
 separate runtime test.
 
+## Vulcan reporting
+
+When CI publishes a compilation containing `accuracy.json`, Model Registry
+publishes the report on the same Vulcan compile run as three forms of evidence:
+
+- an immutable `accuracy-result` JSON artifact with dataset, profile, scope,
+  sample-count, and candidate top-k metadata;
+- an `accuracy/<report-scope>` test result containing the full report;
+- normalized `model.accuracy.*` ratio measurements for candidate top-1/top-5,
+  reference top-1/top-5, agreement, and deltas.
+
+The model browser reads the test-result summary and always displays the
+evaluated sample count and provisional or qualification status beside the accuracy
+numbers. A missing `accuracy.json` remains valid for variants without an
+executable dataset-backed correctness specification.
+
+The browser requests `GET /v1/runs/<compile-run-id>/accuracy/latest`. Vulcan
+returns the latest schema-versioned accuracy summary, its test-result identity,
+and a short-lived URL for the immutable raw report. During rollout, the browser
+also accepts the same summary from the generic run test-results response.
+
+A regular run over a deterministic subset is labeled provisional. A run over
+the complete configured validation split is labeled qualification and is used
+for final accuracy reporting. The status help control in the browser explains
+the coverage represented by each label.
+
 ## Adding an executable correctness specification
 
 Add a correctness case to `model.yaml`, then create its YAML with:

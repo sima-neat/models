@@ -220,6 +220,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .detail-tag { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); color: var(--ink-soft); background: var(--surface); font-size: 13px; }
 .detail-tag svg { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: var(--ink-faint); stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 .detail-tag-branch svg { stroke: var(--blue); }
+.detail-tag-license svg { stroke: var(--amber); }
 .detail-tag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-content section { padding: 28px 0; border-top: 1px solid var(--line); }
 .detail-content section:focus { outline: none; }
@@ -285,6 +286,30 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .temperature-line { fill: none; stroke: var(--amber); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .temperature-points circle { fill: var(--canvas); stroke: var(--amber); stroke-width: 2.5; }
 .benchmark-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0 0; }
+.accuracy-section { scroll-margin-top: 24px; }
+.accuracy-status { padding: 5px 9px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; cursor: help; }
+.accuracy-status.provisional { color: #8a5b00; background: #fff3cf; }
+.accuracy-status.qualification { color: #166534; background: #dcfce7; }
+.accuracy-explainer { position: relative; padding: 0; border: 0; }
+.accuracy-explainer summary { list-style: none; }
+.accuracy-explainer summary::-webkit-details-marker { display: none; }
+.accuracy-explainer summary:hover { filter: brightness(.97); }
+.accuracy-explainer summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.accuracy-explainer-card { display: none; position: absolute; z-index: 8; top: calc(100% + 9px); right: 0; width: min(330px, calc(100vw - 52px)); padding: 15px 16px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-muted); background: var(--surface-raised); box-shadow: 0 12px 32px rgb(0 0 0 / 14%); font-size: 12px; line-height: 1.55; text-transform: none; }
+.accuracy-explainer:hover > .accuracy-explainer-card, .accuracy-explainer[open] > .accuracy-explainer-card { display: block; }
+.accuracy-explainer-card strong { color: var(--ink); }
+.accuracy-explainer-card p { margin: 7px 0 0; }
+.accuracy-scope { margin: -3px 0 16px; color: var(--ink-muted); font-size: 13px; }
+.accuracy-scope strong { color: var(--ink); font-weight: 700; }
+.accuracy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.accuracy-metric { min-width: 0; display: grid; gap: 6px; padding: 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.accuracy-metric.primary { background: color-mix(in srgb, var(--blue) 6%, var(--surface-raised)); }
+.accuracy-metric span { color: var(--ink-faint); font-size: 11px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
+.accuracy-metric strong { color: var(--ink); font: 600 23px/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
+.accuracy-metric small { color: var(--ink-muted); font-size: 12px; }
+.accuracy-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0 0; }
+.license-attribution { display: grid; gap: 6px; margin: 14px 0 0; color: var(--ink-muted); font-size: 13px; line-height: 1.55; }
+.license-attribution strong { color: var(--ink-faint); font-size: 11px; letter-spacing: .065em; text-transform: uppercase; }
 details { padding: 19px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 summary { display: flex; justify-content: space-between; font-size: 15px; font-weight: 600; cursor: pointer; list-style: none; }
 summary span { color: var(--ink-faint); font-size: 13px; }
@@ -369,6 +394,7 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
   .comparison-measurement-control { width: 100%; grid-template-columns: 1fr; gap: 8px; }
   .comparison-measurement-control p { margin-bottom: 0; }
   .benchmark-summary { grid-template-columns: 1fr; }
+  .accuracy-summary, .accuracy-context { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

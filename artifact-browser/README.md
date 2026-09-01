@@ -36,8 +36,8 @@ npm run serve:portal --prefix website
 Open <http://localhost:4173> for the catalog and
 <http://localhost:4173/docs> for the developer guide.
 
-To preview the complete ResNet-50 schema-v3 benchmark UI without a registry or
-DevKit connection, run:
+To preview the complete ResNet-50 accuracy and schema-v3 benchmark UI without a
+registry or DevKit connection, run:
 
 ```bash
 python3 scripts/preview_artifact_browser.py
@@ -45,7 +45,10 @@ python3 scripts/preview_artifact_browser.py
 
 Open the URL printed by the script. The local server provides a realistic model
 catalog with fourteen builds spanning multiple models, variants, branches,
-artifact sizes, and benchmark availability states. This intentionally overflows
+artifact sizes, accuracy evidence, and benchmark availability states. The
+initial ResNet-50 INT8 build uses the 500-image local accuracy result so the
+sample scope, reference comparison, and provisional status can be reviewed.
+The catalog intentionally overflows
 the comparison dialog so sticky headers and vertical scrolling can be checked.
 The base three-trial result fixture is stored in
 `artifact-browser/fixtures/performance-result-v3.json` and can be edited to

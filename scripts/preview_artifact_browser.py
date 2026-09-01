@@ -16,8 +16,8 @@ BROWSER = ROOT / "artifact-browser"
 RUN_ID = "74b48a12-6088-42a0-b881-5925a5272fae"
 COMMIT = "244c03323cefc96a6baaa097f0a4bb008e9c39ae"
 PREVIEW_RUNS = (
-    ("resnet_50", "modalix_bf16", "feat/resnet50-post-compile-benchmark", "2.1.3", 284_103_221),
     ("resnet_50", "modalix_int8", "develop", "2.1.3", 165_482_104),
+    ("resnet_50", "modalix_bf16", "feat/resnet50-post-compile-benchmark", "2.1.3", 284_103_221),
     ("ssd_mobilenet_v1", "modalix_bf16_tess_mla", "develop", "2.1.3", 132_714_990),
     ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "feat/ssd-mobilenet-qualification", "2.1.3", 78_204_118),
     ("ssd_mobilenet_v2", "modalix_bf16_tess_mla", "develop", "2.1.3", 148_821_633),
@@ -63,7 +63,16 @@ def _run(index: int = 0) -> dict:
         "toolchain_name": "model-compiler",
         "toolchain_version": compiler,
         "target_platform": "modalix",
-        "metadata": {"model_id": model_id, "variant_id": variant_id, "model_name": model_id},
+        "metadata": {
+            "model_id": model_id,
+            "variant_id": variant_id,
+            "model_name": model_id,
+            "license": {
+                "spdx": "Apache-2.0",
+                "redistribution": "allowed",
+                "attribution": "Derived from microsoft/resnet-50 and distributed under Apache-2.0.",
+            },
+        },
         "model_type": "vision",
         "architecture_id": architecture,
         "architecture_paradigm": "cnn",
@@ -131,6 +140,36 @@ def _benchmark_result(index: int) -> dict:
     return result
 
 
+def _accuracy_result(index: int) -> dict | None:
+    model_id, variant_id, _, _, _ = PREVIEW_RUNS[index]
+    if (model_id, variant_id) != ("resnet_50", "modalix_int8"):
+        return None
+    return {
+        "schema_version": 1,
+        "report_scope": "sampled_accuracy_smoke",
+        "model": {
+            "id": model_id,
+            "variant_id": variant_id,
+            "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
+        },
+        "dataset": {
+            "id": "imagenet-2012",
+            "variant": "mini",
+            "split": "validation",
+            "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
+            "evaluated_samples": 500,
+            "available_samples": 5000,
+        },
+        "evaluation": {"profile": "regular", "status": "provisional", "config": "tests/correctness.yaml"},
+        "execution": {"workers": 6, "samples_per_second": 2.589, "elapsed_seconds": 193.09},
+        "metrics": {
+            "candidate": {"top1_accuracy": 0.762, "top5_accuracy": 0.934},
+            "reference": {"top1_accuracy": 0.798, "top5_accuracy": 0.95},
+            "comparison": {"top1_agreement": 0.886, "top1_delta": -0.036, "top5_delta": -0.016},
+        },
+    }
+
+
 class PreviewHandler(SimpleHTTPRequestHandler):
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode()
@@ -191,7 +230,17 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         else:
             index = None
         if index is not None and len(parts) == 3:
-            self._json({"run": runs[index], "artifacts": [_artifact(index)]})
+            artifacts = [_artifact(index)]
+            if _accuracy_result(index):
+                accuracy_name = "accuracy-result"
+                artifacts.append({
+                    "name": accuracy_name,
+                    "artifact_type": "accuracy-result",
+                    "sha256": hashlib.sha256(json.dumps(_accuracy_result(index), sort_keys=True).encode()).hexdigest(),
+                    "size_bytes": 2048,
+                    "media_type": "application/json",
+                })
+            self._json({"run": runs[index], "artifacts": artifacts})
             return
         if index is not None and len(parts) == 4 and parts[3] == "provenance":
             self._json({
@@ -213,10 +262,20 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             })
             return
         if index is not None and len(parts) == 4 and parts[3] == "test-results":
-            self._json({"run_id": runs[index]["id"], "test_results": [
+            test_results = [
                 {"suite": "model", "name": "manifest-validation", "status": "passed", "duration_ms": 82},
                 {"suite": "model", "name": "mpk-validation", "status": "passed", "duration_ms": 418},
-            ]})
+            ]
+            accuracy = _accuracy_result(index)
+            if accuracy:
+                test_results.append({
+                    "suite": "accuracy",
+                    "name": accuracy["report_scope"],
+                    "status": "passed",
+                    "version": "1",
+                    "summary": accuracy,
+                })
+            self._json({"run_id": runs[index]["id"], "test_results": test_results})
             return
         if index is not None and len(parts) == 4 and parts[3] == "metrics":
             self._json({
@@ -230,6 +289,24 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 "result": _benchmark_result(index),
                 "result_artifact_url": "/fixtures/performance-result-v3.json",
             })
+            return
+        if index is not None and len(parts) == 5 and parts[3:] == ["accuracy", "latest"]:
+            accuracy = _accuracy_result(index)
+            if accuracy is None:
+                self._json({"error": {"code": "accuracy_not_found", "message": "No accuracy result"}}, 404)
+            else:
+                self._json({
+                    "accuracy_test": {
+                        "id": f"8bd7b220-478f-4d5f-a02f-5fca756305{index:02x}",
+                        "name": accuracy["report_scope"],
+                        "status": "passed",
+                        "attempt": 1,
+                        "version": "1",
+                    },
+                    "result": accuracy,
+                    "result_artifact_url": "/v1/runs/"
+                    f"{runs[index]['id']}/artifacts/accuracy-result",
+                })
             return
         if index is not None and len(parts) == 5 and parts[3] == "artifacts":
             self._json({

@@ -20,10 +20,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class FakeStore:
     def __init__(self) -> None:
-        self.objects: list[tuple[Path, str, str]] = []
+        self.objects: list[tuple[Path, str, str, str]] = []
 
-    def ensure_native_sha256(self, path: Path, key: str, sha256: str) -> S3Object:
-        self.objects.append((path, key, sha256))
+    def ensure_native_sha256(
+        self,
+        path: Path,
+        key: str,
+        sha256: str,
+        *,
+        media_type: str = "application/gzip",
+    ) -> S3Object:
+        self.objects.append((path, key, sha256, media_type))
         return S3Object(key=key, version_id="version-1", sha256=sha256, size_bytes=path.stat().st_size)
 
 
@@ -61,6 +68,39 @@ def _packaged_result(tmp_path: Path) -> Path:
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
     return dist
+
+
+def _add_accuracy_result(dist: Path) -> Path:
+    path = dist / "resnet_50" / "modalix_bf16" / "accuracy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "report_scope": "sampled_accuracy_smoke",
+                "model": {
+                    "id": "resnet_50",
+                    "variant_id": "modalix_bf16",
+                    "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
+                },
+                "dataset": {
+                    "id": "imagenet-2012",
+                    "variant": "mini",
+                    "split": "validation",
+                    "sha256": "d" * 64,
+                    "evaluated_samples": 500,
+                    "available_samples": 5000,
+                },
+                "evaluation": {"profile": "regular", "status": "provisional"},
+                "metrics": {
+                    "candidate": {"top1_accuracy": 0.762, "top5_accuracy": 0.934},
+                    "reference": {"top1_accuracy": 0.798, "top5_accuracy": 0.95},
+                    "comparison": {"top1_agreement": 0.886, "top1_delta": -0.036, "top5_delta": -0.016},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_canonical_sha256_is_stable() -> None:
@@ -124,6 +164,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "variant_id": "modalix_bf16",
         "artifact_kind": "mpk",
         "github_run_id": "1234",
+        "license": {
+            "spdx": "Apache-2.0",
+            "redistribution": "allowed",
+            "attribution": "Derived from microsoft/resnet-50 and distributed under Apache-2.0.",
+        },
     }
     assert create["model_categories"] == {
             "taxonomy_version": 2,
@@ -147,6 +192,67 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     assert artifact["s3_version_id"] == "version-1"
     assert artifact["s3_key"].startswith("models/feature%2Fmodels/aaaaaaaaaaaa/")
     assert store.objects[0][1] == artifact["s3_key"]
+
+
+def test_publish_attaches_accuracy_artifact_test_result_and_measurements(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+    accuracy_path = _add_accuracy_result(dist)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "00000000-0000-4000-8000-000000000001"}
+        if path.endswith("/artifacts/accuracy-result"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000002"}
+        return {"ok": True}
+
+    store = FakeStore()
+    result = publish_compilations(
+        repository=ROOT,
+        dist_dir=dist,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        kms_key_id=None,
+        environment="staging",
+        branch="develop",
+        git_sha="a" * 40,
+        github_run_id="1234",
+        github_run_attempt="1",
+        github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
+        request=request,
+        artifact_store=store,
+    )
+
+    run_id = "00000000-0000-4000-8000-000000000001"
+    endpoints = [path for _, path, _, _ in calls]
+    assert f"/v1/runs/{run_id}/artifacts/accuracy-result" in endpoints
+    assert f"/v1/runs/{run_id}/test-results/accuracy/sampled_accuracy_smoke" in endpoints
+    assert f"/v1/runs/{run_id}/measurements/batch" in endpoints
+    assert endpoints.index(f"/v1/runs/{run_id}/measurements/batch") < endpoints.index(f"/v1/runs/{run_id}/finalize")
+    artifact_call = next(body for _, path, body, _ in calls if path.endswith("/artifacts/accuracy-result"))
+    assert artifact_call is not None
+    assert artifact_call["metadata"]["evaluated_samples"] == 500
+    assert artifact_call["metadata"]["candidate_top1_accuracy"] == 0.762
+    test_call = next(body for _, path, body, _ in calls if "/test-results/accuracy/" in path)
+    assert test_call is not None
+    assert test_call["report_artifact_id"] == "00000000-0000-4000-8000-000000000002"
+    measurement_call = next(body for _, path, body, _ in calls if path.endswith("/measurements/batch"))
+    assert measurement_call is not None
+    assert {item["name"] for item in measurement_call["measurements"]} == {
+        "model.accuracy.candidate.top1",
+        "model.accuracy.candidate.top5",
+        "model.accuracy.reference.top1",
+        "model.accuracy.reference.top5",
+        "model.accuracy.top1_agreement",
+        "model.accuracy.top1_delta",
+        "model.accuracy.top5_delta",
+    }
+    assert all(item["sample_count"] == 500 for item in measurement_call["measurements"])
+    assert result["runs"][0]["accuracy"]["evaluated_samples"] == 500
+    assert store.objects[1][0] == accuracy_path
+    assert store.objects[1][3] == "application/json"
 
 
 def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> None:

@@ -259,6 +259,97 @@ def _require_sha256(value: Any, field: str) -> str:
     return digest
 
 
+def _accuracy_result(path: Path, *, model_id: str, variant_id: str, source_sha256: str) -> JsonObject:
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{path}: could not read accuracy result: {exc}") from exc
+    if not isinstance(report, dict) or report.get("schema_version") != 1:
+        raise ValidationError(f"{path}: accuracy result schema_version must be 1")
+    model = report.get("model")
+    if not isinstance(model, dict):
+        raise ValidationError(f"{path}: accuracy result model must be an object")
+    expected_model = {"id": model_id, "variant_id": variant_id, "source_sha256": source_sha256}
+    for field, expected in expected_model.items():
+        if model.get(field) != expected:
+            raise ValidationError(f"{path}: accuracy result model.{field} must be {expected!r}")
+
+    dataset = report.get("dataset")
+    if not isinstance(dataset, dict):
+        raise ValidationError(f"{path}: accuracy result dataset must be an object")
+    evaluated = dataset.get("evaluated_samples")
+    available = dataset.get("available_samples")
+    if not isinstance(evaluated, int) or not isinstance(available, int) or not 0 < evaluated <= available:
+        raise ValidationError(f"{path}: accuracy sample counts must satisfy 0 < evaluated_samples <= available_samples")
+    _require_sha256(dataset.get("sha256"), "accuracy dataset sha256")
+
+    evaluation = report.get("evaluation")
+    if not isinstance(evaluation, dict) or evaluation.get("status") not in {"provisional", "ready"}:
+        raise ValidationError(f"{path}: publishable accuracy evaluation status must be provisional or ready")
+    if not isinstance(evaluation.get("profile"), str) or not evaluation["profile"].strip():
+        raise ValidationError(f"{path}: accuracy evaluation profile must be a non-empty string")
+    if not isinstance(report.get("report_scope"), str) or not report["report_scope"].strip():
+        raise ValidationError(f"{path}: accuracy report_scope must be a non-empty string")
+
+    metrics = report.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValidationError(f"{path}: accuracy metrics must be an object")
+    ratio_fields = {
+        "candidate": ("top1_accuracy", "top5_accuracy"),
+        "reference": ("top1_accuracy", "top5_accuracy"),
+        "comparison": ("top1_agreement",),
+    }
+    for group, fields in ratio_fields.items():
+        values = metrics.get(group)
+        if not isinstance(values, dict):
+            raise ValidationError(f"{path}: accuracy metrics.{group} must be an object")
+        for field in fields:
+            value = values.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValidationError(f"{path}: accuracy metrics.{group}.{field} must be a ratio in 0..1")
+    for field in ("top1_delta", "top5_delta"):
+        value = metrics["comparison"].get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not -1 <= value <= 1:
+            raise ValidationError(f"{path}: accuracy metrics.comparison.{field} must be a ratio in -1..1")
+    return report
+
+
+def _accuracy_measurements(report: JsonObject, fingerprint: str) -> list[JsonObject]:
+    metric_fields = (
+        ("candidate", "top1_accuracy", "model.accuracy.candidate.top1", "higher"),
+        ("candidate", "top5_accuracy", "model.accuracy.candidate.top5", "higher"),
+        ("reference", "top1_accuracy", "model.accuracy.reference.top1", "higher"),
+        ("reference", "top5_accuracy", "model.accuracy.reference.top5", "higher"),
+        ("comparison", "top1_agreement", "model.accuracy.top1_agreement", "higher"),
+        ("comparison", "top1_delta", "model.accuracy.top1_delta", "higher"),
+        ("comparison", "top5_delta", "model.accuracy.top5_delta", "higher"),
+    )
+    dataset = report["dataset"]
+    dimensions = {
+        "model_id": report["model"]["id"],
+        "variant_id": report["model"]["variant_id"],
+        "dataset_id": dataset["id"],
+        "dataset_variant": dataset["variant"],
+        "dataset_split": dataset["split"],
+        "evaluation_profile": report["evaluation"]["profile"],
+        "report_scope": report["report_scope"],
+        "evaluation_status": report["evaluation"]["status"],
+    }
+    return [
+        {
+            "measurement_key": f"{fingerprint}-{group}-{field}",
+            "name": name,
+            "unit": "ratio",
+            "value": report["metrics"][group][field],
+            "direction": direction,
+            "sample_count": dataset["evaluated_samples"],
+            "aggregation": "mean",
+            "dimensions": dimensions,
+        }
+        for group, field, name, direction in metric_fields
+    ]
+
+
 def publish_compilations(
     *,
     repository: str | Path,
@@ -380,6 +471,7 @@ def publish_compilations(
                     "variant_id": variant_id,
                     "artifact_kind": "mpk",
                     "github_run_id": github_run_id,
+                    "license": model["license"],
                 },
                 **({"model_categories": categorization} if categorization is not None else {}),
             },
@@ -440,13 +532,95 @@ def publish_compilations(
             },
             f"{stable_key}-validation",
         )
+        accuracy_path = result_path.parent / "accuracy.json"
+        accuracy_publication = None
+        if accuracy_path.is_file():
+            accuracy = _accuracy_result(
+                accuracy_path,
+                model_id=model_id,
+                variant_id=variant_id,
+                source_sha256=source_sha,
+            )
+            accuracy_sha, _ = sha256_file(accuracy_path)
+            accuracy_fingerprint = canonical_sha256(accuracy)
+            accuracy_key = (
+                f"models/{branch_key}/{commit_tag}/{model_id}/{variant_id}/accuracy/"
+                f"{accuracy_fingerprint}/accuracy-result-v{accuracy['schema_version']}.json"
+            )
+            accuracy_stored = store.ensure_native_sha256(
+                accuracy_path,
+                accuracy_key,
+                accuracy_sha,
+                media_type="application/json",
+            )
+            accuracy_artifact = client.request(
+                "PUT",
+                f"/v1/runs/{run_id}/artifacts/accuracy-result",
+                {
+                    "artifact_type": "accuracy-result",
+                    "s3_bucket": bucket,
+                    "s3_key": accuracy_stored.key,
+                    "s3_version_id": accuracy_stored.version_id,
+                    "sha256": accuracy_stored.sha256,
+                    "size_bytes": accuracy_stored.size_bytes,
+                    "media_type": "application/json",
+                    "retention_class": "branch",
+                    "metadata": {
+                        "model_id": model_id,
+                        "variant_id": variant_id,
+                        "dataset_id": accuracy["dataset"]["id"],
+                        "dataset_variant": accuracy["dataset"]["variant"],
+                        "dataset_split": accuracy["dataset"]["split"],
+                        "evaluated_samples": accuracy["dataset"]["evaluated_samples"],
+                        "available_samples": accuracy["dataset"]["available_samples"],
+                        "evaluation_profile": accuracy["evaluation"]["profile"],
+                        "evaluation_status": accuracy["evaluation"]["status"],
+                        "report_scope": accuracy["report_scope"],
+                        "candidate_top1_accuracy": accuracy["metrics"]["candidate"]["top1_accuracy"],
+                        "candidate_top5_accuracy": accuracy["metrics"]["candidate"]["top5_accuracy"],
+                    },
+                },
+                f"{stable_key}-accuracy-artifact",
+            )
+            accuracy_test: JsonObject = {
+                "status": "passed",
+                "version": str(accuracy["schema_version"]),
+                "summary": accuracy,
+            }
+            if accuracy_artifact.get("artifact_id"):
+                accuracy_test["report_artifact_id"] = accuracy_artifact["artifact_id"]
+            client.request(
+                "PUT",
+                f"/v1/runs/{run_id}/test-results/accuracy/{accuracy['report_scope']}",
+                accuracy_test,
+                f"{stable_key}-accuracy-test-result",
+            )
+            client.request(
+                "POST",
+                f"/v1/runs/{run_id}/measurements/batch",
+                {"measurements": _accuracy_measurements(accuracy, accuracy_fingerprint)},
+                f"{stable_key}-accuracy-measurements",
+            )
+            accuracy_publication = {
+                "s3_key": accuracy_stored.key,
+                "result_fingerprint": accuracy_fingerprint,
+                "evaluated_samples": accuracy["dataset"]["evaluated_samples"],
+            }
         client.request(
             "POST",
             f"/v1/runs/{run_id}/finalize",
             {"status": "completed"},
             f"{stable_key}-finalize",
         )
-        published.append({"model_id": model_id, "variant_id": variant_id, "run_id": run_id, "s3_key": stored.key})
+        published.append(
+            {
+                "model_id": model_id,
+                "variant_id": variant_id,
+                "run_id": run_id,
+                "s3_key": stored.key,
+                "accuracy": accuracy_publication,
+            }
+        )
 
     return {
         "count": len(published),

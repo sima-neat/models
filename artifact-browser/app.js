@@ -91,6 +91,7 @@ const icons = {
   modelType: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>`,
   architecture: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 12h4m0 0 6-5m-6 5 6 5"/></svg>`,
   task: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>`,
+  license: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5M10 12h6m-6 4h6"/></svg>`,
 };
 
 function escapeHtml(value = "") {
@@ -707,15 +708,19 @@ async function selectRun(runId, { updateUrl = true } = {}) {
   try {
     let detail = state.detailCache.get(runId);
     if (!detail) {
-      const [summary, provenance, tests, metrics, benchmark] = await Promise.all([
+      const [summary, provenance, tests, metrics, benchmark, accuracy] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
         api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
           if (error.status === 404) return null;
           throw error;
         }),
+        api(`/v1/runs/${runId}/accuracy/latest`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        }),
       ]);
-      detail = { summary, provenance, tests, metrics, benchmark };
+      detail = { summary, provenance, tests, metrics, benchmark, accuracy };
       state.detailCache.set(runId, detail);
     }
     if (state.selectedId === runId) renderDetail(detail);
@@ -878,6 +883,59 @@ function benchmarkPanel(payload) {
   </section>`;
 }
 
+function percentage(value, { signed = false } = {}) {
+  if (!Number.isFinite(value)) return "—";
+  const percent = value * 100;
+  return `${signed && percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
+}
+
+function accuracyPanel(payload, tests = []) {
+  const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
+  const report = payload?.result || fallback?.summary;
+  if (!report || report.schema_version !== 1) return "";
+  const candidate = report.metrics?.candidate || {};
+  const reference = report.metrics?.reference || {};
+  const comparison = report.metrics?.comparison || {};
+  const dataset = report.dataset || {};
+  const evaluation = report.evaluation || {};
+  const fullCoverage = Number.isInteger(dataset.evaluated_samples)
+    && dataset.evaluated_samples === dataset.available_samples;
+  const status = fullCoverage ? "Qualification" : "Provisional";
+  const statusClass = fullCoverage ? "qualification" : "provisional";
+  const statusExplanation = fullCoverage
+    ? "This run evaluated the full configured validation split and is intended for final accuracy reporting."
+    : "This run evaluated a sampled subset of the validation images. It is useful for routine regression checks; run the qualification profile for final accuracy reporting.";
+  const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage";
+  const coverageExplanation = fullCoverage
+    ? "Every image in the configured validation split was evaluated."
+    : "A deterministic subset of the configured validation split was evaluated.";
+  const sampleText = Number.isInteger(dataset.evaluated_samples) && Number.isInteger(dataset.available_samples)
+    ? `${dataset.evaluated_samples.toLocaleString()} of ${dataset.available_samples.toLocaleString()} images`
+    : "Sample count unavailable";
+  return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
+    <div class="detail-section-title"><h3>Accuracy</h3><details class="accuracy-explainer"><summary class="accuracy-status ${statusClass}" aria-label="Explain ${status.toLowerCase()} accuracy status">${status}</summary><div class="accuracy-explainer-card"><strong>${status}</strong><p>${escapeHtml(statusExplanation)}</p><p><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p></div></details></div>
+    <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}</p>
+    <div class="accuracy-summary">
+      <div class="accuracy-metric primary"><span>Candidate top-1</span><strong>${percentage(candidate.top1_accuracy)}</strong><small>Reference ${percentage(reference.top1_accuracy)}</small></div>
+      <div class="accuracy-metric primary"><span>Candidate top-5</span><strong>${percentage(candidate.top5_accuracy)}</strong><small>Reference ${percentage(reference.top5_accuracy)}</small></div>
+      <div class="accuracy-metric"><span>Top-1 agreement</span><strong>${percentage(comparison.top1_agreement)}</strong><small>Candidate vs reference</small></div>
+      <div class="accuracy-metric"><span>Top-1 delta</span><strong>${percentage(comparison.top1_delta, { signed: true })}</strong><small>Top-5 ${percentage(comparison.top5_delta, { signed: true })}</small></div>
+    </div>
+    <dl class="accuracy-context">${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}</dl>
+  </section>`;
+}
+
+function licensePanel(license) {
+  if (!license?.spdx) return "";
+  const redistribution = license.redistribution
+    ? license.redistribution.charAt(0).toUpperCase() + license.redistribution.slice(1)
+    : "Unknown";
+  return `<section class="license-section"><div class="detail-section-title"><h3>License</h3><span>${escapeHtml(license.spdx)}</span></div><dl class="key-grid">
+    ${keyValue("SPDX", license.spdx, { copy: true, mono: true })}
+    ${keyValue("Redistribution", redistribution)}
+  </dl>${license.attribution ? `<p class="license-attribution"><strong>Attribution</strong>${escapeHtml(license.attribution)}</p>` : ""}</section>`;
+}
+
 function renderDetail(detail) {
   const run = detail.summary.run;
   const artifacts = detail.summary.artifacts || [];
@@ -889,17 +947,19 @@ function renderDetail(detail) {
   const variant = run.metadata?.variant_id || "default";
   const precision = parameters.compile_parameters?.precision;
   const categories = run.model_categories || {};
+  const license = run.metadata?.license;
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
   const benchmarkMarkup = benchmarkPanel(detail.benchmark);
+  const accuracyMarkup = accuracyPanel(detail.accuracy, tests);
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
-  const primaryArtifact = artifacts[0];
+  const primaryArtifact = artifacts.find((artifact) => artifact.artifact_type === "model-pack") || artifacts[0];
   const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
     <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download="${escapeHtml(primaryArtifact.name)}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
-    <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
+    <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
 
     <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
       ${artifacts.length ? artifacts.map((artifact) => `<dl class="artifact-metadata">
@@ -920,6 +980,10 @@ function renderDetail(detail) {
     </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</section>
 
     ${input ? sourceInputPanel(input) : ""}
+
+    ${licensePanel(license)}
+
+    ${accuracyMarkup}
 
     ${benchmarkMarkup}
 

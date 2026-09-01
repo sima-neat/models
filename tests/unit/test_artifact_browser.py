@@ -451,6 +451,37 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert "time_to_first_inference_ms" in script
 
 
+def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert 'api(`/v1/runs/${runId}/accuracy/latest`)' in script
+    assert 'payload?.result || fallback?.summary' in script
+    assert 'item.suite === "accuracy"' in script
+    assert 'id="accuracy-section"' in script
+    assert "Candidate top-1" in script
+    assert "Reference ${percentage(reference.top1_accuracy)}" in script
+    assert "dataset.evaluated_samples.toLocaleString()" in script
+    assert 'class="accuracy-explainer"' in script
+    assert 'summary class="accuracy-status ${statusClass}"' in script
+    assert '>?</summary>' not in script
+    assert "run the qualification profile for final accuracy reporting" in script
+    assert 'const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage"' in script
+    assert 'const status = fullCoverage ? "Qualification" : "Provisional"' in script
+    assert 'class="accuracy-status ${statusClass}"' in script
+    assert ".accuracy-summary" in styles
+    assert ".accuracy-status.provisional" in styles
+    assert ".accuracy-status.qualification" in styles
+    assert ".accuracy-explainer-card" in styles
+    assert ".accuracy-explainer:hover > .accuracy-explainer-card" in styles
+    assert ".accuracy-explainer[open] > .accuracy-explainer-card" in styles
+    assert '"evaluated_samples": 500' in preview
+    assert '"top1_accuracy": 0.762' in preview
+    assert '"suite": "accuracy"' in preview
+    assert 'parts[3:] == ["accuracy", "latest"]' in preview
+
+
 def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
@@ -512,12 +543,29 @@ def test_model_metadata_tags_use_semantic_icons() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    for icon in ("branch", "precision", "compiler", "modelType", "architecture", "task"):
+    for icon in ("branch", "precision", "compiler", "license", "modelType", "architecture", "task"):
         assert f"{icon}: `<svg" in script
     assert "detailTag(icons.branch, branchName(run.git_ref), \"branch\")" in script
     assert 'class="detail-tag detail-tag-${kind}"' in script
     assert ".detail-tag svg" in styles
     assert ".detail-tag-branch svg { stroke: var(--blue); }" in styles
+
+
+def test_model_license_metadata_is_rendered_with_redistribution_and_attribution() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert "const license = run.metadata?.license" in script
+    assert "function licensePanel(license)" in script
+    assert 'detailTag(icons.license, license.spdx, "license")' in script
+    assert 'keyValue("SPDX", license.spdx' in script
+    assert 'keyValue("Redistribution", redistribution)' in script
+    assert 'class="license-attribution"' in script
+    assert ".detail-tag-license svg" in styles
+    assert ".license-attribution" in styles
+    assert '"spdx": "Apache-2.0"' in preview
+    assert '"redistribution": "allowed"' in preview
 
 
 def test_local_preview_fixture_is_extensible_schema_v3_and_server_is_same_origin() -> None:
