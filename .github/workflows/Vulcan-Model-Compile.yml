@@ -330,17 +330,25 @@ jobs:
           fi
           test -x "$sima_cli"
 
-          dataset_tools="$RUNNER_TEMP/dataset-registry-env"
-          "$MODEL_COMPILER_PYTHON" -m venv --system-site-packages "$dataset_tools"
-          ln -s "$(dirname "$MODEL_COMPILER_PYTHON")/mla-masm" "$dataset_tools/bin/mla-masm"
-          MODEL_COMPILER_PYTHON="$dataset_tools/bin/python" \
-            "$sima_cli" neat install \
-              --env "$DATASET_REGISTRY_ENVIRONMENT" \
-              --install-dir "$RUNNER_TEMP/dataset-registry-package" \
-              dataset/dataset-registry@main:latest
-          "$dataset_tools/bin/dataset-registry" --version
-          "$dataset_tools/bin/python" -c 'import boto3, dataset_registry'
-          echo "$dataset_tools/bin" >> "$GITHUB_PATH"
+          package_dir="$RUNNER_TEMP/dataset-registry-package"
+          dataset_tools="$RUNNER_TEMP/dataset-registry-tools"
+          "$sima_cli" neat install \
+            --env "$DATASET_REGISTRY_ENVIRONMENT" \
+            --install-dir "$package_dir" \
+            --download-only \
+            dataset/dataset-registry@main:latest
+          mapfile -t wheels < <(find "$package_dir" -maxdepth 1 -type f -name 'sima_neat_dataset_registry-*.whl' -print)
+          if (( ${#wheels[@]} != 1 )); then
+            echo "Expected one dataset-registry wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check \
+            --target "$dataset_tools" 'boto3>=1.34,<2'
+          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check \
+            --no-deps --target "$dataset_tools" "${wheels[0]}"
+          PYTHONPATH="$dataset_tools${PYTHONPATH:+:$PYTHONPATH}" \
+            "$MODEL_COMPILER_PYTHON" -m dataset_registry --version
+          echo "PYTHONPATH=$dataset_tools${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
 
       - name: Install shared registry tooling outside the read-only compiler image
         run: |
@@ -348,7 +356,7 @@ jobs:
           tooling="$RUNNER_TEMP/model-registry-tools"
           "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check --no-deps --target "$tooling" .
           "$MODEL_COMPILER_PYTHON" -c 'import certifi, jsonschema, yaml'
-          echo "PYTHONPATH=$tooling" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=$tooling${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
 
       - name: Fetch and verify the immutable model source
         id: source

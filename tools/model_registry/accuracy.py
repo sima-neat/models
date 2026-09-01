@@ -83,13 +83,18 @@ def resolve_dataset(
             int(dataset_config["size_bytes"]),
             "dataset",
         )
+    command_prefix: list[str]
     executable = shutil.which("dataset-registry")
-    if executable is None:
+    if executable is not None:
+        command_prefix = [executable]
+    else:
         installed_script = Path(sys.executable).resolve().with_name("dataset-registry")
         if installed_script.is_file():
-            executable = str(installed_script)
+            command_prefix = [str(installed_script)]
+        else:
+            command_prefix = [sys.executable, "-m", "dataset_registry"]
     command = [
-        executable or "dataset-registry",
+        *command_prefix,
         "resolve",
         str(dataset_config["id"]),
         "--variant",

@@ -297,10 +297,12 @@ def test_compile_worker_installs_main_dataset_registry_artifact() -> None:
 
     assert install_index < calibration_index
     assert install["env"]["DATASET_REGISTRY_ENVIRONMENT"] == "${{ needs.select.outputs.vulcan_environment }}"
-    assert '"$MODEL_COMPILER_PYTHON" -m venv --system-site-packages' in install["run"]
-    assert 'MODEL_COMPILER_PYTHON="$dataset_tools/bin/python"' in install["run"]
     assert "dataset/dataset-registry@main:latest" in install["run"]
-    assert 'echo "$dataset_tools/bin" >> "$GITHUB_PATH"' in install["run"]
+    assert "--download-only" in install["run"]
+    assert "sima_neat_dataset_registry-*.whl" in install["run"]
+    assert '--target "$dataset_tools"' in install["run"]
+    assert '"$MODEL_COMPILER_PYTHON" -m dataset_registry --version' in install["run"]
+    assert 'echo "PYTHONPATH=$dataset_tools${PYTHONPATH:+:$PYTHONPATH}"' in install["run"]
 
 
 def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:

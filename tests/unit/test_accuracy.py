@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -98,6 +99,33 @@ def test_smoke_selection_is_deterministic_and_spans_validation_split() -> None:
 def test_sampling_rejects_more_than_available() -> None:
     with pytest.raises(AccuracyError, match="1..5000"):
         select_sample_indices(5000, 5001)
+
+
+def test_dataset_resolution_falls_back_to_current_python_module(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from model_registry import accuracy
+
+    dataset = tmp_path / "dataset.tgz"
+    dataset.write_bytes(b"registered dataset")
+    commands: list[list[str]] = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"path": str(dataset)}), stderr="")
+
+    monkeypatch.setattr(accuracy.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(accuracy.sys, "executable", "/missing/compiler/bin/python")
+    monkeypatch.setattr(accuracy.subprocess, "run", run)
+    config = {
+        "id": "fixture",
+        "variant": "mini",
+        "sha256": accuracy.sha256_file(dataset),
+        "size_bytes": dataset.stat().st_size,
+    }
+
+    assert accuracy.resolve_dataset(config, None) == dataset
+    assert commands[0][:3] == ["/missing/compiler/bin/python", "-m", "dataset_registry"]
 
 
 def test_dataset_index_rejects_parent_traversal(tmp_path: Path) -> None:
