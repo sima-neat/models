@@ -136,7 +136,7 @@ Model authors compile through `models/<model-id>/compile.py` and benchmark
 through the DevKit `benchmarker` command.
 
 Do not run or document direct use of `model-registry publish`,
-`publish-benchmark`, `publish-taxonomy`, or `package` as part of a model
+`publish-benchmark`, or `publish-taxonomy` as part of a model
 contribution. Those commands require controlled credentials and provenance and
 are reserved for CI.
 
@@ -153,12 +153,11 @@ Trusted pushes and explicit maintainer dispatches can:
 2. fetch and verify immutable inputs;
 3. run each selected supported variant in an isolated output directory;
 4. require and validate exactly one MPK;
-5. package and publish immutable catalog/provenance records;
+5. publish immutable artifacts and provenance records through the registry API;
 6. dispatch newly compiled staging variants for Modalix benchmarking.
 
-Production is an explicit protected workflow choice. A targeted manual variant
-run is compile-only and does not advance the catalog. Incremental builds may
-reuse an unchanged model fingerprint from the current or resolved base branch.
+Production is an explicit protected workflow choice. Targeted manual variants
+publish independently without updating shared mutable catalog pointers.
 
 ## Review and merge expectations
 

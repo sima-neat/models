@@ -15,7 +15,6 @@ from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model, variant_requires_calibration
-from .published import validate_latest_index
 from .source import SourceSpec
 
 AUTHOR_COMMANDS = frozenset(
@@ -104,7 +103,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--base")
     matrix.add_argument("--head")
     matrix.add_argument("--compiler-version")
-    matrix.add_argument("--previous-index", type=Path)
 
     base = subcommands.add_parser("resolve-base", help="resolve the closest base branch and merge base")
     base.add_argument("--repository", type=Path, default=Path.cwd())
@@ -147,28 +145,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
     mpk.add_argument("--build-fingerprint")
-
-    package = subcommands.add_parser("package", help="assemble compiled MPKs into sima-cli package metadata")
-    package.add_argument("--repository", type=Path, default=Path.cwd())
-    package.add_argument("--compiled-dir", type=Path, required=True)
-    package.add_argument("--output-dir", type=Path, required=True)
-    package.add_argument("--git-sha", required=True)
-    package.add_argument("--environment", choices=("staging", "production"), required=True)
-    package.add_argument("--branch", required=True)
-    package.add_argument("--previous-index", type=Path)
-    package.add_argument(
-        "--allow-partial-catalog",
-        action="store_true",
-        help="omit unbuilt models with no previous index entry (intended for feature branches)",
-    )
-    package.add_argument("--json", action="store_true", dest="json_output")
-
-    previous = subcommands.add_parser("fetch-previous", help="fetch the previous model-aware latest index")
-    previous.add_argument("--environment", choices=("staging", "production"), required=True)
-    previous.add_argument("--branch", required=True)
-    previous.add_argument("--fallback-branch")
-    previous.add_argument("--output-file", type=Path, required=True)
-    previous.add_argument("--json", action="store_true", dest="json_output")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
     publish.add_argument("--repository", type=Path, default=Path.cwd())
@@ -376,15 +352,6 @@ def _matrix(args: argparse.Namespace) -> int:
         variant_ids = [item.strip() for item in args.variants.split(",") if item.strip()]
         if not variant_ids:
             raise ModelRegistryError("--variants must contain at least one variant ID")
-    previous_models = None
-    if args.previous_index is not None:
-        if args.compiler_version is None:
-            raise ModelRegistryError("--compiler-version is required with --previous-index")
-        try:
-            value = json.loads(args.previous_index.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ModelRegistryError(f"could not read previous index {args.previous_index}: {exc}") from exc
-        previous_models = validate_latest_index(value)["models"]
     print(
         json.dumps(
             build_matrix(
@@ -393,7 +360,6 @@ def _matrix(args: argparse.Namespace) -> int:
                 variant_ids,
                 repository=args.repository if args.compiler_version is not None else None,
                 compiler_version=args.compiler_version,
-                previous_models=previous_models,
             ),
             sort_keys=True,
             separators=(",", ":"),
@@ -456,41 +422,6 @@ def _verify_mpk(args: argparse.Namespace) -> int:
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
     result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid MPK: {result['archive']}")
-    return 0
-
-
-def _package(args: argparse.Namespace) -> int:
-    from .package import package_compiled_models
-
-    result = package_compiled_models(
-        args.repository,
-        args.compiled_dir,
-        args.output_dir,
-        args.git_sha,
-        environment=args.environment,
-        branch=args.branch,
-        previous_index=args.previous_index,
-        allow_partial_catalog=args.allow_partial_catalog,
-    )
-    message = json.dumps(result, sort_keys=True) if args.json_output else f"Packaged {len(result['models'])} variant(s)"
-    print(message)
-    return 0
-
-
-def _fetch_previous(args: argparse.Namespace) -> int:
-    from .published import fetch_previous_index
-
-    index = fetch_previous_index(args.environment, args.branch, args.output_file)
-    source_branch = args.branch if index is not None else None
-    if index is None and args.fallback_branch and args.fallback_branch != args.branch:
-        index = fetch_previous_index(args.environment, args.fallback_branch, args.output_file)
-        source_branch = args.fallback_branch if index is not None else None
-    result = {
-        "found": index is not None,
-        "catalog_tag": index.get("catalog_tag") if index else None,
-        "source_branch": source_branch,
-    }
-    print(json.dumps(result, sort_keys=True) if args.json_output else (result["catalog_tag"] or "No previous index"))
     return 0
 
 
@@ -583,10 +514,6 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _make_benchmark_manifest(args)
         if args.command == "verify-mpk":
             return _verify_mpk(args)
-        if args.command == "package":
-            return _package(args)
-        if args.command == "fetch-previous":
-            return _fetch_previous(args)
         if args.command == "publish":
             return _publish(args)
         if args.command == "publish-benchmark":

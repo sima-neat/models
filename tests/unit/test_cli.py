@@ -22,9 +22,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
 @pytest.mark.parametrize(
     "command",
     [
-        "fetch-previous",
         "make-benchmark-manifest",
-        "package",
         "publish",
         "publish-benchmark",
         "publish-taxonomy",
@@ -44,7 +42,8 @@ def test_repository_cli_retains_ci_only_commands() -> None:
     parser = cli._parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
 
-    assert {"package", "publish", "publish-benchmark", "publish-taxonomy"} <= set(subcommands.choices)
+    assert {"publish", "publish-benchmark", "publish-taxonomy"} <= set(subcommands.choices)
+    assert {"package", "fetch-previous"}.isdisjoint(subcommands.choices)
 
 
 def test_validate_json_output(capsys) -> None:
@@ -203,7 +202,7 @@ def test_matrix_selects_one_ssd_variant(capsys) -> None:
     assert '"model_id":"ssd_mobilenet_v1"' in output
 
 
-def test_package_supports_python_module_entrypoint() -> None:
+def test_tooling_supports_python_module_entrypoint() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "model_registry", "--help"],
         cwd=ROOT,

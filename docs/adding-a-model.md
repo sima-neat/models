@@ -157,7 +157,7 @@ belongs under `tools/`, not in model code.
 The model recipe is the developer-facing compilation interface. The
 author-safe `model-registry` package provides validation, verified input
 handling, matrix inspection, and artifact checks; it is not a model-author
-publishing client. CI retains the separate packaging and publication commands.
+publishing client. CI retains separate registry publication commands.
 
 Each model owns a Python compile recipe with this interface:
 

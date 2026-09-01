@@ -44,10 +44,9 @@ model type before any compilation job can be scheduled. Taxonomy v1 remains in
 the repository as immutable publication history; taxonomy v2 adds the SSD and
 YOLO architecture families needed by the fully categorized catalog.
 
-Packaging emits `taxonomy.json`, records its SHA-256 in schema-version 2
-`latest.json`, and projects canonical category IDs into `latest.json` and
-`catalog.json`. Registry publication uploads the immutable taxonomy before a
-categorized run. Existing run records are not guessed or heuristically backfilled.
+Registry publication uploads the immutable taxonomy before a categorized run
+and records canonical category IDs with that run. Existing records are not
+guessed or heuristically backfilled.
 
 ## Search semantics
 

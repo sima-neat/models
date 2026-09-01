@@ -41,13 +41,11 @@ and the GitHub review checklist.
 [`Vulcan-Model-Compile.yml`](.github/workflows/Vulcan-Model-Compile.yml) validates
 pull requests without granting them a self-hosted runner. Trusted pushes build
 only changed models on staging. The first build of a new branch resolves its
-closest base branch, compares from the merge base, and inherits unchanged model
-artifacts from that branch's published `latest.json`; it does not rebuild the
-catalog merely because GitHub reports an all-zero previous SHA. A maintainer can
+closest base branch and compares from the merge base, so GitHub's all-zero
+previous SHA does not force a full rebuild. A maintainer can
 run the workflow manually, choose `staging` or protected `production`, and
 optionally provide a comma-separated model list and variant list or an explicit
 base branch; empty model and variant lists build the full catalog.
-A targeted variant run is compile-only and never advances the published catalog.
 
 The Python-only `benchmarker` is published separately when its source,
 schemas, dependency pins, or packaging change. Install its branch package with:
@@ -62,58 +60,25 @@ installs the benchmarker wheel into the Core-managed pyneat environment.
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
 `model-compiler`, and the derived `model-compiler-<version>` label. Successful matrix outputs are
-assembled and published with the standard Vulcan branch layout:
+published individually. Each successful matrix item validates its MPK, uploads
+it under an immutable object key, records its checksum, provenance, exact S3
+object version, and taxonomy through the IAM-authenticated Model Registry API,
+and then finalizes the registry run.
 
-```text
-models/
-  <url-encoded-branch>/
-    latest.tag                         # 12-character catalog commit
-    latest.json                        # per-model latest build and category index
-    <12-character-commit>/
-      metadata.json                    # selectable model catalog
-      catalog.json                     # machine-readable catalog
-      taxonomy.json                    # canonical searchable category vocabulary
-      latest.json                      # immutable copy of the index
-      manifest.json                    # Vulcan checksums and S3 keys
-      <changed-model-id>/
-        metadata.json                  # directly installable model package
-        <variant-id>/
-          *_mpk.tar.gz
-          SHA256SUMS
-          compile-result.json
-  branches.json
-```
-
-The shared Vulcan publisher uploads the immutable commit folder first. The
-branch's `latest.tag` is advanced only after the commit manifest exists. For
-example:
+Model discovery and checksum-verified downloads use registry database records
+and presigned artifact URLs:
 
 ```bash
-# Select one or more models interactively from the branch catalog.
-sima-cli neat install --stg models@develop:latest --install-dir ./compiled-models
-
-# Install every compiled variant for one model directly.
-sima-cli neat install --stg models/resnet_50@develop:latest --install-dir ./compiled-models
+sima-cli models list --branch develop
+sima-cli models download --id resnet_50 --variant modalix_bf16 --branch develop
 ```
 
-Only affected models are recompiled. `latest.tag` remains a plain-text pointer
-to the newest complete catalog for existing Vulcan consumers. The versioned
-[`latest.json`](schemas/latest-index-v2.schema.json) maps each model to its own
-build tag, build time, source/compiler provenance, and artifact branch. Root
-catalog metadata uses immutable URLs from that index, while a direct
-`models/<model-id>@<branch>:latest` install resolves the model's build tag.
-Unchanged MPKs are not copied into every catalog commit. A new branch inherits
-unchanged pointers from its resolved base branch until those models are rebuilt
-on the branch. Each compiled model records a deterministic fingerprint covering
-its model-local inputs, shared build tooling, and Model Compiler version. A
-matching fingerprint is reused; a missing or changed fingerprint rebuilds every
-supported variant of that model. A branch with no compilation work still
-publishes a lightweight catalog whose entries reference inherited immutable
-artifacts. Model README and test-description edits do not invalidate compiled
-MPKs.
+The former Models-specific `metadata.json`, `latest.json`, `latest.tag`, and
+`catalog.json` publication path is retired. Existing objects remain historical
+artifacts, but workflows no longer read, carry forward, validate, generate, or
+promote those pointers. Branch purge and restore use registry API operations
+over registered runs and immutable S3 object versions.
 
-Successful staging compilations are also written through the IAM-authenticated
-Vulcan Artifact Registry API as one immutable run per newly compiled variant.
 Each record links the model source checksum, variant parameters, Model Compiler
 version, build fingerprint, and exact versioned S3 MPK. For staging feature
 branches, the workflow discovers the Modalix compile artifacts actually produced

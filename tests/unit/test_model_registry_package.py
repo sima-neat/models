@@ -89,7 +89,7 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "Version: 0.1.0+unit" in metadata
         assert "Requires-Dist: jsonschema<5,>=4.18.4" in metadata
         assert "model_registry/cli.py" in names
-        for ci_module in ("benchmark_manifest", "benchmark_publication", "package", "registry"):
+        for ci_module in ("benchmark_manifest", "benchmark_publication", "registry"):
             assert f"model_registry/{ci_module}.py" not in names
         assert "author_main" in wheel.read("model_registry/__main__.py").decode()
         entry_points = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))

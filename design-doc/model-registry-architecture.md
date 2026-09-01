@@ -89,53 +89,27 @@ model code executes. Model variants do not carry independent compiler pins.
 
 ## Artifact publication contract
 
-Compilation matrix jobs exchange outputs through short-lived GitHub artifacts;
-they do not write S3 directly. A GitHub-hosted packaging job revalidates every
-MPK and its provenance, then emits root and per-model `sima-cli` metadata. The
-standard organization publisher writes the result below
-`models/<encoded-branch>/<short-commit>/`, including `manifest.json` and the
-repository `branches.json` index. Only after publication succeeds does the
-model-aware `models/<encoded-branch>/latest.json` index publish and the standard
-promotion workflow update `models/<encoded-branch>/latest.tag`. The CLI rejects
-the pointers when `latest.json.catalog_tag` does not equal `latest.tag`, making
-a partial promotion visible instead of silently mixing catalog revisions.
+Each successful compilation matrix item verifies its MPK and provenance,
+uploads the archive to a collision-resistant immutable S3 key with native
+SHA-256, and upserts one Model Registry run through IAM-authenticated,
+idempotent API calls. The run records the immutable source, canonical
+model/variant/compiler parameters, taxonomy, exact S3 object version and
+checksum, and MPK validation result before finalization. A sibling matrix
+failure cannot roll back or hide a completed run.
 
-The root `metadata.json` exposes compiled model variants as selectable
-resources so users can choose one or more. Each `<model-id>/metadata.json`
-provides a stable direct-install target for that model. `catalog.json` carries
-the same inventory for automation without interactive `sima-cli` selection.
-`taxonomy.json` carries the canonical category vocabulary used by schema-version
-2 models. Its checksum and version are recorded in `latest.json`; catalog and
-registry records store canonical category IDs rather than copied display labels.
+The registry database is the discovery and lifecycle source of truth. Public
+read APIs select current builds and return presigned download URLs. The model
+browser and `sima-cli models` commands consume those APIs directly. Compilation
+workflows do not assemble or promote Models-specific `metadata.json`,
+`catalog.json`, `latest.json`, or `latest.tag` objects.
 
-For staging builds that produce new MPKs, the workflow also creates one
-artifact-registry run per compiled model variant after S3 publication. It
-records the immutable source, canonical model/variant/compiler parameters, and
-the exact S3 object version and checksum, then finalizes the run. The required
-compile-result validation is recorded as compilation evidence; it is not a
-substitute for future Kerrigan DevKit correctness or performance results.
-Inherited model entries are not recorded as new compilations. Production keeps
-using S3 and the model-aware indexes until the artifact-registry API is deployed
-there. Registry ingestion is an independently retryable projection: a temporary
-registry failure does not roll back an otherwise complete S3 catalog or prevent
-the branch pointer from advancing.
+Changed-model selection comes from the Git diff against an explicit or resolved
+base branch. The comparison starts at the merge base rather than treating an
+all-zero new-branch SHA as a full rebuild. Build fingerprints remain provenance
+on registry runs; workflow selection no longer reads or carries forward an
+object-storage index.
 
-To preserve incremental compilation without copying large MPKs, the selection
-job pins the current branch's versioned `latest.json`, falling back to the
-resolved base branch on a branch's first build. The base is explicit for pull
-requests and manual dispatches and otherwise resolved from the closest remote
-branch by Git graph distance, with `develop` winning ties. The comparison starts
-at the merge base rather than treating GitHub's all-zero new-branch `before` SHA
-as a request to rebuild the entire catalog. Each model entry owns an immutable
-`latest_tag`, `artifact_branch`, build timestamp, per-variant provenance, and a
-deterministic build fingerprint over model-local inputs, shared build inputs,
-and the pinned Model Compiler version. Changed model outputs are stored under
-the current commit; unchanged entries continue to reference their prior
-immutable build. When no fingerprint requires compilation, the workflow still
-publishes complete metadata and a branch index without leasing a Vulcan compiler
-runner. Root metadata and `catalog.json` remain complete and use absolute
-artifact URLs. Direct model installs use the model-aware index.
-
-Cleanup collects references from all current model indexes before applying age
-retention, so an older model build remains protected while any live index uses
-it. A malformed index causes cleanup to fail closed for the models repository.
+Branch deletion and recreation call registry purge and restore endpoints.
+Retention operates on registered runs and exact S3 object versions. Previously
+published JSON objects may remain as historical artifacts but are not consulted
+or destructively bulk-deleted.

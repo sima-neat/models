@@ -96,8 +96,6 @@ jobs:
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       publishable: ${{ steps.matrix.outputs.publishable }}
       base_branch: ${{ steps.base.outputs.base_branch }}
-      previous_found: ${{ steps.previous.outputs.found }}
-      previous_source_branch: ${{ steps.previous.outputs.source_branch }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v6
@@ -174,41 +172,6 @@ jobs:
           echo "Resolved base branch: \`$base_branch\`" >> "$GITHUB_STEP_SUMMARY"
           echo "Comparison: \`$comparison_base..$HEAD_SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Resolve immutable previous model catalog
-        id: previous
-        env:
-          CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          FALLBACK_BRANCH: ${{ steps.base.outputs.base_branch }}
-          VULCAN_ENVIRONMENT: ${{ steps.environment.outputs.vulcan_environment }}
-        run: |
-          set -euo pipefail
-          result="$(model-registry fetch-previous \
-            --environment "$VULCAN_ENVIRONMENT" \
-            --branch "$CURRENT_BRANCH" \
-            --fallback-branch "$FALLBACK_BRANCH" \
-            --output-file previous-latest.json \
-            --json)"
-          found="$(jq -er '.found' <<< "$result")"
-          source_branch="$(jq -r '.source_branch // ""' <<< "$result")"
-          echo "found=$found" >> "$GITHUB_OUTPUT"
-          echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
-          if [[ "$found" == "true" ]]; then
-            catalog_tag="$(jq -er '.catalog_tag' previous-latest.json)"
-            echo "Previous catalog: \`$source_branch@$catalog_tag\`" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Previous catalog: none (bootstrap build)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Pin previous catalog for the packaging job
-        if: github.event_name != 'pull_request' && steps.previous.outputs.found == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: previous-model-index
-          path: previous-latest.json
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Build deterministic matrix
         id: matrix
         env:
@@ -218,7 +181,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           COMPARISON_BASE: ${{ steps.base.outputs.comparison_base }}
           COMPILER_VERSION: ${{ steps.compiler.outputs.version }}
-          PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -234,12 +196,9 @@ jobs:
                 --compiler-version "$COMPILER_VERSION" "${variant_args[@]}")"
             fi
           else
-            reuse_args=(--compiler-version "$COMPILER_VERSION")
-            if [[ "$PREVIOUS_FOUND" == "true" ]]; then
-              reuse_args+=(--previous-index previous-latest.json)
-            fi
             matrix="$(model-registry matrix --repository . \
-              --base "$COMPARISON_BASE" --head "$HEAD_SHA" "${reuse_args[@]}")"
+              --base "$COMPARISON_BASE" --head "$HEAD_SHA" \
+              --compiler-version "$COMPILER_VERSION")"
           fi
           count="$(python -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))' <<< "$matrix")"
           publishable=true
@@ -501,9 +460,6 @@ jobs:
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Configure artifact-registry publisher credentials
-        if: >-
-          needs.select.outputs.publishable == 'true' &&
-          needs.select.outputs.vulcan_environment == 'staging'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -511,9 +467,6 @@ jobs:
           role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Publish this model compilation
-        if: >-
-          needs.select.outputs.publishable == 'true' &&
-          needs.select.outputs.vulcan_environment == 'staging'
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
@@ -542,7 +495,7 @@ jobs:
           printf '%s\n' "$result" > "$OUTPUT_DIR/registry-publication.json"
           echo "Published $MODEL_ID/$VARIANT_ID to the model registry." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Retain the validated model output for packaging
+      - name: Retain the validated model output for benchmark handoff
         uses: actions/upload-artifact@v7
         with:
           name: compiled-model-${{ matrix.model_id }}-${{ matrix.variant_id }}
@@ -1013,192 +966,3 @@ jobs:
             --repository . \
             --api-url "$REGISTRY_API_URL" \
             --aws-region "$AWS_REGION"
-
-  package:
-    name: Build sima-cli model catalog
-    needs: [select, compile]
-    if: >-
-      always() &&
-      github.event_name != 'pull_request' &&
-      (needs.compile.result == 'success' ||
-       (needs.compile.result == 'skipped' && needs.select.outputs.count == '0')) &&
-      needs.select.outputs.publishable == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install registry tooling
-        run: python -m pip install .
-
-      - name: Prepare empty compiled-output directory
-        run: mkdir _compiled
-
-      - name: Download pinned previous model catalog
-        if: needs.select.outputs.previous_found == 'true'
-        uses: actions/download-artifact@v7
-        with:
-          name: previous-model-index
-          path: _previous
-
-      - name: Download compiled model outputs
-        if: needs.select.outputs.count != '0'
-        uses: actions/download-artifact@v7
-        with:
-          pattern: compiled-model-*
-          path: _compiled
-          merge-multiple: true
-
-      - name: Generate root and per-model package metadata
-        env:
-          VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
-        run: |
-          set -euo pipefail
-          package_args=(
-            --repository . \
-            --compiled-dir _compiled \
-            --output-dir dist \
-            --git-sha "$GITHUB_SHA" \
-            --environment "$VULCAN_ENVIRONMENT" \
-            --branch "$GITHUB_REF_NAME" \
-            --json
-          )
-          if [[ -f _previous/previous-latest.json ]]; then
-            package_args+=(--previous-index _previous/previous-latest.json)
-          fi
-          if [[ "$GITHUB_REF_NAME" != "main" && "$GITHUB_REF_NAME" != "develop" ]]; then
-            package_args+=(--allow-partial-catalog)
-          fi
-          model-registry package "${package_args[@]}" > package-result.json
-          python -m json.tool dist/metadata.json >/dev/null
-          find dist -mindepth 2 -name metadata.json -print -exec python -m json.tool {} \; >/dev/null
-          find dist -type f -print | sort >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload installable model catalog
-        uses: actions/upload-artifact@v7
-        with:
-          name: models-dist
-          path: dist
-          if-no-files-found: error
-          retention-days: 14
-
-  publish:
-    name: Publish branch model artifacts
-    needs: [select, package, resolve-vulcan-config]
-    if: needs.package.result == 'success'
-    permissions:
-      contents: read
-      actions: write
-      id-token: write
-    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
-    with:
-      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-      environment_name: ${{ needs.select.outputs.vulcan_environment }}
-      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-      artifact_folder: "."
-      artifact_pattern: models-dist
-      artifact_glob: "**/*"
-      min_artifact_count: 3
-      publish_manifest: true
-      cleanup_github_artifacts: false
-
-  publish-latest-index:
-    name: Publish model-aware latest.json
-    needs: [select, package, publish, resolve-vulcan-config]
-    if: always() && needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    environment: ${{ needs.select.outputs.vulcan_environment }}
-    permissions:
-      contents: read
-      actions: read
-      id-token: write
-    steps:
-      - name: Download packaged model catalog
-        uses: actions/download-artifact@v7
-        with:
-          name: models-dist
-          path: dist
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
-          role-session-name: models-latest-index-${{ github.run_id }}
-
-      - name: Validate and upload latest.json
-        env:
-          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-        run: |
-          set -euo pipefail
-          branch_key="$(python -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["GITHUB_REF_NAME"], safe=""))')"
-          jq -e \
-            --arg branch "$GITHUB_REF_NAME" \
-            --arg tag "${GITHUB_SHA:0:12}" \
-            '.schema_version == 2 and .repository == "sima-neat/models" and .branch == $branch and .catalog_tag == $tag' \
-            dist/latest.json >/dev/null
-          encryption=(--sse aws:kms)
-          if [[ -n "$KMS_KEY_ID" ]]; then
-            encryption+=(--sse-kms-key-id "$KMS_KEY_ID")
-          fi
-          aws s3 cp dist/latest.json "s3://$ARTIFACT_BUCKET/models/$branch_key/latest.json" \
-            --content-type application/json \
-            --cache-control no-store \
-            "${encryption[@]}"
-
-  promote-latest:
-    name: Promote branch latest.tag
-    needs: [select, publish-latest-index, resolve-vulcan-config]
-    if: needs.publish-latest-index.result == 'success'
-    permissions:
-      contents: read
-      id-token: write
-    uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
-    with:
-      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-      environment_name: ${{ needs.select.outputs.vulcan_environment }}
-      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-      artifact_folder: "."
-      validate_manifest: true
-
-  cleanup-github-artifacts:
-    name: Clean up packaged GitHub artifacts
-    needs: [publish, publish-latest-index, promote-latest]
-    if: >-
-      always() &&
-      needs.publish.result == 'success' &&
-      needs.publish-latest-index.result == 'success' &&
-      needs.promote-latest.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Delete packaging artifacts after all consumers finish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mapfile -t artifact_ids < <(
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-              --jq '.artifacts[] | select(.name == "models-dist" or .name == "previous-model-index") | .id'
-          )
-          if (( ${#artifact_ids[@]} < 1 || ${#artifact_ids[@]} > 2 )); then
-            echo "Expected models-dist and at most one previous-model-index artifact; found ${#artifact_ids[@]}" >&2
-            exit 1
-          fi
-          for artifact_id in "${artifact_ids[@]}"; do
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
-          done

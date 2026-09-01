@@ -219,7 +219,6 @@ def build_matrix(
     *,
     repository: str | Path | None = None,
     compiler_version: str | None = None,
-    previous_models: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     unknown = sorted(set(model_ids) - set(catalog))
     if unknown:
@@ -251,13 +250,10 @@ def build_matrix(
     for model_id in sorted(set(model_ids)):
         model = catalog[model_id]
         fingerprint = ""
-        if repository is not None or compiler_version is not None or previous_models is not None:
+        if repository is not None or compiler_version is not None:
             if repository is None or compiler_version is None:
-                raise ValidationError("repository and compiler version are required for reusable matrix selection")
+                raise ValidationError("repository and compiler version must be supplied together")
             fingerprint = model_build_fingerprint(repository, model_id, compiler_version)
-            previous = (previous_models or {}).get(model_id)
-            if isinstance(previous, dict) and previous.get("build_fingerprint") == fingerprint:
-                continue
         for variant in sorted(model["compile_variants"], key=lambda item: item["id"]):
             if requested_variants and variant["id"] not in requested_variants:
                 continue

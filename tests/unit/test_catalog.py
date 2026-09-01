@@ -117,8 +117,6 @@ def test_global_compile_inputs_select_every_model(catalog_repository: Path, path
         "tools/model_registry/errors.py",
         "tools/model_registry/fetch.py",
         "tools/model_registry/model.py",
-        "tools/model_registry/package.py",
-        "tools/model_registry/published.py",
         "tools/model_registry/registry.py",
         "tools/model_registry/source.py",
         "tools/runtime/execute.py",
@@ -330,12 +328,11 @@ def test_build_fingerprint_invalidates_benchmark_configuration_changes(catalog_r
     assert model_build_fingerprint(catalog_repository, "alpha", "2.1.3") != first
 
 
-def test_matrix_reruns_model_when_benchmark_configuration_changes(catalog_repository: Path) -> None:
+def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repository: Path) -> None:
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "tests").mkdir()
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text("benchmark:\n  samples: 100\n", encoding="utf-8")
-    previous_fingerprint = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
     benchmark.write_text("benchmark:\n  samples: 5\n", encoding="utf-8")
 
     matrix = build_matrix(
@@ -343,24 +340,21 @@ def test_matrix_reruns_model_when_benchmark_configuration_changes(catalog_reposi
         ["alpha"],
         repository=catalog_repository,
         compiler_version="2.1.3",
-        previous_models={"alpha": {"build_fingerprint": previous_fingerprint}},
     )
 
     assert [(entry["model_id"], entry["variant_id"]) for entry in matrix["include"]] == [("alpha", "fixture")]
 
 
-def test_matrix_reuses_model_with_matching_build_fingerprint(catalog_repository: Path) -> None:
+def test_matrix_records_fingerprints_without_catalog_carry_forward(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
-    fingerprint = model_build_fingerprint(catalog_repository, "alpha", "2.1.3")
     matrix = build_matrix(
         catalog,
         ["alpha", "bravo"],
         repository=catalog_repository,
         compiler_version="2.1.3",
-        previous_models={"alpha": {"build_fingerprint": fingerprint}},
     )
 
-    assert {entry["model_id"] for entry in matrix["include"]} == {"bravo"}
+    assert {entry["model_id"] for entry in matrix["include"]} == {"alpha", "bravo"}
     assert all(len(entry["build_fingerprint"]) == 64 for entry in matrix["include"])
 
 
