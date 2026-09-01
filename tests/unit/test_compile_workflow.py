@@ -257,11 +257,7 @@ def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
     assert 'archives=("$OUTPUT_DIR"/*_mpk.tar.gz)' in compile_script
     assert '--dataset "$CALIBRATION_PATH"' in compile_script
     assert 'if [[ "$CALIBRATION_KIND" == "dataset" ]]' in compile_script
-    assert "python -m model_registry evaluate" in compile_script
-    assert '--samples "$ACCURACY_SAMPLES"' in compile_script
-    assert "--workers 6" in compile_script
-    assert ".dataset.evaluated_samples" in compile_script
-    assert ".evaluation.status" in compile_script
+    assert "python -m model_registry evaluate" not in compile_script
 
 
 def test_compile_workflow_resolves_registered_calibration_input() -> None:
@@ -271,6 +267,27 @@ def test_compile_workflow_resolves_registered_calibration_input() -> None:
     assert "model_registry fetch-calibration" in calibration["run"]
     assert '--variant "$VARIANT_ID"' in calibration["run"]
     assert 'get("kind", "none")' in calibration["run"]
+
+
+def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    accuracy_dataset = next(step for step in steps if step.get("id") == "accuracy_dataset")
+    accuracy_step = next(step for step in steps if step.get("name") == "Measure model accuracy")
+
+    assert "model_registry fetch-accuracy-dataset" in accuracy_dataset["run"]
+    assert accuracy_dataset["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset'"
+    assert accuracy_step["env"]["SOURCE_PATH"] == "${{ steps.source.outputs.path }}"
+    assert accuracy_step["env"]["ACCURACY_DATASET_PATH"] == "${{ steps.accuracy_dataset.outputs.path }}"
+    assert "source /etc/profile.d/vulcan-model-compiler.sh" in accuracy_step["run"]
+    assert "activate-model-compiler" in accuracy_step["run"]
+    assert "python -m model_registry evaluate" in accuracy_step["run"]
+    assert '--dataset "$ACCURACY_DATASET_PATH"' in accuracy_step["run"]
+    assert '--samples "$ACCURACY_SAMPLES"' in accuracy_step["run"]
+    assert "--workers 6" in accuracy_step["run"]
+    assert ".dataset.evaluated_samples" in accuracy_step["run"]
+    assert ".evaluation.status" in accuracy_step["run"]
 
 
 def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:

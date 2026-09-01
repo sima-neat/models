@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .accuracy import evaluate_accuracy, resolve_dataset
+from .accuracy_config import find_accuracy_config
 from .artifact import verify_mpk
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
@@ -21,6 +22,7 @@ AUTHOR_COMMANDS = frozenset(
     {
         "fetch",
         "fetch-calibration",
+        "fetch-accuracy-dataset",
         "evaluate",
         "matrix",
         "resolve-compiler",
@@ -68,6 +70,14 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     calibration.add_argument("--cache-dir", type=Path)
     calibration.add_argument("--variant", help="resolve calibration only when this compile variant requires it")
     calibration.add_argument("--json", action="store_true", dest="json_output")
+
+    accuracy_dataset = subcommands.add_parser(
+        "fetch-accuracy-dataset", help="download and verify a model's immutable correctness dataset"
+    )
+    accuracy_dataset.add_argument("model_dir", type=Path)
+    accuracy_dataset.add_argument("--schema", type=Path)
+    accuracy_dataset.add_argument("--cache-dir", type=Path)
+    accuracy_dataset.add_argument("--json", action="store_true", dest="json_output")
 
     evaluate = subcommands.add_parser("evaluate", help="run a declarative model accuracy evaluation")
     evaluate.add_argument("model_dir", type=Path)
@@ -280,6 +290,31 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
         print(f"Verified calibration: {result['path']}")
     else:
         print(f"No calibration required: {result['model_id']}")
+    return 0
+
+
+def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
+    model = load_and_validate_model(args.model_dir, args.schema)
+    selected = find_accuracy_config(args.model_dir, model)
+    if selected is None:
+        result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    else:
+        _, config = selected
+        dataset = config["dataset"]
+        path = resolve_dataset(dataset, None, args.cache_dir)
+        result = {
+            "kind": "dataset",
+            "model_id": model["id"],
+            "path": str(path),
+            "sha256": dataset["sha256"],
+            "size_bytes": dataset["size_bytes"],
+        }
+    if args.json_output:
+        print(json.dumps(result, sort_keys=True))
+    elif result["path"]:
+        print(f"Verified accuracy dataset: {result['path']}")
+    else:
+        print(f"No executable accuracy dataset configured: {result['model_id']}")
     return 0
 
 
@@ -529,6 +564,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _fetch(args)
         if args.command == "fetch-calibration":
             return _fetch_calibration(args)
+        if args.command == "fetch-accuracy-dataset":
+            return _fetch_accuracy_dataset(args)
         if args.command == "evaluate":
             return _evaluate(args)
         if args.command == "matrix":

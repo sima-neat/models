@@ -376,7 +376,7 @@ jobs:
           set -euo pipefail
           result="$RUNNER_TEMP/calibration.json"
           "$MODEL_COMPILER_PYTHON" -m model_registry fetch-calibration "$MODEL_DIR" \
-            --variant "$VARIANT_ID" --cache-dir "$RUNNER_TEMP/calibration" --json > "$result"
+            --variant "$VARIANT_ID" --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
           calibration_path="$("$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; print(json.load(open(sys.argv[1])).get("path", ""))' "$result")"
           calibration_sha256="$("$MODEL_COMPILER_PYTHON" -c \
@@ -386,6 +386,22 @@ jobs:
           echo "path=$calibration_path" >> "$GITHUB_OUTPUT"
           echo "sha256=$calibration_sha256" >> "$GITHUB_OUTPUT"
           echo "kind=$calibration_kind" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch and verify the immutable accuracy dataset
+        id: accuracy_dataset
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/accuracy-dataset.json"
+          "$MODEL_COMPILER_PYTHON" -m model_registry fetch-accuracy-dataset "$MODEL_DIR" \
+            --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
+          accuracy_dataset_path="$("$MODEL_COMPILER_PYTHON" -c \
+            'import json,sys; print(json.load(open(sys.argv[1])).get("path", ""))' "$result")"
+          accuracy_dataset_kind="$("$MODEL_COMPILER_PYTHON" -c \
+            'import json,sys; print(json.load(open(sys.argv[1])).get("kind", "none"))' "$result")"
+          echo "path=$accuracy_dataset_path" >> "$GITHUB_OUTPUT"
+          echo "kind=$accuracy_dataset_kind" >> "$GITHUB_OUTPUT"
 
       - name: Run model-specific surgery and compilation recipe
         env:
@@ -419,33 +435,42 @@ jobs:
             find "$OUTPUT_DIR" -maxdepth 2 -type f -print >&2 || true
             exit 1
           fi
-          if [[ "$CALIBRATION_KIND" == "dataset" ]]; then
-            candidate_model="$OUTPUT_DIR/${MODEL_ID}_${VARIANT_ID}.sima"
-            test -f "$candidate_model"
-            accuracy_profile=regular
-            if [[ "$ACCURACY_SAMPLES" == "5000" ]]; then
-              accuracy_profile=qualification
-            fi
-            python -m model_registry evaluate "$MODEL_DIR" \
-              --variant "$VARIANT_ID" \
-              --reference-model "$SOURCE_PATH" \
-              --candidate-model "$candidate_model" \
-              --dataset "$CALIBRATION_PATH" \
-              --profile "$accuracy_profile" \
-              --samples "$ACCURACY_SAMPLES" \
-              --workers 6 \
-              --output "$OUTPUT_DIR/accuracy.json"
+          BASH
+
+      - name: Measure model accuracy
+        if: steps.accuracy_dataset.outputs.kind == 'dataset'
+        env:
+          SOURCE_PATH: ${{ steps.source.outputs.path }}
+          ACCURACY_DATASET_PATH: ${{ steps.accuracy_dataset.outputs.path }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc <<'BASH'
+          set -euo pipefail
+          source /etc/profile.d/vulcan-model-compiler.sh
+          activate-model-compiler
+          candidate_model="$OUTPUT_DIR/${MODEL_ID}_${VARIANT_ID}.sima"
+          test -f "$candidate_model"
+          accuracy_profile=regular
+          if [[ "$ACCURACY_SAMPLES" == "5000" ]]; then
+            accuracy_profile=qualification
           fi
-          if [[ -f "$OUTPUT_DIR/accuracy.json" ]]; then
-            evaluated="$(jq -er '.dataset.evaluated_samples' "$OUTPUT_DIR/accuracy.json")"
-            available="$(jq -er '.dataset.available_samples' "$OUTPUT_DIR/accuracy.json")"
-            scope="$(jq -er '.report_scope' "$OUTPUT_DIR/accuracy.json")"
-            status="$(jq -er '.evaluation.status' "$OUTPUT_DIR/accuracy.json")"
-            top1="$(jq -er '.metrics.candidate.top1_accuracy' "$OUTPUT_DIR/accuracy.json")"
-            top5="$(jq -er '.metrics.candidate.top5_accuracy' "$OUTPUT_DIR/accuracy.json")"
-            echo "Accuracy: status=\`$status\`, scope=\`$scope\`, samples=\`$evaluated/$available\`, top-1=\`$top1\`, top-5=\`$top5\`" \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
+          python -m model_registry evaluate "$MODEL_DIR" \
+            --variant "$VARIANT_ID" \
+            --reference-model "$SOURCE_PATH" \
+            --candidate-model "$candidate_model" \
+            --dataset "$ACCURACY_DATASET_PATH" \
+            --profile "$accuracy_profile" \
+            --samples "$ACCURACY_SAMPLES" \
+            --workers 6 \
+            --output "$OUTPUT_DIR/accuracy.json"
+          evaluated="$(jq -er '.dataset.evaluated_samples' "$OUTPUT_DIR/accuracy.json")"
+          available="$(jq -er '.dataset.available_samples' "$OUTPUT_DIR/accuracy.json")"
+          scope="$(jq -er '.report_scope' "$OUTPUT_DIR/accuracy.json")"
+          status="$(jq -er '.evaluation.status' "$OUTPUT_DIR/accuracy.json")"
+          top1="$(jq -er '.metrics.candidate.top1_accuracy' "$OUTPUT_DIR/accuracy.json")"
+          top5="$(jq -er '.metrics.candidate.top5_accuracy' "$OUTPUT_DIR/accuracy.json")"
+          echo "Accuracy: status=\`$status\`, scope=\`$scope\`, samples=\`$evaluated/$available\`, top-1=\`$top1\`, top-5=\`$top5\`" \
+            >> "$GITHUB_STEP_SUMMARY"
           BASH
 
       - name: Validate and checksum the MPK

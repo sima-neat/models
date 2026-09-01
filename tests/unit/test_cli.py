@@ -105,6 +105,43 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
     assert '"kind": "none"' in capsys.readouterr().out
 
 
+def test_fetch_accuracy_dataset_resolves_independently_of_bf16_calibration(monkeypatch, tmp_path: Path, capsys) -> None:
+    dataset = tmp_path / "imagenet-mini.tgz"
+    dataset.write_bytes(b"dataset")
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", lambda *args, **kwargs: dataset)
+
+    result = main(
+        [
+            "fetch-accuracy-dataset",
+            str(ROOT / "models" / "resnet_50"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"kind": "dataset"' in output
+    assert f'"path": "{dataset}"' in output
+
+
+def test_fetch_accuracy_dataset_skips_legacy_correctness_declaration(monkeypatch, capsys) -> None:
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("legacy correctness declarations must not resolve an accuracy dataset")
+
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
+
+    result = main(
+        [
+            "fetch-accuracy-dataset",
+            str(ROOT / "models" / "ssd_mobilenet_v1"),
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    assert '"kind": "none"' in capsys.readouterr().out
+
+
 def test_invalid_model_has_nonzero_exit(capsys) -> None:
     result = main(["validate", str(ROOT / "tests" / "fixtures" / "invalid_model")])
     assert result == 2

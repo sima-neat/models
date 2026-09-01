@@ -85,26 +85,40 @@ def select_accuracy_config(
     directory = Path(model_dir).expanduser().resolve()
     cases = model["tests"]["correctness"]
     if test_id is None:
-        executable = []
-        for case in cases:
-            path = directory / case["config"]
-            try:
-                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as exc:
-                raise ValidationError(f"{path}: could not inspect accuracy YAML: {exc}") from exc
-            if isinstance(raw, dict) and raw.get("engine") == "model_registry":
-                executable.append(case)
-        if len(executable) != 1:
+        selected = find_accuracy_config(directory, model)
+        if selected is None:
             raise ValidationError(
                 f"{directory}: expected exactly one executable correctness test; pass --test-id explicitly"
             )
-        selected = executable[0]
+        return selected
     else:
         matches = [case for case in cases if case["id"] == test_id]
         if len(matches) != 1:
             raise ValidationError(f"{directory}: expected exactly one correctness test named {test_id!r}")
         selected = matches[0]
     path = (directory / selected["config"]).resolve()
+    return path, load_accuracy_config(path)
+
+
+def find_accuracy_config(
+    model_dir: str | Path,
+    model: dict[str, Any],
+) -> tuple[Path, dict[str, Any]] | None:
+    directory = Path(model_dir).expanduser().resolve()
+    executable = []
+    for case in model["tests"]["correctness"]:
+        path = directory / case["config"]
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise ValidationError(f"{path}: could not inspect accuracy YAML: {exc}") from exc
+        if isinstance(raw, dict) and raw.get("engine") == "model_registry":
+            executable.append(case)
+    if not executable:
+        return None
+    if len(executable) != 1:
+        raise ValidationError(f"{directory}: expected exactly one executable correctness test")
+    path = (directory / executable[0]["config"]).resolve()
     return path, load_accuracy_config(path)
 
 

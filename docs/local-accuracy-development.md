@@ -37,9 +37,13 @@ Resolve the immutable inputs first:
 ```bash
 source_json="$(python -m model_registry fetch models/resnet_50 --json)"
 source_path="$(jq -r .path <<<"$source_json")"
-dataset_json="$(dataset-registry resolve imagenet-2012 --variant mini)"
+dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50 --json)"
 dataset_path="$(jq -r .path <<<"$dataset_json")"
 ```
+
+Accuracy dataset resolution is independent of calibration. BF16 evaluation
+uses the correctness dataset even though BF16 compilation does not consume
+representative calibration samples.
 
 Compile the variant. Compilation consumes calibration samples declared by the
 correctness YAML but does not contain accuracy logic:
