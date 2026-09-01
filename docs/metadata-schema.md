@@ -29,7 +29,7 @@ Every model declares the taxonomy version, broad model type, tasks, semantic
 input/output modalities, and architecture:
 
 ```yaml
-taxonomy_version: 2
+taxonomy_version: 3
 model_type: vision
 tasks: [image_classification]
 modalities:
@@ -42,7 +42,7 @@ architecture:
 
 `tags` are optional normalized secondary descriptors. IDs must satisfy the
 schema and sanctioned references must exist in
-[`model-taxonomy-v2.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v2.yaml).
+[`model-taxonomy-v3.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v3.yaml).
 Task and
 architecture compatibility with `model_type` is checked semantically. Composite
 architectures may declare `components`, each with a `role` and

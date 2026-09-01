@@ -11,30 +11,41 @@ import yaml
 
 from .errors import ValidationError
 
-TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v2.yaml")
+TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v3.yaml")
 TAXONOMY_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
-def find_taxonomy(model_dir: str | Path, taxonomy_path: str | Path | None = None) -> Path:
+def taxonomy_relative_path(version: int) -> Path:
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValidationError(f"unsupported taxonomy version {version!r}")
+    return Path(f"taxonomies/model-taxonomy-v{version}.yaml")
+
+
+def find_taxonomy(
+    model_dir: str | Path,
+    taxonomy_path: str | Path | None = None,
+    taxonomy_version: int | None = None,
+) -> Path:
     if taxonomy_path is not None:
         candidate = Path(taxonomy_path).expanduser().resolve()
         if not candidate.is_file():
             raise ValidationError(f"taxonomy not found: {candidate}")
         return candidate
 
+    relative_path = TAXONOMY_RELATIVE_PATH if taxonomy_version is None else taxonomy_relative_path(taxonomy_version)
     configured_root = os.environ.get("MODEL_REGISTRY_ROOT", "").strip()
     candidates = []
     if configured_root:
-        candidates.append(Path(configured_root).expanduser().resolve() / TAXONOMY_RELATIVE_PATH)
+        candidates.append(Path(configured_root).expanduser().resolve() / relative_path)
 
     directory = Path(model_dir).expanduser().resolve()
-    candidates.extend(parent / TAXONOMY_RELATIVE_PATH for parent in (directory, *directory.parents))
-    candidates.extend(parent / TAXONOMY_RELATIVE_PATH for parent in (Path.cwd(), *Path.cwd().parents))
+    candidates.extend(parent / relative_path for parent in (directory, *directory.parents))
+    candidates.extend(parent / relative_path for parent in (Path.cwd(), *Path.cwd().parents))
     for candidate in candidates:
         if candidate.is_file():
             return candidate
     raise ValidationError(
-        f"{directory}: could not locate {TAXONOMY_RELATIVE_PATH}; run inside the repository or set MODEL_REGISTRY_ROOT"
+        f"{directory}: could not locate {relative_path}; run inside the repository or set MODEL_REGISTRY_ROOT"
     )
 
 
@@ -85,7 +96,7 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
         if unknown:
             details.append(f"unknown fields: {', '.join(unknown)}")
         raise ValidationError(f"{taxonomy_path}: taxonomy {'; '.join(details)}")
-    if taxonomy["version"] != 2:
+    if isinstance(taxonomy["version"], bool) or not isinstance(taxonomy["version"], int) or taxonomy["version"] < 1:
         raise ValidationError(f"{taxonomy_path}: unsupported taxonomy version {taxonomy['version']!r}")
 
     model_types = _mapping(taxonomy["model_types"], "model_types")
@@ -119,6 +130,15 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
             raise ValidationError(
                 f"taxonomy tasks.{task_id}.allowed_model_types references unknown IDs: {', '.join(unknown_types)}"
             )
+    return taxonomy
+
+
+def load_taxonomy_for_model(repository: str | Path, model: dict[str, Any]) -> dict[str, Any]:
+    version = model.get("taxonomy_version")
+    path = Path(repository).expanduser().resolve() / taxonomy_relative_path(version)
+    taxonomy = load_taxonomy(path)
+    if taxonomy["version"] != version:
+        raise ValidationError(f"{path}: taxonomy document version does not match {version!r}")
     return taxonomy
 
 

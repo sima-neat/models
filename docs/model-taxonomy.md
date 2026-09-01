@@ -1,6 +1,6 @@
 # Model categorization taxonomy
 
-`taxonomies/model-taxonomy-v2.yaml` is the current canonical source of searchable model
+`taxonomies/model-taxonomy-v3.yaml` is the current canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
 references; the Model Registry semantic validator resolves those references
@@ -10,7 +10,7 @@ Do not copy sanctioned lists into model definitions, browser code, API code, or
 database migrations. Individual schema-version 2 models declare references:
 
 ```yaml
-taxonomy_version: 2
+taxonomy_version: 3
 model_type: vision
 tasks: [image_classification]
 modalities:
@@ -40,9 +40,16 @@ database-schema redesign.
 
 Model schema v2 and all authoritative category facets are mandatory. Catalog
 validation rejects a missing field, an unknown sanctioned ID, or an incompatible
-model type before any compilation job can be scheduled. Taxonomy v1 remains in
-the repository as immutable publication history; taxonomy v2 adds the SSD and
-YOLO architecture families needed by the fully categorized catalog.
+model type before any compilation job can be scheduled. Taxonomy versions 1 and
+2 remain in the repository as immutable publication history. Taxonomy v3 adds
+DepthART after taxonomy v2 added the SSD and YOLO architecture families needed
+by the fully categorized catalog.
+
+Existing model definitions stay pinned to the immutable taxonomy version they
+were reviewed against; adding a taxonomy version does not invalidate their
+compile fingerprints. New or recategorized models opt into the new version.
+Packaging emits the current taxonomy and preserves each model's declared
+`taxonomy_version` in its categorization record.
 
 Packaging emits `taxonomy.json`, records its SHA-256 in schema-version 2
 `latest.json`, and projects canonical category IDs into `latest.json` and

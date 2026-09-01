@@ -19,6 +19,7 @@ from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
     load_taxonomy,
+    load_taxonomy_for_model,
     taxonomy_sha256,
     validate_model_categorization,
 )
@@ -417,7 +418,7 @@ def publish_compilations(
         source_sha = _require_sha256(provenance.get("source_sha256"), "source_sha256")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
         model = catalog[model_id]
-        categorization = validate_model_categorization(model, taxonomy)
+        categorization = validate_model_categorization(model, load_taxonomy_for_model(root, model))
         variant = variants[variant_id]
         parameters = {
             "schema_version": 1,

@@ -84,6 +84,7 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     Draft202012Validator(latest_schema, format_checker=FormatChecker()).validate(latest)
     assert latest["schema_version"] == 2
     assert latest["taxonomy"]["path"] == "taxonomy.json"
+    assert latest["taxonomy"]["version"] == 3
     assert latest["models"]["resnet_50"]["categorization"] == {
         "taxonomy_version": 2,
         "model_type": "vision",
@@ -103,6 +104,8 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
 
     catalog_model = next(item for item in result["models"] if item["id"] == "resnet_50")
     assert catalog_model["categorization"]["architecture"]["paradigm"] == "cnn"
+    depthart_model = next(item for item in result["models"] if item["id"] == "depthart_base")
+    assert depthart_model["categorization"]["taxonomy_version"] == 3
 
     model_metadata = json.loads((destination / "resnet_50" / "metadata.json").read_text(encoding="utf-8"))
     assert model_metadata["name"] == "gh:sima-neat/models/resnet_50"
@@ -193,7 +196,8 @@ def test_package_carries_forward_pointers_without_copying_unchanged_mpk(tmp_path
     assert latest["models"]["resnet_50"]["artifact_branch"] == "main"
     assert latest["models"]["resnet_50"]["categorization"]["tasks"] == ["image_classification"]
     metadata = json.loads((destination / "metadata.json").read_text(encoding="utf-8"))
-    assert "/models/main/aaaaaaaaaaaa/resnet_50/" in metadata["selectable-resources"][0]["resource"]
+    resources = [item["resource"] for item in metadata["selectable-resources"]]
+    assert any("/models/main/aaaaaaaaaaaa/resnet_50/" in resource for resource in resources)
 
 
 def test_first_package_requires_every_catalog_model(tmp_path: Path) -> None:

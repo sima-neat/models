@@ -95,7 +95,7 @@ Create a schema-version 2 `model.yaml`. It must describe:
 
 - identity, ownership, license, upstream provenance, and maturity;
 - sanctioned taxonomy references from
-  [`model-taxonomy-v2.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v2.yaml);
+  [`model-taxonomy-v3.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v3.yaml);
 - every ONNX input and output, including name, dtype, shape, and useful layout;
 - ordered preprocessing and postprocessing behavior;
 - calibration status and immutable calibration source when ready;

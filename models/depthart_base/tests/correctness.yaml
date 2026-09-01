@@ -1,0 +1,10 @@
+schema_version: 1
+status: pending
+reason: Full 654-image Modalix validation is running; host recurrence isolation is not silicon evidence.
+metric: delta1
+acceptance:
+  - {name: delta1, minimum: 0.90}
+  - {name: abs_rel, maximum: 0.09}
+  - {name: delta1_retention_vs_local_fp32, minimum: 0.95}
+dataset: nyuv2_test654
+split_sha256: 41c9d775b5fd7e5a65252187de15f2b3cd325b26baaa72fafd43ddc8ea505944

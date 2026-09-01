@@ -144,7 +144,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
 
     assert result["count"] == 1
     assert [path for _, path, _, _ in calls] == [
-        "/v1/repositories/sima-neat/models/taxonomies/2",
+        "/v1/repositories/sima-neat/models/taxonomies/3",
         "/v1/runs",
         "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-model",
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
@@ -279,8 +279,8 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
 
     assert result["count"] == 0
     assert result["runs"] == []
-    assert result["taxonomy"]["version"] == 2
-    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/2"]
+    assert result["taxonomy"]["version"] == 3
+    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/3"]
 
 
 def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Path) -> None:
@@ -324,7 +324,7 @@ def test_publish_taxonomy_is_independent_of_model_compilation() -> None:
         request=lambda *args: calls.append(args) or {"stored": True},
     )
 
-    assert result["version"] == 2
+    assert result["version"] == 3
     assert result["registry"] == {"stored": True}
     assert len(calls) == 1
-    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/2")
+    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/3")

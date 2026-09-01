@@ -1,0 +1,117 @@
+schema_version: 2
+id: depthart_base
+display_name: DepthART Base dynamic-p64 INT8 QAT
+description: Mathematically equivalent DepthART Base with strict W8A8 compute and compiler-exact dynamic INT8 recurrence.
+taxonomy_version: 3
+model_type: vision
+tasks:
+  - depth_estimation
+modalities:
+  inputs:
+    - image
+  outputs:
+    - depth_map
+architecture:
+  id: depthart
+  variant: base_dynamic_p64_tree_448x576
+owners:
+  - "@sima-neat/models"
+license:
+  spdx: Apache-2.0
+  redistribution: restricted
+  attribution: DepthART by Feng Xue et al.; the checkpoint model card declares Apache-2.0, while upstream source redistribution remains restricted pending approval.
+source:
+  uri: https://api.github.com/repos/sima-neat/models/releases/assets/538839418
+  sha256: 34c508fc9d200a8bffb281bbfe484623bec2ec45b294f4541894365516790d9c
+  size_bytes: 57786977
+  media_type: application/onnx
+upstream:
+  repository: https://github.com/xuefeng-cvr/DepthART
+  revision: 0384521b3bcb4c64adf03eeb5d55ebdb1cbdd84c
+  model_card: https://huggingface.co/Fengxue93/DepthART
+  derived_from: https://huggingface.co/Fengxue93/DepthART/resolve/483c4b9c59f476b7e37d879f44e13a1088249522/relative/depthart_relative_b_224.pth
+interface:
+  format: onnx
+  opset: 17
+  inputs:
+    - name: image
+      dtype: float32
+      shape: [1, 3, 448, 576]
+      layout: NCHW
+      description: RGB image resized to 576x448 and ImageNet-normalized; Q/DQ is represented explicitly in the source.
+  outputs:
+    - name: depth
+      dtype: float32
+      shape: [1, 1, 448, 576]
+      layout: NCHW
+      description: Relative inverse depth before strict-INT8 public-ABI relocation.
+preprocessing:
+  pipeline:
+    - op: decode_image
+      parameters: {color_space: RGB}
+    - op: resize
+      parameters: {width: 576, height: 448, resample: bicubic, preserve_aspect_ratio: false}
+    - op: rescale
+      parameters: {factor: 0.00392156862745098}
+    - op: normalize
+      parameters:
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+    - op: transpose
+      parameters: {from: HWC, to: CHW}
+postprocessing:
+  pipeline:
+    - op: affine_relative_depth_alignment
+      parameters: {prediction_domain: inverse_depth, metric_depth_requires_scale_and_shift: true}
+calibration:
+  status: not_required
+  reason: The checksum-pinned source-QAT snapshot carries frozen QAT grids and a content-bound dynamic-p64 compile profile.
+surgery:
+  type: none
+compile_variants:
+  - id: modalix_strict_int8_dynamic_p64
+    target: modalix
+    recipe: compile.py
+    parameters:
+      precision: int8
+      quantization_method: qat
+      activation_quantization: asymmetric_per_tensor_8bit
+      weight_quantization: symmetric_per_channel_8bit
+      recurrence: dynamic_q8_p64
+      physical_state_channels: 128
+      expected_bindings: 918
+      compile_profile: depthart_dynamic_p64.json
+      compile_profile_sha256: 7627678137983ed5cf8c351e3ea3a81460c512e629133822519a62f972da52cc
+      compile_profile_manifest_sha256: f0d0fdceb161d08a73e04b3cee776347c1781430508f47f62dd6127a69224d46
+      quantized_snapshot:
+        uri: https://api.github.com/repos/sima-neat/models/releases/assets/538839416
+        sha256: 5625616385732cad1c000c4a6a2b976beb9759cf8fa518d4993d724fbc42bb2d
+        size_bytes: 13550503
+        media_type: application/gzip
+      public_input_dtype: int8
+      public_input_layout: NHWC
+      public_input_shape: [1, 448, 576, 3]
+      public_input_inverse_scale: 53.62121217871723
+      public_input_zero_point: -14
+      public_input_rounding: ties_to_even
+      public_output_dtype: int8
+      public_output_layout: NHWC
+      public_output_shape: [1, 448, 576, 1]
+      public_output_scale: 0.11401007324457169
+      public_output_zero_point: -128
+      tessellation_owner: mla
+      require_single_mla: true
+      require_zero_float_compute: true
+      required_compiler_features:
+        - depthart_dynamic_p64_v1
+        - residual_dynamic_scale_aux_v1
+        - compact_aux_dense_row_partition_v1
+        - deep_modelgraph_serialization_v1
+tests:
+  correctness:
+    - id: nyuv2_test654_relative_depth
+      config: tests/correctness.yaml
+  performance:
+    - id: modalix_strict_int8_latency
+      config: tests/performance.yaml
+maturity: experimental

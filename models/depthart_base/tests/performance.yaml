@@ -1,0 +1,9 @@
+schema_version: 1
+status: pending
+reason: Modalix latency will be recorded from the exact precision-audited MPK after compilation completes.
+metrics:
+  - model_inference_latency_ms
+  - throughput_fps
+  - model_load_ms
+  - time_to_first_inference_ms
+  - mla_memory_peak_mib

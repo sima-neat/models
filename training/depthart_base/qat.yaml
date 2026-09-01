@@ -1,0 +1,125 @@
+schema_version: 1
+model_id: depthart_base
+method: qat
+status: qualified_source_recipe
+runner_contract:
+  package: sima-neat/qat
+  repository: https://github.com/sima-neat/qat
+  pull_request: https://github.com/sima-neat/qat/pull/6
+  branch: feat/task-aware-range-refinement
+  revision: 621f1cffe3c1d47be5b626bee74cce96b4a15621
+  requirement: Install the SiMa QAT extension; shared QAT implementation is not vendored here.
+source:
+  repository: https://github.com/xuefeng-cvr/DepthART
+  revision: 0384521b3bcb4c64adf03eeb5d55ebdb1cbdd84c
+  checkpoint:
+    uri: hf://models/Fengxue93/DepthART@483c4b9c59f476b7e37d879f44e13a1088249522/relative/depthart_relative_b_224.pth
+    sha256: 87bdec998a91c262142e2d8df058a708a76585cf0b82e2916204fca1e392f653
+    size_bytes: 46258554
+  architecture_patch:
+    path: training/depthart_base/depthart_dynamic_p64_source.patch
+    sha256: 290da5974d025a67aba109972f94d622ea12a0fb09a2a1f8448c60605f087856
+architecture:
+  encoder: B
+  deployment_input_nchw: [1, 3, 448, 576]
+  output_nchw: [1, 1, 448, 576]
+  scan: associative_tree
+  transformations:
+    - mathematically_equivalent_grouped_convolution_projections
+    - mathematically_equivalent_associative_tree_scan
+    - omit_exact_first_chunk_a_times_zero_identity
+    - split_independent_state_into_physical_c128_blocks
+  equivalence_contract:
+    changes_model_function: false
+    first_chunk_identity: a_times_zero_plus_b_equals_b
+    tree_operator: compose_a2_b2_after_a1_b1_equals_a2_times_a1_and_a2_times_b1_plus_b2
+quantization:
+  public_input: {dtype: int8, granularity: per_tensor, symmetric: false}
+  public_output: {dtype: int8, granularity: per_tensor, symmetric: false}
+  activations: {dtype: int8, granularity: per_tensor, symmetric: false}
+  weights: {dtype: int8, granularity: per_output_channel, symmetric: true, quant_min: -127, quant_max: 127}
+  recurrence:
+    representation: q8_plus_pow2_p64
+    physical_block_channels: 128
+    product: exact_integer_forward_with_ste
+    residual_add: exact_integer_forward_with_ste
+    static_to_dynamic: exact_integer_forward_with_ste
+    dynamic_to_static: exact_integer_forward_with_ste
+    observer_safety_margin: 1.05
+    calibration_samples: 8
+  forbidden_compute_dtypes: [bfloat16, float16, float32]
+data:
+  training_manifest:
+    id: nyuv2_cityscapes_qat_mixture_v1
+    sha256: 9799b492a499286b901ef3492748872fde6138785e305584f732492bc53433f0
+    access: private_dataset_repository
+  streams:
+    - {dataset: nyuv2_train, role: paired_supervision_and_teacher_distillation, samples: 768}
+    - {dataset: cityscapes, role: unpaired_teacher_distillation, samples: 256}
+  validation:
+    dataset: nyuv2_test654
+    split_manifest_sha256: 41c9d775b5fd7e5a65252187de15f2b3cd325b26baaa72fafd43ddc8ea505944
+    access: private_dataset_repository
+  disjoint_validation_required: true
+preprocessing:
+  resize: {width: 576, height: 448, resample: bicubic, preserve_aspect_ratio: false}
+  color_space: RGB
+  scale: 0.00392156862745098
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+loss:
+  teacher_distillation:
+    standardized_prediction: true
+    spatial_gradient_weight: 0.25
+    weight: 1.0
+  intermediate_feature_distillation:
+    stages: [0, 2, 4, 6]
+    weight: 0.25
+  supervised_affine_inverse_depth:
+    weight: 0.10
+  nyuv2_metric_surrogate:
+    abs_rel: true
+    log_rmse: true
+    delta1_smooth_hinge: true
+    edge_fidelity: true
+schedule:
+  device: cuda
+  minimum_gpu_memory_gb: 24
+  batch_size: 1
+  gradient_accumulation: 8
+  seed: 260826
+  lifecycle:
+    - observe_recurrence_ranges_with_fake_quant_disabled
+    - freeze_dynamic_p64_bases
+    - enable_exact_integer_fake_quant
+    - fine_tune_with_task_and_distillation_losses
+    - freeze_all_qat_grids
+    - export_standard_qdq_mul_add_onnx_and_content_bound_profile
+export:
+  qualified_checkpoint:
+    uri: https://api.github.com/repos/sima-neat/models/releases/assets/538839419
+    sha256: c4835f513bc9200dda3dfe82dbc9084ca9928148721c1946a0a5db6f966221b4
+    size_bytes: 46247261
+  format: onnx
+  opset: 17
+  input: {name: image, dtype: float32, shape: [1, 3, 448, 576]}
+  output: {name: depth, dtype: float32, shape: [1, 1, 448, 576]}
+  onnx_sha256: 34c508fc9d200a8bffb281bbfe484623bec2ec45b294f4541894365516790d9c
+  compile_profile_sha256: 7627678137983ed5cf8c351e3ea3a81460c512e629133822519a62f972da52cc
+  compile_profile_manifest_sha256: f0d0fdceb161d08a73e04b3cee776347c1781430508f47f62dd6127a69224d46
+  recurrence_bindings: 918
+reference_isolation:
+  scope: pytorch_recurrence_strict_int8_other_layers_fp32
+  samples: 100
+  delta1: 0.9198747904091213
+  abs_rel: 0.08842372131224095
+  delta1_retention_vs_local_fp32: 0.9884141670925691
+acceptance:
+  minimum_nyu_test_samples: 654
+  minimum_delta1: 0.90
+  minimum_delta1_retention_vs_local_fp32: 0.95
+  maximum_abs_rel: 0.09
+  require_single_mla_elf: true
+  require_zero_float_compute: true
+  require_modalix_full_split: true
+  require_repeat_run_bit_exact: true

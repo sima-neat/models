@@ -1,0 +1,169 @@
+version: 3
+
+model_types:
+  vision:
+    display_name: Vision
+  llm:
+    display_name: LLM
+  vlm:
+    display_name: VLM
+
+modalities:
+  image:
+    display_name: Image
+  video:
+    display_name: Video
+  text:
+    display_name: Text
+  audio:
+    display_name: Audio
+  class_scores:
+    display_name: Class Scores
+  bounding_boxes:
+    display_name: Bounding Boxes
+  masks:
+    display_name: Masks
+  depth_map:
+    display_name: Depth Map
+  embeddings:
+    display_name: Embeddings
+  landmarks:
+    display_name: Landmarks
+
+architecture_paradigms:
+  cnn:
+    display_name: CNN
+  encoder_transformer:
+    display_name: Encoder Transformer
+  decoder_transformer:
+    display_name: Decoder Transformer
+  multimodal_transformer:
+    display_name: Multimodal Transformer
+
+architectures:
+  resnet_50:
+    display_name: ResNet-50
+    paradigm: cnn
+    allowed_model_types: [vision]
+  ssd_mobilenet_v1:
+    display_name: SSD-MobileNet V1
+    paradigm: cnn
+    allowed_model_types: [vision]
+  ssd_mobilenet_v2:
+    display_name: SSD-MobileNet V2
+    paradigm: cnn
+    allowed_model_types: [vision]
+  ssdlite_mobilenet_v3_large:
+    display_name: SSDLite-MobileNet V3 Large
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo_26:
+    display_name: YOLO26
+    paradigm: cnn
+    allowed_model_types: [vision]
+  depthart:
+    display_name: DepthART
+    paradigm: encoder_transformer
+    allowed_model_types: [vision]
+  gemma_3:
+    display_name: Gemma 3
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  lfm2:
+    display_name: LFM2
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  llama_2:
+    display_name: Llama 2
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  llama_3_1:
+    display_name: Llama 3.1
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  llava_1_5:
+    display_name: LLaVA 1.5
+    paradigm: multimodal_transformer
+    allowed_model_types: [vlm]
+  mistral_1:
+    display_name: Mistral 1
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  phi_3_5_mini:
+    display_name: Phi 3.5 Mini
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  qwen_2_5:
+    display_name: Qwen 2.5
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  qwen_3:
+    display_name: Qwen 3
+    paradigm: decoder_transformer
+    allowed_model_types: [llm]
+  clip_vit_l_14:
+    display_name: CLIP ViT-L/14
+    paradigm: encoder_transformer
+    allowed_model_types: [vlm]
+
+tasks:
+  anomaly_detection:
+    display_name: Anomaly Detection
+    allowed_model_types: [vision]
+  change_detection:
+    display_name: Change Detection
+    allowed_model_types: [vision]
+  depth_estimation:
+    display_name: Depth Estimation
+    allowed_model_types: [vision, vlm]
+  face_detection:
+    display_name: Face Detection
+    allowed_model_types: [vision]
+  face_landmark_detection:
+    display_name: Face Landmark Detection
+    allowed_model_types: [vision]
+  grasping:
+    display_name: Grasping
+    allowed_model_types: [vision, vlm]
+  handwriting_classification:
+    display_name: Handwriting Classification
+    allowed_model_types: [vision]
+  image_classification:
+    display_name: Image Classification
+    allowed_model_types: [vision]
+  image_super_resolution:
+    display_name: Image Super Resolution
+    allowed_model_types: [vision]
+  instance_segmentation:
+    display_name: Instance Segmentation
+    allowed_model_types: [vision]
+  license_plate_recognition:
+    display_name: License Plate Recognition
+    allowed_model_types: [vision, vlm]
+  object_detection:
+    display_name: Object Detection
+    allowed_model_types: [vision, vlm]
+  pose_estimation:
+    display_name: Pose Estimation
+    allowed_model_types: [vision]
+  re_identification:
+    display_name: Re-Identification
+    allowed_model_types: [vision]
+  semantic_segmentation:
+    display_name: Semantic Segmentation
+    allowed_model_types: [vision]
+  conversational_ai:
+    display_name: Conversational AI
+    allowed_model_types: [llm, vlm]
+  image_captioning:
+    display_name: Image Captioning
+    allowed_model_types: [vlm]
+  multimodal_chat:
+    display_name: Multimodal Chat
+    allowed_model_types: [vlm]
+  text_generation:
+    display_name: Text Generation
+    allowed_model_types: [llm, vlm]
+  visual_question_answering:
+    display_name: Visual Question Answering
+    allowed_model_types: [vlm]

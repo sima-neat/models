@@ -1,0 +1,2217 @@
+diff --git a/relative/tinyvim/model/dpt.py b/relative/tinyvim/model/dpt.py
+index 6b20659..a670759 100644
+--- a/relative/tinyvim/model/dpt.py
++++ b/relative/tinyvim/model/dpt.py
+@@ -27,16 +27,17 @@ class ConvBlock(nn.Module):
+         )
+     def forward(self, x):
+         return self.conv_block(x)
+-    
++
+ class DPTHead(nn.Module):
+     def __init__(
+         self,
+         features=48,                        # 统一通道数
+         out_channels=[48, 64, 168, 224],    # backbone各层特征图的通道数
+-        use_bn=False, 
++        use_bn=False,
++        output_channels=1,
+     ):
+         super(DPTHead, self).__init__()
+-        
++
+         self.scratch = _make_scratch(
+             out_channels,
+             features,
+@@ -45,70 +46,78 @@ class DPTHead(nn.Module):
+         )
+ 
+         self.scratch.stem_transpose = None
+-        
++
+         self.scratch.refinenet1 = _make_fusion_block(features, use_bn)
+         self.scratch.refinenet2 = _make_fusion_block(features, use_bn)
+         self.scratch.refinenet3 = _make_fusion_block(features, use_bn)
+         self.scratch.refinenet4 = _make_fusion_block(features, use_bn)
+-        
++
+         head_features_1 = features
+         head_features_2 = 16
+-        
++
+         self.scratch.output_conv1 = nn.Conv2d(head_features_1, head_features_1 // 2, kernel_size=3, stride=1, padding=1)
+         self.scratch.output_conv2 = nn.Sequential(
+             nn.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1),
+             nn.ReLU(True),
+-            nn.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0),
++            nn.Conv2d(
++                head_features_2,
++                output_channels,
++                kernel_size=1,
++                stride=1,
++                padding=0,
++            ),
+             nn.ReLU(True),
+         )
+-    
++
+     def forward(self, features, size_h, size_w):
+-    
+-        layer_1, layer_2, layer_3, layer_4 = features   # [b,48,56,56] [b,64,28,28] [b,168,14,14] [b,168,7,7] 
+-        
++
++        layer_1, layer_2, layer_3, layer_4 = features   # [b,48,56,56] [b,64,28,28] [b,168,14,14] [b,168,7,7]
++
+         layer_1_rn = self.scratch.layer1_rn(layer_1)    # 统一调整到 48维
+         layer_2_rn = self.scratch.layer2_rn(layer_2)
+         layer_3_rn = self.scratch.layer3_rn(layer_3)
+         layer_4_rn = self.scratch.layer4_rn(layer_4)
+-        
+-        path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])                # [b,48,7,7] -> [b,48,14,14]   
++
++        path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])                # [b,48,7,7] -> [b,48,14,14]
+         path_3 = self.scratch.refinenet3(path_4, layer_3_rn, size=layer_2_rn.shape[2:])        # [b,48,14,14] -> [b,48,28,28]
+         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])        # [b,48,28,28] -> [b,48,56,56]
+         path_1 = self.scratch.refinenet1(path_2, layer_1_rn)    # 特征融合到[b,48,56,56]        # [b,48,56,56] -> [b,48,112,112]
+-        
++
+         out = self.scratch.output_conv1(path_1)                                                 # [b,48,112,112] -> [b,24,112,112]
+         out = F.interpolate(out, (size_h, size_w), mode="bilinear", align_corners=True)         # [b,24,112,112] -> [b,24,224,224]
+         out = self.scratch.output_conv2(out)                                                    # [b,24,224,224] -> [b,16,224,224] -> [b,1,224,224]
+-        
++
+         return out
+ 
+ 
+ class TinyVimDepth(nn.Module):
+     def __init__(
+-        self, 
+-        encoder="S", # 'S', 'B', 'L'  
+-        use_bn=False, 
++        self,
++        encoder="S", # 'S', 'B', 'L'
++        use_bn=False,
++        output_channels=1,
++        output_publication="repeated_concat",
+     ):
+         super(TinyVimDepth, self).__init__()
+-        
++
+         if encoder=="S":
+             """创建TinyViM_S模型"""
+-            self.pretrained = create_model(  
+-                            'TinyViM_S',  
+-                            num_classes=1000,  
+-                            pretrained=False,  
+-                            fork_feat=True    
+-                        )  
++            self.pretrained = create_model(
++                            'TinyViM_S',
++                            num_classes=1000,
++                            pretrained=False,
++                            fork_feat=True
++                        )
+             self.features = 48
+             self.out_channels = [48, 64, 168, 224]
+         elif encoder=="B":
+             """创建TinyViM_B模型"""
+-            self.pretrained = create_model(  
+-                            'TinyViM_B',  
+-                            num_classes=1000,  
+-                            pretrained=False,  
+-                            fork_feat=True    
+-                        )  
++            self.pretrained = create_model(
++                            'TinyViM_B',
++                            num_classes=1000,
++                            pretrained=False,
++                            fork_feat=True
++                        )
+             self.features = 48
+             self.out_channels = [48, 96, 192, 384]
+         elif encoder=="L":
+@@ -117,46 +126,78 @@ class TinyVimDepth(nn.Module):
+                             'TinyViM_L',
+                             num_classes=1000,
+                             pretrained=False,
+-                            fork_feat=True 
++                            fork_feat=True
+                         )
+             self.features = 64
+             self.out_channels = [64, 128, 384, 512]
+-        self.depth_head = DPTHead(features=self.features,out_channels=self.out_channels,use_bn=use_bn)
+-    
+-    
++        if output_channels not in (1, 16):
++            raise ValueError(
++                "DepthART output_channels must be 1 (framework) or 16 "
++                "(aligned Michelangelo public output)"
++            )
++        self.output_channels = output_channels
++        if output_publication not in ("repeated_concat", "wide_conv"):
++            raise ValueError(
++                "DepthART output_publication must be repeated_concat or wide_conv, "
++                f"found {output_publication!r}"
++            )
++        self.output_publication = output_publication
++        self.depth_head = DPTHead(
++            features=self.features,
++            out_channels=self.out_channels,
++            use_bn=use_bn,
++            output_channels=(
++                16
++                if self.output_channels == 16
++                and self.output_publication == "wide_conv"
++                else 1
++            ),
++        )
++
++
+     def forward(self, x):
+-        # 提取四层特征  [b,48,56,56]、[b, 64, 28, 28]、[b, 168, 14, 14]、[1, 224, 7, 7]
+-        result = self.pretrained(x,return_high_freq=True)  
+-        features = result[0] # result[0] 融合后的特征 result[1] 高频特征 result[2] 低频特征  
++        # The released head consumes only the four fused backbone features.
++        # Avoid materializing high/low-frequency diagnostic tensors so the
++        # trainable source and deployment topology stay identical.
++        features = self.pretrained(x, return_high_freq=False)
+         depth = self.depth_head(features=features,size_h = x.shape[-2],size_w = x.shape[-1])
++        if self.output_channels == 16 and self.output_publication == "repeated_concat":
++            # Michelangelo exposes C16-aligned public tensors. Repeat the
++            # already-computed scalar depth on its shared integer grid. This
++            # legacy publication route is checkpoint-compatible, but AFE maps
++            # the terminal Concat to an APU helper.
++            depth = torch.cat((depth,) * 16, dim=1)
++        # The production ``wide_conv`` route represents the same repeated C1
++        # function with sixteen identical final-Conv output filters. It keeps
++        # publication inside the final MLA subgraph, eliminating the terminal
++        # APU/cast/helper while remaining an ordinary trainable PyTorch layer.
+         return depth
+-    
++
+     @torch.no_grad()
+     def infer_image(self):
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+         input_tensor = torch.randn(1, 3, 224, 224).to(device)
+-        depth = self.forward(input_tensor) 
+-        
++        depth = self.forward(input_tensor)
++
+         return depth
+-    
+-    def load_pretrained(self, pretrained_path):  
+-        """加载预训练权重"""  
+-        checkpoint = torch.load(pretrained_path, map_location='cpu')  
+-        
+-        # 处理不同的权重格式  
+-        if 'model' in checkpoint:  
+-            state_dict = checkpoint['model']  
+-        else:  
+-            state_dict = checkpoint  
+-        
+-        # 加载权重到backbone  
+-        missing_keys, unexpected_keys = self.pretrained.load_state_dict(  
+-            state_dict, strict=False  
+-        )  
+-        
+-        print(f"Loaded pretrained weights from {pretrained_path}")  
+-        if missing_keys:  
+-            print(f"Missing keys: {missing_keys}")  
+-        if unexpected_keys:  
++
++    def load_pretrained(self, pretrained_path):
++        """加载预训练权重"""
++        checkpoint = torch.load(pretrained_path, map_location='cpu')
++
++        # 处理不同的权重格式
++        if 'model' in checkpoint:
++            state_dict = checkpoint['model']
++        else:
++            state_dict = checkpoint
++
++        # 加载权重到backbone
++        missing_keys, unexpected_keys = self.pretrained.load_state_dict(
++            state_dict, strict=False
++        )
++
++        print(f"Loaded pretrained weights from {pretrained_path}")
++        if missing_keys:
++            print(f"Missing keys: {missing_keys}")
++        if unexpected_keys:
+             print(f"Unexpected keys: {unexpected_keys}")
+-    
+\ No newline at end of file
+diff --git a/relative/tinyvim/model/tinyvim.py b/relative/tinyvim/model/tinyvim.py
+index 441d405..f2387b9 100644
+--- a/relative/tinyvim/model/tinyvim.py
++++ b/relative/tinyvim/model/tinyvim.py
+@@ -3,9 +3,14 @@ import copy
+ import torch
+ import torch.nn as nn
+ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+-from timm.models.layers import DropPath, trunc_normal_
+-from timm.models.registry import register_model
+-from timm.models.layers.helpers import to_2tuple
++try:
++    # timm >= 1.0 keeps the layer utilities in the public timm.layers API.
++    from timm.layers import DropPath, to_2tuple, trunc_normal_
++    from timm.models import register_model
++except ImportError:  # Preserve compatibility with the released timm 0.6.12 environment.
++    from timm.models.layers import DropPath, trunc_normal_
++    from timm.models.registry import register_model
++    from timm.models.layers.helpers import to_2tuple
+ from .tvimblock import TViMBlock, Conv2d_BN, RepDW, FFN
+ 
+ TinyViM_width = {
+@@ -75,6 +80,35 @@ class LocalBlock(nn.Module):
+             if m.bias is not None:
+                 nn.init.constant_(m.bias, 0)
+ 
++    @torch.no_grad()
++    def fold_layer_scale_into_mlp(self):
++        """Fold the inference layer-scale multiply into the terminal 1x1 conv.
++
++        This is an exact deployment reparameterization after ``Conv2d_BN``
++        modules have been fused.  It removes a separately requantized multiply
++        immediately before the residual add, while preserving the original
++        PyTorch function and trainable source checkpoint.
++        """
++        if not self.use_layer_scale:
++            return self
++        terminal = self.mlp.fc2
++        if not isinstance(terminal, nn.Conv2d):
++            raise RuntimeError(
++                "LocalBlock layer-scale folding requires the terminal "
++                "Conv2d_BN to be fused first"
++            )
++        scale = self.layer_scale.reshape(-1).to(
++            device=terminal.weight.device, dtype=terminal.weight.dtype
++        )
++        terminal.weight.mul_(scale[:, None, None, None])
++        if terminal.bias is None:
++            terminal.bias = nn.Parameter(torch.zeros_like(scale))
++        else:
++            terminal.bias.mul_(scale)
++        self.use_layer_scale = False
++        self.register_parameter("layer_scale", None)
++        return self
++
+     def forward(self, x):
+         input = x
+         x = self.dwconv(x)
+@@ -378,4 +412,3 @@ def TinyViM_L(pretrained=False, **kwargs):
+         **kwargs)
+     model.default_cfg = _cfg(crop_pct=0.9)
+     return model
+-
+diff --git a/relative/tinyvim/model/tvimblock.py b/relative/tinyvim/model/tvimblock.py
+index 784dc2b..9b1f660 100644
+--- a/relative/tinyvim/model/tvimblock.py
++++ b/relative/tinyvim/model/tvimblock.py
+@@ -20,12 +20,29 @@ except ImportError:
+ 
+ 
+ def selective_scan_reference(u, delta, A, B, C, D=None, delta_bias=None,
+-                             delta_softplus=False, nrows=1):
+-    """Portable inference fallback and ONNX-export implementation."""
++                             delta_softplus=False, nrows=1,
++                             dynamic_p64_step=None):
++    """Portable inference fallback and static ONNX-export implementation.
++
++    Evaluate a bounded block of transition/injection terms together, then
++    explicitly unroll every recurrent state update. This is mathematically
++    equivalent to the original vectorized prefix-sum identity while avoiding
++    both unsupported CumSum and its numerically fragile
++    ``exp * prefix_sum(value / exp)``
++    cancellation in W8A8.
++
++    This implementation deliberately lives in the PyTorch architecture rather
++    than in an ONNX-only surgeon so inference, QAT and exported deployment all
++    share exactly the same recurrence.
++    """
+     input_dtype = u.dtype
+-    delta = delta.float()
++    if delta.dtype != torch.float32:
++        delta = delta.float()
+     if delta_bias is not None:
+-        delta = delta + delta_bias.view(1, -1, 1).float()
++        bias = delta_bias.view(1, -1, 1)
++        if bias.dtype != torch.float32:
++            bias = bias.float()
++        delta = delta + bias
+     if delta_softplus:
+         delta = F.softplus(delta)
+     if B.dim() == 3:
+@@ -33,28 +50,507 @@ def selective_scan_reference(u, delta, A, B, C, D=None, delta_bias=None,
+     if C.dim() == 3:
+         C = C.unsqueeze(1)
+     batch, groups, state_dim, length = (int(value) for value in B.shape)
+-    u = u.view(batch, groups, -1, length).permute(3, 0, 1, 2).float()
++    u = u.view(batch, groups, -1, length).permute(3, 0, 1, 2)
++    if u.dtype != torch.float32:
++        u = u.float()
+     delta = delta.view(batch, groups, -1, length).permute(3, 0, 1, 2)
+-    A = A.view(groups, -1, state_dim).float()
+-    B = B.permute(3, 0, 1, 2).float()
+-    C = C.permute(3, 0, 1, 2).float()
++    A = A.view(groups, -1, state_dim)
++    B = B.permute(3, 0, 1, 2)
++    C = C.permute(3, 0, 1, 2)
++    if A.dtype != torch.float32:
++        A = A.float()
++    if B.dtype != torch.float32:
++        B = B.float()
++    if C.dtype != torch.float32:
++        C = C.float()
+     outputs = []
+     previous = u.new_zeros((batch, groups, A.shape[1], state_dim), dtype=torch.float32)
+-    for start in range(0, length, 4):
+-        stop = min(start + 4, length)
+-        delta_chunk, u_chunk = delta[start:stop], u[start:stop]
+-        B_chunk, C_chunk = B[start:stop], C[start:stop]
+-        times = delta_chunk.cumsum(dim=0)
+-        exponentials = torch.einsum("gdn,lbgd->lbgdn", A, times).exp()
+-        delta_u_B = torch.einsum("lbgd,lbgn->lbgdn", delta_chunk * u_chunk, B_chunk)
+-        states = exponentials * (delta_u_B / exponentials).cumsum(dim=0)
+-        states = states + exponentials * previous.unsqueeze(0)
++    if dynamic_p64_step is not None:
++        if int(previous.shape[-2]) * int(previous.shape[-1]) != 128:
++            raise RuntimeError(
++                "dynamic p64 scan requires a 16x8 C128 state block")
++        # Keep the recurrent q+p64 edge in its physical C128 form.  Reshaping
++        # that edge between timesteps would expose q as an ordinary tensor and
++        # orphan the compiler's compact p carrier.
++        previous = previous.reshape(1, batch, groups, 128)
++    # Express complete static partitions as Split rather than thousands of
++    # individual Slice nodes at high resolution. AFE otherwise repeats TVM
++    # type inference for every Slice during import. The chunk/state math and
++    # every public tensor remain unchanged.
++    chunks = zip(
++        torch.split(delta, 64, dim=0),
++        torch.split(u, 64, dim=0),
++        torch.split(B, 64, dim=0),
++        torch.split(C, 64, dim=0),
++    )
++    for delta_chunk, u_chunk, B_chunk, C_chunk in chunks:
++        transition_logits = torch.einsum("gdn,lbgd->lbgdn", A, delta_chunk)
++        transitions = transition_logits.exp()
++        injections = torch.einsum(
++            "lbgd,lbgn->lbgdn", delta_chunk * u_chunk, B_chunk
++        )
++        if dynamic_p64_step is not None:
++            # Fixed affine Q/DQ is elementwise and therefore commutes exactly
++            # with the static timestep Split/reshape below. Hoist it once per
++            # complete chunk so eager QAT keeps the same codes while ONNX does
++            # not duplicate one identical Q/DQ pair for every timestep.
++            transitions, injections = dynamic_p64_step.prepare_static_inputs(
++                transitions, injections)
++        state = previous if dynamic_p64_step is not None else previous.unsqueeze(0)
++        chunk_states = []
++        for transition, injection in zip(
++            torch.split(transitions, 1, dim=0),
++            torch.split(injections, 1, dim=0),
++        ):
++            if dynamic_p64_step is None:
++                state = transition * state + injection
++            else:
++                # A channel shard has D=16 and DepthART has N=8, hence each
++                # scan direction owns one exact C128 compiler block.  Flatten
++                # only those two independent coordinates; batch/direction
++                # remain token axes and receive independent runtime p64.
++                if int(transition.shape[-2]) * int(transition.shape[-1]) != 128:
++                    raise RuntimeError(
++                        "dynamic p64 scan requires a 16x8 C128 state block")
++                state = dynamic_p64_step(
++                    state,
++                    transition.reshape(*transition.shape[:-2], 128),
++                    injection.reshape(*injection.shape[:-2], 128),
++                    static_inputs_prepared=True,
++                )
++            if dynamic_p64_step is None:
++                chunk_states.append(state)
++            else:
++                # The recurrent edge above remains q+p64. Only this readout
++                # copy is converted to the fixed INT8 grid consumed by the C
++                # contraction and ordinary downstream graph.
++                chunk_states.append(
++                    dynamic_p64_step.readout(state).reshape(
++                        1, batch, groups, A.shape[1], state_dim))
++        states = torch.cat(chunk_states, dim=0)
+         outputs.append(torch.einsum("lbgn,lbgdn->lbgd", C_chunk, states))
+-        previous = states[-1]
++        # Unit-width Split plus reshape avoids unsupported scalar Gather.
++        previous = (
++            state if dynamic_p64_step is not None
++            else state.reshape(batch, groups, A.shape[1], state_dim))
+     output = torch.cat(outputs, dim=0)
+     if D is not None:
+-        output = output + D.view(groups, -1).float() * u
+-    return output.permute(1, 2, 3, 0).reshape(batch, -1, length).to(input_dtype)
++        skip = D.view(groups, -1)
++        if skip.dtype != torch.float32:
++            skip = skip.float()
++        output = output + skip * u
++    output = output.permute(1, 2, 3, 0).reshape(batch, -1, length)
++    return output.to(input_dtype) if output.dtype != input_dtype else output
++
++
++def selective_scan_tree_reference(u, delta, A, B, C, D=None, delta_bias=None,
++                                  delta_softplus=False, nrows=1,
++                                  chunk_size=64,
++                                  state_rotation=None,
++                                  identity_free=False,
++                                  scan_algorithm="hillis_steele",
++                                  dynamic_p64_step=None):
++    """Equivalent selective scan with logarithmic recurrent quantization depth.
++
++    A state update is the affine map ``x -> transition * x + injection``.
++    Affine maps form an associative monoid, so an inclusive parallel prefix
++    scan produces the same states as the released serial recurrence. Keeping
++    the existing 64-token partitions bounds memory, while each partition now
++    has six multiply/add levels rather than 64 serial levels. This matters on
++    strict W8A8 targets where every arithmetic output is requantized.
++
++    This is part of the PyTorch architecture, not an export-only rewrite: QAT,
++    eager evaluation and ONNX capture therefore train and execute the same
++    numerical function.
++    """
++    input_dtype = u.dtype
++    if delta.dtype != torch.float32:
++        delta = delta.float()
++    if delta_bias is not None:
++        bias = delta_bias.view(1, -1, 1)
++        if bias.dtype != torch.float32:
++            bias = bias.float()
++        delta = delta + bias
++    if delta_softplus:
++        delta = F.softplus(delta)
++    if B.dim() == 3:
++        B = B.unsqueeze(1)
++    if C.dim() == 3:
++        C = C.unsqueeze(1)
++    batch, groups, state_dim, length = (int(value) for value in B.shape)
++    u = u.view(batch, groups, -1, length).permute(3, 0, 1, 2)
++    if u.dtype != torch.float32:
++        u = u.float()
++    delta = delta.view(batch, groups, -1, length).permute(3, 0, 1, 2)
++    A = A.view(groups, -1, state_dim)
++    B = B.permute(3, 0, 1, 2)
++    C = C.permute(3, 0, 1, 2)
++    if A.dtype != torch.float32:
++        A = A.float()
++    if B.dtype != torch.float32:
++        B = B.float()
++    if C.dtype != torch.float32:
++        C = C.float()
++    outputs = []
++    previous = u.new_zeros((batch, groups, A.shape[1], state_dim), dtype=torch.float32)
++    chunk_size = int(chunk_size)
++    if chunk_size < 1:
++        raise ValueError(f"tree-scan chunk size must be positive, found {chunk_size}")
++    chunks = zip(
++        torch.split(delta, chunk_size, dim=0),
++        torch.split(u, chunk_size, dim=0),
++        torch.split(B, chunk_size, dim=0),
++        torch.split(C, chunk_size, dim=0),
++    )
++    first_chunk = True
++    for delta_chunk, u_chunk, B_chunk, C_chunk in chunks:
++        transition_logits = torch.einsum("gdn,lbgd->lbgdn", A, delta_chunk)
++        transitions = transition_logits.exp()
++        injections = torch.einsum(
++            "lbgd,lbgn->lbgdn", delta_chunk * u_chunk, B_chunk
++        )
++
++        chunk_length = int(transitions.shape[0])
++        if dynamic_p64_step is not None:
++            if scan_algorithm != "hillis_steele":
++                raise RuntimeError(
++                    "dynamic p64 tree scan is proven only for Hillis-Steele")
++            if state_rotation is not None:
++                raise RuntimeError(
++                    "dynamic p64 tree scan does not yet carry rotated state")
++            if int(transitions.shape[-2]) * int(transitions.shape[-1]) != 128:
++                raise RuntimeError(
++                    "dynamic p64 tree scan requires a 16x8 C128 state block")
++
++            # Q/DQ the two ordinary fixed-grid sources once before all static
++            # views, then lift b onto the tied recurrent q+p64 base.  Every
++            # prefix stage below is the associative affine-map composition
++            # (a2,b2)o(a1,b1)=(a2*a1,a2*b1+b2).
++            transitions, injections = dynamic_p64_step.prepare_static_inputs(
++                transitions, injections)
++            state_shape = tuple(int(value) for value in transitions.shape)
++            transitions = transitions.reshape(*state_shape[:-2], 128)
++            injections = dynamic_p64_step.lift_static_injection(
++                injections.reshape(*state_shape[:-2], 128))
++            offset = 1
++            while offset < chunk_length:
++                composed_injections = dynamic_p64_step.compose_tree_affine(
++                    injections[:-offset],
++                    transitions[offset:],
++                    injections[offset:],
++                )
++                composed_transitions = dynamic_p64_step.compose_tree_transition(
++                    transitions[:-offset], transitions[offset:])
++                # Both branches already use the same frozen grids. Reapplying
++                # those grids after Concat is mathematically idempotent, while
++                # making it impossible for downstream PTQ to invent an
++                # untrained structural-output grid.
++                injections = dynamic_p64_step.publish_tree_state(torch.cat(
++                    (injections[:offset], composed_injections), dim=0))
++                transitions = dynamic_p64_step.publish_tree_transition(torch.cat(
++                    (transitions[:offset], composed_transitions), dim=0))
++                offset *= 2
++
++            # Compose every chunk prefix with the exact final state from the
++            # preceding chunk.  For the first chunk, h[-1] is the additive
++            # identity zero, hence
++            #
++            #   (a_prefix, b_prefix)(0) = a_prefix * 0 + b_prefix = b_prefix.
++            #
++            # Do not materialize that provably dead Mul/Add.  Apart from being
++            # the mathematically canonical recurrence, this prevents ONNX/AFE
++            # constant folding from retaining an arbitrary subset of zero
++            # products according to tensor size.  ``injections`` is already
++            # published on the same frozen tree-state Q/DQ grid that
++            # compose_tree_affine would publish, so the identity-free edge is
++            # also a valid strict-INT8 structural boundary.
++            if first_chunk and identity_free:
++                states_flat = injections
++            else:
++                previous_flat = previous.reshape(1, batch, groups, 128).expand(
++                    chunk_length, batch, groups, 128)
++                states_flat = dynamic_p64_step.compose_tree_affine(
++                    previous_flat, transitions, injections)
++            # compose_tree_affine already ends at the shared static state
++            # grid; keeping Slice/Concat and the C contraction on that grid
++            # prevents any hidden q+p64 carrier from crossing a structural op.
++            states = states_flat.reshape(state_shape)
++            outputs.append(torch.einsum("lbgn,lbgdn->lbgd", C_chunk, states))
++            previous = states_flat[-1:].reshape(
++                batch, groups, A.shape[1], state_dim)
++            first_chunk = False
++            continue
++
++        states = None
++        if scan_algorithm.startswith("log_"):
++            # Closed-form affine recurrence in a short log-domain block:
++            #   P_t = exp(sum_{i<=t} log(T_i))
++            #   h_t = P_t * (h_0 + sum_{i<=t} injection_i / P_i)
++            # This is algebraically identical to the released update.  It
++            # replaces each prefix level's quantized Multiply+Add composition
++            # with two additive prefixes and one final multiply.  Short static
++            # blocks bound exp(-log(P)) while exact final states carry between
++            # blocks and the existing 64-token memory chunks.
++            log_block_size = int(scan_algorithm.rsplit("_", 1)[1])
++            if (
++                log_block_size < 2
++                or log_block_size > 16
++                or log_block_size & (log_block_size - 1)
++            ):
++                raise ValueError(
++                    "log-domain scan block must be a power of two in [2, 16], "
++                    f"found {log_block_size}"
++                )
++            state_blocks = []
++            block_previous = previous
++            for logits_block, injection_block in zip(
++                torch.split(transition_logits, log_block_size, dim=0),
++                torch.split(injections, log_block_size, dim=0),
++            ):
++                block_length = int(logits_block.shape[0])
++                prefix_logits = logits_block
++                offset = 1
++                while offset < block_length:
++                    prefix_logits = torch.cat(
++                        (
++                            prefix_logits[:offset],
++                            prefix_logits[offset:] + prefix_logits[:-offset],
++                        ),
++                        dim=0,
++                    )
++                    offset *= 2
++                prefix_transitions = prefix_logits.exp()
++                scaled_injections = injection_block * (-prefix_logits).exp()
++                offset = 1
++                while offset < block_length:
++                    scaled_injections = torch.cat(
++                        (
++                            scaled_injections[:offset],
++                            scaled_injections[offset:]
++                            + scaled_injections[:-offset],
++                        ),
++                        dim=0,
++                    )
++                    offset *= 2
++                block_states = prefix_transitions * (
++                    block_previous.unsqueeze(0) + scaled_injections
++                )
++                state_blocks.append(block_states)
++                block_previous = block_states[-1:].reshape(
++                    batch, groups, A.shape[1], state_dim
++                )
++            states = torch.cat(state_blocks, dim=0)
++        elif scan_algorithm.startswith("hybrid_"):
++            # Hierarchical inclusive scan: build short serial prefixes inside
++            # vectorized token blocks, scan only the block summaries, then
++            # compose each local prefix with the preceding block prefix.  The
++            # real-valued affine map is identical to both the released serial
++            # recurrence and Hillis-Steele.  The association order is useful
++            # for strict INT8 because it avoids repeatedly combining every
++            # token with increasingly long transition products.
++            local_size = int(scan_algorithm.rsplit("_", 1)[1])
++            if local_size < 2 or local_size > 32 or local_size & (local_size - 1):
++                raise ValueError(
++                    f"hybrid tree-scan block must be a power of two in [2, 32], "
++                    f"found {local_size}"
++                )
++            padded_length = (
++                (chunk_length + local_size - 1) // local_size * local_size
++            )
++            padding = padded_length - chunk_length
++            if padding:
++                expand_shape = (padding,) + tuple(
++                    int(value) for value in transitions.shape[1:]
++                )
++                transitions = torch.cat(
++                    (transitions, torch.ones_like(transitions[:1]).expand(expand_shape)),
++                    dim=0,
++                )
++                injections = torch.cat(
++                    (injections, torch.zeros_like(injections[:1]).expand(expand_shape)),
++                    dim=0,
++                )
++            blocks = padded_length // local_size
++            tail_shape = tuple(int(value) for value in transitions.shape[1:])
++            transition_blocks = transitions.reshape(
++                blocks, local_size, *tail_shape
++            )
++            injection_blocks = injections.reshape(
++                blocks, local_size, *tail_shape
++            )
++            local_transitions = [transition_blocks[:, :1]]
++            local_injections = [injection_blocks[:, :1]]
++            for local_index in range(1, local_size):
++                current_transition = transition_blocks[
++                    :, local_index : local_index + 1
++                ]
++                current_injection = injection_blocks[
++                    :, local_index : local_index + 1
++                ]
++                local_injections.append(
++                    current_transition * local_injections[-1] + current_injection
++                )
++                local_transitions.append(
++                    current_transition * local_transitions[-1]
++                )
++            local_transitions = torch.cat(local_transitions, dim=1)
++            local_injections = torch.cat(local_injections, dim=1)
++
++            block_transitions = local_transitions[:, -1:]
++            block_injections = local_injections[:, -1:]
++            offset = 1
++            while offset < blocks:
++                shifted_injections = torch.cat(
++                    (
++                        torch.zeros_like(block_injections[:offset]),
++                        block_injections[:-offset],
++                    ),
++                    dim=0,
++                )
++                shifted_transitions = torch.cat(
++                    (
++                        torch.ones_like(block_transitions[:offset]),
++                        block_transitions[:-offset],
++                    ),
++                    dim=0,
++                )
++                block_injections = (
++                    block_transitions * shifted_injections + block_injections
++                )
++                block_transitions = block_transitions * shifted_transitions
++                offset *= 2
++            preceding_injections = torch.cat(
++                (
++                    torch.zeros_like(block_injections[:1]),
++                    block_injections[:-1],
++                ),
++                dim=0,
++            )
++            preceding_transitions = torch.cat(
++                (
++                    torch.ones_like(block_transitions[:1]),
++                    block_transitions[:-1],
++                ),
++                dim=0,
++            )
++            injections = (
++                local_transitions * preceding_injections
++                + local_injections
++            ).reshape(padded_length, *tail_shape)[:chunk_length]
++            transitions = (
++                local_transitions * preceding_transitions
++            ).reshape(padded_length, *tail_shape)[:chunk_length]
++        elif scan_algorithm == "sklansky":
++            # Divide-and-conquer inclusive scan.  At level ``2h``, each right
++            # half already owns its local prefix and is composed with the last
++            # prefix of its left half.  Thus only half of the elements perform
++            # recurrent Multiply/Add at each level (versus every tail element
++            # in Hillis-Steele), while maximum arithmetic depth remains
++            # ceil(log2(L)).  Reshaping all equal-size blocks into one leading
++            # dimension keeps this as six stock tensor expressions rather than
++            # unrolling 63 small block operations.
++            padded_length = 1 << (chunk_length - 1).bit_length()
++            padding = padded_length - chunk_length
++            if padding:
++                transitions = torch.cat(
++                    (transitions, torch.ones_like(transitions[:padding])), dim=0
++                )
++                injections = torch.cat(
++                    (injections, torch.zeros_like(injections[:padding])), dim=0
++                )
++            block_size = 2
++            tail_shape = tuple(int(value) for value in transitions.shape[1:])
++            while block_size <= padded_length:
++                blocks = padded_length // block_size
++                half = block_size // 2
++                transition_blocks = transitions.reshape(
++                    blocks, block_size, *tail_shape
++                )
++                injection_blocks = injections.reshape(
++                    blocks, block_size, *tail_shape
++                )
++                left_transitions = transition_blocks[:, :half]
++                right_transitions = transition_blocks[:, half:]
++                left_injections = injection_blocks[:, :half]
++                right_injections = injection_blocks[:, half:]
++                boundary_transition = left_transitions[:, half - 1 : half]
++                boundary_injection = left_injections[:, half - 1 : half]
++                composed_injections = (
++                    right_transitions * boundary_injection + right_injections
++                )
++                composed_transitions = right_transitions * boundary_transition
++                transitions = torch.cat(
++                    (left_transitions, composed_transitions), dim=1
++                ).reshape(padded_length, *tail_shape)
++                injections = torch.cat(
++                    (left_injections, composed_injections), dim=1
++                ).reshape(padded_length, *tail_shape)
++                block_size *= 2
++            transitions = transitions[:chunk_length]
++            injections = injections[:chunk_length]
++        elif scan_algorithm == "hillis_steele":
++            # Hillis-Steele inclusive scan over affine-map composition. Static
++            # Slice+Concat avoids Gather and maps directly to supported MLA tensor
++            # operators. Leading identity maps keep the first ``offset`` elements
++            # unchanged at each level.
++            offset = 1
++            while offset < chunk_length:
++                if identity_free:
++                    # The leading maps are already the inclusive prefix for this
++                    # level. Copy them instead of expressing the identity as
++                    # ``a * 1`` and ``a + t * 0``. Both forms are equal over reals,
++                    # but the padded form creates avoidable INT8 requantization.
++                    composed_injections = (
++                        transitions[offset:] * injections[:-offset]
++                        + injections[offset:]
++                    )
++                    composed_transitions = transitions[offset:] * transitions[:-offset]
++                    injections = torch.cat(
++                        (injections[:offset], composed_injections), dim=0
++                    )
++                    transitions = torch.cat(
++                        (transitions[:offset], composed_transitions), dim=0
++                    )
++                else:
++                    shifted_injections = torch.cat(
++                        (torch.zeros_like(injections[:offset]), injections[:-offset]), dim=0
++                    )
++                    shifted_transitions = torch.cat(
++                        (torch.ones_like(transitions[:offset]), transitions[:-offset]), dim=0
++                    )
++                    injections = transitions * shifted_injections + injections
++                    transitions = transitions * shifted_transitions
++                offset *= 2
++        else:
++            raise ValueError(f"unsupported tree-scan algorithm {scan_algorithm!r}")
++
++        if states is None:
++            states = transitions * previous.unsqueeze(0) + injections
++        if state_rotation is not None:
++            # For orthogonal R, (R.T C)^T (R.T h) = C^T h.  Applying the
++            # online rotation immediately before the C/state contraction is
++            # exact and suppresses the parallel-scan outliers identified by
++            # MambaQuant without attempting to rotate through diagonal A.
++            # Keep the rotation in a real nn.Module so PT2E retains its source
++            # provenance and annotates the ordinary Conv2d as W8A8. Passing a
++            # bare buffer into F.conv2d loses that provenance after export and
++            # would leave the new core compute unquantized.
++            C_output = state_rotation(C_chunk)
++            states_output = state_rotation(states)
++        else:
++            C_output = C_chunk
++            states_output = states
++        outputs.append(torch.einsum("lbgn,lbgdn->lbgd", C_output, states_output))
++        # A unit-width Slice followed by reshape avoids scalar Gather.
++        previous = states[-1:].reshape(batch, groups, A.shape[1], state_dim)
++    output = torch.cat(outputs, dim=0)
++    if D is not None:
++        skip = D.view(groups, -1)
++        if skip.dtype != torch.float32:
++            skip = skip.float()
++        output = output + skip * u
++    output = output.permute(1, 2, 3, 0).reshape(batch, -1, length)
++    return output.to(input_dtype) if output.dtype != input_dtype else output
+ 
+ 
+ class Conv2d_BN(torch.nn.Sequential):
+@@ -82,6 +578,168 @@ class Conv2d_BN(torch.nn.Sequential):
+         return m
+ 
+ 
++class FixedBlockHadamard(torch.nn.Module):
++    """Orthogonal block-Hadamard channel rotation as a grouped 1x1 Conv.
++
++    The fixed weights are a non-persistent architectural constant. Expressing
++    the transform as grouped Conv keeps the graph within the stock SiMa
++    compiler's ordinary W8A8 operator surface rather than requiring a custom
++    Hadamard operator.
++    """
++
++    def __init__(self, channels: int, block_size: int) -> None:
++        super().__init__()
++        if block_size < 2 or block_size & (block_size - 1):
++            raise ValueError("Hadamard block size must be a power of two >= 2")
++        if channels % block_size:
++            raise ValueError(
++                f"{channels} channels are not divisible by block size {block_size}"
++            )
++        matrix = torch.ones(1, 1, dtype=torch.float32)
++        while matrix.shape[0] < block_size:
++            matrix = torch.cat(
++                (
++                    torch.cat((matrix, matrix), dim=1),
++                    torch.cat((matrix, -matrix), dim=1),
++                ),
++                dim=0,
++            )
++        matrix = matrix / math.sqrt(block_size)
++        weight = matrix[:, :, None, None].repeat(channels // block_size, 1, 1, 1)
++        self.register_buffer("weight", weight, persistent=False)
++        self.groups = channels // block_size
++
++    def forward(self, value: torch.Tensor) -> torch.Tensor:
++        return F.conv2d(value, self.weight, groups=self.groups)
++
++
++class FixedChannelRotation(torch.nn.Module):
++    """Frozen orthogonal channel rotation expressed as an ordinary 1x1 Conv.
++
++    ``matrix`` uses the column-vector convention from MambaQuant: the runtime
++    tensor is ``z = matrix.T @ x``.  A following ungrouped 1x1 projection can
++    absorb the exact inverse by replacing ``W`` with ``W @ matrix``.  Keeping
++    the rotation as Conv2d deliberately avoids a custom Hadamard/KLT operator
++    and stays within the stock SiMa W8A8 compiler surface.
++    """
++
++    def __init__(
++        self, matrix: torch.Tensor, center: torch.Tensor | None = None
++    ) -> None:
++        super().__init__()
++        matrix = torch.as_tensor(matrix).detach()
++        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
++            raise ValueError(
++                "channel rotation must be a square matrix, found "
++                f"{tuple(matrix.shape)}"
++            )
++        if matrix.shape[0] < 1 or not bool(torch.isfinite(matrix).all()):
++            raise ValueError("channel rotation must be nonempty and finite")
++        identity = torch.eye(matrix.shape[0], device=matrix.device, dtype=matrix.dtype)
++        orthogonality_error = (matrix.T @ matrix - identity).abs().max()
++        # Calibration eigensolvers construct the matrix in float64 and cast it
++        # to the model dtype.  Permit only the resulting FP32 roundoff, not an
++        # approximate or learned non-orthogonal transform.
++        if float(orthogonality_error) > 2e-5:
++            raise ValueError(
++                "channel rotation is not orthogonal: max |R.T R - I| = "
++                f"{float(orthogonality_error):.8g}"
++            )
++        self.register_buffer(
++            "weight", matrix.T.contiguous().unsqueeze(-1).unsqueeze(-1),
++            persistent=False,
++        )
++        if center is None:
++            self.register_buffer("bias", None, persistent=False)
++        else:
++            center = torch.as_tensor(
++                center, device=matrix.device, dtype=matrix.dtype
++            ).flatten()
++            if center.numel() != matrix.shape[0] or not bool(torch.isfinite(center).all()):
++                raise ValueError(
++                    "channel-rotation center must be a finite vector of width "
++                    f"{matrix.shape[0]}"
++                )
++            # z = R.T @ (x - center)
++            bias = -(matrix.T @ center)
++            self.register_buffer("bias", bias.contiguous(), persistent=False)
++
++    def forward(self, value: torch.Tensor) -> torch.Tensor:
++        return F.conv2d(value, self.weight, self.bias)
++
++
++class FixedLastAxisRotation(torch.nn.Module):
++    """Frozen orthogonal rotation of a tensor's final axis using Conv2d.
++
++    Selective-scan state tensors use ``[..., N]`` rather than NCHW layout.
++    The layout-only reshapes around this ordinary 1x1 Conv preserve exact
++    source math and, unlike a raw functional call with a captured buffer,
++    retain module provenance for PT2E's standard Conv QAT annotator.
++    """
++
++    def __init__(self, matrix: torch.Tensor) -> None:
++        super().__init__()
++        matrix = torch.as_tensor(matrix).detach()
++        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
++            raise ValueError(
++                "last-axis rotation must be square, found "
++                f"{tuple(matrix.shape)}"
++            )
++        identity = torch.eye(matrix.shape[0], device=matrix.device, dtype=matrix.dtype)
++        error = (matrix.T @ matrix - identity).abs().max()
++        if not bool(torch.isfinite(matrix).all()) or float(error) > 2e-5:
++            raise ValueError(
++                "last-axis rotation must be finite and orthogonal: max error "
++                f"{float(error):.8g}"
++            )
++        self.channels = int(matrix.shape[0])
++        self.register_buffer(
++            "weight", matrix.T.contiguous().unsqueeze(-1).unsqueeze(-1),
++            persistent=False,
++        )
++
++    def forward(self, value: torch.Tensor) -> torch.Tensor:
++        original_shape = value.shape
++        flattened = value.reshape(-1, self.channels)
++        channel_first = flattened.transpose(0, 1).reshape(
++            1, self.channels, 1, -1
++        )
++        rotated = F.conv2d(channel_first, self.weight)
++        return (
++            rotated.reshape(self.channels, -1)
++            .transpose(0, 1)
++            .reshape(original_shape)
++        )
++
++
++class FixedChannelScale(torch.nn.Conv2d):
++    """A frozen diagonal channel scale expressed as a depthwise 1x1 Conv.
++
++    Keeping the exact reparameterization inside the ordinary Conv operator
++    surface lets PT2E annotate it as W8A8 and lets the stock SiMa compiler
++    lower it without a custom operator.  A depthwise one-tap weight is exactly
++    representable by a per-output-channel INT8 weight grid.
++    """
++
++    def __init__(self, inverse_scale: torch.Tensor) -> None:
++        inverse_scale = torch.as_tensor(inverse_scale).detach().flatten()
++        channels = int(inverse_scale.numel())
++        if channels < 1:
++            raise ValueError("channel scale cannot be empty")
++        super().__init__(
++            channels,
++            channels,
++            1,
++            groups=channels,
++            bias=False,
++            device=inverse_scale.device,
++            dtype=inverse_scale.dtype,
++        )
++        with torch.no_grad():
++            self.weight.copy_(inverse_scale.reshape(channels, 1, 1, 1))
++        self.weight.requires_grad_(False)
++
++
+ class RepDW(torch.nn.Module):
+     def __init__(self, ed) -> None:
+         super().__init__()
+@@ -202,6 +860,25 @@ class Rep_Inception(torch.nn.Module):
+         )
+ 
+ 
++class TargetRealizableGELU(nn.Module):
++    """Exact GELU expressed at the target's integer requantization boundaries.
++
++    ``nn.GELU`` remains one ATen node during PT2E preparation, but ONNX and
++    AFE subsequently lower it to five primitive operations.  AFE executes each
++    primitive on its own INT8 grid.  Writing the mathematically identical
++    decomposition in the source architecture exposes those same boundaries to
++    SiMa QAT, so fake quantization trains the function that the MLA executes.
++    The operation order deliberately matches the ONNX GELU lowering.
++    """
++
++    def forward(self, x):
++        scaled = x * 0.7071067811865476
++        cdf = torch.erf(scaled)
++        cdf = cdf + 1.0
++        y = x * cdf
++        return y * 0.5
++
++
+ class SelectiveScan(torch.autograd.Function):
+     
+     @staticmethod
+@@ -290,7 +967,15 @@ class CrossMerge(torch.autograd.Function):
+         ctx.shape = (H, W)
+         ys = ys.view(B, K, D, -1)
+         ys = ys[:, 0:2] + ys[:, 2:4].flip(dims=[-1]).view(B, 2, D, -1)
+-        y = ys[:, 0] + ys[:, 1].view(B, -1, W, H).transpose(dim0=2, dim1=3).contiguous().view(B, D, -1)
++        # Keep the directional axis until a static reshape removes it.  Scalar
++        # indexing exports as Gather (unsupported for INT8); unit-range Slice
++        # plus Reshape is equivalent and directly realizable by MLA.
++        horizontal = ys[:, 0:1].reshape(B, D, -1)
++        vertical = (
++            ys[:, 1:2].reshape(B, D, W, H)
++            .transpose(dim0=2, dim1=3).contiguous().reshape(B, D, -1)
++        )
++        y = horizontal + vertical
+         return y
+     
+     @staticmethod
+@@ -320,6 +1005,16 @@ def cross_selective_scan(
+     delta_softplus = True,
+     to_dtype=True,
+     force_fp32=True,
++    tree_scan=False,
++    tree_scan_chunk_size=64,
++    state_partition_size=0,
++    scan_channel_partition_size=0,
++    scan_direction_partitioned=False,
++    scan_input_equalization_scale=None,
++    scan_state_rotation=None,
++    identity_free_tree_scan=False,
++    tree_scan_algorithm="hillis_steele",
++    dynamic_p64_steps=None,
+ ):
+     # out_norm: whatever fits (B, L, C); LayerNorm; Sigmoid; Softmax(dim=1);...
+ 
+@@ -345,43 +1040,310 @@ def cross_selective_scan(
+     else:
+         xs = CrossScan.apply(x)
+     
+-    x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs, x_proj_weight)
+-    if x_proj_bias is not None:
+-        x_dbl = x_dbl + x_proj_bias.view(1, K, -1, 1)
+-    dts, Bs, Cs = torch.split(x_dbl, [R, N, N], dim=2)
+-    dts = torch.einsum("b k r l, k d r -> b k d l", dts, dt_projs_weight)
++    # These two learned projections were released as Einsum. Express their
++    # identical block-diagonal linear maps as grouped 1x1 Conv2d so PT2E can
++    # attach true per-output-channel INT8 weight fake quantizers. Treating the
++    # static projection tensors as per-tensor activations loses substantial
++    # precision and leaves them outside shift-aware QAT.
++    projection_input = xs.reshape(B, K * D, 1, L)
++
++    def grouped_projection(start, width):
++        # The released x-projection has three semantically independent output
++        # fields (dt, B, C).  Computing them as separate slices of the same
++        # block-diagonal map is exactly equivalent channel by channel, while
++        # giving strict per-tensor activation quantization an independent grid
++        # for each field.  A single combined Conv forces the tiny dt features
++        # and the recurrent B/C features to share one output scale.
++        weight = x_proj_weight[:, start:start + width]
++        bias = (
++            x_proj_bias[:, start:start + width].reshape(K * width)
++            if x_proj_bias is not None
++            else None
++        )
++        return F.conv2d(
++            projection_input,
++            weight.reshape(K * width, D, 1, 1),
++            bias,
++            groups=K,
++        ).reshape(B, K, width, L)
++
++    dts = grouped_projection(0, R)
++    # Selective-scan state coordinates are independent until their final
++    # contraction with C.  Keeping static state partitions as separate
++    # branches is mathematically equivalent to one N-wide contraction, but it
++    # gives a strict per-tensor INT8 target an independent activation grid for
++    # each state range.  This is source architecture, not export-only surgery.
++    # The stock path is intentionally unchanged when partitioning is disabled.
++    partition_size = int(state_partition_size)
++    if partition_size > 0 and partition_size < N:
++        state_slices = tuple(
++            (start, min(partition_size, N - start))
++            for start in range(0, N, partition_size)
++        )
++        Bs = tuple(grouped_projection(R + start, width) for start, width in state_slices)
++        Cs = tuple(
++            grouped_projection(R + N + start, width)
++            for start, width in state_slices
++        )
++    else:
++        state_slices = ((0, N),)
++        Bs = grouped_projection(R, N)
++        Cs = grouped_projection(R + N, N)
++    dts = F.conv2d(
++        dts.reshape(B, K * R, 1, L),
++        dt_projs_weight.reshape(K * D, R, 1, 1),
++        None,
++        groups=K,
++    ).reshape(B, K, D, L)
+     xs = xs.view(B, -1, L)
+ 
++    input_equalization_scale = scan_input_equalization_scale
++    input_equalized = (
++        input_equalization_scale is not None
++        and int(input_equalization_scale.numel()) > 0
++    )
++    if input_equalized:
++        # Device follows the registered architectural buffer when the model is
++        # moved. Avoid capturing a literal CPU device from the PT2E example.
++        scale = input_equalization_scale.to(dtype=xs.dtype)
++        if tuple(scale.shape) == (D,):
++            scale = scale.unsqueeze(0).expand(K, D)
++        if tuple(scale.shape) != (K, D):
++            raise ValueError(
++                f"scan input equalization scale must be {(K, D)}, "
++                f"found {tuple(scale.shape)}"
++            )
++        # The recurrence is linear in u for fixed delta/B/C. Normalize each
++        # independent u channel before scan and apply the exact inverse after
++        # scan. Depthwise 1x1 Conv gives the static coefficients ordinary
++        # per-output-channel INT8 weight grids on the stock compiler.
++        xs = F.conv2d(
++            xs.reshape(B, K * D, 1, L),
++            scale.reciprocal().reshape(K * D, 1, 1, 1),
++            groups=K * D,
++        ).reshape(B, K * D, L)
++
+     dts = dts.contiguous().view(B, -1, L)
+-    As = -torch.exp(A_logs.to(torch.float)) # (k * c, d_state)
+-    Bs = Bs.contiguous()
+-    Cs = Cs.contiguous()
+-    Ds = Ds.to(torch.float) # (K * c)
+-    delta_bias = dt_projs_bias.view(-1).to(torch.float)
++    As = -torch.exp(A_logs.float() if A_logs.dtype != torch.float32 else A_logs) # (k * c, d_state)
++    channel_partition_size = int(scan_channel_partition_size)
++    if isinstance(Bs, tuple):
++        Bs = tuple(value.contiguous() for value in Bs)
++        Cs = tuple(value.contiguous() for value in Cs)
++    else:
++        Bs = Bs.contiguous()
++        Cs = Cs.contiguous()
++    Ds = Ds.float() if Ds.dtype != torch.float32 else Ds # (K * c)
++    delta_bias = dt_projs_bias.view(-1)
++    if delta_bias.dtype != torch.float32:
++        delta_bias = delta_bias.float()
+ 
+     if force_fp32:
+         xs = xs.to(torch.float)
+         dts = dts.to(torch.float)
+-        Bs = Bs.to(torch.float)
+-        Cs = Cs.to(torch.float)
++        if isinstance(Bs, tuple):
++            Bs = tuple(value.to(torch.float) for value in Bs)
++            Cs = tuple(value.to(torch.float) for value in Cs)
++        else:
++            Bs = Bs.to(torch.float)
++            Cs = Cs.to(torch.float)
+ 
+-    def selective_scan(u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=True, nrows=1):
++    def selective_scan(
++        u, delta, A, B, C, D=None, delta_bias=None,
++        delta_softplus=True, nrows=1, dynamic_p64_step=None,
++    ):
++        if tree_scan:
++            return selective_scan_tree_reference(
++                u, delta, A, B, C, D, delta_bias, delta_softplus, nrows,
++                tree_scan_chunk_size,
++                scan_state_rotation,
++                identity_free_tree_scan,
++                tree_scan_algorithm,
++                dynamic_p64_step,
++            )
++        # The released custom autograd Function expects one of the CUDA
++        # extensions to save its recurrence state for backward.  QAT runs must
++        # remain trainable when those optional extensions are absent, so route
++        # directly through the ordinary PyTorch reference graph in that case.
++        # Its forward arithmetic is the same fallback already used by
++        # SelectiveScan.forward, but autograd can now differentiate every op.
++        if selective_scan_cuda is None and selective_scan_cuda_oflex is None:
++            return selective_scan_reference(
++                u, delta, A, B, C, D, delta_bias, delta_softplus, nrows,
++                dynamic_p64_step=dynamic_p64_step,
++            )
++        if dynamic_p64_step is not None:
++            # Custom CUDA SelectiveScan hides the recurrence and cannot carry
++            # the compiler's q+p64 pair.  The explicit PyTorch recurrence is
++            # required for both QAT and ONNX source provenance.
++            return selective_scan_reference(
++                u, delta, A, B, C, D, delta_bias, delta_softplus, nrows,
++                dynamic_p64_step=dynamic_p64_step,
++            )
+         return SelectiveScan.apply(u, delta, A, B, C, D, delta_bias, delta_softplus, nrows)
+     
+-    ys: torch.Tensor = selective_scan(
+-        xs, dts, As, Bs, Cs, Ds, delta_bias, delta_softplus, nrows,
+-    ).view(B, K, -1, H, W)
++    if (
++        bool(scan_direction_partitioned)
++        and not isinstance(Bs, tuple)
++        and not (channel_partition_size > 0 and channel_partition_size < D)
++    ):
++        # The four 2-D scan directions are independent until CrossMerge.
++        # Evaluate them as four static branches so each direction owns its
++        # own activation grids.  This is exactly the same real-valued map as
++        # the K=4 batched call: every recurrent parameter and input is merely
++        # sliced on the existing group axis and concatenated in its original
++        # order.  The branch form realizes direction-wise INT8 quantization
++        # with ordinary stock operators and no compiler special case.
++        xs_by_direction = xs.view(B, K, D, L)
++        dts_by_direction = dts.view(B, K, D, L)
++        As_by_direction = As.view(K, D, N)
++        Bs_by_direction = Bs.view(B, K, N, L)
++        Cs_by_direction = Cs.view(B, K, N, L)
++        Ds_by_direction = Ds.view(K, D)
++        bias_by_direction = delta_bias.view(K, D)
++        direction_outputs = []
++        for direction in range(K):
++            direction_outputs.append(
++                selective_scan(
++                    xs_by_direction[:, direction : direction + 1].reshape(B, D, L),
++                    dts_by_direction[:, direction : direction + 1].reshape(B, D, L),
++                    As_by_direction[direction : direction + 1].reshape(D, N),
++                    Bs_by_direction[:, direction : direction + 1],
++                    Cs_by_direction[:, direction : direction + 1],
++                    Ds_by_direction[direction : direction + 1].reshape(D),
++                    bias_by_direction[direction : direction + 1].reshape(D),
++                    delta_softplus,
++                    nrows,
++                ).view(B, 1, D, H, W)
++            )
++        ys = torch.cat(direction_outputs, dim=1)
++    elif (
++        not isinstance(Bs, tuple)
++        and (
++            (channel_partition_size > 0 and channel_partition_size < D)
++            or dynamic_p64_steps is not None
++        )
++    ):
++        if D % channel_partition_size and dynamic_p64_steps is None:
++            raise ValueError(
++                f"scan width {D} is not divisible by channel partition "
++                f"size {channel_partition_size}"
++            )
++        # Model channels are independent inside selective scan (B/C are
++        # broadcast over them). Static channel shards concatenate to the exact
++        # original output while owning independent activation grids.
++        xs_by_direction = xs.view(B, K, D, L)
++        dts_by_direction = dts.view(B, K, D, L)
++        As_by_direction = As.view(K, D, N)
++        Ds_by_direction = Ds.view(K, D)
++        bias_by_direction = delta_bias.view(K, D)
++        channel_outputs = []
++        num_channel_blocks = (
++            (D + channel_partition_size - 1) // channel_partition_size)
++        if dynamic_p64_steps is not None and len(dynamic_p64_steps) != num_channel_blocks:
++            raise RuntimeError(
++                f"dynamic p64 step blocks differ: {len(dynamic_p64_steps)} "
++                f"!= {num_channel_blocks}")
++        for block_index, start in enumerate(range(0, D, channel_partition_size)):
++            stop = min(start + channel_partition_size, D)
++            width = stop - start
++            u_part = xs_by_direction[:, :, start:stop]
++            delta_part = dts_by_direction[:, :, start:stop]
++            a_part = As_by_direction[:, start:stop]
++            d_part = Ds_by_direction[:, start:stop]
++            bias_part = bias_by_direction[:, start:stop]
++            if width != channel_partition_size:
++                if dynamic_p64_steps is None:
++                    raise AssertionError("partial scan block requires dynamic p64")
++                pad = channel_partition_size - width
++                # State channels are independent. Appending zero u/delta and
++                # zero A/D/bias creates an inert state initialized at zero;
++                # slicing it away after the scan is mathematically identical
++                # to the original partial channel block.
++                u_part = F.pad(u_part, (0, 0, 0, pad))
++                delta_part = F.pad(delta_part, (0, 0, 0, pad))
++                a_part = F.pad(a_part, (0, 0, 0, pad))
++                d_part = F.pad(d_part, (0, pad))
++                bias_part = F.pad(bias_part, (0, pad))
++            physical_width = channel_partition_size
++            part_output = selective_scan(
++                u_part.reshape(B, K * physical_width, L),
++                delta_part.reshape(B, K * physical_width, L),
++                a_part.reshape(K * physical_width, N),
++                Bs,
++                Cs,
++                d_part.reshape(K * physical_width),
++                bias_part.reshape(K * physical_width),
++                delta_softplus,
++                nrows,
++                None if dynamic_p64_steps is None
++                else dynamic_p64_steps[block_index],
++            ).view(B, K, physical_width, L)
++            channel_outputs.append(
++                part_output[:, :, :width]
++            )
++        ys = torch.cat(channel_outputs, dim=2).view(B, K, D, H, W)
++    elif isinstance(Bs, tuple):
++        partition_outputs = []
++        for partition_index, ((start, width), B_part, C_part) in enumerate(
++            zip(state_slices, Bs, Cs)
++        ):
++            # D*u is independent of state and must be included exactly once.
++            D_part = Ds if partition_index == 0 else None
++            partition_outputs.append(
++                selective_scan(
++                    xs,
++                    dts,
++                    As[:, start : start + width],
++                    B_part,
++                    C_part,
++                    D_part,
++                    delta_bias,
++                    delta_softplus,
++                    nrows,
++                )
++            )
++        # Pairwise summation keeps the added INT8 requantization depth
++        # logarithmic when four or more state partitions are requested.
++        while len(partition_outputs) > 1:
++            next_outputs = []
++            for index in range(0, len(partition_outputs), 2):
++                if index + 1 < len(partition_outputs):
++                    next_outputs.append(
++                        partition_outputs[index] + partition_outputs[index + 1]
++                    )
++                else:
++                    next_outputs.append(partition_outputs[index])
++            partition_outputs = next_outputs
++        ys = partition_outputs[0].view(B, K, -1, H, W)
++    else:
++        ys = selective_scan(
++            xs, dts, As, Bs, Cs, Ds, delta_bias, delta_softplus, nrows,
++        ).view(B, K, -1, H, W)
+     
++    if input_equalized:
++        ys = F.conv2d(
++            ys.reshape(B, K * D, H, W),
++            scale.reshape(K * D, 1, 1, 1),
++            groups=K * D,
++        ).reshape(B, K, D, H, W)
++
+     if torch.onnx.is_in_onnx_export():
+         merged = ys.view(B, K, -1, L)
+         merged = merged[:, 0:2] + merged[:, 2:4].flip(-1)
+-        y = merged[:, 0] + merged[:, 1].view(B, -1, W, H).transpose(2, 3).contiguous().view(B, -1, L)
++        horizontal = merged[:, 0:1].reshape(B, -1, L)
++        vertical = (
++            merged[:, 1:2].reshape(B, -1, W, H)
++            .transpose(2, 3).contiguous().reshape(B, -1, L)
++        )
++        y = horizontal + vertical
+     else:
+         y: torch.Tensor = CrossMerge.apply(ys)
+     y = y.transpose(dim0=1, dim1=2).contiguous() # (B, L, C)
+     y = out_norm(y).view(B, H, W, -1)
+ 
+-    return (y.to(x.dtype) if to_dtype else y)
++    if to_dtype and y.dtype != x.dtype:
++        y = y.to(x.dtype)
++    return y
+ 
+ 
+ class SS2D(nn.Module):
+@@ -430,6 +1392,27 @@ class SS2D(nn.Module):
+         self.d_state = math.ceil(d_model / 6) if d_state == "auto" else d_state # 20240109
+         self.d_conv = d_conv
+         self.out_norm = nn.LayerNorm(d_inner)
++        self.tree_selective_scan = False
++        self.tree_scan_chunk_size = 64
++        self.identity_free_tree_scan = False
++        self.tree_scan_algorithm = "hillis_steele"
++        self.state_partition_size = 0
++        self.scan_channel_partition_size = 0
++        self.depthart_dynamic_p64_steps = nn.ModuleList()
++        self.scan_direction_partitioned = False
++        self.register_buffer(
++            "scan_input_equalization_scale", torch.empty(0), persistent=False
++        )
++        self.scan_state_rotation = None
++        self.branch_local_silu = False
++        self.split_out_projection = False
++        self.output_hadamard = None
++        self.output_hadamard_block_size = 0
++        self.output_rotation = None
++        self.output_low_equalizer = None
++        self.output_high_equalizer = None
++        self.output_channel_split_indices = ()
++        self.output_channel_split_mode = "none"
+ 
+         self.K = 4
+         self.K2 = self.K
+@@ -476,7 +1459,618 @@ class SS2D(nn.Module):
+             self.A_logs = nn.Parameter(torch.randn((self.K2 * d_inner, self.d_state))) # A == -A_logs.exp() < 0; # 0 < exp(A * dt) < 1
+             self.dt_projs_weight = nn.Parameter(torch.randn((self.K, d_inner, self.dt_rank)))
+             self.dt_projs_bias = nn.Parameter(torch.randn((self.K, d_inner))) 
+-    
++
++    def enable_branch_local_silu(self):
++        """Move SiLU across the channel split without changing FP32 math."""
++        self.branch_local_silu = True
++
++    def set_tree_scan_chunk_size(self, chunk_size: int) -> "SS2D":
++        """Set exact temporal groups for the associative selective scan.
++
++        Chunks exchange the exact final recurrent state, so changing this
++        static partition does not change the real-valued recurrence.  Smaller
++        groups expose separate QAT grids for hidden-state ranges that vary
++        along the sequence (QMamba temporal-group quantization) while keeping
++        only ordinary Slice/Concat/Multiply/Add operators.
++        """
++        value = int(chunk_size)
++        if value < 1 or value > 64:
++            raise ValueError(
++                f"tree-scan chunk size must be in [1, 64], found {value}"
++            )
++        self.tree_scan_chunk_size = value
++        return self
++
++    def enable_identity_free_tree_scan(self) -> "SS2D":
++        """Remove padded zero/one arithmetic from the exact prefix scan."""
++        if not self.tree_selective_scan:
++            raise RuntimeError("identity-free tree scan requires tree selective scan")
++        self.identity_free_tree_scan = True
++        return self
++
++    def set_tree_scan_algorithm(self, algorithm: str) -> "SS2D":
++        """Select an exact stock-operator parallel-prefix schedule."""
++        value = str(algorithm).strip().lower().replace("-", "_")
++        if value not in (
++            "hillis_steele", "sklansky", "hybrid_2", "hybrid_4",
++            "hybrid_8", "hybrid_16", "hybrid_32", "log_2", "log_4",
++            "log_8", "log_16",
++        ):
++            raise ValueError(f"unsupported tree-scan algorithm {algorithm!r}")
++        if not self.tree_selective_scan:
++            raise RuntimeError("tree-scan algorithm requires tree selective scan")
++        self.tree_scan_algorithm = value
++        return self
++
++    def enable_state_partitioning(self, partition_size: int) -> "SS2D":
++        """Split the independent SSM state axis into static INT8 branches.
++
++        State coordinates do not interact inside selective scan; they meet
++        only in the final C contraction.  Partitioning that contraction and
++        summing the partial results is therefore the same real-valued map
++        (modulo floating reduction order) while avoiding one shared activation
++        range for all state coordinates.  Only ordinary Conv/Slice/Add and the
++        existing scan arithmetic are used, so no compiler feature is needed.
++        """
++        value = int(partition_size)
++        if value < 1 or value > self.d_state:
++            raise ValueError(
++                f"state partition size must be in [1, {self.d_state}], found {value}"
++            )
++        if self.d_state % value:
++            raise ValueError(
++                f"state dimension {self.d_state} is not divisible by {value}"
++            )
++        self.state_partition_size = 0 if value == self.d_state else value
++        return self
++
++    def enable_scan_channel_partitioning(self, partition_size: int) -> "SS2D":
++        """Shard independent selective-scan model channels for INT8 ranges."""
++        value = int(partition_size)
++        channels = int(self.split[0])
++        if value < 1 or value > channels:
++            raise ValueError(
++                f"scan channel partition size must be in [1, {channels}], found {value}"
++            )
++        if channels % value:
++            raise ValueError(
++                f"scan width {channels} is not divisible by {value}"
++            )
++        self.scan_channel_partition_size = 0 if value == channels else value
++        return self
++
++    def enable_depthart_dynamic_p64_scan_(
++        self,
++        *,
++        stack_id: str,
++        bases: Optional[list[dict[str, float]]] = None,
++        safety_margin: float = 1.0,
++        observe: bool = True,
++    ) -> "SS2D":
++        """Enable compiler-exact q+p64 QAT for this selective recurrence.
++
++        The customer-facing setup is intentionally one call per SS2D module.
++        It selects the mathematically independent 16-channel architecture
++        partition (16 channels x DepthART's 8 state coordinates = C128) and
++        creates one shared range profile per partition.  Dynamic p64 still
++        varies per batch/direction/token at runtime.
++
++        ``bases`` may provide one dictionary per channel block with keys
++        ``state``, ``transition``, ``injection``, ``product``, ``output`` and
++        ``readout`` (the ordinary fixed-INT8 grid used by the C contraction).
++        Omit it for observer-driven calibration, then freeze the modules before
++        qualification/export.
++        """
++        if self.d_state != 8:
++            raise RuntimeError(
++                f"DepthART p64 scan requires d_state=8, found {self.d_state}")
++        channels = int(self.split[0])
++        if not str(stack_id):
++            raise ValueError("stack_id must be nonempty")
++        if self.state_partition_size or self.scan_direction_partitioned:
++            raise RuntimeError(
++                "dynamic p64 scan is not composable with state/direction partitioning")
++        # Keep 16 explicit even when the complete scan width is one C128
++        # block; the generic setter uses zero as its no-partition sentinel.
++        self.scan_channel_partition_size = 16
++        # The scan starts from the exact additive identity.  Removing the
++        # first chunk's ``transition * 0 + injection`` is real-math
++        # equivalent, avoids a redundant quantized rounding boundary, and
++        # gives AFE one deterministic topology instead of a size-dependent
++        # constant-folding choice.  Keep this source-architecture property on
++        # automatically for the one-call dynamic-p64 customer API.
++        self.identity_free_tree_scan = True
++        num_blocks = (channels + 15) // 16
++        profiles = bases or [{} for _ in range(num_blocks)]
++        if len(profiles) != num_blocks:
++            raise ValueError(
++                f"expected {num_blocks} p64 base profiles, found {len(profiles)}")
++        try:
++            from sima_qat.dynamic_p64 import DepthARTDynamicP64Step
++        except ImportError as exc:
++            raise RuntimeError(
++                "install/add qat-shift-aware-extension to PYTHONPATH before "
++                "enabling DepthART dynamic p64 QAT") from exc
++        default = 1.0 / 32767.0
++        steps = []
++        for block_index, profile in enumerate(profiles):
++            unknown = set(profile).difference(
++                {"state", "transition", "injection", "product", "output",
++                 "readout", "transition_static_scale",
++                 "transition_static_zero_point", "injection_static_scale",
++                 "injection_static_zero_point"})
++            if unknown:
++                raise ValueError(f"unknown p64 base keys: {sorted(unknown)}")
++            state_base = float(profile.get("state", default))
++            output_base = float(profile.get("output", state_base))
++            if state_base != output_base:
++                raise ValueError(
++                    "a shared recurrent p64 step requires state base == output base")
++            steps.append(DepthARTDynamicP64Step(
++                state_base=state_base,
++                transition_base=float(profile.get("transition", default)),
++                injection_base=float(profile.get("injection", default)),
++                product_base=float(profile.get("product", default)),
++                output_base=output_base,
++                readout_scale=float(profile.get("readout", 1.0 / 127.0)),
++                transition_static_scale=float(
++                    profile.get("transition_static_scale", 1.0 / 127.0)),
++                transition_static_zero_point=int(
++                    profile.get("transition_static_zero_point", 0)),
++                injection_static_scale=float(
++                    profile.get("injection_static_scale", 1.0 / 127.0)),
++                injection_static_zero_point=int(
++                    profile.get("injection_static_zero_point", 0)),
++                safety_margin=safety_margin,
++                observe=observe,
++                stack_id=f"{stack_id}.block{block_index}",
++                timestep=0,
++                block_index=block_index,
++                num_blocks=num_blocks,
++            ))
++        # ``prepare_depthart_dynamic_p64`` is commonly called after the source
++        # model has already moved to CUDA. Newly attached modules otherwise
++        # remain on CPU, and export inserts/executes a cross-device scalar-one
++        # marker. Move only device here; preserve the deliberate float64 base
++        # buffers used by the compiler contract.
++        self.depthart_dynamic_p64_steps = nn.ModuleList(steps).to(
++            device=self.A_logs.device)
++        return self
++
++    def freeze_depthart_dynamic_p64_(self) -> "SS2D":
++        if not self.depthart_dynamic_p64_steps:
++            raise RuntimeError("dynamic p64 scan is not enabled")
++        for step in self.depthart_dynamic_p64_steps:
++            step.freeze_base()
++        return self
++
++    def enable_scan_direction_partitioning(self) -> "SS2D":
++        """Expose the four independent 2-D scan directions as INT8 branches.
++
++        The original batched selective scan already treats direction as its
++        group axis.  Static slicing and concatenation therefore preserve the
++        FP32 function while preventing unrelated horizontal/vertical and
++        forward/reverse distributions from sharing one activation scale.
++        """
++        if self.state_partition_size:
++            raise RuntimeError(
++                "direction and state partitioning are not yet composable"
++            )
++        if self.scan_channel_partition_size:
++            raise RuntimeError(
++                "direction and channel partitioning are not yet composable"
++            )
++        self.scan_direction_partitioned = True
++        return self
++
++    def enable_scan_input_equalization_(self, scale: torch.Tensor) -> "SS2D":
++        """Normalize the scan's linear u coordinate and invert its output."""
++        value = torch.as_tensor(
++            scale,
++            device=self.x_proj_weight.device,
++            dtype=self.x_proj_weight.dtype,
++        )
++        channels = int(self.split[0])
++        if value.numel() == channels:
++            value = value.reshape(channels)
++        elif value.numel() == self.K * channels:
++            value = value.reshape(self.K, channels)
++        else:
++            raise ValueError(
++                "scan input equalization expects D or K*D positive scales, "
++                f"found {value.numel()} for D={channels}, K={self.K}"
++            )
++        if not bool(torch.isfinite(value).all()) or not bool((value > 0).all()):
++            raise ValueError("scan input equalization scales must be finite and positive")
++        self.scan_input_equalization_scale = value.detach().clone()
++        return self
++
++    def enable_scan_state_rotation_(self, matrix: torch.Tensor) -> "SS2D":
++        """Rotate C and recurrent states exactly at their final contraction."""
++        value = torch.as_tensor(
++            matrix,
++            device=self.x_proj_weight.device,
++            dtype=self.x_proj_weight.dtype,
++        )
++        expected = (self.d_state, self.d_state)
++        if tuple(value.shape) != expected or not bool(torch.isfinite(value).all()):
++            raise ValueError(
++                f"scan state rotation must be a finite {expected} matrix"
++            )
++        identity = torch.eye(
++            self.d_state, device=value.device, dtype=value.dtype
++        )
++        error = (value.T @ value - identity).abs().max()
++        if float(error) > 2e-5:
++            raise ValueError(
++                "scan state rotation must be orthogonal: max error "
++                f"{float(error):.8g}"
++            )
++        self.scan_state_rotation = FixedLastAxisRotation(value)
++        return self
++
++    def enable_split_out_projection(self):
++        """Keep the low/high branches separate through the output projection.
++
++        The released output projection is linear in its input channels.  For
++        ``x = cat((x_low, x_high))`` and ``W = cat((W_low, W_high), dim=1)``,
++
++        ``conv(x, W, b) = conv(x_low, W_low, b) + conv(x_high, W_high, 0)``.
++
++        The branch form is therefore mathematically identical, but permits a
++        strict per-tensor INT8 target to assign independent activation grids to
++        the recurrent low-frequency and local high-frequency features.  It is
++        expressed with ordinary Conv and Add operations supported by the stock
++        compiler and does not add model parameters.
++        """
++        self.split_out_projection = True
++
++    @torch.no_grad()
++    def enable_output_channel_equalization_(
++        self, channel_scale: torch.Tensor
++    ) -> "SS2D":
++        """Insert an exact diagonal scale before ``out_proj``.
++
++        For ``z = x / s``, replacing each input column of the projection with
++        ``W'[:, i] = W[:, i] * s[i]`` gives ``W' z = W x``.  The low/high
++        branch scales are applied before their final concatenation so the
++        shared per-tensor activation grid sees the equalized ranges.  The
++        runtime scales are frozen depthwise 1x1 Convs and the inverse is folded
++        into the existing projection, so the transformation uses only stock
++        compiler operators and adds no trainable degrees of freedom.
++        """
++        if self.output_low_equalizer is not None or self.output_high_equalizer is not None:
++            raise RuntimeError("SS2D output channels are already equalized")
++        if self.split_out_projection:
++            raise RuntimeError(
++                "output channel equalization and split output projection are mutually exclusive"
++            )
++        projection = self.out_proj.c if isinstance(self.out_proj, Conv2d_BN) else self.out_proj
++        if not isinstance(projection, nn.Conv2d) or projection.kernel_size != (1, 1):
++            raise RuntimeError("SS2D output equalization requires a 1x1 out_proj")
++        if projection.groups != 1:
++            raise RuntimeError("SS2D output equalization requires an ungrouped out_proj")
++        scale = torch.as_tensor(
++            channel_scale,
++            device=projection.weight.device,
++            dtype=projection.weight.dtype,
++        ).flatten()
++        if scale.numel() != projection.in_channels:
++            raise ValueError(
++                "output channel scale has the wrong width: "
++                f"{scale.numel()} != {projection.in_channels}"
++            )
++        if not bool(torch.isfinite(scale).all()) or not bool((scale > 0).all()):
++            raise ValueError("output channel scales must be finite and positive")
++        low_channels = int(self.split[0])
++        self.output_low_equalizer = FixedChannelScale(scale[:low_channels].reciprocal())
++        self.output_high_equalizer = FixedChannelScale(scale[low_channels:].reciprocal())
++        projection.weight.mul_(scale.reshape(1, -1, 1, 1))
++        return self
++
++    @torch.no_grad()
++    def fold_output_channel_equalization_(
++        self, channel_scale: torch.Tensor
++    ) -> "SS2D":
++        """Fold exact output equalization into existing producer parameters.
++
++        The final (index-3) SS2D has no low-frequency resize/residual after
++        ``out_norm``.  Its low branch is therefore affine in LayerNorm's
++        learned gamma/beta and its high branch is affine in the fused local
++        depthwise Conv. Dividing both producer outputs channelwise and folding
++        the inverse into ``out_proj`` is exactly equivalent and introduces no
++        runtime operator at all.
++        """
++        if self.index != 3:
++            raise RuntimeError(
++                "producer-folded SS2D output equalization requires index 3"
++            )
++        if self.output_low_equalizer is not None or self.output_high_equalizer is not None:
++            raise RuntimeError("runtime output equalization is already enabled")
++        projection = self.out_proj.c if isinstance(self.out_proj, Conv2d_BN) else self.out_proj
++        if not isinstance(projection, nn.Conv2d) or projection.kernel_size != (1, 1):
++            raise RuntimeError("folded output equalization requires a 1x1 out_proj")
++        if not isinstance(self.out_norm, nn.LayerNorm) or not self.out_norm.elementwise_affine:
++            raise RuntimeError("folded output equalization requires affine LayerNorm")
++        if not isinstance(self.local_conv, nn.Conv2d):
++            raise RuntimeError("folded output equalization requires fused local_conv")
++        scale = torch.as_tensor(
++            channel_scale,
++            device=projection.weight.device,
++            dtype=projection.weight.dtype,
++        ).flatten()
++        if scale.numel() != projection.in_channels:
++            raise ValueError(
++                f"output channel scale width {scale.numel()} != {projection.in_channels}"
++            )
++        if not bool(torch.isfinite(scale).all()) or not bool((scale > 0).all()):
++            raise ValueError("output channel scales must be finite and positive")
++        low_channels = int(self.split[0])
++        low = scale[:low_channels].to(self.out_norm.weight)
++        high = scale[low_channels:].to(self.local_conv.weight)
++        if low.numel() != self.out_norm.weight.numel():
++            raise RuntimeError("low equalization width does not match LayerNorm")
++        if high.numel() != self.local_conv.out_channels:
++            raise RuntimeError("high equalization width does not match local_conv")
++        self.out_norm.weight.div_(low)
++        self.out_norm.bias.div_(low)
++        self.local_conv.weight.div_(high.reshape(-1, 1, 1, 1))
++        if self.local_conv.bias is not None:
++            self.local_conv.bias.div_(high)
++        projection.weight.mul_(scale.reshape(1, -1, 1, 1))
++        return self
++
++    @torch.no_grad()
++    def enable_output_channel_splitting_(
++        self, channel_indices: tuple[int, ...] | list[int]
++    ) -> "SS2D":
++        """Apply exact Outlier Channel Splitting before ``out_proj``.
++
++        Each selected activation channel ``x_i`` is replaced by two channels
++        ``x_i / 2`` and the corresponding projection column is duplicated.
++        Their two contributions sum to the original ``W_i x_i`` exactly, while
++        the shared INT8 input grid sees half the selected outlier magnitude.
++        Only Slice, scalar Multiply, Concat, and an ordinary widened Conv are
++        used, all supported by the stock compiler.
++        """
++        if self.output_channel_split_indices:
++            raise RuntimeError("SS2D output channel splitting is already enabled")
++        if self.split_out_projection:
++            raise RuntimeError(
++                "output channel splitting and split output projection are mutually exclusive"
++            )
++        if self.output_low_equalizer is not None or self.output_high_equalizer is not None:
++            raise RuntimeError(
++                "output channel splitting and output equalization are mutually exclusive"
++            )
++        projection = self.out_proj
++        if not isinstance(projection, nn.Conv2d) or projection.kernel_size != (1, 1):
++            raise RuntimeError("output channel splitting requires fused 1x1 out_proj")
++        if projection.groups != 1:
++            raise RuntimeError("output channel splitting requires ungrouped out_proj")
++        indices = tuple(sorted({int(value) for value in channel_indices}))
++        if not indices:
++            raise ValueError("at least one output-projection input channel must be split")
++        if indices[0] < 0 or indices[-1] >= projection.in_channels:
++            raise ValueError("output channel split index is out of range")
++        low_channels = int(self.split[0])
++        low_indices = tuple(range(low_channels))
++        high_indices = tuple(range(low_channels, projection.in_channels))
++        if indices == low_indices:
++            self.output_channel_split_mode = "low"
++            expanded_weight = torch.cat(
++                (
++                    projection.weight[:, :low_channels],
++                    projection.weight[:, :low_channels],
++                    projection.weight[:, low_channels:],
++                ),
++                dim=1,
++            )
++        elif indices == high_indices:
++            self.output_channel_split_mode = "high"
++            expanded_weight = torch.cat(
++                (
++                    projection.weight[:, :low_channels],
++                    projection.weight[:, low_channels:],
++                    projection.weight[:, low_channels:],
++                ),
++                dim=1,
++            )
++        elif indices == tuple(range(projection.in_channels)):
++            self.output_channel_split_mode = "all"
++            expanded_weight = torch.cat(
++                (
++                    projection.weight[:, :low_channels],
++                    projection.weight[:, :low_channels],
++                    projection.weight[:, low_channels:],
++                    projection.weight[:, low_channels:],
++                ),
++                dim=1,
++            )
++        else:
++            self.output_channel_split_mode = "sparse"
++            expanded_columns = []
++            selected = set(indices)
++            for channel in range(projection.in_channels):
++                column = projection.weight[:, channel : channel + 1]
++                expanded_columns.append(column)
++                if channel in selected:
++                    expanded_columns.append(column.clone())
++            expanded_weight = torch.cat(expanded_columns, dim=1)
++        replacement = nn.Conv2d(
++            projection.in_channels + len(indices),
++            projection.out_channels,
++            1,
++            stride=projection.stride,
++            padding=projection.padding,
++            dilation=projection.dilation,
++            bias=projection.bias is not None,
++            device=projection.weight.device,
++            dtype=projection.weight.dtype,
++        )
++        replacement.weight.copy_(expanded_weight)
++        if projection.bias is not None:
++            replacement.bias.copy_(projection.bias)
++        self.out_proj = replacement
++        self.output_channel_split_indices = indices
++        return self
++
++    @torch.no_grad()
++    def enable_output_hadamard_(self, block_size: int = 32) -> "SS2D":
++        """Insert an exact low-branch rotation and fold its inverse into out_proj.
++
++        If ``z = H x`` for an orthogonal block-Hadamard matrix, replacing the
++        corresponding output-projection columns by ``W H.T`` preserves
++        ``W x`` exactly over real arithmetic.  The runtime rotation makes
++        channel outliers easier for a per-tensor activation grid while the
++        inverse is fully absorbed into the existing 1x1 Conv. No compiler
++        change or floating fallback is required.
++        """
++
++        block_size = int(block_size)
++        if self.output_hadamard is not None:
++            if self.output_hadamard_block_size != block_size:
++                raise RuntimeError(
++                    "SS2D output Hadamard is already enabled with block size "
++                    f"{self.output_hadamard_block_size}"
++                )
++            return self
++        low_channels = int(self.split[0])
++        projection = self.out_proj.c if isinstance(self.out_proj, Conv2d_BN) else self.out_proj
++        if not isinstance(projection, nn.Conv2d) or projection.kernel_size != (1, 1):
++            raise RuntimeError("SS2D Hadamard folding requires an ordinary 1x1 out_proj")
++        if projection.groups != 1 or projection.in_channels < low_channels:
++            raise RuntimeError("SS2D Hadamard folding requires an ungrouped out_proj")
++        rotation = FixedBlockHadamard(low_channels, block_size).to(
++            device=projection.weight.device, dtype=projection.weight.dtype
++        )
++        matrix = rotation.weight[:block_size, :, 0, 0]
++        low_weight = projection.weight[:, :low_channels, 0, 0]
++        grouped = low_weight.reshape(projection.out_channels, -1, block_size)
++        folded = torch.einsum("ogc,dc->ogd", grouped, matrix)
++        projection.weight[:, :low_channels, 0, 0].copy_(
++            folded.reshape(projection.out_channels, low_channels)
++        )
++        self.output_hadamard = rotation
++        self.output_hadamard_block_size = block_size
++        return self
++
++    @torch.no_grad()
++    def enable_output_rotation_(
++        self, matrix: torch.Tensor, center: torch.Tensor | None = None
++    ) -> "SS2D":
++        """Insert an exact full-output rotation before ``out_proj``.
++
++        For the orthogonal matrix ``R``, runtime ``z = R.T @ x`` and folded
++        projection ``W' = W @ R`` satisfy ``W' @ z = W @ x``.  Unlike the
++        historical low-branch Hadamard experiment this covers the complete
++        recurrent/local feature vector consumed by the output projection, as
++        prescribed by variance-aligned Mamba quantization methods.
++        """
++
++        if self.output_rotation is not None:
++            raise RuntimeError("SS2D output rotation is already enabled")
++        if self.output_hadamard is not None:
++            raise RuntimeError(
++                "full output rotation and low-branch Hadamard are mutually exclusive"
++            )
++        if self.split_out_projection:
++            raise RuntimeError(
++                "full output rotation and split output projection are mutually exclusive"
++            )
++        if self.output_low_equalizer is not None or self.output_channel_split_indices:
++            raise RuntimeError(
++                "full output rotation cannot be combined with output equalization/splitting"
++            )
++        projection = self.out_proj.c if isinstance(self.out_proj, Conv2d_BN) else self.out_proj
++        if not isinstance(projection, nn.Conv2d) or projection.kernel_size != (1, 1):
++            raise RuntimeError("SS2D output rotation requires an ordinary 1x1 out_proj")
++        if projection.groups != 1:
++            raise RuntimeError("SS2D output rotation requires an ungrouped out_proj")
++        matrix = torch.as_tensor(
++            matrix, device=projection.weight.device, dtype=projection.weight.dtype
++        )
++        if tuple(matrix.shape) != (projection.in_channels, projection.in_channels):
++            raise ValueError(
++                "output rotation shape mismatch: expected "
++                f"{(projection.in_channels, projection.in_channels)}, "
++                f"found {tuple(matrix.shape)}"
++            )
++        center_supplied = center is not None
++        center = (
++            torch.zeros(
++                projection.in_channels,
++                device=projection.weight.device,
++                dtype=projection.weight.dtype,
++            )
++            if center is None
++            else torch.as_tensor(
++                center,
++                device=projection.weight.device,
++                dtype=projection.weight.dtype,
++            ).flatten()
++        )
++        if center.numel() != projection.in_channels or not bool(torch.isfinite(center).all()):
++            raise ValueError(
++                "output rotation center must be a finite vector of width "
++                f"{projection.in_channels}"
++            )
++        if bool((center != 0).any()) and projection.bias is None:
++            raise RuntimeError(
++                "centered output rotation requires an explicit out_proj bias"
++            )
++        rotation = FixedChannelRotation(
++            matrix, center if center_supplied else None
++        ).to(
++            device=projection.weight.device, dtype=projection.weight.dtype
++        )
++        original = projection.weight[:, :, 0, 0]
++        if projection.bias is not None:
++            projection.bias.add_(original @ center)
++        projection.weight[:, :, 0, 0].copy_(original @ matrix)
++        self.output_rotation = rotation
++        return self
++
++    @torch.no_grad()
++    def fold_state_gauge_(self, gauge: torch.Tensor) -> "SS2D":
++        """Fold an exact diagonal selective-scan state change into its weights.
++
++        For the released recurrence
++
++        ``state[t] = transition[t] * state[t - 1] + injection[t]`` and
++        ``output[t] = C[t] @ state[t]``, let ``state' = gauge * state``.
++        Multiplying the rows that produce ``B`` by ``gauge`` and dividing the
++        corresponding ``C`` rows by it gives
++
++        ``state'[t] = transition[t] * state'[t - 1] + gauge * injection[t]``
++        and ``(C[t] / gauge) @ state'[t] = C[t] @ state[t]``.
++
++        The transformation is therefore exactly equivalent over real
++        arithmetic.  It adds no forward operator or persistent parameter: the
++        gauge is fully absorbed into ``x_proj_weight``.  QAT may select the
++        gauge to improve the conditioning of per-tensor INT8 grids, then save
++        the ordinary DepthART state dict for stock compilation.
++        """
++        gauge = torch.as_tensor(
++            gauge,
++            device=self.x_proj_weight.device,
++            dtype=self.x_proj_weight.dtype,
++        )
++        expected = (self.K, self.d_state)
++        if tuple(gauge.shape) != expected:
++            raise ValueError(
++                f"state gauge must have shape {expected}, found {tuple(gauge.shape)}"
++            )
++        if not bool(torch.isfinite(gauge).all()) or not bool((gauge > 0).all()):
++            raise ValueError("state gauge values must be finite and strictly positive")
++
++        rank = self.dt_rank
++        state = self.d_state
++        row_scale = gauge.unsqueeze(-1)
++        self.x_proj_weight[:, rank:rank + state].mul_(row_scale)
++        self.x_proj_weight[:, rank + state:rank + 2 * state].div_(row_scale)
++        return self
++
+ 
+     @staticmethod
+     def dt_init(dt_rank, d_inner, dt_scale=1.0, dt_init="random", dt_min=0.001, dt_max=0.1, dt_init_floor=1e-4, **factory_kwargs):
+@@ -540,6 +2134,15 @@ class SS2D(nn.Module):
+             x = self.in_rank(x)
+         
+         x_low, x_high = torch.split(x, self.split, dim=1)
++        # SiLU is elementwise, so applying it independently after the channel
++        # split is mathematically identical to applying it once before the
++        # split.  The branch-local form is important for strict INT8 QAT: each
++        # branch owns a visible activation grid instead of AFE having to invent
++        # one hidden shared Swish grid and then insert selection/requantization
++        # helpers that PyTorch fake quant cannot train against.
++        if self.d_conv > 1 and self.branch_local_silu:
++            x_low = self.act(x_low)
++            x_high = self.act(x_high)
+         B, C, H, W = x.shape
+         x_high = self.local_conv(x_high)
+         # 保存处理后的高频特征  
+@@ -553,13 +2156,79 @@ class SS2D(nn.Module):
+             x_low, self.x_proj_weight, None, self.dt_projs_weight, self.dt_projs_bias,
+             self.A_logs, self.Ds, getattr(self, "out_norm", None),
+             nrows=nrows, delta_softplus=True, force_fp32=self.training,
++            tree_scan=self.tree_selective_scan,
++            tree_scan_chunk_size=self.tree_scan_chunk_size,
++            state_partition_size=self.state_partition_size,
++            scan_channel_partition_size=self.scan_channel_partition_size,
++            scan_direction_partitioned=self.scan_direction_partitioned,
++            scan_input_equalization_scale=self.scan_input_equalization_scale,
++            scan_state_rotation=self.scan_state_rotation,
++            identity_free_tree_scan=self.identity_free_tree_scan,
++            tree_scan_algorithm=self.tree_scan_algorithm,
++            dynamic_p64_steps=(
++                self.depthart_dynamic_p64_steps
++                if self.depthart_dynamic_p64_steps else None
++            ),
+         )
+         x_low = x_low.permute(0, 3, 1, 2)
+         
+         if self.index < 3:
+             x_low = F.interpolate(x_low, scale_factor=2**(3-self.index), mode='bilinear') + res
++        if self.output_hadamard is not None:
++            x_low = self.output_hadamard(x_low)
+         x_low_processed = x_low.clone() if return_high_freq else None 
++        if self.output_low_equalizer is not None:
++            if self.output_high_equalizer is None:
++                raise RuntimeError("incomplete SS2D output channel equalization")
++            x_low = self.output_low_equalizer(x_low)
++            x_high = self.output_high_equalizer(x_high)
++        if self.output_channel_split_indices:
++            if self.output_channel_split_mode in ("low", "high", "all"):
++                low_half = x_low * 0.5
++                high_half = x_high * 0.5
++                if self.output_channel_split_mode == "low":
++                    parts = (low_half, low_half, x_high)
++                elif self.output_channel_split_mode == "high":
++                    parts = (x_low, high_half, high_half)
++                else:
++                    parts = (low_half, low_half, high_half, high_half)
++                x = torch.cat(parts, dim=1)
++                if return_high_freq:
++                    return x, x_high_processed, x_low_processed
++                return x
++            parts = []
++            low_channels = int(self.split[0])
++            for value, global_start in ((x_low, 0), (x_high, low_channels)):
++                local_selected = [
++                    index - global_start
++                    for index in self.output_channel_split_indices
++                    if global_start <= index < global_start + value.shape[1]
++                ]
++                start = 0
++                for index in local_selected:
++                    if start < index:
++                        parts.append(value[:, start:index])
++                    half = value[:, index : index + 1] * 0.5
++                    parts.extend((half, half))
++                    start = index + 1
++                if start < value.shape[1]:
++                    parts.append(value[:, start:])
++            x = torch.cat(parts, dim=1)
++            if return_high_freq:
++                return x, x_high_processed, x_low_processed
++            return x
++        if self.split_out_projection:
++            if self.ssm_low_rank:
++                raise RuntimeError(
++                    "split output projection is not defined for ssm_low_rank"
++                )
++            branches = (x_low, x_high)
++            if return_high_freq:
++                return branches, x_high_processed, x_low_processed
++            return branches
+         x = torch.cat((x_low, x_high),dim=1)
++        if self.output_rotation is not None:
++            x = self.output_rotation(x)
+         if self.ssm_low_rank:
+             x = self.out_rank(x)
+         if return_high_freq:  
+@@ -569,10 +2238,45 @@ class SS2D(nn.Module):
+     def forward(self, x: torch.Tensor, return_high_freq=False, **kwargs):  
+         x = self.in_proj(x)  
+         if self.d_conv > 1:  
+-            x = self.act(self.conv2d(x))  
++            x = self.conv2d(x)
++            if not self.branch_local_silu:
++                x = self.act(x)
+         
+         result = self.forward_core(x, channel_first=(self.d_conv > 1), return_high_freq=return_high_freq)  
+         
++        if self.split_out_projection:
++            if return_high_freq:
++                (x_low_branch, x_high_branch), x_high, x_low = result
++            else:
++                x_low_branch, x_high_branch = result
++            projection = self.out_proj
++            if not isinstance(projection, nn.Conv2d):
++                raise RuntimeError(
++                    "split output projection requires fused Conv2d_BN"
++                )
++            low_channels = int(self.split[0])
++            low = F.conv2d(
++                x_low_branch,
++                projection.weight[:, :low_channels],
++                projection.bias,
++                projection.stride,
++                projection.padding,
++                projection.dilation,
++                projection.groups,
++            )
++            high = F.conv2d(
++                x_high_branch,
++                projection.weight[:, low_channels:],
++                None,
++                projection.stride,
++                projection.padding,
++                projection.dilation,
++                projection.groups,
++            )
++            out = self.dropout(low + high)
++            if return_high_freq:
++                return out, x_high, x_low
++            return out
+         if return_high_freq:  
+             x, x_high,x_low = result  
+             out = self.dropout(self.out_proj(x))  

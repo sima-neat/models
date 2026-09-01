@@ -12,7 +12,13 @@ from .errors import ValidationError
 from .fetch import sha256_file
 from .model import variant_requires_calibration
 from .published import artifact_url, validate_latest_index
-from .taxonomy import TAXONOMY_RELATIVE_PATH, canonical_taxonomy_document, load_taxonomy, validate_model_categorization
+from .taxonomy import (
+    TAXONOMY_RELATIVE_PATH,
+    canonical_taxonomy_document,
+    load_taxonomy,
+    load_taxonomy_for_model,
+    validate_model_categorization,
+)
 
 
 def _size_text(size_bytes: int) -> str:
@@ -82,7 +88,10 @@ def package_compiled_models(
 
     catalog = discover_catalog(root)
     taxonomy = load_taxonomy(root / TAXONOMY_RELATIVE_PATH)
-    categorizations = {model_id: validate_model_categorization(model, taxonomy) for model_id, model in catalog.items()}
+    categorizations = {
+        model_id: validate_model_categorization(model, load_taxonomy_for_model(root, model))
+        for model_id, model in catalog.items()
+    }
     version = git_sha[:12]
     previous_models: dict[str, Any] = {}
     if previous_index is not None:
