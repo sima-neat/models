@@ -52,7 +52,8 @@ def _compiled_fixture(
             }
             calibration = model["calibration"]
             if calibration["status"] == "ready":
-                provenance["calibration_sha256"] = calibration["source"]["sha256"]
+                calibration_input = calibration.get("source") or calibration.get("dataset")
+                provenance["calibration_sha256"] = calibration_input["sha256"]
             verify_mpk(
                 output,
                 write_manifest=True,

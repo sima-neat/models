@@ -89,7 +89,13 @@ def test_catalog_model_is_valid() -> None:
     assert set(variants) == {"modalix_bf16", "modalix_int8"}
     assert variants["modalix_bf16"]["parameters"]["precision"] == "bf16"
     assert variants["modalix_int8"]["parameters"]["precision"] == "int8"
-    assert variants["modalix_int8"]["parameters"]["calibration_samples"] == 8
+    assert variants["modalix_int8"]["parameters"]["calibration_samples"] == 500
+    assert model["calibration"]["dataset"] == {
+        "id": "imagenet-2012",
+        "variant": "mini",
+        "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
+        "size_bytes": 356052889,
+    }
 
 
 def test_unknown_task_fails_semantic_validation() -> None:

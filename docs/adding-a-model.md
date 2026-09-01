@@ -125,6 +125,12 @@ dataset checksum, thresholds, and measured values needed by reviewers. The
 model schema verifies that test paths exist; model-specific test formats and
 release gates may impose additional requirements.
 
+For image-classification accuracy measurement, add an executable correctness
+YAML with `engine: model_registry`. Keep sampling, workers, executors, metrics,
+and reporting declarative; do not add a model-local evaluator. Follow
+[Local accuracy development](local-accuracy-development.md) to compile and run
+the regular and qualification profiles inside the SDK.
+
 ## 6. Add model-specific preparation and compilation
 
 Set surgery to `none` when the pinned source can be compiled directly:

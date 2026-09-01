@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .accuracy import evaluate_accuracy, resolve_dataset
 from .artifact import verify_mpk
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
@@ -20,6 +21,7 @@ AUTHOR_COMMANDS = frozenset(
     {
         "fetch",
         "fetch-calibration",
+        "evaluate",
         "matrix",
         "resolve-compiler",
         "validate",
@@ -64,7 +66,23 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     calibration.add_argument("model_dir", type=Path)
     calibration.add_argument("--schema", type=Path)
     calibration.add_argument("--cache-dir", type=Path)
+    calibration.add_argument("--variant", help="resolve calibration only when this compile variant requires it")
     calibration.add_argument("--json", action="store_true", dest="json_output")
+
+    evaluate = subcommands.add_parser("evaluate", help="run a declarative model accuracy evaluation")
+    evaluate.add_argument("model_dir", type=Path)
+    evaluate.add_argument("--variant", required=True)
+    evaluate.add_argument("--candidate-model", type=Path, required=True, help="saved candidate .sima graph")
+    evaluate.add_argument("--reference-model", type=Path, help="verified ONNX source; fetched when omitted")
+    evaluate.add_argument("--dataset", type=Path, help="verified dataset archive; resolved when omitted")
+    evaluate.add_argument("--dataset-cache-dir", type=Path)
+    evaluate.add_argument("--model-cache-dir", type=Path)
+    evaluate.add_argument("--test-id")
+    evaluate.add_argument("--profile", default="regular")
+    evaluate.add_argument("--samples", type=int)
+    evaluate.add_argument("--workers", type=int)
+    evaluate.add_argument("--output", type=Path, required=True)
+    evaluate.add_argument("--json", action="store_true", dest="json_output")
 
     matrix = subcommands.add_parser("matrix", help="emit a deterministic changed-model compilation matrix")
     matrix.add_argument("--repository", type=Path, default=Path.cwd())
@@ -227,12 +245,29 @@ def _fetch(args: argparse.Namespace) -> int:
 def _fetch_calibration(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     calibration = model["calibration"]
-    if calibration["status"] != "ready":
-        result = {"model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    variant_requires_calibration = True
+    if args.variant:
+        variants = [item for item in model["compile_variants"] if item["id"] == args.variant]
+        if len(variants) != 1:
+            raise ModelRegistryError(f"unknown compile variant: {args.variant}")
+        variant_requires_calibration = "calibration_samples" in variants[0].get("parameters", {})
+    if calibration["status"] != "ready" or not variant_requires_calibration:
+        result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    elif "dataset" in calibration:
+        dataset = calibration["dataset"]
+        path = resolve_dataset(dataset, None, args.cache_dir)
+        result = {
+            "kind": "dataset",
+            "model_id": model["id"],
+            "path": str(path),
+            "sha256": dataset["sha256"],
+            "size_bytes": dataset["size_bytes"],
+        }
     else:
         source = SourceSpec.from_mapping(calibration["source"])
         path, cache_hit = Fetcher(args.cache_dir).fetch(source)
         result = {
+            "kind": "source",
             "cache_hit": cache_hit,
             "model_id": model["id"],
             "path": str(path),
@@ -245,6 +280,36 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
         print(f"Verified calibration: {result['path']}")
     else:
         print(f"No calibration required: {result['model_id']}")
+    return 0
+
+
+def _evaluate(args: argparse.Namespace) -> int:
+    report = evaluate_accuracy(
+        args.model_dir,
+        args.variant,
+        args.candidate_model,
+        reference_model=args.reference_model,
+        dataset_path=args.dataset,
+        dataset_cache_dir=args.dataset_cache_dir,
+        model_cache_dir=args.model_cache_dir,
+        test_id=args.test_id,
+        profile_name=args.profile,
+        sample_count=args.samples,
+        workers=args.workers,
+    )
+    output = args.output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.json_output:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        samples = report["dataset"]
+        candidate = report["metrics"]["candidate"]
+        print(
+            f"Accuracy {report['model']['id']}/{report['model']['variant_id']}: "
+            f"samples={samples['evaluated_samples']}/{samples['available_samples']} "
+            f"top1={candidate['top1_accuracy']:.4f} output={output}"
+        )
     return 0
 
 
@@ -464,6 +529,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _fetch(args)
         if args.command == "fetch-calibration":
             return _fetch_calibration(args)
+        if args.command == "evaluate":
+            return _evaluate(args)
         if args.command == "matrix":
             return _matrix(args)
         if args.command == "resolve-base":

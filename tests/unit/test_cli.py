@@ -64,6 +64,47 @@ def test_validate_catalog_checks_every_manifest(capsys) -> None:
     assert '"valid": true' in output
 
 
+def test_fetch_calibration_resolves_registered_dataset(monkeypatch, tmp_path: Path, capsys) -> None:
+    dataset = tmp_path / "imagenet-mini.tgz"
+    dataset.write_bytes(b"dataset")
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", lambda *args, **kwargs: dataset)
+
+    result = main(
+        [
+            "fetch-calibration",
+            str(ROOT / "models" / "resnet_50"),
+            "--variant",
+            "modalix_int8",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"kind": "dataset"' in output
+    assert f'"path": "{dataset}"' in output
+
+
+def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, capsys) -> None:
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("BF16 must not resolve a calibration dataset")
+
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
+
+    result = main(
+        [
+            "fetch-calibration",
+            str(ROOT / "models" / "resnet_50"),
+            "--variant",
+            "modalix_bf16",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    assert '"kind": "none"' in capsys.readouterr().out
+
+
 def test_invalid_model_has_nonzero_exit(capsys) -> None:
     result = main(["validate", str(ROOT / "tests" / "fixtures" / "invalid_model")])
     assert result == 2

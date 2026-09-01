@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
+from .accuracy_config import load_accuracy_config, validate_accuracy_model_contract
 from .errors import SourcePolicyError, ValidationError
 from .source import SourceSpec
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
@@ -109,7 +110,7 @@ def validate_model(
     try:
         SourceSpec.from_mapping(model["source"])
         calibration = model["calibration"]
-        if calibration["status"] == "ready":
+        if calibration["status"] == "ready" and "source" in calibration:
             SourceSpec.from_mapping(calibration["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
         raise ValidationError(f"{directory}: source policy: {exc}") from exc
@@ -127,6 +128,16 @@ def validate_model(
         candidate = (directory / relative).resolve()
         if not candidate.is_relative_to(directory) or not candidate.is_file():
             raise ValidationError(f"{directory}: referenced file does not exist inside model directory: {relative}")
+
+    for case in model["tests"]["correctness"]:
+        candidate = (directory / case["config"]).resolve()
+        try:
+            raw = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise ValidationError(f"{candidate}: could not inspect correctness YAML: {exc}") from exc
+        if isinstance(raw, dict) and raw.get("engine") == "model_registry":
+            config = load_accuracy_config(candidate)
+            validate_accuracy_model_contract(model, config, candidate)
 
 
 def load_and_validate_model(

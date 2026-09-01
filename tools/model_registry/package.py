@@ -133,7 +133,8 @@ def package_compiled_models(
         declared_calibration = catalog[model_id]["calibration"]
         calibration_sha256 = provenance.get("calibration_sha256")
         if declared_calibration["status"] == "ready":
-            expected_calibration = declared_calibration["source"]["sha256"]
+            calibration_input = declared_calibration.get("source") or declared_calibration.get("dataset")
+            expected_calibration = calibration_input["sha256"]
             if calibration_sha256 != expected_calibration:
                 raise ValidationError(
                     f"{result_path}: provenance calibration_sha256 must be {expected_calibration!r}, "

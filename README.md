@@ -125,6 +125,7 @@ and records an immutable `model_benchmark` child of the matching compile run.
 
 See [the developer documentation](docs/README.md),
 [the Model Registry design](design-doc/model-registry-architecture.md), the
+[local accuracy development guide](docs/local-accuracy-development.md), the
 [synthetic benchmarking guide](docs/benchmarking.md), the
 [model taxonomy](docs/model-taxonomy.md), and the
 [SSD-MobileNet matrix qualification plan](design-doc/ssd-mobilenet-precision-matrix-plan.md)

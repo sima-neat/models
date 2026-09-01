@@ -62,6 +62,15 @@ def test_production_is_an_explicit_dispatch_choice() -> None:
     assert workflow["on"]["workflow_dispatch"]["inputs"]["environment"]["default"] == "staging"
 
 
+def test_dispatch_can_request_full_mini_accuracy() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    accuracy = workflow["on"]["workflow_dispatch"]["inputs"]["accuracy_samples"]
+
+    assert accuracy["default"] == "500"
+    assert accuracy["options"] == ["500", "5000"]
+    assert workflow["jobs"]["compile"]["env"]["ACCURACY_SAMPLES"] == "${{ inputs.accuracy_samples || '500' }}"
+
+
 def test_dispatch_can_select_expensive_variants_and_passes_private_asset_token() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert "variants" in workflow["on"]["workflow_dispatch"]["inputs"]
@@ -229,7 +238,9 @@ def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
         for value in node.args
         if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("--")
     }
-    assert {"--model", "--output-dir", "--variant"} <= option_strings
+    assert {"--model", "--output-dir", "--variant", "--dataset"} <= option_strings
+    assert "--accuracy-samples" not in option_strings
+    assert "--accuracy-workers" not in option_strings
 
 
 def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
@@ -244,6 +255,22 @@ def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
     assert "activate-model-compiler" in compile_script
     assert "command -v mla-masm" in compile_script
     assert 'archives=("$OUTPUT_DIR"/*_mpk.tar.gz)' in compile_script
+    assert '--dataset "$CALIBRATION_PATH"' in compile_script
+    assert 'if [[ "$CALIBRATION_KIND" == "dataset" ]]' in compile_script
+    assert "python -m model_registry evaluate" in compile_script
+    assert '--samples "$ACCURACY_SAMPLES"' in compile_script
+    assert "--workers 6" in compile_script
+    assert ".dataset.evaluated_samples" in compile_script
+    assert ".evaluation.status" in compile_script
+
+
+def test_compile_workflow_resolves_registered_calibration_input() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    calibration = next(step for step in steps if step.get("id") == "calibration")
+    assert "model_registry fetch-calibration" in calibration["run"]
+    assert '--variant "$VARIANT_ID"' in calibration["run"]
+    assert 'get("kind", "none")' in calibration["run"]
 
 
 def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
@@ -270,6 +297,7 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     assert "model_registry fetch-calibration" in calibration["run"]
     assert calibration["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert compile_step["env"]["CALIBRATION_PATH"] == "${{ steps.calibration.outputs.path }}"
+    assert compile_step["env"]["CALIBRATION_KIND"] == "${{ steps.calibration.outputs.kind }}"
     assert "--calibration-sha256" in verify_step["run"]
 
 

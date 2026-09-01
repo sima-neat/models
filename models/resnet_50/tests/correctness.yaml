@@ -1,4 +1,62 @@
 schema_version: 1
-status: pending
-reason: Immutable, redistribution-approved ImageNet test samples and expected top-5 labels are not yet selected.
-metric: top5_accuracy
+engine: model_registry
+status: provisional
+task: image_classification
+dataset:
+  id: imagenet-2012
+  variant: mini
+  sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
+  size_bytes: 356052889
+  loader:
+    type: image_classification_tar
+    image_suffixes: [.webp, .webp.bak]
+  splits:
+    calibration:
+      prefix: cal
+      samples: 500
+      label_strategy: none
+    validation:
+      prefix: val
+      samples: 5000
+      classes: 1000
+      label_strategy: lexicographic_parent_directory
+profiles:
+  regular:
+    report_scope: sampled_accuracy_smoke
+    samples: 500
+    sampling: deterministic_evenly_spaced
+    workers: auto
+  qualification:
+    report_scope: full_mini_accuracy
+    samples: all
+    sampling: deterministic_evenly_spaced
+    workers: auto
+    cadence: weekly_or_on_demand_before_release
+executors:
+  reference:
+    type: onnxruntime
+    artifact: source
+    input_layout: NCHW
+  candidate:
+    type: afe_sima
+    artifact: compile_variant
+    input_layout: NHWC
+    use_jax: true
+metrics:
+  - type: top_k_accuracy
+    k: 1
+  - type: top_k_accuracy
+    k: 5
+  - type: top1_agreement
+reporting:
+  required_fields:
+    - dataset.evaluated_samples
+    - dataset.available_samples
+    - dataset.sampling.selection_sha256
+    - evaluation.profile
+    - evaluation.status
+    - model.variant_id
+notes:
+  - The mini split is an accuracy proxy, not the full 50000-image ImageNet validation benchmark.
+  - The current archive has known calibration/validation overlap; reports remain provisional until it is replaced.
+  - One manifest-listed WebP uses a .webp.bak suffix, which is included by the declared loader.

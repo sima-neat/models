@@ -42,11 +42,14 @@ models/<model-id>/       Declarative metadata and genuinely model-specific asset
 tests/                   Schema fixtures, unit tests, and contract tests
 ```
 
-Common download, checksum, cache, discovery, MPK validation, publication, and
-result logic must stay under `tools/`. A model directory owns a compile recipe
+Common download, checksum, cache, discovery, accuracy evaluation, MPK
+validation, publication, and result logic must stay under `tools/`. A model directory owns a compile recipe
 and may contain surgery only when the transformation is specific to that model
 and cannot be expressed as shared parameters. The recipe's product is one
 directly consumable `*_mpk.tar.gz`, not an ONNX or compiler intermediate.
+Accuracy sampling, preprocessing interpretation, host executors, metrics, and
+report generation are owned by `model-registry evaluate`; model directories
+provide only schema-validated correctness YAML.
 
 The canonical product name is **Model Registry**. Code and paths use
 `model-registry` or `model_registry`. The word `modelzoo` is used only when

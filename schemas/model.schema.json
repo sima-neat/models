@@ -219,6 +219,25 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["status", "dataset"],
+          "properties": {
+            "status": {"const": "ready"},
+            "dataset": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "variant", "sha256", "size_bytes"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+                "variant": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "size_bytes": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["status", "reason"],
           "properties": {
             "status": {"const": "not_required"},
