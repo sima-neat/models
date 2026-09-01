@@ -297,6 +297,8 @@ def test_compile_worker_installs_main_dataset_registry_artifact() -> None:
 
     assert install_index < calibration_index
     assert install["env"]["DATASET_REGISTRY_ENVIRONMENT"] == "${{ needs.select.outputs.vulcan_environment }}"
+    assert "sima-cli-installer.sh" in install["run"]
+    assert 'sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"' in install["run"]
     assert "dataset/dataset-registry@main:latest" in install["run"]
     assert "--download-only" in install["run"]
     assert "sima_neat_dataset_registry-*.whl" in install["run"]

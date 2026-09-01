@@ -322,13 +322,10 @@ jobs:
           SIMA_CLI_CHECK_FOR_UPDATE: "0"
         run: |
           set -euo pipefail
-          if command -v sima-cli >/dev/null 2>&1; then
-            sima_cli="$(command -v sima-cli)"
-          else
-            curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
-            sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"
-          fi
+          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+          sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"
           test -x "$sima_cli"
+          "$sima_cli" neat install --help | grep -q -- '--download-only'
 
           package_dir="$RUNNER_TEMP/dataset-registry-package"
           dataset_tools="$RUNNER_TEMP/dataset-registry-tools"
