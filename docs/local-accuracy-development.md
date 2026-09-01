@@ -23,6 +23,13 @@ the Model Compiler environment's AFE, JAX, ONNX Runtime, NumPy, or Pillow
 packages. `dataset-registry` must be installed in the same environment when the
 dataset path is not passed explicitly.
 
+Install the published `main` branch tool artifact when it is not already
+present:
+
+```bash
+sima-cli neat install --stg dataset/dataset-registry@main:latest
+```
+
 ## Compile and evaluate locally
 
 Resolve the immutable inputs first:

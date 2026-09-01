@@ -285,6 +285,24 @@ def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
     assert "import certifi, jsonschema, yaml" in install_script
 
 
+def test_compile_worker_installs_main_dataset_registry_artifact() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    install_index, install = next(
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("name") == "Install dataset-registry from the main branch artifact"
+    )
+    calibration_index = next(index for index, step in enumerate(steps) if step.get("id") == "calibration")
+
+    assert install_index < calibration_index
+    assert install["env"]["DATASET_REGISTRY_ENVIRONMENT"] == "${{ needs.select.outputs.vulcan_environment }}"
+    assert '"$MODEL_COMPILER_PYTHON" -m venv --system-site-packages' in install["run"]
+    assert 'MODEL_COMPILER_PYTHON="$dataset_tools/bin/python"' in install["run"]
+    assert "dataset/dataset-registry@main:latest" in install["run"]
+    assert 'echo "$dataset_tools/bin" >> "$GITHUB_PATH"' in install["run"]
+
+
 def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     steps = workflow["jobs"]["compile"]["steps"]
