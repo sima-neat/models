@@ -400,6 +400,16 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert ".artifact-download-shortcut:focus-visible" in styles
 
 
+def test_only_model_packs_are_presented_as_artifacts() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'artifact.artifact_type === "model-pack"' in script
+    assert "artifacts: modelPackArtifacts(summary?.artifacts)" in script
+    assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
+    assert "const primaryArtifact = artifacts[0]" in script
+    assert '|| artifacts[0]' not in script
+
+
 def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")

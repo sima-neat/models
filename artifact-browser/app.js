@@ -596,7 +596,7 @@ function comparisonEntryFromDetail(run, detail) {
   const adapted = detail?.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : { kind: "missing" };
   return {
     run: summary?.run || run,
-    artifacts: summary?.artifacts || [],
+    artifacts: modelPackArtifacts(summary?.artifacts),
     benchmark: adapted.kind === "supported" ? adapted.value : null,
   };
 }
@@ -936,9 +936,13 @@ function licensePanel(license) {
   </dl>${license.attribution ? `<p class="license-attribution"><strong>Attribution</strong>${escapeHtml(license.attribution)}</p>` : ""}</section>`;
 }
 
+function modelPackArtifacts(artifacts) {
+  return (artifacts || []).filter((artifact) => artifact.artifact_type === "model-pack");
+}
+
 function renderDetail(detail) {
   const run = detail.summary.run;
-  const artifacts = detail.summary.artifacts || [];
+  const artifacts = modelPackArtifacts(detail.summary.artifacts);
   const provenance = detail.provenance;
   const parameters = provenance.parameters?.parameters || {};
   const input = provenance.inputs?.[0];
@@ -953,7 +957,7 @@ function renderDetail(detail) {
   const benchmarkMarkup = benchmarkPanel(detail.benchmark);
   const accuracyMarkup = accuracyPanel(detail.accuracy, tests);
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
-  const primaryArtifact = artifacts.find((artifact) => artifact.artifact_type === "model-pack") || artifacts[0];
+  const primaryArtifact = artifacts[0];
   const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
