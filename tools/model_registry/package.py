@@ -10,6 +10,7 @@ from .artifact import verify_mpk
 from .catalog import discover_catalog, model_build_fingerprint
 from .errors import ValidationError
 from .fetch import sha256_file
+from .model import variant_requires_calibration
 from .published import artifact_url, validate_latest_index
 from .taxonomy import TAXONOMY_RELATIVE_PATH, canonical_taxonomy_document, load_taxonomy, validate_model_categorization
 
@@ -132,7 +133,8 @@ def package_compiled_models(
             raise ValidationError(f"{result_path}: provenance source_sha256 must be a SHA-256 digest")
         declared_calibration = catalog[model_id]["calibration"]
         calibration_sha256 = provenance.get("calibration_sha256")
-        if declared_calibration["status"] == "ready":
+        requires_calibration = variant_requires_calibration(variants[variant_id])
+        if declared_calibration["status"] == "ready" and requires_calibration:
             calibration_input = declared_calibration.get("source") or declared_calibration.get("dataset")
             expected_calibration = calibration_input["sha256"]
             if calibration_sha256 != expected_calibration:
@@ -141,7 +143,7 @@ def package_compiled_models(
                     f"found {calibration_sha256!r}"
                 )
         elif calibration_sha256 is not None:
-            raise ValidationError(f"{result_path}: unexpected calibration provenance for {model_id}")
+            raise ValidationError(f"{result_path}: unexpected calibration provenance for {model_id}/{variant_id}")
         verified = verify_mpk(result_path.parent)
         if result.get("sha256") != verified["sha256"] or result.get("archive") != verified["archive"]:
             raise ValidationError(f"{result_path}: compile result does not match the MPK archive")

@@ -17,6 +17,10 @@ MODEL_FILE = "model.yaml"
 SCHEMA_RELATIVE_PATH = Path("schemas/model.schema.json")
 
 
+def variant_requires_calibration(variant: dict[str, Any]) -> bool:
+    return "calibration_samples" in variant.get("parameters", {})
+
+
 def model_file(model_dir: str | Path) -> Path:
     directory = Path(model_dir).expanduser().resolve()
     path = directory / MODEL_FILE

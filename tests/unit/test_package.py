@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from model_registry.artifact import verify_mpk
 from model_registry.catalog import discover_catalog, model_build_fingerprint
 from model_registry.errors import ValidationError
+from model_registry.model import variant_requires_calibration
 from model_registry.package import package_compiled_models
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +52,7 @@ def _compiled_fixture(
                 "build_fingerprint": model_build_fingerprint(ROOT, model_id, "2.1.3"),
             }
             calibration = model["calibration"]
-            if calibration["status"] == "ready":
+            if calibration["status"] == "ready" and variant_requires_calibration(variant):
                 calibration_input = calibration.get("source") or calibration.get("dataset")
                 provenance["calibration_sha256"] = calibration_input["sha256"]
             verify_mpk(
@@ -114,6 +115,16 @@ def test_package_builds_root_and_per_model_sima_cli_metadata(tmp_path: Path) -> 
     assert (destination / "resnet_50" / "modalix_bf16" / "SHA256SUMS").is_file()
     assert (destination / "resnet_50" / "modalix_int8" / "compile-result.json").is_file()
     assert (destination / "resnet_50" / "modalix_int8" / "SHA256SUMS").is_file()
+    bf16_result = json.loads(
+        (destination / "resnet_50" / "modalix_bf16" / "compile-result.json").read_text(encoding="utf-8")
+    )
+    int8_result = json.loads(
+        (destination / "resnet_50" / "modalix_int8" / "compile-result.json").read_text(encoding="utf-8")
+    )
+    assert "calibration_sha256" not in bf16_result["provenance"]
+    assert int8_result["provenance"]["calibration_sha256"] == (
+        "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239"
+    )
 
 
 def test_package_rejects_mismatched_compile_provenance(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
-from .model import load_and_validate_model
+from .model import load_and_validate_model, variant_requires_calibration
 from .published import validate_latest_index
 from .source import SourceSpec
 
@@ -245,13 +245,13 @@ def _fetch(args: argparse.Namespace) -> int:
 def _fetch_calibration(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     calibration = model["calibration"]
-    variant_requires_calibration = True
+    requires_calibration = True
     if args.variant:
         variants = [item for item in model["compile_variants"] if item["id"] == args.variant]
         if len(variants) != 1:
             raise ModelRegistryError(f"unknown compile variant: {args.variant}")
-        variant_requires_calibration = "calibration_samples" in variants[0].get("parameters", {})
-    if calibration["status"] != "ready" or not variant_requires_calibration:
+        requires_calibration = variant_requires_calibration(variants[0])
+    if calibration["status"] != "ready" or not requires_calibration:
         result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
     elif "dataset" in calibration:
         dataset = calibration["dataset"]
