@@ -20,7 +20,8 @@ an iterable. INT8 uses all 500 calibration images in the registered
 `imagenet-2012/mini` Artifactory archive. The same archive contains a balanced
 5,000-image validation proxy (five images for every ImageNet-1k class). The
 model-local recipe only compiles; shared `model-registry evaluate` tooling reads
-`tests/correctness.yaml` to run deterministic accuracy measurement.
+`tests/correctness.yaml` to run deterministic accuracy measurement for INT8.
+BF16 remains a compiler canary and does not run accuracy measurement.
 
 ```bash
 dataset="$(dataset-registry resolve imagenet-2012 --variant mini | python -c 'import json,sys; print(json.load(sys.stdin)["path"])')"

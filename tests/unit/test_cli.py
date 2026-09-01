@@ -105,7 +105,7 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
     assert '"kind": "none"' in capsys.readouterr().out
 
 
-def test_fetch_accuracy_dataset_resolves_independently_of_bf16_calibration(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_fetch_accuracy_dataset_resolves_for_scoped_int8_variant(monkeypatch, tmp_path: Path, capsys) -> None:
     dataset = tmp_path / "imagenet-mini.tgz"
     dataset.write_bytes(b"dataset")
     monkeypatch.setattr("model_registry.cli.resolve_dataset", lambda *args, **kwargs: dataset)
@@ -114,6 +114,8 @@ def test_fetch_accuracy_dataset_resolves_independently_of_bf16_calibration(monke
         [
             "fetch-accuracy-dataset",
             str(ROOT / "models" / "resnet_50"),
+            "--variant",
+            "modalix_int8",
             "--json",
         ]
     )
@@ -122,6 +124,26 @@ def test_fetch_accuracy_dataset_resolves_independently_of_bf16_calibration(monke
     output = capsys.readouterr().out
     assert '"kind": "dataset"' in output
     assert f'"path": "{dataset}"' in output
+
+
+def test_fetch_accuracy_dataset_skips_bf16_outside_accuracy_scope(monkeypatch, capsys) -> None:
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("BF16 must not resolve an accuracy dataset")
+
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
+
+    result = main(
+        [
+            "fetch-accuracy-dataset",
+            str(ROOT / "models" / "resnet_50"),
+            "--variant",
+            "modalix_bf16",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    assert '"kind": "none"' in capsys.readouterr().out
 
 
 def test_fetch_accuracy_dataset_skips_legacy_correctness_declaration(monkeypatch, capsys) -> None:

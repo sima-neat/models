@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .accuracy_config import select_accuracy_config
+from .accuracy_config import accuracy_applies_to_variant, select_accuracy_config
 from .errors import ModelRegistryError
 from .model import load_and_validate_model
 
@@ -424,6 +424,8 @@ def evaluate_accuracy(
     if len(variants) != 1:
         raise AccuracyError(f"{directory}: expected exactly one compile variant named {variant_id!r}")
     variant = variants[0]
+    if not accuracy_applies_to_variant(config, variant_id):
+        raise AccuracyError(f"accuracy test {config_path} does not apply to variant {variant_id!r}")
     if variant["target"] != "modalix":
         raise AccuracyError(f"variant {variant_id!r} does not target Modalix")
 

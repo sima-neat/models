@@ -395,7 +395,7 @@ jobs:
           set -euo pipefail
           result="$RUNNER_TEMP/accuracy-dataset.json"
           "$MODEL_COMPILER_PYTHON" -m model_registry fetch-accuracy-dataset "$MODEL_DIR" \
-            --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
+            --variant "$VARIANT_ID" --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
           accuracy_dataset_path="$("$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; print(json.load(open(sys.argv[1])).get("path", ""))' "$result")"
           accuracy_dataset_kind="$("$MODEL_COMPILER_PYTHON" -c \

@@ -276,6 +276,7 @@ def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> No
     accuracy_step = next(step for step in steps if step.get("name") == "Measure model accuracy")
 
     assert "model_registry fetch-accuracy-dataset" in accuracy_dataset["run"]
+    assert '--variant "$VARIANT_ID"' in accuracy_dataset["run"]
     assert accuracy_dataset["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset'"
     assert accuracy_step["env"]["SOURCE_PATH"] == "${{ steps.source.outputs.path }}"

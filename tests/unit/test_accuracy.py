@@ -16,7 +16,11 @@ from model_registry.accuracy import (
     preprocess_image,
     select_sample_indices,
 )
-from model_registry.accuracy_config import select_accuracy_config, validate_accuracy_model_contract
+from model_registry.accuracy_config import (
+    accuracy_applies_to_variant,
+    select_accuracy_config,
+    validate_accuracy_model_contract,
+)
 from model_registry.cli import main
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model
@@ -33,6 +37,10 @@ def test_resnet_accuracy_config_is_executable_and_schema_valid() -> None:
     assert path == MODEL_DIR / "tests" / "correctness.yaml"
     assert config["engine"] == "model_registry"
     assert config["status"] == "provisional"
+    assert config["variants"] == ["modalix_int8"]
+    assert accuracy_applies_to_variant(config, "modalix_int8")
+    assert not accuracy_applies_to_variant(config, "modalix_bf16")
+    assert accuracy_applies_to_variant({}, "backward_compatible_variant")
     assert config["profiles"]["regular"]["samples"] == 500
     assert config["profiles"]["qualification"]["samples"] == "all"
 
@@ -44,6 +52,22 @@ def test_static_accuracy_contract_rejects_unsupported_model_operation() -> None:
 
     with pytest.raises(ValidationError, match="unsupported preprocessing operation"):
         validate_accuracy_model_contract(model, config, path)
+
+
+def test_static_accuracy_contract_rejects_unknown_compile_variant() -> None:
+    model = load_and_validate_model(MODEL_DIR)
+    path, config = select_accuracy_config(MODEL_DIR, model)
+    config["variants"] = ["modalix_missing"]
+
+    with pytest.raises(ValidationError, match="accuracy variants do not match compile variants: modalix_missing"):
+        validate_accuracy_model_contract(model, config, path)
+
+
+def test_evaluator_rejects_variant_outside_accuracy_scope(tmp_path: Path) -> None:
+    from model_registry.accuracy import evaluate_accuracy
+
+    with pytest.raises(AccuracyError, match="does not apply to variant 'modalix_bf16'"):
+        evaluate_accuracy(MODEL_DIR, "modalix_bf16", tmp_path / "candidate.sima")
 
 
 def test_declarative_preprocessing_matches_resnet_contract() -> None:

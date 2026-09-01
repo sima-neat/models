@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .accuracy import evaluate_accuracy, resolve_dataset
-from .accuracy_config import find_accuracy_config
+from .accuracy_config import accuracy_applies_to_variant, find_accuracy_config
 from .artifact import verify_mpk
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
@@ -77,6 +77,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     accuracy_dataset.add_argument("model_dir", type=Path)
     accuracy_dataset.add_argument("--schema", type=Path)
     accuracy_dataset.add_argument("--cache-dir", type=Path)
+    accuracy_dataset.add_argument("--variant", help="resolve accuracy only when its config applies to this variant")
     accuracy_dataset.add_argument("--json", action="store_true", dest="json_output")
 
     evaluate = subcommands.add_parser("evaluate", help="run a declarative model accuracy evaluation")
@@ -295,8 +296,10 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
 
 def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
+    if args.variant and not any(item["id"] == args.variant for item in model["compile_variants"]):
+        raise ModelRegistryError(f"unknown compile variant: {args.variant}")
     selected = find_accuracy_config(args.model_dir, model)
-    if selected is None:
+    if selected is None or (args.variant and not accuracy_applies_to_variant(selected[1], args.variant)):
         result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
     else:
         _, config = selected
@@ -314,7 +317,7 @@ def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
     elif result["path"]:
         print(f"Verified accuracy dataset: {result['path']}")
     else:
-        print(f"No executable accuracy dataset configured: {result['model_id']}")
+        print(f"No applicable executable accuracy dataset configured: {result['model_id']}")
     return 0
 
 

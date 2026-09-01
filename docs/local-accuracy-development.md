@@ -37,13 +37,14 @@ Resolve the immutable inputs first:
 ```bash
 source_json="$(python -m model_registry fetch models/resnet_50 --json)"
 source_path="$(jq -r .path <<<"$source_json")"
-dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50 --json)"
+dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50 --variant modalix_int8 --json)"
 dataset_path="$(jq -r .path <<<"$dataset_json")"
 ```
 
-Accuracy dataset resolution is independent of calibration. BF16 evaluation
-uses the correctness dataset even though BF16 compilation does not consume
-representative calibration samples.
+Accuracy dataset resolution is independent of calibration. An optional
+top-level `variants` list in the correctness config scopes evaluation to named
+compile variants. ResNet-50 currently measures INT8 only, so BF16 resolution
+returns `kind: none` and CI skips its accuracy step.
 
 Compile the variant. Compilation consumes calibration samples declared by the
 correctness YAML but does not contain accuracy logic:
@@ -130,6 +131,7 @@ the coverage represented by each label.
 Add a correctness case to `model.yaml`, then create its YAML with:
 
 - `engine: model_registry` and `task: image_classification`;
+- an optional `variants` list when accuracy applies only to specific compile variants;
 - immutable dataset identity and archive loader/split definitions;
 - regular and qualification profiles;
 - ONNX Runtime reference and AFE `.sima` candidate executors;

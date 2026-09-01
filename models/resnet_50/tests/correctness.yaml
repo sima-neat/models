@@ -2,6 +2,7 @@ schema_version: 1
 engine: model_registry
 status: provisional
 task: image_classification
+variants: [modalix_int8]
 dataset:
   id: imagenet-2012
   variant: mini

@@ -122,12 +122,24 @@ def find_accuracy_config(
     return path, load_accuracy_config(path)
 
 
+def accuracy_applies_to_variant(config: dict[str, Any], variant_id: str) -> bool:
+    variants = config.get("variants")
+    return variants is None or variant_id in variants
+
+
 def validate_accuracy_model_contract(
     model: dict[str, Any],
     config: dict[str, Any],
     config_path: str | Path,
 ) -> None:
     path = Path(config_path).expanduser().resolve()
+    configured_variants = set(config.get("variants", ()))
+    unknown_variants = configured_variants - {variant["id"] for variant in model["compile_variants"]}
+    if unknown_variants:
+        raise ValidationError(
+            f"{path}: accuracy variants do not match compile variants: {', '.join(sorted(unknown_variants))}"
+        )
+
     inputs = model["interface"]["inputs"]
     if len(inputs) != 1 or inputs[0].get("layout") != "NCHW":
         raise ValidationError(f"{path}: image_classification evaluation requires one NCHW model input")
