@@ -81,7 +81,7 @@ body {
 .contribution-path {
   display: block;
   width: 100%;
-  min-width: 920px;
+  min-width: 1120px;
   height: auto;
   font-family: var(--ifm-font-family-base);
 }

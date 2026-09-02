@@ -21,7 +21,6 @@ compile_variants:
   - id: modalix_bf16
     target: modalix
     recipe: compile.py
-    runner_class: default
     runner_class: expensive
     parameters:
       precision: bf16
@@ -127,14 +126,21 @@ approval check in the scaler before provisioning as a defense-in-depth boundary.
 The workflow definition must also avoid accepting an arbitrary runner label
 directly from untrusted event input.
 
+Pull-request checks validate the requested class and construct the matrix, but
+they do not read the protected Vulcan specification or run admission. The first
+trusted push after merge performs that lookup. A missing, expired, or mismatched
+approval fails before the self-hosted compile job is scheduled.
+
 ## Model author workflow
 
 1. Start with the default runner and capture evidence from the compile attempt.
 2. Reduce avoidable resource use in the recipe before requesting a larger class.
 3. Add the smallest sufficient `runner_class` to the affected variant only.
 4. Explain the request and link the evidence in the model pull request.
-5. Obtain a matching Vulcan approval through the infrastructure review process.
-6. Confirm admission succeeds before merging or scheduling the elevated build.
+5. Obtain a matching Vulcan approval through the infrastructure review process
+   and link its review evidence in the pull request.
+6. After merge, confirm the trusted admission job authorizes the request before
+   expecting the compile job to be scheduled.
 7. Re-evaluate or remove the request when the compiler, recipe, or model changes.
 
 Changes that increase runner class should be conspicuous in review. A variant

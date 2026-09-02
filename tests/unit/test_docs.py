@@ -36,6 +36,28 @@ def test_developer_sidebar_includes_every_article() -> None:
         assert f"'{doc_id}'" in sidebar, f"docs/{article.name} is missing from the developer sidebar"
 
 
+def test_contributor_docs_distinguish_pr_checks_from_trusted_automation() -> None:
+    overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "Vulcan-Model-Compile.yml").read_text(encoding="utf-8")
+    contributing_words = " ".join(contributing.split())
+
+    assert "Pull requests do **not** run recipe or surgery code" in overview
+    assert "## After merge: trusted staging automation" in contributing
+    assert "A successful compile does not by itself mean the dispatched benchmark succeeded" in contributing_words
+    assert "if: github.event_name != 'pull_request'" in workflow
+
+
+def test_local_guide_passes_variant_calibration_to_the_recipe() -> None:
+    text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
+
+    assert "fetch-calibration \\" in text
+    assert "models/<model-id> --variant <variant-id> --json" in text
+    assert 'recipe_args=(--dataset "$calibration_path")' in text
+    assert '"${recipe_args[@]}"' in text
+    assert "## Measure declared accuracy locally" in text
+
+
 def test_local_guide_uses_supported_validation_commands() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 

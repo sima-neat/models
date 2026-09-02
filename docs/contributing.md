@@ -103,9 +103,9 @@ git push --set-upstream origin HEAD
 ```
 
 Open a pull request against `develop`. Repository automation reruns validation
-and matrix selection from the committed revision. Trusted post-review workflows
-repeat compilation, MPK verification, benchmarking, packaging, and publication;
-authors do not invoke those publication steps themselves.
+and matrix selection from the committed revision. It does not compile or
+benchmark pull-request code. Trusted post-merge workflows perform those later
+stages; authors do not invoke those publication steps themselves.
 
 ## Pull request description
 
@@ -147,14 +147,39 @@ and deterministic matrix construction on GitHub-hosted infrastructure. They do
 not schedule contributor-controlled recipe or surgery code on a self-hosted
 Vulcan runner.
 
-Trusted pushes and explicit maintainer dispatches can:
+For a model change, interpret a successful pull-request workflow as confirmation
+that:
 
-1. resolve the repository-wide Model Compiler version;
-2. fetch and verify immutable inputs;
-3. run each selected supported variant in an isolated output directory;
-4. require and validate exactly one MPK;
-5. publish immutable artifacts and provenance records through the registry API;
-6. dispatch newly compiled staging variants for Modalix benchmarking.
+- the complete catalog and taxonomy are structurally valid;
+- the repository-wide Model Compiler dependency resolves;
+- the comparison base and changed models were identified; and
+- the resulting supported-variant matrix is deterministic.
+
+It is **not** evidence that the recipe compiled, the MPK passed validation,
+accuracy met a threshold, or the model ran on a DevKit. Those claims must come
+from stated local evidence or the trusted staging workflow after merge.
+
+## After merge: trusted staging automation
+
+When the change is merged to `develop`, the trusted push workflow selects the
+affected variants and then:
+
+1. authorizes each requested runner class against the protected Vulcan
+   environment specification;
+2. verifies the pinned Model Compiler runner and fetches immutable source,
+   calibration, and applicable accuracy data;
+3. runs each selected supported recipe in an isolated output directory;
+4. evaluates declared dataset-backed accuracy when it applies;
+5. requires and validates exactly one MPK;
+6. publishes the compilation and provenance to the staging registry; and
+7. dispatches each newly compiled Modalix variant to the dedicated DevKit
+   benchmark workflow, which publishes the successful result.
+
+The compile and benchmark are separate GitHub Actions runs. A successful
+compile does not by itself mean the dispatched benchmark succeeded; inspect the
+per-variant `Vulcan Model Benchmarking` run and the model's staging registry
+record. If trusted compilation or benchmarking fails, follow up with a focused
+manifest or recipe change and reproducible evidence.
 
 Production is an explicit protected workflow choice. Targeted manual variants
 publish independently without updating shared mutable catalog pointers.

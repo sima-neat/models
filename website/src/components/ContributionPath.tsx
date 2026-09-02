@@ -44,11 +44,19 @@ const stages: Stage[] = [
   },
   {
     number: '05',
-    title: 'CI repeats',
-    action: ['Repeat controlled checks', 'Package + publish safely'],
-    success: ['Trusted evidence', 'and provenance'],
+    title: 'PR validates',
+    action: ['Validate catalog + matrix', 'Keep contributor code off Vulcan'],
+    success: ['Safe, deterministic', 'review signal'],
     guide: 'contributing#ci-and-trust-boundaries',
-    guideLabel: 'CI and trust',
+    guideLabel: 'PR checks',
+  },
+  {
+    number: '06',
+    title: 'Trusted automation',
+    action: ['Compile + measure accuracy', 'Publish + benchmark staging'],
+    success: ['Trusted evidence', 'and provenance'],
+    guide: 'contributing#after-merge-trusted-staging-automation',
+    guideLabel: 'After merge',
   },
 ];
 
@@ -59,14 +67,15 @@ export default function ContributionPath(): React.JSX.Element {
     <div className="contribution-path-frame">
       <svg
         className="contribution-path"
-        viewBox="0 0 1120 368"
+        viewBox="0 0 1344 368"
         role="img"
         aria-labelledby="contribution-path-title contribution-path-desc">
         <title id="contribution-path-title">Path to a successful model contribution</title>
         <desc id="contribution-path-desc">
-          Five linked stages establish the model contract, qualify it locally,
-          benchmark the exact MPK, prepare the Git contribution, and let CI
-          repeat the evidence. Each stage links to its detailed guide.
+          Six linked stages establish the model contract, qualify it locally,
+          benchmark the exact MPK, prepare the Git contribution, validate the
+          pull request safely, and run trusted staging automation after merge.
+          Each stage links to its detailed guide.
         </desc>
         <defs>
           <marker id="contribution-path-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
@@ -79,6 +88,7 @@ export default function ContributionPath(): React.JSX.Element {
           <line x1="440" y1="184" x2="460" y2="184" markerEnd="url(#contribution-path-arrow)" />
           <line x1="664" y1="184" x2="684" y2="184" markerEnd="url(#contribution-path-arrow)" />
           <line x1="888" y1="184" x2="908" y2="184" markerEnd="url(#contribution-path-arrow)" />
+          <line x1="1112" y1="184" x2="1132" y2="184" markerEnd="url(#contribution-path-arrow)" />
         </g>
 
         {stages.map((stage, index) => {
