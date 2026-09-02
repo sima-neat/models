@@ -15,7 +15,8 @@ contribution.
 
 Before a contribution is eligible for review, pin the model source and required
 datasets to immutable revisions, define the contract in `model.yaml`, compile
-every supported component/profile pair with the repository-pinned Model Compiler, complete
+every supported component/profile pair with the repository-pinned Model
+Compiler, complete
 each applicable accuracy evaluation, verify the resulting MPK, and benchmark
 that exact MPK on a compatible Modalix DevKit. Commit only the source-controlled
 contract; downloaded inputs and generated artifacts must remain outside Git.
