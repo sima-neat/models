@@ -2,14 +2,14 @@ import ContributionPath from '@site/src/components/ContributionPath';
 
 # Contribute a model
 
-Take a model from a pinned source to a review-ready contribution: describe it
-in `model.yaml`, validate its immutable inputs, compile it with the pinned Model
-Compiler, test it on a compatible Modalix DevKit, and submit only the
-source-controlled contract through Git. Model developers are responsible for
-completing local qualification before submission. Pull-request checks validate
-the committed contract without executing contributor code on SiMa
-infrastructure. Trusted automation compiles, publishes, and benchmarks the
-model after merge.
+Bringing a model into the registry starts with proving that it works in your
+hands. You pin the exact source, describe the model in `model.yaml`, compile
+every supported variant with the pinned Model Compiler, and test each resulting
+MPK on a compatible Modalix DevKit before opening a pull request. Git carries
+the reproducible model contract—not downloaded inputs or generated artifacts.
+Pull-request checks make sure that contract is coherent and safe to review.
+After merge, trusted automation rebuilds the trusted revision, publishes it to
+staging, and records its benchmark evidence.
 
 ## Understand the three execution boundaries
 
