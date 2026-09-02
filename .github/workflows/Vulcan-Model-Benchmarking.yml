@@ -1,4 +1,5 @@
 name: Vulcan Model Benchmarking
+run-name: Benchmarking (${{ inputs.model_id }}, ${{ inputs.variant_id }})
 
 on:
   workflow_dispatch:
