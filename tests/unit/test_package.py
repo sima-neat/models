@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import json
 import tarfile
 from pathlib import Path
 
+import pytest
+from model_registry import package as package_module
+from model_registry.errors import ValidationError
 from model_registry.package import assemble_available_packages, assemble_package
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +43,52 @@ def _compiled_component(tmp_path: Path) -> Path:
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
     return tmp_path / "compiled"
+
+
+def _model_with_resource(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, install_path: str
+) -> tuple[dict, dict]:
+    model = copy.deepcopy(
+        package_module.load_and_validate_model(
+            ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json"
+        )
+    )
+    payload = tmp_path / "resource.json"
+    payload.write_bytes(b'{"fixture":true}\n')
+    resource_license = {
+        "spdx": "LicenseRef-Fixture-Resource",
+        "redistribution": "restricted",
+        "attribution": "Fixture resource attribution.",
+    }
+    resource = {
+        "id": "runtime_config",
+        "source": {
+            "type": "file",
+            "uri": "https://example.invalid/resource.json",
+            "sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
+            "size_bytes": payload.stat().st_size,
+        },
+        "install_path": install_path,
+        "license": resource_license,
+    }
+    model["resources"] = [resource]
+    model["packages"][0]["resources"] = [resource["id"]]
+
+    class FakeFetcher:
+        def __init__(self, _cache_dir: str | Path | None) -> None:
+            pass
+
+        def fetch_source(self, _source: dict) -> tuple[Path, str, str, int]:
+            return (
+                payload,
+                resource["source"]["uri"],
+                resource["source"]["sha256"],
+                payload.stat().st_size,
+            )
+
+    monkeypatch.setattr(package_module, "load_and_validate_model", lambda *_args: model)
+    monkeypatch.setattr(package_module, "Fetcher", FakeFetcher)
+    return model, resource_license
 
 
 def test_assembles_deterministic_retrieval_bundle_with_intact_component_mpk(tmp_path: Path) -> None:
@@ -86,3 +136,41 @@ def test_assemble_available_packages_skips_incomplete_builds(tmp_path: Path) -> 
     assert [(item["model_id"], item["build_profile_id"]) for item in results] == [
         ("resnet_50", "modalix_bf16")
     ]
+
+
+def test_package_manifest_preserves_resource_specific_license(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, resource_license = _model_with_resource(monkeypatch, tmp_path, "resources/runtime.json")
+    result = assemble_package(
+        repository=ROOT,
+        compiled_dir=_compiled_component(tmp_path),
+        output_dir=tmp_path / "packages",
+        model_id="resnet_50",
+        build_profile_id="modalix_bf16",
+        package_id="default",
+    )
+
+    assert result["manifest"]["resources"][0]["license"] == resource_license
+
+
+def test_package_rejects_resource_path_that_collides_with_declarative_composition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model, _ = _model_with_resource(monkeypatch, tmp_path, "composition/composition.yaml")
+    model["compositions"] = [
+        {"id": "default", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="package path is declared more than once: composition/composition.yaml",
+    ):
+        assemble_package(
+            repository=ROOT,
+            compiled_dir=_compiled_component(tmp_path),
+            output_dir=tmp_path / "packages",
+            model_id="resnet_50",
+            build_profile_id="modalix_bf16",
+            package_id="default",
+        )

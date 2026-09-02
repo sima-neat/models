@@ -9,14 +9,13 @@
   "identity": {
     "algorithm": "sha256",
     "canonicalization_version": 3,
-    "fingerprint": "4f877a7da647d2cfdcf59bcef1fe6d8e90a46f1a583be32d124d30e8121bca9f"
+    "fingerprint": "4ea2eee0cd8dc098e9af9e7ce88d93ab0a459bb4cc44d3cf60956653f58b048b"
   },
   "timestamp_utc": "2026-08-26T19:42:31Z",
   "failure_classification": null,
   "model": {
     "id": "resnet_50",
-    "build_profile_id": "modalix_bf16",
-    "component_id": "model",
+    "variant_id": "modalix_bf16",
     "path": "/workspace/resnet_50_modalix_bf16_mpk.tar.gz",
     "sha256": "62b45721ab30176da63cd9f84357dc79270fd702a7273d5d1c678d8263a9c219",
     "uri": "vulcan://runs/74b48a12-6088-42a0-b881-5925a5272fae/artifacts/mpk",

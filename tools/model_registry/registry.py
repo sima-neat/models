@@ -260,6 +260,13 @@ def _require_sha256(value: Any, field: str) -> str:
     return digest
 
 
+def _component_source_media_type(source: JsonObject) -> str:
+    declared = source.get("media_type")
+    if isinstance(declared, str) and declared:
+        return declared
+    return "application/onnx" if source.get("type") == "file" else "application/vnd.sima.onnx-file-set+json"
+
+
 def _accuracy_result(
     path: Path, *, model_id: str, build_profile_id: str, component_id: str, source_sha256: str
 ) -> JsonObject:
@@ -531,7 +538,7 @@ def publish_compilations(
                 "size_bytes": source.get(
                     "size_bytes", sum(int(member["size_bytes"]) for member in source.get("files", ()))
                 ),
-                "media_type": source.get("media_type", "application/vnd.sima.onnx-file-set+json"),
+                "media_type": _component_source_media_type(source),
                 "metadata": source_metadata,
             },
             f"{stable_key}-input",

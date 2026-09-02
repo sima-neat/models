@@ -40,7 +40,7 @@ PREVIEW_RUNS = (
 
 
 def _read_result() -> dict:
-    return json.loads((BROWSER / "fixtures" / "performance-result-v3.json").read_text(encoding="utf-8"))
+    return json.loads((BROWSER / "fixtures" / "performance-result-v4.json").read_text(encoding="utf-8"))
 
 
 def _run(index: int = 0) -> dict:
@@ -290,7 +290,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({
                 "benchmark_run": {"id": f"9bd7b220-478f-4d5f-a02f-5fca756305{index:02x}"},
                 "result": _benchmark_result(index),
-                "result_artifact_url": "/fixtures/performance-result-v3.json",
+                "result_artifact_url": "/fixtures/performance-result-v4.json",
             })
             return
         if index is not None and len(parts) == 5 and parts[3:] == ["accuracy", "latest"]:
@@ -314,7 +314,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if index is not None and len(parts) == 5 and parts[3] == "artifacts":
             self._json({
                 "artifact": {
-                    "download_url": "/fixtures/performance-result-v3.json",
+                    "download_url": "/fixtures/performance-result-v4.json",
                     "download_url_expires_in": 300,
                 }
             })

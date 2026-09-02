@@ -19,6 +19,9 @@ MODEL_COMPILE_INPUT_PATHS = {
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
+_IGNORED_MODEL_BUILD_NAMES = {"README.md"}
+
+
 def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
     root = Path(repository).expanduser().resolve()
     model_root = root / "models"
@@ -138,9 +141,13 @@ def _component_build_input_files(
         elif prefix in model_prefixes:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
-    candidates.append(model_dir / component["recipe"])
-    if component["surgery"]["type"] == "python":
-        candidates.append(model_dir / component["surgery"]["entrypoint"].split(":", 1)[0])
+    candidates.extend(
+        item
+        for item in model_dir.rglob("*")
+        if item.is_file()
+        and item.name not in _IGNORED_MODEL_BUILD_NAMES
+        and "tests" not in item.relative_to(model_dir).parts
+    )
     candidates.extend(
         model_dir / case["config"]
         for case in model["tests"]["performance"]

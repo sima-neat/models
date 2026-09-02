@@ -10,6 +10,7 @@ from model_registry.registry import (
     RegistryPublicationError,
     S3Object,
     SigV4RegistryClient,
+    _component_source_media_type,
     canonical_sha256,
     publish_compilations,
     publish_taxonomy,
@@ -109,6 +110,18 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ({"type": "file"}, "application/onnx"),
+        ({"type": "file_set"}, "application/vnd.sima.onnx-file-set+json"),
+        ({"type": "file", "media_type": "application/custom"}, "application/custom"),
+    ],
+)
+def test_component_source_media_type_matches_source_shape(source: dict, expected: str) -> None:
+    assert _component_source_media_type(source) == expected
+
+
 def test_registry_errors_identify_the_failed_endpoint() -> None:
     def reject(method: str, path: str, body: dict | None, key: str) -> dict:
         raise RegistryPublicationError("artifact registry HTTP 403 unknown_error: request rejected")
@@ -183,6 +196,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     }
     source_input = calls[2][2]
     assert source_input is not None
+    assert source_input["media_type"] == "application/onnx"
     assert source_input["source_reference"].startswith("hf://models/onnx-community/resnet-50-ONNX@")
     assert source_input["metadata"] == {
         "model_id": "resnet_50",

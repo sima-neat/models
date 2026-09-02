@@ -107,7 +107,11 @@ function adaptV3(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3]]);
+function adaptV4(result) {
+  return { ...common(result), orchestration: result.orchestration || null };
+}
+
+export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4]]);
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

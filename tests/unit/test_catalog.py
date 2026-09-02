@@ -284,6 +284,16 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(cat
     assert _fingerprint(catalog_repository, "alpha", "2.1.4") != dependency_changed
 
 
+def test_build_fingerprint_includes_model_local_recipe_helpers(catalog_repository: Path) -> None:
+    helper = catalog_repository / "models" / "alpha" / "calibration.py"
+    helper.write_text("# calibration helper\n", encoding="utf-8")
+    first = _fingerprint(catalog_repository, "alpha", "2.1.3")
+
+    helper.write_text("# changed calibration helper\n", encoding="utf-8")
+
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") != first
+
+
 def test_yolo26_build_fingerprint_includes_its_training_subtree(
     catalog_repository: Path,
 ) -> None:

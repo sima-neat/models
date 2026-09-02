@@ -132,10 +132,24 @@ def assemble_package(
             }
         )
 
+    composition = compositions[package["composition"]]
+    composition_files: list[tuple[str, Path]] = []
+    if composition["type"] == "single":
+        packaged_composition = composition
+    else:
+        composition_path = f"composition/{Path(composition['file']).name}"
+        composition_files.append((composition_path, model_dir / composition["file"]))
+        packaged_composition = {
+            "id": composition["id"],
+            "type": composition["type"],
+            "schema_version": composition["schema_version"],
+            "path": composition_path,
+        }
+
     fetcher = Fetcher(resource_cache_dir)
     resource_entries: list[dict[str, Any]] = []
     resource_files: list[tuple[str, Path]] = []
-    occupied_paths = {name for name, _ in component_files} | {"manifest.json"}
+    occupied_paths = {name for name, _ in (*component_files, *composition_files)} | {"manifest.json"}
     for resource_id in sorted(package["resources"]):
         resource = resources[resource_id]
         source = resource["source"]
@@ -159,28 +173,15 @@ def assemble_package(
                 raise ValidationError(f"package path is declared more than once: {package_path}")
             occupied_paths.add(package_path)
             resource_files.append((package_path, resource_path))
-        resource_entries.append(
-            {
-                "id": resource_id,
-                "paths": paths,
-                "source_sha256": digest,
-                "size_bytes": size,
-            }
-        )
-
-    composition = compositions[package["composition"]]
-    composition_files: list[tuple[str, Path]] = []
-    if composition["type"] == "single":
-        packaged_composition = composition
-    else:
-        composition_path = f"composition/{Path(composition['file']).name}"
-        composition_files.append((composition_path, model_dir / composition["file"]))
-        packaged_composition = {
-            "id": composition["id"],
-            "type": composition["type"],
-            "schema_version": composition["schema_version"],
-            "path": composition_path,
+        resource_entry = {
+            "id": resource_id,
+            "paths": paths,
+            "source_sha256": digest,
+            "size_bytes": size,
         }
+        if "license" in resource:
+            resource_entry["license"] = resource["license"]
+        resource_entries.append(resource_entry)
 
     manifest = {
         "schema_version": 1,

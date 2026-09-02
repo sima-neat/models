@@ -36,7 +36,7 @@ npm run serve:portal --prefix website
 Open <http://localhost:4173> for the catalog and
 <http://localhost:4173/docs> for the developer guide.
 
-To preview the complete ResNet-50 accuracy and schema-v3 benchmark UI without a
+To preview the complete ResNet-50 accuracy and schema-v4 benchmark UI without a
 registry or DevKit connection, run:
 
 ```bash
@@ -51,7 +51,7 @@ sample scope, reference comparison, and provisional status can be reviewed.
 The catalog intentionally overflows
 the comparison dialog so sticky headers and vertical scrolling can be checked.
 The base three-trial result fixture is stored in
-`artifact-browser/fixtures/performance-result-v3.json` and can be edited to
+`artifact-browser/fixtures/performance-result-v4.json` and can be edited to
 exercise other metric values or availability states. Its
 `preview_only_extension_metric` is deliberately synthetic and exists only to
 verify that unknown additive metrics render gracefully.

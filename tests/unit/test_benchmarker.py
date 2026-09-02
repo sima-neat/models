@@ -465,7 +465,7 @@ def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Pa
         2,
         None,
     ]
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_measures_model_load_and_time_to_first_inference_with_one_startup_probe(
@@ -523,7 +523,7 @@ def test_measures_model_load_and_time_to_first_inference_with_one_startup_probe(
     assert runtime.runners[0].options.startup_preflight is True
     assert runtime.runners[0].closed
     assert startup_order == ["startup", "resolved_model"]
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_startup_probe_failure_is_nonfatal(tmp_path: Path) -> None:
@@ -550,7 +550,7 @@ def test_startup_probe_failure_is_nonfatal(tmp_path: Path) -> None:
     assert first["status"] == "unavailable"
     assert first["reason"] == "startup_probe_failed"
     assert first["details"]["error_type"] == "AttributeError"
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_temperature_snapshot_disambiguates_duplicate_sensor_labels(tmp_path: Path) -> None:
@@ -608,7 +608,7 @@ def test_measured_power_includes_cross_trial_statistics_and_energy_per_inference
     assert result["metrics"]["energy_joules"]["value"] == 3.75
     assert result["metrics"]["energy_per_inference_joules"]["value"] == pytest.approx(0.15)
     assert result["metrics"]["energy_per_inference_joules"]["standard_deviation"] == pytest.approx(0.05)
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_bounded_runner_uses_explicit_warmup_and_sample_counts(tmp_path: Path) -> None:
@@ -652,7 +652,7 @@ def test_bounded_runner_uses_explicit_warmup_and_sample_counts(tmp_path: Path) -
     assert result["metrics"]["avg_power_watts"]["value"] == 7.5
     assert result["metrics"]["mla_memory_peak_delta_mib"]["value"] == 20
     assert result["power_measurement"]["source"] == "pyneat.ModelRunner.measure"
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_rejects_checksum_mismatch(tmp_path: Path) -> None:
@@ -742,7 +742,7 @@ def test_cli_writes_machine_readable_error_result(tmp_path: Path, monkeypatch: p
     assert result["failure_classification"] == "model"
     assert result["model"]["contract"]["name"] == "fixture-model"
     assert result["model"]["contract"]["mla_stage_count"] == 1
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
@@ -792,7 +792,7 @@ def test_cli_preserves_runtime_details_and_completed_trials_on_failure(
     assert result["metrics"]["mla_memory_peak_delta_mib"]["value"] == 12
     assert result["metrics"]["mla_memory_peak_delta_mib"]["sample_count"] == 4
     assert result["environment"]["observations"]["end"] is not None
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_cli_writes_schema_valid_error_for_invalid_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -806,7 +806,7 @@ def test_cli_writes_schema_valid_error_for_invalid_manifest(tmp_path: Path, monk
     assert result["status"] == "error"
     assert result["failure_classification"] == "configuration"
     assert result["model"]["id"] is None
-    validate("performance-result-v3.schema.json", result)
+    validate("performance-result-v4.schema.json", result)
 
 
 def test_power_preflight_warns_with_actionable_runtime_user(

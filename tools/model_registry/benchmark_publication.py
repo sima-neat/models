@@ -39,15 +39,24 @@ REGISTRY_AGGREGATIONS = {
 
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
+    model = result["model"]
+    if result["schema_version"] <= 3:
+        model_identity = {
+            "id": model["id"],
+            "variant_id": model["variant_id"],
+            "sha256": model["sha256"],
+        }
+    else:
+        model_identity = {
+            "id": model["id"],
+            "build_profile_id": model["build_profile_id"],
+            "component_id": model["component_id"],
+            "sha256": model["sha256"],
+        }
     return {
         "schema_version": result["schema_version"],
         "benchmark_type": result["benchmark_type"],
-        "model": {
-            "id": result["model"]["id"],
-            "build_profile_id": result["model"]["build_profile_id"],
-            "component_id": result["model"]["component_id"],
-            "sha256": result["model"]["sha256"],
-        },
+        "model": model_identity,
         "compatibility": {
             "platform_version": result["compatibility"]["expected_platform_version"],
             "neat_version": result["compatibility"]["expected_neat_version"],
@@ -63,7 +72,7 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
         version = result.get("schema_version") if isinstance(result, dict) else None
-        if version not in {1, 2, 3}:
+        if version not in {1, 2, 3, 4}:
             raise ValidationError(f"unsupported benchmark result schema version: {version!r}")
         schema = (
             Path(schema_path).expanduser().resolve()
@@ -89,6 +98,14 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     return result
 
 
+def _build_identity(result: JsonObject) -> tuple[str, str]:
+    """Map legacy variant identities onto the v2 build coordinates."""
+    model = result["model"]
+    if result["schema_version"] <= 3:
+        return model["variant_id"], "model"
+    return model["build_profile_id"], model["component_id"]
+
+
 def _require_compile_run_id(result: JsonObject, declared: str | None) -> str:
     provenance_run_id = result["provenance"].get("compile_run_id")
     run_id = declared or provenance_run_id
@@ -111,6 +128,7 @@ def _require_git_sha(value: str) -> str:
 
 
 def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
+    build_profile_id, component_id = _build_identity(result)
     definitions = {
         "latency_avg_ms": ("model.latency.avg", "lower"),
         "latency_p50_ms": ("model.latency.p50", "lower"),
@@ -125,8 +143,8 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
     }
     dimensions = {
         "model_id": result["model"]["id"],
-        "build_profile_id": result["model"]["build_profile_id"],
-        "component_id": result["model"]["component_id"],
+        "build_profile_id": build_profile_id,
+        "component_id": component_id,
         "benchmark_type": result["benchmark_type"],
     }
     values = []
@@ -186,8 +204,7 @@ def publish_benchmark_result(
 
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
-    build_profile_id = result["model"]["build_profile_id"]
-    component_id = result["model"]["component_id"]
+    build_profile_id, component_id = _build_identity(result)
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
     stable_digest = hashlib.sha256(

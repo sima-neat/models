@@ -8,7 +8,11 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from model_registry.benchmark_publication import load_benchmark_result, publish_benchmark_result
+from model_registry.benchmark_publication import (
+    benchmark_identity_document,
+    load_benchmark_result,
+    publish_benchmark_result,
+)
 from model_registry.errors import ValidationError
 from model_registry.registry import S3Object, canonical_sha256
 
@@ -99,6 +103,52 @@ def valid_result(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.mark.parametrize("version", [2, 3])
+def test_loads_historical_variant_identity_results(version: int) -> None:
+    path = ROOT / "artifact-browser" / "fixtures" / f"performance-result-v{version}.json"
+
+    result = load_benchmark_result(path)
+
+    assert result["model"]["variant_id"] == "modalix_bf16"
+
+
+def test_republishes_historical_variant_identity_result(tmp_path: Path) -> None:
+    path = valid_result(tmp_path)
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["schema_version"] = 3
+    result["identity"]["canonicalization_version"] = 3
+    result["model"]["variant_id"] = result["model"].pop("build_profile_id")
+    result["model"].pop("component_id")
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    path.write_text(json.dumps(result), encoding="utf-8")
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        if endpoint == "/v1/runs":
+            return {"run_id": BENCHMARK_RUN_ID}
+        return {"ok": True}
+
+    published = publish_benchmark_result(
+        result_path=path,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        request=request,
+        artifact_store=FakeStore(),
+    )
+
+    create = calls[0][2]
+    assert create is not None
+    assert create["metadata"]["build_profile_id"] == "modalix_bf16"
+    assert create["metadata"]["component_id"] == "model"
+    assert published["build_profile_id"] == "modalix_bf16"
+    assert published["component_id"] == "model"
+
+
 def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     path = valid_result(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
@@ -172,7 +222,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v3.json")
+    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v4.json")
 
 
 def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:

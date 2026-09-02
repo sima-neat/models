@@ -43,7 +43,7 @@ POWER_DEVICE_PATHS = (Path("/dev/i2c-3"), Path("/dev/i2c-4"))
 MLA_MEMORY_PATH = Path("/dev/simaai-mem")
 MLA_MEMORY_SAMPLE_INTERVAL_SECONDS = 0.1
 MLA_MEMORY_PATTERN = re.compile(r"Total allocated size:\s*(0x[0-9a-fA-F]+)")
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 
 
 def tool_version() -> str:
@@ -1541,7 +1541,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {tool_version()}")
     parser.add_argument("--manifest", type=Path, required=True, help="performance-test-v1 JSON manifest")
-    parser.add_argument("--output", type=Path, required=True, help="performance-result-v3 JSON output")
+    parser.add_argument("--output", type=Path, required=True, help="performance-result-v4 JSON output")
     return parser
 
 
