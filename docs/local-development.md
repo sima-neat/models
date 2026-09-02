@@ -175,18 +175,33 @@ In the pinned Model Compiler environment:
    calibration_path="$(jq -r .path <<<"$calibration_json")"
    ```
 
-   `calibration_kind` is `dataset` only when the selected variant needs the
-   ready calibration declaration. Otherwise its path is empty and the recipe
-   must not receive `--dataset`.
+   `calibration_kind` distinguishes three outcomes: `dataset` resolves a
+   registered dataset archive, `source` resolves the immutable file declared
+   by `calibration.source`, and `none` has no calibration input or path. Keep a
+   nonempty path from either resolved kind; do not make the recipe download the
+   same input again.
 
 4. Invoke the recipe declared by the selected `compile_variants` entry, using a
    new output directory:
 
    ```bash
    recipe_args=()
-   if [[ "$calibration_kind" == "dataset" ]]; then
-     recipe_args=(--dataset "$calibration_path")
-   fi
+   case "$calibration_kind" in
+     dataset)
+       recipe_args=(--dataset "$calibration_path")
+       unset CALIBRATION_PATH
+       ;;
+     source)
+       export CALIBRATION_PATH="$calibration_path"
+       ;;
+     none)
+       unset CALIBRATION_PATH
+       ;;
+     *)
+       echo "Unknown calibration kind: $calibration_kind" >&2
+       exit 1
+       ;;
+   esac
 
    python models/<model-id>/compile.py \
      --model "$source_path" \
@@ -194,6 +209,11 @@ In the pinned Model Compiler environment:
      --variant <variant-id> \
      "${recipe_args[@]}"
    ```
+
+   Dataset-based recipes receive `--dataset`. Source-based recipes read the
+   already verified file from `CALIBRATION_PATH`; this environment variable is
+   the standard recipe interface for `calibration.source`. A recipe must not
+   fall back to a network download when that variable is present.
 
 5. Verify that the directory contains exactly one `*_mpk.tar.gz` and validate
    it:

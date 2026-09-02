@@ -176,12 +176,15 @@ compile.py --model <verified-source> --output-dir <new-directory> --variant <var
 The recipe must:
 
 - consume the already verified source passed by `--model`;
+- consume registered calibration datasets passed by `--dataset`, or immutable
+  `calibration.source` files passed through `CALIBRATION_PATH`;
 - read only the selected, declared variant parameters;
 - fail on an unknown or incompatible variant;
 - make preparation, quantization, and compilation deterministic;
 - create the new output directory rather than reuse stale output;
 - leave exactly one directly consumable `*_mpk.tar.gz` there;
-- never download an unpinned input or select another compiler version.
+- never download an unpinned input, re-download a provided calibration input,
+  or select another compiler version.
 
 The repository-wide compiler version comes from
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
