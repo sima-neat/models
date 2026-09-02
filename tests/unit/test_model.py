@@ -51,6 +51,16 @@ def test_unsupported_variant_requires_reason() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
+def test_runner_class_is_optional_and_validated() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+    model["compile_variants"][0]["runner_class"] = "expensive"
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+    model["compile_variants"][0]["runner_class"] = "arbitrary-instance"
+    with pytest.raises(ValidationError, match="runner_class"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
 def test_unapproved_https_host_is_a_validation_error() -> None:
     model = load_model(FIXTURES / "fixture_model")
     model["source"]["uri"] = "https://unapproved.example/model.onnx"

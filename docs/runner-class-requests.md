@@ -1,9 +1,8 @@
 # Compile runner class requests and approvals
 
-> **Status: planned contract.** The current schema does not accept
-> `runner_class`, and the current compilation workflow uses the platform default.
-> Do not add this field to a model manifest until the schema, workflow, and Vulcan
-> admission check are implemented together.
+The schema and compilation workflow support this contract. Elevated requests
+remain unusable until a matching approval is deployed through the Vulcan
+environment specification.
 
 Model compilation requirements vary substantially. Most variants should use the
 default runner, while a small number may need more CPU, memory, or time. The
@@ -22,6 +21,7 @@ compile_variants:
   - id: modalix_bf16
     target: modalix
     recipe: compile.py
+    runner_class: default
     runner_class: expensive
     parameters:
       precision: bf16
@@ -109,7 +109,7 @@ The admission check matches repository, model ID, variant ID, environment, and
 requested class against the Vulcan record. It returns only an approved logical
 runner label.
 
-The workflow must fail closed when:
+The workflow and scaler must fail closed when:
 
 - the requested class is unknown;
 - an elevated request has no matching approval;
@@ -121,9 +121,11 @@ Do not silently downgrade an unapproved request to `default`. A downgrade can
 turn a policy error into a long-running compile failure and makes build behavior
 non-deterministic.
 
-Checking approval inside the compile job is too late: the expensive runner may
-already have been provisioned. The workflow definition must also avoid accepting
-an arbitrary runner label directly from untrusted event input.
+The Models workflow authorizes the complete matrix in an Ubuntu-hosted admission
+job before GitHub expands the self-hosted compile matrix. Vulcan repeats the
+approval check in the scaler before provisioning as a defense-in-depth boundary.
+The workflow definition must also avoid accepting an arbitrary runner label
+directly from untrusted event input.
 
 ## Model author workflow
 

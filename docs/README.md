@@ -49,7 +49,7 @@ the complete environment setup.
 - [`model.yaml` reference](metadata-schema.md) — field-level contracts and
   validation requirements.
 - [Compile runner class requests and approvals](runner-class-requests.md) —
-  planned per-variant resource requests and Vulcan admission policy.
+  per-variant resource requests and Vulcan admission policy.
 - [Model taxonomy](model-taxonomy.md) — sanctioned category IDs.
 - [Local development and testing](local-development.md) — validation, input
   fetching, compilation, MPK verification, and common failures.

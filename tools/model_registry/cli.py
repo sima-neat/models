@@ -15,6 +15,7 @@ from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .model import load_and_validate_model, variant_requires_calibration
+from .runner_approval import authorize_runner_matrix
 from .source import SourceSpec
 
 AUTHOR_COMMANDS = frozenset(
@@ -24,6 +25,7 @@ AUTHOR_COMMANDS = frozenset(
         "fetch-accuracy-dataset",
         "evaluate",
         "matrix",
+        "authorize-runner-matrix",
         "resolve-compiler",
         "validate",
         "validate-catalog",
@@ -104,6 +106,15 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--head")
     matrix.add_argument("--compiler-version")
 
+    authorize = subcommands.add_parser(
+        "authorize-runner-matrix",
+        help="authorize compile runner requests against a Terraform-published Vulcan specification",
+    )
+    authorize.add_argument("--matrix", type=Path, required=True)
+    authorize.add_argument("--vulcan-spec", type=Path, required=True)
+    authorize.add_argument("--repository-name", required=True)
+    authorize.add_argument("--environment", required=True)
+
     base = subcommands.add_parser("resolve-base", help="resolve the closest base branch and merge base")
     base.add_argument("--repository", type=Path, default=Path.cwd())
     base.add_argument("--current-branch", required=True)
@@ -145,6 +156,10 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
     mpk.add_argument("--build-fingerprint")
+    mpk.add_argument("--requested-runner-class")
+    mpk.add_argument("--runner-class")
+    mpk.add_argument("--runner-approval-id")
+    mpk.add_argument("--runner-approval-spec-revision")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
     publish.add_argument("--repository", type=Path, default=Path.cwd())
@@ -368,6 +383,24 @@ def _matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def _authorize_runner_matrix(args: argparse.Namespace) -> int:
+    try:
+        matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
+        vulcan_spec = json.loads(args.vulcan_spec.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelRegistryError(f"could not load runner authorization input: {exc}") from exc
+    if not isinstance(matrix, dict) or not isinstance(vulcan_spec, dict):
+        raise ModelRegistryError("runner authorization inputs must be JSON objects")
+    result = authorize_runner_matrix(
+        matrix,
+        vulcan_spec,
+        repository=args.repository_name,
+        environment=args.environment,
+    )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def _resolve_base(args: argparse.Namespace) -> int:
     result = resolve_base_branch(
         args.repository,
@@ -418,6 +451,10 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "git_sha",
         "environment",
         "build_fingerprint",
+        "requested_runner_class",
+        "runner_class",
+        "runner_approval_id",
+        "runner_approval_spec_revision",
     )
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
     result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
@@ -504,6 +541,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _evaluate(args)
         if args.command == "matrix":
             return _matrix(args)
+        if args.command == "authorize-runner-matrix":
+            return _authorize_runner_matrix(args)
         if args.command == "resolve-base":
             return _resolve_base(args)
         if args.command == "resolve-compiler":

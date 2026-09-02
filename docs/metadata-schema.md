@@ -212,11 +212,11 @@ reason: Model Compiler 2.x rejects the documented operator after the recorded qu
 Unsupported variants are visible in the manifest but omitted from matrices and
 release packaging. A non-empty reason is mandatory.
 
-A per-variant `runner_class` override is a [planned contract](runner-class-requests.md),
-not part of schema version 2 today. The current schema rejects that field. The
-planned design treats it as a resource request: `default` needs no exceptional
-approval, while an elevated class must have a matching approval in the Vulcan
-scaler specification and must pass admission before scheduling.
+`runner_class` is an optional per-variant resource request with allowed values
+`default`, `expensive`, and `most-expensive`. When omitted, it defaults to
+`default`. Elevated classes must have a matching approval in the Vulcan scaler
+specification and pass admission before scheduling. See [Compile runner class
+requests and approvals](runner-class-requests.md).
 
 ## Tests
 

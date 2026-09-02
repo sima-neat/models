@@ -274,6 +274,7 @@
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
         "target": {"type": "string", "minLength": 1},
         "recipe": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py$"},
+        "runner_class": {"enum": ["default", "expensive", "most-expensive"]},
         "parameters": {"type": "object"},
         "status": {"enum": ["supported", "unsupported"]},
         "reason": {"type": "string", "minLength": 1}

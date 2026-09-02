@@ -51,6 +51,7 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     assert "compiler_label" not in matrix["include"][0]
     assert "compiler_version" not in matrix["include"][0]
     assert matrix["include"][0]["recipe"] == "compile.py"
+    assert matrix["include"][0]["requested_runner_class"] == "default"
 
 
 @pytest.mark.parametrize(
@@ -187,6 +188,13 @@ def test_matrix_can_select_requested_variants(catalog_repository: Path) -> None:
     catalog["alpha"]["compile_variants"].append(second)
     matrix = build_matrix(catalog, ["alpha"], ["second"])
     assert [entry["variant_id"] for entry in matrix["include"]] == ["second"]
+
+
+def test_matrix_carries_explicit_per_variant_runner_class(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    catalog["alpha"]["compile_variants"][0]["runner_class"] = "expensive"
+    matrix = build_matrix(catalog, ["alpha"])
+    assert matrix["include"][0]["requested_runner_class"] == "expensive"
 
 
 def test_matrix_excludes_explicitly_unsupported_variants(catalog_repository: Path) -> None:

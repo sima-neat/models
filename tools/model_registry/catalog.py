@@ -264,6 +264,7 @@ def build_matrix(
                     "model_dir": f"models/{model_id}",
                     "model_id": model_id,
                     "recipe": variant["recipe"],
+                    "requested_runner_class": variant.get("runner_class", "default"),
                     "target": variant["target"],
                     "variant_id": variant["id"],
                     **({"build_fingerprint": fingerprint} if fingerprint else {}),

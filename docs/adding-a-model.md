@@ -201,13 +201,11 @@ combination cannot work with the repository compiler, retain it as
 variants remain documented but are excluded from compilation and packaging.
 Do not mark an untested or temporarily failing variant unsupported.
 
-Some variants may eventually request a logical runner class when the default
-runner is insufficient. This is a planned, approval-gated contract and is not
-accepted by the current schema. Read [Compile runner class requests and
-approvals](runner-class-requests.md) before proposing or implementing such a
-request. Elevated capacity must be approved in the Vulcan scaler specification
-and enforced before the build is scheduled; a model manifest cannot authorize
-its own infrastructure cost.
+Variants may request a logical runner class when the default runner is
+insufficient. Read [Compile runner class requests and
+approvals](runner-class-requests.md) before adding one. Elevated capacity must
+be approved in the Vulcan scaler specification and is enforced before the build
+is scheduled; a model manifest cannot authorize its own infrastructure cost.
 
 ## 8. Validate the contribution
 

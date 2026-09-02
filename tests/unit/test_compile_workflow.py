@@ -16,6 +16,9 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert "github.event_name != 'pull_request'" in compile_job["if"]
     assert "model-compiler" in compile_job["runs-on"]
     assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
+    assert "${{ matrix.runner_class }}" in compile_job["runs-on"]
+    assert "model-id-${{ matrix.model_id }}" in compile_job["runs-on"]
+    assert "variant-id-${{ matrix.variant_id }}" in compile_job["runs-on"]
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
@@ -41,6 +44,26 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
     assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == ("${{ needs.select.outputs.model_compiler_version }}")
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
+
+
+def test_runner_classes_are_authorized_before_compile_matrix_is_queued() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    admission = workflow["jobs"]["authorize-runner-classes"]
+    compile_job = workflow["jobs"]["compile"]
+
+    assert admission["runs-on"] == "ubuntu-latest"
+    assert admission["needs"] == ["select", "resolve-vulcan-config"]
+    assert "github.event_name != 'pull_request'" in admission["if"]
+    assert admission["permissions"]["id-token"] == "write"
+    authorization = next(step for step in admission["steps"] if step.get("id") == "authorization")
+    assert "authorize-runner-matrix" in authorization["run"]
+    assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == (
+        "${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}"
+    )
+    assert compile_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
+    assert compile_job["strategy"]["matrix"] == (
+        "${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}"
+    )
 
 
 def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
@@ -108,7 +131,7 @@ def test_each_successful_matrix_item_publishes_directly_to_registry() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     compile_job = workflow["jobs"]["compile"]
 
-    assert compile_job["needs"] == ["select", "resolve-vulcan-config"]
+    assert compile_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
     assert compile_job["permissions"]["id-token"] == "write"
     credentials = next(
         step for step in compile_job["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
@@ -226,6 +249,22 @@ def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> No
     assert "--workers 6" in accuracy_step["run"]
     assert ".dataset.evaluated_samples" in accuracy_step["run"]
     assert ".evaluation.status" in accuracy_step["run"]
+
+
+def test_compile_result_records_runner_authorization_provenance() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    compile_job = workflow["jobs"]["compile"]
+    verify = next(step for step in compile_job["steps"] if step.get("id") == "mpk")
+
+    assert compile_job["env"]["REQUESTED_RUNNER_CLASS"] == "${{ matrix.requested_runner_class }}"
+    assert compile_job["env"]["RUNNER_CLASS"] == "${{ matrix.runner_class }}"
+    assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == (
+        "${{ matrix.runner_approval_spec_revision }}"
+    )
+    assert "--requested-runner-class" in verify["run"]
+    assert "--runner-class" in verify["run"]
+    assert "--runner-approval-id" in verify["run"]
+    assert "--runner-approval-spec-revision" in verify["run"]
 
 
 def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
