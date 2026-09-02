@@ -133,6 +133,17 @@ def calibration_source() -> SourceSpec:
     return SourceSpec.from_mapping(calibration["source"])
 
 
+def resolve_calibration_path() -> Path:
+    override = os.environ.get("CALIBRATION_PATH", "").strip()
+    if override:
+        path = Path(override).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"calibration snapshot does not exist: {path}")
+        return path
+    path, _cache_hit = Fetcher().fetch(calibration_source())
+    return path
+
+
 def _tessellation_parameters(
     model: Any,
     *,
@@ -454,7 +465,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     from afe.load.importers.general_importer import ImporterParams, ModelFormat
     from sima_utils.data.data_generator import DataGenerator
 
-    calibration_path, _ = Fetcher().fetch(calibration_source())
+    calibration_path = resolve_calibration_path()
     calibration, _validation = validate_dataset(calibration_path)
     calibration = imagenet_normalize(calibration)
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -529,8 +540,8 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Pat
     from afe.apis.defines import InputName
     from afe.apis.model import Model
 
-    LOG.info("Fresh validation process: fetching calibration asset")
-    calibration_path, _ = Fetcher().fetch(calibration_source())
+    LOG.info("Fresh validation process: resolving calibration asset")
+    calibration_path = resolve_calibration_path()
     _calibration, validation = validate_dataset(calibration_path)
     validation = imagenet_normalize(validation)
     model_name = f"ssd_mobilenet_v3_{variant_id}"

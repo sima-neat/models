@@ -67,6 +67,17 @@ def calibration_source() -> SourceSpec:
     return SourceSpec.from_mapping(calibration["source"])
 
 
+def resolve_calibration_path() -> Path:
+    override = os.environ.get("CALIBRATION_PATH", "").strip()
+    if override:
+        path = Path(override).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"calibration snapshot does not exist: {path}")
+        return path
+    path, _cache_hit = Fetcher().fetch(calibration_source())
+    return path
+
+
 def _tessellation_parameters(
     model: Any,
     *,
@@ -368,7 +379,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     from afe.load.importers.general_importer import ImporterParams, ModelFormat
     from sima_utils.data.data_generator import DataGenerator
 
-    calibration_path, _ = Fetcher().fetch(calibration_source())
+    calibration_path = resolve_calibration_path()
     calibration, validation = validate_dataset(calibration_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v1-", dir=os.environ.get("RUNNER_TEMP")) as temporary:

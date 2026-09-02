@@ -216,6 +216,22 @@ def test_calibration_split_has_128_representative_and_32_disjoint_samples() -> N
     assert calibration.IMAGE_DATASET_REVISION == "9e50abcdc1361852f34841af4939cbcd2d37c92f"
 
 
+def test_compile_recipe_uses_verified_calibration_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recipe = load_module("compile")
+    verified = tmp_path / "calibration.npz"
+    verified.write_bytes(b"verified")
+    monkeypatch.setenv("CALIBRATION_PATH", str(verified))
+
+    class UnexpectedFetcher:
+        def fetch(self, _source: Any) -> None:
+            raise AssertionError("verified calibration must not be downloaded again")
+
+    monkeypatch.setattr(recipe, "Fetcher", UnexpectedFetcher)
+    assert recipe.resolve_calibration_path() == verified.resolve()
+
+
 def test_calibration_rejects_wrong_sample_shape() -> None:
     calibration = load_module("calibration")
     with pytest.raises(ValueError, match="calibration must be"):
