@@ -18,8 +18,9 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
     assert "${{ matrix.runner_class }}" in compile_job["runs-on"]
     assert "model-id-${{ matrix.model_id }}" in compile_job["runs-on"]
-    assert "build-profile-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
-    assert "component-id-${{ matrix.component_id }}" in compile_job["runs-on"]
+    assert "variant-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
+    assert all(not label.startswith("build-profile-id-") for label in compile_job["runs-on"])
+    assert all(not label.startswith("component-id-") for label in compile_job["runs-on"])
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
@@ -177,17 +178,50 @@ def test_changed_selection_does_not_fetch_or_carry_forward_a_previous_catalog() 
     assert '--compiler-version "$COMPILER_VERSION"' in matrix_script
 
 
-def test_new_branch_uses_merge_base_instead_of_full_catalog_fallback() -> None:
+def test_feature_branch_pushes_always_use_merge_base_for_retryable_selection() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     matrix_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
-    base_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
+    base_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
+    base_script = base_step["run"]
 
     assert "model-registry resolve-base" in base_script
     assert 'comparison_base="$merge_base"' in base_script
-    assert 'git cat-file -e "${EVENT_BEFORE}^{commit}"' in base_script
+    assert base_step["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]' in base_script
+    assert base_script.index('comparison_base="$merge_base"') < base_script.index(
+        '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]'
+    )
     assert "model-registry matrix --repository ." in matrix_script
     assert '--base "$COMPARISON_BASE" --head "$HEAD_SHA"' in matrix_script
     assert 'elif [[ "$BASE_SHA" =~ ^0+$ ]]' not in matrix_script
+
+
+def test_develop_pushes_compare_only_the_push_event_range() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    base_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
+    base_script = base_step["run"]
+
+    assert base_step["env"]["DEFAULT_BRANCH"] == "develop"
+    assert base_step["env"]["EVENT_BEFORE"] == "${{ github.event.before }}"
+    develop_guard = '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]'
+    assert develop_guard in base_script
+    assert 'git cat-file -e "${EVENT_BEFORE}^{commit}"' in base_script
+    assert 'comparison_base="$EVENT_BEFORE"' in base_script
+    assert base_script.index(develop_guard) < base_script.index('comparison_base="$EVENT_BEFORE"')
+
+
+def test_manual_dispatch_keeps_explicit_model_profile_and_component_selection() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    matrix_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
+    matrix_script = matrix_step["run"]
+
+    assert 'if [[ "$EVENT_NAME" == "workflow_dispatch" ]]' in matrix_script
+    assert matrix_step["env"]["REQUESTED_MODELS"] == "${{ inputs.models }}"
+    assert matrix_step["env"]["REQUESTED_PROFILES"] == "${{ inputs.profiles }}"
+    assert matrix_step["env"]["REQUESTED_COMPONENTS"] == "${{ inputs.components }}"
+    assert '--models "$REQUESTED_MODELS"' in matrix_script
+    assert 'profile_args=(--profiles "$REQUESTED_PROFILES")' in matrix_script
+    assert 'component_args=(--components "$REQUESTED_COMPONENTS")' in matrix_script
 
 
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:

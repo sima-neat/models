@@ -127,6 +127,7 @@ jobs:
           CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
           DEFAULT_BRANCH: develop
           EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PREFERRED_BRANCH: ${{ inputs.base_branch || github.event.pull_request.base.ref }}
         run: |
@@ -144,8 +145,12 @@ jobs:
           base_branch="$(jq -er '.base_branch' <<< "$resolution")"
           merge_base="$(jq -er '.merge_base' <<< "$resolution")"
           comparison_base="$merge_base"
-          if [[ "${EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$EVENT_BEFORE" =~ ^0+$ ]] && \
-             git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
+          if [[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]; then
+            if [[ ! "${EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ ]] || [[ "$EVENT_BEFORE" =~ ^0+$ ]] || \
+               ! git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
+              echo "Push to $DEFAULT_BRANCH has no valid github.event.before commit: ${EVENT_BEFORE:-<empty>}" >&2
+              exit 2
+            fi
             comparison_base="$EVENT_BEFORE"
           fi
           echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
@@ -278,8 +283,10 @@ jobs:
       - ${{ needs.select.outputs.model_compiler_label }}
       - ${{ matrix.runner_class }}
       - model-id-${{ matrix.model_id }}
-      - build-profile-id-${{ matrix.build_profile_id }}
-      - component-id-${{ matrix.component_id }}
+      # Vulcan currently registers model/build identity with the legacy
+      # variant-id label. In contract v2, the build profile is that identity;
+      # component identity remains in the matrix and authorization record.
+      - variant-id-${{ matrix.build_profile_id }}
     timeout-minutes: 90
     env:
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
