@@ -476,10 +476,11 @@ function taxonomyLabel(section, id) {
 }
 
 function buildIdentity(run) {
-  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
-  const component = run.metadata?.component_id;
-  if (profile && component) return `${profile} · ${component}`;
-  return profile || component || "default artifact";
+  const metadata = run.metadata || {};
+  const profile = metadata.build_profile_id || metadata.variant_id;
+  const component = metadata.component_id;
+  if (profile && component && component !== "model") return `${profile} · ${component}`;
+  return profile || component || "Build identity unavailable";
 }
 
 function runSearchDocument(run) {
@@ -570,18 +571,18 @@ function renderRuns() {
 
   elements["result-list"].innerHTML = runs.map((run) => {
     const model = run.metadata?.model_id || run.run_type.replaceAll("_", " ");
-    const variant = buildIdentity(run);
+    const build = buildIdentity(run);
     const selected = run.id === state.selectedId;
     const compared = state.compareSelection.has(run.id);
     if (compared) state.compareSelection.set(run.id, run);
-    const compareLabel = `${model} ${variant}`;
+    const compareLabel = `${model} ${build}`;
     return `<div class="run-entry${compared ? " compared" : ""}">
       <label class="compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
         <input type="checkbox" data-compare-run-id="${run.id}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(compareLabel)} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />
         <span aria-hidden="true">✓</span>
       </label>
       <button class="run-row${selected ? " selected" : ""}" type="button" data-run-id="${run.id}" aria-pressed="${selected}">
-      <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(variant)}</small></span>
+      <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small></span>
       <span class="run-branch"><small>Branch</small>${escapeHtml(branchName(run.git_ref))}</span>
       <span class="run-compiler"><small>Compiler</small>${escapeHtml(run.toolchain_version || "—")}</span>
       <span class="run-date"><small>${escapeHtml(shortSha(run.commit_sha))}</small>${escapeHtml(formatDate(run.finished_at || run.created_at))}</span>
@@ -657,12 +658,12 @@ function renderComparisonTable(entries) {
   const definition = field ? metricDefinition(field, sampleMetric) : null;
   const rows = entries.map(({ run, artifacts, benchmark }) => {
     const model = run.metadata?.model_id || run.run_type?.replaceAll("_", " ") || "Unknown model";
-    const variant = buildIdentity(run);
+    const build = buildIdentity(run);
     const artifactBytes = artifacts.reduce((total, artifact) => (
       total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
     ), 0);
     return `<tr>
-      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(variant)}</small></th>
+      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small></th>
       <td>${escapeHtml(branchName(run.git_ref))}</td>
       <td>${escapeHtml(run.toolchain_version || "—")}</td>
       <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
@@ -957,7 +958,7 @@ function renderDetail(detail) {
   const input = provenance.inputs?.[0];
   const tests = detail.tests.test_results || [];
   const model = run.metadata?.model_id || run.run_type;
-  const variant = buildIdentity(run);
+  const build = buildIdentity(run);
   const precision = parameters.compile_parameters?.precision;
   const categories = run.model_categories || {};
   const license = run.metadata?.license;
@@ -971,7 +972,7 @@ function renderDetail(detail) {
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(variant)}</p></div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download="${escapeHtml(primaryArtifact.name)}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
+    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(model)}</h2><p>${escapeHtml(build)}</p></div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download="${escapeHtml(primaryArtifact.name)}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
     <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
 
     <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
