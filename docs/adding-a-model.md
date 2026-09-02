@@ -1,9 +1,10 @@
 # Adding a model
 
-This guide takes a model from an upstream ONNX file to a reviewable Model
-Registry contribution. Read the [`model.yaml` reference](metadata-schema.md)
-for field-level details and [local development](local-development.md) for the
-complete command reference.
+This guide owns the source-controlled model contract: the model directory,
+immutable source, metadata, recipe, variants, and test declarations. It ends
+when those files validate. The separate [local qualification
+guide](local-development.md) owns compilation, accuracy, MPK verification, and
+DevKit testing.
 
 ## 1. Confirm that the model is suitable
 
@@ -214,38 +215,22 @@ approvals](runner-class-requests.md) before adding one. Elevated capacity must
 be approved in the Vulcan scaler specification and is enforced before the build
 is scheduled; a model manifest cannot authorize its own infrastructure cost.
 
-## 8. Validate the contribution
+## 8. Check the contract
 
-Run the model-owned recipe and benchmark flow from
-[Local development and testing](local-development.md). Use these internal,
-non-publishing repository checks before and after that work:
+Before moving to qualification, check the model directory and its effect on the
+complete catalog:
 
 ```bash
 model-registry validate models/<model-id>
-model-registry fetch models/<model-id>
-model-registry fetch-calibration models/<model-id>
-model-registry matrix --repository . --changed-path models/<model-id>/model.yaml
-model-registry resolve-compiler --repository .
 model-registry validate-catalog --repository .
 ```
 
-`fetch-calibration` reports that no calibration is required when status is not
-`ready`. Inspect the matrix JSON and confirm that it contains every intended
-supported variant and no unintended model.
+These checks prove that the files form a coherent contract; they do not prove
+that the model compiles or runs.
 
-Continue through local compilation, applicable accuracy evaluation, MPK
-verification, and the declared performance test in
-[Local development and testing](local-development.md) using the exact pinned
-Model Compiler environment and a compatible Modalix DevKit. Completing this
-qualification for every submitted supported variant is required before opening
-the pull request.
+## Next: qualify the model locally
 
-## 9. Submit the change
-
-Follow [Contributing with Git and GitHub](contributing.md). A typical new-model
-commit contains only the model directory and, when necessary, a separately
-reviewable taxonomy update. Never commit downloaded models, calibration or test
-datasets, MPKs, compiler intermediates, logs, credentials, or signed URLs.
-
-See [Contributing with Git and GitHub](contributing.md) for the submission and
-automation boundary. Model authors never publish registry state directly.
+Continue with [Local development and testing](local-development.md). Complete
+its full qualification loop for every submitted supported variant before
+opening a pull request. When that work passes, the local guide sends you to the
+Git and pull-request guide.

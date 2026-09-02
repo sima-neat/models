@@ -20,20 +20,12 @@ python -m model_registry evaluate --help
 
 Using `PYTHONPATH` runs the tooling from the current checkout without replacing
 the Model Compiler environment's AFE, JAX, ONNX Runtime, NumPy, or Pillow
-packages. `dataset-registry` must be installed in the same environment when the
-dataset path is not passed explicitly.
+packages.
 
-Install the published `main` branch tool artifact when it is not already
-present:
-
-```bash
-sima-cli neat install --stg dataset/dataset-registry@main:latest
-```
-
-The resolver requires local access to the registered dataset archive in SiMa
-Artifactory. Follow [Datasets for local model development](datasets.md) to set
-up authentication, prove the exact variant resolves, or introduce a missing
-dataset before continuing.
+Complete [Datasets for local model development](datasets.md) before continuing.
+That guide owns Dataset Registry installation, Artifactory authentication,
+proof that the exact variant resolves, and the process for introducing missing
+data.
 
 ## Compile and evaluate locally
 

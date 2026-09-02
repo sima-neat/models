@@ -8,11 +8,18 @@ const sidebars: SidebarsConfig = {
       label: 'Contribute a model',
       collapsed: false,
       items: [
-        'adding-a-model',
-        'local-development',
-        'datasets',
-        'local-accuracy-development',
-        'contributing',
+        {type: 'doc', id: 'adding-a-model', label: '1. Define the model contract'},
+        {type: 'doc', id: 'local-development', label: '2. Qualify locally'},
+        {type: 'doc', id: 'contributing', label: '3. Submit for review'},
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Data and evaluation',
+      items: [
+        {type: 'doc', id: 'datasets', label: 'Dataset access and registration'},
+        {type: 'doc', id: 'local-accuracy-development', label: 'Accuracy evaluation'},
+        {type: 'doc', id: 'benchmarking', label: 'DevKit benchmarking'},
       ],
     },
     {
@@ -22,7 +29,6 @@ const sidebars: SidebarsConfig = {
         'metadata-schema',
         'runner-class-requests',
         'model-taxonomy',
-        'benchmarking',
       ],
     },
   ],

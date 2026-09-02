@@ -228,44 +228,29 @@ Benchmark the exact MPK produced above using the performance declaration in
 model route with deterministic synthetic inputs; it does not establish model
 accuracy or measure application preprocessing and postprocessing.
 
-### 1. Check the DevKit environment
+Complete the installation and compatibility checks in [Synthetic model
+benchmarking](benchmarking.md#install-on-a-devkit) once for the target DevKit.
+For each qualified variant, follow this shorter model-contribution sequence.
 
-The DevKit must match the versions from `deps/manifest.json`. When working from
-a NEAT SDK, confirm that its DevKit runner is available and keep the MPK,
-manifest, and result paths under `/workspace`:
+### 1. Prepare the exact MPK and manifest
+
+Confirm that the NEAT SDK can reach the DevKit:
 
 ```bash
 bash -lic 'type dk || type devkit-run'
 ```
 
-Non-Python programs launched through the SDK runner must be ARM64. The
-benchmarker itself runs in the DevKit's installed `pyneat` environment. If the
-SDK runner is unavailable, use a direct DevKit shell and copy the same assets
-there explicitly.
-
-### 2. Install and verify the benchmarker on the DevKit
-
-```bash
-sima-cli neat install --stg models-utils/benchmarker@develop:latest
-source ~/pyneat/bin/activate
-benchmarker --version
-```
-
-### 3. Create the local benchmark manifest
-
 Copy the compiled `*_mpk.tar.gz` under `/workspace`, calculate its SHA-256, and
-create `/workspace/benchmark-test.json` using the manifest shown in
-[Synthetic model benchmarking](benchmarking.md#create-a-benchmark-manifest).
-For a local run, `provenance.compile_run_id` may be omitted. Keep `model.id`,
-`model.variant_id`, compatibility versions, sample counts, and any
-bounded-runner geometry consistent with `model.yaml`, `deps/manifest.json`, and
-the model's `tests/performance.yaml`.
+create `/workspace/benchmark-test.json` from the [benchmark manifest
+reference](benchmarking.md#create-a-benchmark-manifest). Keep its model,
+variant, compatibility, and test settings consistent with the checked-in
+contracts. For a local run, `provenance.compile_run_id` may be omitted.
 
 The published contributor command intentionally does not expose CI's
 `make-benchmark-manifest` helper. Creating the local manifest explicitly keeps
 the MPK path, checksum, tested revision, and performance settings reviewable.
 
-### 4. Run on the DevKit and retain evidence
+### 2. Run on the DevKit and retain evidence
 
 From a DevKit shell:
 
@@ -278,16 +263,14 @@ benchmarker \
   2>&1 | tee /workspace/results/benchmark.log
 ```
 
-From a NEAT SDK, prefer its `dk` or `devkit-run` mechanism to execute the same
-files under `/workspace`; use direct SSH only when that runner is unavailable.
-
 Confirm that the command exits successfully and that
 `performance-result.json` reports a successful result with the expected model,
 variant, platform, Neat version, and measured sample count. Retain the JSON and
 log outside the repository, but do not commit either file.
 
-See [Synthetic model benchmarking](benchmarking.md) for manifest fields,
-bounded-runner behavior, power telemetry, and result semantics.
+See [Synthetic model benchmarking](benchmarking.md) for runner installation,
+manifest fields, bounded-runner behavior, power telemetry, and result
+semantics.
 
 ## Finish the local review
 

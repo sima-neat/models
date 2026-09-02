@@ -56,8 +56,24 @@ def test_local_qualification_is_required_before_submission() -> None:
 
     assert "submission prerequisites, not optional CI substitutes" in overview_words
     assert "complete the entire loop before submitting a model pull request" in local
-    assert "on a compatible Modalix DevKit;" in contributing
+    assert "Do not start submission until every supported variant" in contributing
     assert "checks not run locally" not in contributing
+
+
+def test_contribution_guides_have_single_workflow_owners() -> None:
+    overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    authoring = (ROOT / "docs" / "adding-a-model.md").read_text(encoding="utf-8")
+    local = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
+    overview_words = " ".join(overview.split())
+
+    assert "owns the tool installation and complete test sequence" in overview_words
+    assert "sima-cli neat install --stg models-utils/model-registry" not in overview
+    assert "model-registry matrix --repository" not in authoring
+    assert "model-registry verify-mpk" not in authoring
+    assert "does not repeat the local qualification procedure" in contributing
+    assert "model-registry validate models/<model-id>" not in contributing
+    assert "## Local-first qualification loop" in local
 
 
 def test_dataset_guide_covers_artifactory_access_and_registration() -> None:
@@ -150,12 +166,10 @@ def test_bounded_runner_documents_dynamic_image_geometry() -> None:
 
 
 def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
-    overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
     local = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
     contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
     benchmarking = (ROOT / "docs" / "benchmarking.md").read_text(encoding="utf-8")
 
-    assert "models-utils/model-registry@develop:latest" in overview
     assert "models-utils/model-registry@develop:latest" in local
     assert "Compilation is intentionally model-owned" in local
     assert "Model authors do not publish benchmark results directly" in benchmarking

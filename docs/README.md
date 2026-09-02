@@ -44,42 +44,38 @@ machine-readable DevKit benchmark result.
 You need a checkout of the Models repository, `sima-cli`, and the
 repository-pinned Model Compiler installed through the NEAT SDK or as a
 standalone tool. A compatible Modalix DevKit is required for the benchmarking
-stage.
+stage. Models that use calibration or accuracy data also require private
+Artifactory access.
 
-Install the author-safe contributor command into the Model Compiler
-environment:
-
-```bash
-sima-cli neat install --stg models-utils/model-registry@develop:latest
-model-registry --version
-```
-
-The installer finds the compiler environment and preserves its dependencies.
-The command can validate, fetch, inspect variants, and verify MPKs; it cannot
-publish registry artifacts.
-
-Continue with [Local development and testing](local-development.md) if you need
-the complete environment setup.
+Start with [Adding a model](adding-a-model.md) to define the source-controlled
+contract. The [local qualification guide](local-development.md) owns the tool
+installation and complete test sequence; follow it before you submit anything.
 
 ## Guides
 
-- [Adding a model](adding-a-model.md) — model directory, source, recipe, and
-  test declarations.
-- [`model.yaml` reference](metadata-schema.md) — field-level contracts and
-  validation requirements.
-- [Compile runner class requests and approvals](runner-class-requests.md) —
-  per-variant resource requests and Vulcan admission policy.
-- [Model taxonomy](model-taxonomy.md) — sanctioned category IDs.
-- [Local development and testing](local-development.md) — validation, input
-  fetching, compilation, MPK verification, and common failures.
+Follow these guides in order:
+
+1. [Adding a model](adding-a-model.md) — define the model directory, immutable
+   source, recipe, variants, and test declarations.
+2. [Local development and testing](local-development.md) — install the
+   contributor tools, compile and test every supported variant, and retain the
+   required local evidence.
+3. [Contributing with Git and GitHub](contributing.md) — commit only reviewed
+   inputs and submit the local evidence for review.
+
+Use these supporting references when the model needs them:
+
 - [Datasets for local model development](datasets.md) — Artifactory access,
   registered dataset resolution, and introducing new datasets or variants.
 - [Local accuracy development](local-accuracy-development.md) — declarative
   dataset-backed reference and candidate evaluation.
 - [Synthetic model benchmarking](benchmarking.md) — DevKit setup, manifests,
-  execution, and results.
-- [Contributing with Git and GitHub](contributing.md) — pre-commit review, pull
-  request evidence, and CI behavior.
+  execution, and result semantics.
+- [`model.yaml` reference](metadata-schema.md) — field-level contracts and
+  validation requirements.
+- [Compile runner class requests and approvals](runner-class-requests.md) —
+  per-variant resource requests and Vulcan admission policy.
+- [Model taxonomy](model-taxonomy.md) — sanctioned category IDs.
 
 The JSON Schemas under
 [`schemas/`](https://github.com/sima-neat/models/tree/develop/schemas) and the
