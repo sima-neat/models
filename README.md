@@ -47,6 +47,10 @@ run the workflow manually, choose `staging` or protected `production`, and
 optionally provide a comma-separated model list and variant list or an explicit
 base branch; empty model and variant lists build the full catalog.
 
+Each successful staging Modalix compile dispatches the dedicated
+[`Vulcan-Model-Benchmarking.yml`](.github/workflows/Vulcan-Model-Benchmarking.yml)
+workflow, shown in GitHub Actions as `Vulcan Model Benchmarking`.
+
 The Python-only `benchmarker` is published separately when its source,
 schemas, dependency pins, or packaging change. Install its branch package with:
 
