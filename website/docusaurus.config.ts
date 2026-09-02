@@ -106,6 +106,7 @@ const config: Config = {
           title: 'Reference',
           items: [
             {label: 'model.yaml', to: '/docs/metadata-schema'},
+            {label: 'Datasets', to: '/docs/datasets'},
             {label: 'Taxonomy', to: '/docs/model-taxonomy'},
           ],
         },
@@ -113,6 +114,7 @@ const config: Config = {
           title: 'Source',
           items: [
             {label: 'Models repository', href: 'https://github.com/sima-neat/models'},
+            {label: 'Dataset Registry', href: 'https://github.com/sima-neat/dataset'},
             {label: 'Report a documentation issue', href: 'https://github.com/sima-neat/models/issues/new'},
           ],
         },

@@ -72,6 +72,8 @@ the complete environment setup.
 - [Model taxonomy](model-taxonomy.md) — sanctioned category IDs.
 - [Local development and testing](local-development.md) — validation, input
   fetching, compilation, MPK verification, and common failures.
+- [Datasets for local model development](datasets.md) — Artifactory access,
+  registered dataset resolution, and introducing new datasets or variants.
 - [Local accuracy development](local-accuracy-development.md) — declarative
   dataset-backed reference and candidate evaluation.
 - [Synthetic model benchmarking](benchmarking.md) — DevKit setup, manifests,

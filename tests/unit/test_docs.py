@@ -60,6 +60,24 @@ def test_local_qualification_is_required_before_submission() -> None:
     assert "checks not run locally" not in contributing
 
 
+def test_dataset_guide_covers_artifactory_access_and_registration() -> None:
+    text = (ROOT / "docs" / "datasets.md").read_text(encoding="utf-8")
+
+    for expected in (
+        "## Set up Artifactory access first",
+        "dataset-registry resolve imagenet-2012",
+        'jq -e \'.provider == "artifactory"\'',
+        "## Introduce a dataset or variant that does not exist",
+        "catalog/datasets.yaml",
+        "artifactory_sources",
+        "Dataset pull-request CI is intentionally credential-free",
+        "## Troubleshooting access",
+    ):
+        assert expected in text
+
+    assert "Do not add a one-off download path to the model recipe" in text
+
+
 def test_local_guide_passes_variant_calibration_to_the_recipe() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 

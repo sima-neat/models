@@ -125,6 +125,13 @@ dataset checksum, thresholds, and measured values needed by reviewers. The
 model schema verifies that test paths exist; model-specific test formats and
 release gates may impose additional requirements.
 
+Every calibration or correctness dataset must resolve through Dataset Registry.
+Set up private Artifactory access and follow
+[Datasets for local model development](datasets.md) before adding dataset
+metadata. If the required dataset or variant is not registered, introduce it in
+`sima-neat/dataset` and complete that review before referencing it from the
+model.
+
 For image-classification accuracy measurement, add an executable correctness
 YAML with `engine: model_registry`. Keep sampling, workers, executors, metrics,
 and reporting declarative; do not add a model-local evaluator. Follow

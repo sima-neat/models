@@ -30,6 +30,11 @@ present:
 sima-cli neat install --stg dataset/dataset-registry@main:latest
 ```
 
+The resolver requires local access to the registered dataset archive in SiMa
+Artifactory. Follow [Datasets for local model development](datasets.md) to set
+up authentication, prove the exact variant resolves, or introduce a missing
+dataset before continuing.
+
 ## Compile and evaluate locally
 
 Resolve the immutable inputs first:

@@ -81,6 +81,8 @@ Before committing, confirm:
 - the exact locally compiled MPK was exercised by the declared performance test
   on a compatible Modalix DevKit;
 - each applicable dataset-backed accuracy evaluation completed successfully;
+- every calibration or correctness dataset resolved through Dataset Registry
+  from its reviewed ID and variant using the developer's Artifactory access;
 - local compiler and DevKit result summaries are ready for the pull request,
   while MPKs, JSON results, and logs remain unstaged;
 - unsupported variants include durable qualification evidence;
@@ -115,6 +117,8 @@ Give reviewers enough evidence to reproduce and assess the contribution:
 - model purpose, upstream project, immutable revision, and conversion history;
 - license and redistribution assessment;
 - source and calibration SHA-256 values;
+- registered dataset IDs, variants, archive hashes, and Dataset Registry change
+  when new data was introduced;
 - input/output and pre/postprocessing decisions;
 - compile variants, precision, target, and why each variant is needed;
 - model-specific surgery or compiler workarounds;

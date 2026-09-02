@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'adding-a-model',
         'local-development',
+        'datasets',
         'local-accuracy-development',
         'contributing',
       ],

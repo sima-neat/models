@@ -13,7 +13,7 @@ const stages: Stage[] = [
   {
     number: '01',
     title: 'Establish contract',
-    action: ['Pin source + license', 'Define YAML, recipe, tests'],
+    action: ['Pin source + datasets', 'Define YAML, recipe, tests'],
     success: ['Complete, reviewable', 'model contract'],
     guide: 'adding-a-model',
     guideLabel: 'Adding a model',

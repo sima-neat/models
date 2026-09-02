@@ -58,6 +58,11 @@ This is an author-safe command surface for validation, verified downloads,
 matrix inspection, and MPK checks. It cannot package or publish models,
 taxonomy, or benchmark results; those operations remain CI-only.
 
+Models that require calibration or accuracy data also require Dataset Registry
+and working private Artifactory access. Complete
+[Datasets for local model development](datasets.md) before fetching those
+inputs.
+
 ## Validate one model
 
 ```bash
