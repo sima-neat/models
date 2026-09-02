@@ -28,6 +28,14 @@ def test_developer_index_covers_the_contribution_path() -> None:
         assert f"]({guide})" in text
 
 
+def test_developer_sidebar_includes_every_article() -> None:
+    sidebar = (ROOT / "website" / "sidebars.ts").read_text(encoding="utf-8")
+
+    for article in sorted((ROOT / "docs").glob("*.md")):
+        doc_id = article.stem
+        assert f"'{doc_id}'" in sidebar, f"docs/{article.name} is missing from the developer sidebar"
+
+
 def test_local_guide_uses_supported_validation_commands() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 

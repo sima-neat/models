@@ -7,12 +7,22 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Contribute a model',
       collapsed: false,
-      items: ['adding-a-model', 'local-development', 'contributing'],
+      items: [
+        'adding-a-model',
+        'local-development',
+        'local-accuracy-development',
+        'contributing',
+      ],
     },
     {
       type: 'category',
       label: 'Contracts and reference',
-      items: ['metadata-schema', 'model-taxonomy', 'benchmarking'],
+      items: [
+        'metadata-schema',
+        'runner-class-requests',
+        'model-taxonomy',
+        'benchmarking',
+      ],
     },
   ],
 };
