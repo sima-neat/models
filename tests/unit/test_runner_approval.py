@@ -77,6 +77,20 @@ def test_matching_approval_authorizes_only_the_requested_class() -> None:
     )
 
 
+def test_legacy_variant_approval_is_limited_to_conventional_model_component() -> None:
+    approval = _approval()
+    approval["variant_id"] = approval.pop("build_profile_id")
+    del approval["component_id"]
+
+    entry = _authorize(_matrix("expensive"), _spec(approval))["include"][0]
+    assert entry["runner_class"] == "expensive"
+
+    matrix = _matrix("expensive")
+    matrix["include"][0]["component_id"] = "encoder"
+    with pytest.raises(ValidationError, match="has no unique Vulcan approval"):
+        _authorize(matrix, _spec(approval))
+
+
 def test_elevated_request_without_matching_approval_fails_closed() -> None:
     with pytest.raises(ValidationError, match="has no unique Vulcan approval"):
         _authorize(_matrix("expensive"), _spec())

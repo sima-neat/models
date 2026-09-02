@@ -57,8 +57,17 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
         record = dict(raw)
         repository = _non_empty_string(record, "repository", index)
         model_id = _non_empty_string(record, "model_id", index)
-        component_id = _non_empty_string(record, "component_id", index)
-        build_profile_id = _non_empty_string(record, "build_profile_id", index)
+        if "build_profile_id" in record or "component_id" in record:
+            component_id = _non_empty_string(record, "component_id", index)
+            build_profile_id = _non_empty_string(record, "build_profile_id", index)
+        else:
+            # Before contract v2, one variant always produced one MPK. Preserve
+            # those approvals only for the conventional single component; a
+            # multi-component model must receive explicitly scoped approvals.
+            component_id = "model"
+            build_profile_id = _non_empty_string(record, "variant_id", index)
+            record["component_id"] = component_id
+            record["build_profile_id"] = build_profile_id
         environment = _non_empty_string(record, "environment", index)
         maximum = _non_empty_string(record, "maximum_runner_class", index)
         _non_empty_string(record, "approved_by", index)

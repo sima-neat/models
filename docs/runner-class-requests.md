@@ -113,6 +113,12 @@ ID, environment, and
 requested class against the Vulcan record. It returns only an approved logical
 runner label.
 
+During the v2 migration, an existing `variant_id` approval without the new
+fields is interpreted as that build profile for the conventional single
+component named `model`. It cannot authorize a newly introduced named
+component. Replace legacy approvals with explicitly scoped records when they
+are next reviewed.
+
 The workflow and scaler must fail closed when:
 
 - the requested class is unknown;
