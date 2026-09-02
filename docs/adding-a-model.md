@@ -113,7 +113,7 @@ If the correct category does not exist, follow the versioning rules in the
 [taxonomy guide](model-taxonomy.md). Do not invent an authoritative category in
 one model manifest.
 
-## 5. Declare calibration and tests honestly
+## 5. Declare calibration and tests
 
 Use `calibration.status: ready` only when the declared source is immutable,
 checksummed, representative, and legally usable. Use `pending` with a concrete
