@@ -90,6 +90,7 @@ compile_variants:
   - id: modalix_bf16
     target: modalix
     recipe: compile.py
+    runner_class: expensive
     parameters:
       precision: bf16
       input_name: pixel_values
