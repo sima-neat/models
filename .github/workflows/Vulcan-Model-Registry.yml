@@ -111,7 +111,7 @@ jobs:
             grep -q "${command}" <<< "${help_text}"
           done
           for command in package publish publish-benchmark publish-taxonomy; do
-            if grep -Eq "(^|[,{[:space:]])${command}([,}[:space:]]|$)" <<< "${help_text}"; then
+            if "${model_registry}" "${command}" --help >/dev/null 2>&1; then
               echo "author CLI unexpectedly exposes ${command}" >&2
               exit 1
             fi

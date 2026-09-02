@@ -51,7 +51,7 @@ for command in validate validate-catalog fetch fetch-calibration fetch-accuracy-
   }
 done
 for command in package publish publish-benchmark publish-taxonomy; do
-  if grep -Eq "(^|[,{[:space:]])${command}([,}[:space:]]|$)" <<< "${help_text}"; then
+  if "${MODEL_REGISTRY_BIN}" "${command}" --help >/dev/null 2>&1; then
     echo "Installed author CLI unexpectedly exposes CI command: ${command}" >&2
     exit 1
   fi
