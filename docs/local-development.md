@@ -1,4 +1,4 @@
-# Local development and testing
+# Qualify locally
 
 This guide covers the complete local qualification loop: validate `model.yaml`,
 fetch immutable inputs, compile a declared variant, measure declared accuracy,
@@ -291,7 +291,7 @@ and `DevKit benchmark: pass` is clearer than a broad claim that local testing
 passed.
 
 When this checklist passes, continue to
-[Contributing with Git and GitHub](contributing.md) for commit, push, pull
+[Submit for review](contributing.md) for commit, push, pull
 request, and submission guidance.
 
 ## Common failures

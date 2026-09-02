@@ -47,20 +47,21 @@ standalone tool. A compatible Modalix DevKit is required for the benchmarking
 stage. Models that use calibration or accuracy data also require private
 Artifactory access.
 
-Start with [Adding a model](adding-a-model.md) to define the source-controlled
-contract. The [local qualification guide](local-development.md) owns the tool
-installation and complete test sequence; follow it before you submit anything.
+Start with [Define the model contract](adding-a-model.md) to describe the
+source-controlled contract. The [local qualification
+guide](local-development.md) owns the tool installation and complete test
+sequence; follow it before you submit anything.
 
 ## Guides
 
 Follow these guides in order:
 
-1. [Adding a model](adding-a-model.md) — define the model directory, immutable
-   source, recipe, variants, and test declarations.
-2. [Local development and testing](local-development.md) — install the
+1. [Define the model contract](adding-a-model.md) — define the model directory,
+   immutable source, recipe, variants, and test declarations.
+2. [Qualify locally](local-development.md) — install the
    contributor tools, compile and test every supported variant, and retain the
    required local evidence.
-3. [Contributing with Git and GitHub](contributing.md) — commit only reviewed
+3. [Submit for review](contributing.md) — commit only reviewed
    inputs and submit the local evidence for review.
 
 Use these supporting references when the model needs them:

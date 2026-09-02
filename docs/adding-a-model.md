@@ -1,4 +1,4 @@
-# Adding a model
+# Define the model contract
 
 This guide owns the source-controlled model contract: the model directory,
 immutable source, metadata, recipe, variants, and test declarations. It ends
@@ -230,7 +230,7 @@ that the model compiles or runs.
 
 ## Next: qualify the model locally
 
-Continue with [Local development and testing](local-development.md). Complete
+Continue with [Qualify locally](local-development.md). Complete
 its full qualification loop for every submitted supported variant before
 opening a pull request. When that work passes, the local guide sends you to the
 Git and pull-request guide.

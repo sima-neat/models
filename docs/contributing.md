@@ -1,7 +1,7 @@
-# Contributing with Git and GitHub
+# Submit for review
 
 This guide covers the contribution boundary after a model works through the
-required checks in [Local development and testing](local-development.md). It
+required checks in [Qualify locally](local-development.md). It
 owns Git hygiene, pull-request evidence, review, and what happens after merge;
 it does not repeat the local qualification procedure.
 

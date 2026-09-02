@@ -16,7 +16,7 @@ const stages: Stage[] = [
     action: ['Pin source + datasets', 'Define YAML, recipe, tests'],
     success: ['Complete, reviewable', 'model contract'],
     guide: 'adding-a-model',
-    guideLabel: 'Adding a model',
+    guideLabel: 'Define the model contract',
   },
   {
     number: '02',
@@ -24,7 +24,7 @@ const stages: Stage[] = [
     action: ['Validate + fetch inputs', 'Compile + verify variants'],
     success: ['One valid MPK', 'per tested variant'],
     guide: 'local-development',
-    guideLabel: 'Local development',
+    guideLabel: 'Qualify locally',
   },
   {
     number: '03',
@@ -40,7 +40,7 @@ const stages: Stage[] = [
     action: ['Commit inputs only', 'Document local evidence'],
     success: ['Focused, reviewable', 'pull request'],
     guide: 'contributing',
-    guideLabel: 'Contributing',
+    guideLabel: 'Submit for review',
   },
   {
     number: '05',

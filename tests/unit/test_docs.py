@@ -76,6 +76,22 @@ def test_contribution_guides_have_single_workflow_owners() -> None:
     assert "## Local-first qualification loop" in local
 
 
+def test_core_page_titles_match_the_journey_navigation() -> None:
+    sidebar = (ROOT / "website" / "sidebars.ts").read_text(encoding="utf-8")
+    component = (ROOT / "website" / "src" / "components" / "ContributionPath.tsx").read_text(encoding="utf-8")
+    expected = {
+        "adding-a-model.md": ("1", "Define the model contract"),
+        "local-development.md": ("2", "Qualify locally"),
+        "contributing.md": ("3", "Submit for review"),
+    }
+
+    for filename, (step, title) in expected.items():
+        article = (ROOT / "docs" / filename).read_text(encoding="utf-8")
+        assert article.startswith(f"# {title}\n")
+        assert f"label: '{step}. {title}'" in sidebar
+        assert f"guideLabel: '{title}'" in component
+
+
 def test_dataset_guide_covers_artifactory_access_and_registration() -> None:
     text = (ROOT / "docs" / "datasets.md").read_text(encoding="utf-8")
 

@@ -96,7 +96,7 @@ Those commands delegate registered dataset resolution to Dataset Registry and
 then verify the exact SHA-256 and size committed with the model. Pass the
 returned calibration path to the model-owned recipe as `--dataset`. Use the
 accuracy path with `model-registry evaluate`. Follow
-[Local development and testing](local-development.md) for the complete command
+[Qualify locally](local-development.md) for the complete command
 sequence and [Local accuracy development](local-accuracy-development.md) for
 loader, split, profile, and result semantics.
 
