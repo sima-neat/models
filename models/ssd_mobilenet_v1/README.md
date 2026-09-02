@@ -4,7 +4,7 @@ This entry compiles the raw box and class predictor heads of the pinned ONNX
 Model Zoo SSD-MobileNet V1 model. Neat owns anchor decode, scoring, and NMS, so
 the graph deliberately stops before the source model's dynamic postprocessing.
 
-## Four-variant matrix
+## Four build profiles
 
 | Variant | Internal precision | Tessellation placement | Public ABI |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ The serialized quantized topology checks all 47 MLA convolutions and verifies
 per-channel integer weights for INT8 or BF16 compute tensors/weights for BF16.
 The MPK checks one MLA ELF, no shared objects or A65 stages, all 12 output
 transport tensor types, FP32 public buffer sizes, and whether the external EV74
-`tessellate` or fused INT8 `quanttess` stage is present. A variant name alone is
+`tessellate` or fused INT8 `quanttess` stage is present. A profile name alone is
 never accepted as evidence of precision.
 
 Every compiler run also executes the floating and quantized raw-head models on
@@ -80,6 +80,6 @@ The annotations file must have SHA-256
 ## Run on Vulcan
 
 Dispatch `Vulcan Model Compile` in staging with model
-`ssd_mobilenet_v1`. Leaving `variants` empty builds all four combinations. A
-single variant can be selected for compiler diagnosis without changing the
+`ssd_mobilenet_v1`. Leaving `profiles` empty builds all four combinations. A
+single build profile can be selected for compiler diagnosis without changing the
 recipe or metadata.

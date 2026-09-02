@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sima.ai/model-registry/composition-v1.schema.json",
+  "title": "Model Registry declarative composition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "components", "connections", "inputs", "outputs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "component", "entrypoint"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "component": {"$ref": "#/$defs/id"},
+          "entrypoint": {"$ref": "#/$defs/id"}
+        }
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to"],
+        "properties": {
+          "from": {"$ref": "#/$defs/outputEndpoint"},
+          "to": {"$ref": "#/$defs/inputEndpoint"}
+        }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "to"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "to": {"$ref": "#/$defs/inputEndpoint"}
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "from"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "from": {"$ref": "#/$defs/outputEndpoint"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "inputEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "input"],
+      "properties": {
+        "component": {"$ref": "#/$defs/id"},
+        "input": {"type": "string", "minLength": 1}
+      }
+    },
+    "outputEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "output"],
+      "properties": {
+        "component": {"$ref": "#/$defs/id"},
+        "output": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

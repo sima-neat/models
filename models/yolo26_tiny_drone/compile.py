@@ -37,15 +37,17 @@ from onnx_audit import audit_onnx  # noqa: E402
 
 def variant_config(variant_id: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    matches = [item for item in metadata["compile_variants"] if item["id"] == variant_id]
+    matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one YOLO26 tiny-drone variant named {variant_id!r}")
-    return matches[0]
+    profile = matches[0]
+    binding = next(item for item in profile["components"] if item["id"] == "model")
+    return {**profile, "parameters": binding["parameters"]}
 
 
 def calibration_source() -> SourceSpec:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    calibration = metadata["calibration"]
+    calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
     if calibration.get("status") != "ready":
         raise ValueError("YOLO26 tiny-drone compilation requires pinned calibration data")
     return SourceSpec.from_mapping(calibration["source"])
@@ -141,12 +143,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--variant", required=True)
+    parser.add_argument("--build-profile", required=True)
+    parser.add_argument("--component", required=True)
     args = parser.parse_args()
+    if args.component != "model":
+        parser.error(f"unsupported component: {args.component}")
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    archive = compile_variant(source, args.output_dir.expanduser().resolve(), args.variant)
+    archive = compile_variant(source, args.output_dir.expanduser().resolve(), args.build_profile)
     print(archive)
     return 0
 

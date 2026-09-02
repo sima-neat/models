@@ -81,11 +81,21 @@ def select_accuracy_config(
     model_dir: str | Path,
     model: dict[str, Any],
     test_id: str | None = None,
+    *,
+    build_profile_id: str | None = None,
+    component_id: str | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     directory = Path(model_dir).expanduser().resolve()
     cases = model["tests"]["correctness"]
     if test_id is None:
-        selected = find_accuracy_config(directory, model)
+        selected = find_accuracy_config(
+            directory,
+            model,
+            build_profile_id=build_profile_id,
+            component_id=component_id,
+        )
+        if selected is None and (build_profile_id is not None or component_id is not None):
+            selected = find_accuracy_config(directory, model)
         if selected is None:
             raise ValidationError(
                 f"{directory}: expected exactly one executable correctness test; pass --test-id explicitly"
@@ -103,10 +113,17 @@ def select_accuracy_config(
 def find_accuracy_config(
     model_dir: str | Path,
     model: dict[str, Any],
+    *,
+    build_profile_id: str | None = None,
+    component_id: str | None = None,
 ) -> tuple[Path, dict[str, Any]] | None:
     directory = Path(model_dir).expanduser().resolve()
     executable = []
     for case in model["tests"]["correctness"]:
+        if build_profile_id is not None and build_profile_id not in case["build_profiles"]:
+            continue
+        if component_id is not None and case["scope"] != {"type": "component", "component": component_id}:
+            continue
         path = directory / case["config"]
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -117,30 +134,25 @@ def find_accuracy_config(
     if not executable:
         return None
     if len(executable) != 1:
-        raise ValidationError(f"{directory}: expected exactly one executable correctness test")
+        scope = f" for {build_profile_id or '*'}/{component_id or '*'}"
+        raise ValidationError(f"{directory}: expected exactly one executable correctness test{scope}")
     path = (directory / executable[0]["config"]).resolve()
     return path, load_accuracy_config(path)
-
-
-def accuracy_applies_to_variant(config: dict[str, Any], variant_id: str) -> bool:
-    variants = config.get("variants")
-    return variants is None or variant_id in variants
 
 
 def validate_accuracy_model_contract(
     model: dict[str, Any],
     config: dict[str, Any],
     config_path: str | Path,
+    test_case: dict[str, Any],
 ) -> None:
     path = Path(config_path).expanduser().resolve()
-    configured_variants = set(config.get("variants", ()))
-    unknown_variants = configured_variants - {variant["id"] for variant in model["compile_variants"]}
-    if unknown_variants:
-        raise ValidationError(
-            f"{path}: accuracy variants do not match compile variants: {', '.join(sorted(unknown_variants))}"
-        )
-
-    inputs = model["interface"]["inputs"]
+    scope = test_case["scope"]
+    if scope["type"] != "component":
+        raise ValidationError(f"{path}: image_classification evaluation requires component scope")
+    component = next(item for item in model["components"] if item["id"] == scope["component"])
+    entrypoint = component["interface"]["entrypoints"][0]
+    inputs = entrypoint["inputs"]
     if len(inputs) != 1 or inputs[0].get("layout") != "NCHW":
         raise ValidationError(f"{path}: image_classification evaluation requires one NCHW model input")
 
@@ -148,7 +160,7 @@ def validate_accuracy_model_contract(
         ("preprocessing", PREPROCESSING_PARAMETERS),
         ("postprocessing", POSTPROCESSING_PARAMETERS),
     ):
-        for index, stage in enumerate(model[section]["pipeline"]):
+        for index, stage in enumerate(component[section]["pipeline"]):
             operation = stage["op"]
             if operation not in supported:
                 raise ValidationError(f"{path}: unsupported {section} operation {operation!r}")
@@ -162,7 +174,7 @@ def validate_accuracy_model_contract(
     executors = config["executors"]
     expected = {
         "reference": ("onnxruntime", "source", "NCHW"),
-        "candidate": ("afe_sima", "compile_variant", "NHWC"),
+        "candidate": ("afe_sima", "compiled_component", "NHWC"),
     }
     for role, values in expected.items():
         actual = tuple(executors[role][key] for key in ("type", "artifact", "input_layout"))

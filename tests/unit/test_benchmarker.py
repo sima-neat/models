@@ -73,7 +73,8 @@ def make_manifest(path: Path, sha256: str, *, trials: int = 2) -> dict[str, Any]
         "schema_version": 1,
         "model": {
             "id": "fixture_model",
-            "variant_id": "modalix_bf16",
+            "build_profile_id": "modalix_bf16",
+            "component_id": "model",
             "path": str(path),
             "sha256": sha256,
         },

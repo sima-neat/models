@@ -8,15 +8,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .accuracy import evaluate_accuracy, resolve_dataset
-from .accuracy_config import accuracy_applies_to_variant, find_accuracy_config
+from .accuracy_config import find_accuracy_config
 from .artifact import verify_mpk
 from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
-from .model import load_and_validate_model, variant_requires_calibration
+from .model import component_for, load_and_validate_model, profile_component_for
 from .runner_approval import authorize_runner_matrix
-from .source import SourceSpec
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -26,6 +25,7 @@ AUTHOR_COMMANDS = frozenset(
         "evaluate",
         "matrix",
         "authorize-runner-matrix",
+        "assemble-package",
         "resolve-compiler",
         "validate",
         "validate-catalog",
@@ -61,6 +61,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     fetch.add_argument("model_dir", type=Path)
     fetch.add_argument("--schema", type=Path)
     fetch.add_argument("--cache-dir", type=Path)
+    fetch.add_argument("--component", help="component ID; optional when the model contains one component")
     fetch.add_argument("--json", action="store_true", dest="json_output")
 
     calibration = subcommands.add_parser(
@@ -69,7 +70,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     calibration.add_argument("model_dir", type=Path)
     calibration.add_argument("--schema", type=Path)
     calibration.add_argument("--cache-dir", type=Path)
-    calibration.add_argument("--variant", help="resolve calibration only when this compile variant requires it")
+    calibration.add_argument("--build-profile", required=True, help="build profile that declares the calibration")
+    calibration.add_argument("--component", required=True, help="component within the selected build profile")
     calibration.add_argument("--json", action="store_true", dest="json_output")
 
     accuracy_dataset = subcommands.add_parser(
@@ -78,12 +80,18 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     accuracy_dataset.add_argument("model_dir", type=Path)
     accuracy_dataset.add_argument("--schema", type=Path)
     accuracy_dataset.add_argument("--cache-dir", type=Path)
-    accuracy_dataset.add_argument("--variant", help="resolve accuracy only when its config applies to this variant")
+    accuracy_dataset.add_argument(
+        "--build-profile", required=True, help="resolve accuracy only when its config applies"
+    )
+    accuracy_dataset.add_argument(
+        "--component", required=True, help="component evaluated by the selected build profile"
+    )
     accuracy_dataset.add_argument("--json", action="store_true", dest="json_output")
 
     evaluate = subcommands.add_parser("evaluate", help="run a declarative model accuracy evaluation")
     evaluate.add_argument("model_dir", type=Path)
-    evaluate.add_argument("--variant", required=True)
+    evaluate.add_argument("--build-profile", required=True)
+    evaluate.add_argument("--component", required=True)
     evaluate.add_argument("--candidate-model", type=Path, required=True, help="saved candidate .sima graph")
     evaluate.add_argument("--reference-model", type=Path, help="verified ONNX source; fetched when omitted")
     evaluate.add_argument("--dataset", type=Path, help="verified dataset archive; resolved when omitted")
@@ -100,7 +108,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--repository", type=Path, default=Path.cwd())
     matrix.add_argument("--all", action="store_true", dest="all_models")
     matrix.add_argument("--models", help="comma-separated model IDs")
-    matrix.add_argument("--variants", help="comma-separated variant IDs within the selected models")
+    matrix.add_argument("--profiles", help="comma-separated build profile IDs within the selected models")
+    matrix.add_argument("--components", help="comma-separated component IDs within the selected models")
     matrix.add_argument("--changed-path", action="append", default=[])
     matrix.add_argument("--base")
     matrix.add_argument("--head")
@@ -139,7 +148,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_manifest.add_argument("--branch", required=True)
     benchmark_manifest.add_argument("--git-sha", required=True)
     benchmark_manifest.add_argument("--model", required=True)
-    benchmark_manifest.add_argument("--variant", required=True)
+    benchmark_manifest.add_argument("--build-profile", required=True)
+    benchmark_manifest.add_argument("--component", required=True)
     benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
 
     mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
@@ -147,7 +157,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--write-manifest", action="store_true")
     mpk.add_argument("--json", action="store_true", dest="json_output")
     mpk.add_argument("--model-id")
-    mpk.add_argument("--variant-id")
+    mpk.add_argument("--build-profile-id")
+    mpk.add_argument("--component-id")
     mpk.add_argument("--target")
     mpk.add_argument("--compiler-version")
     mpk.add_argument("--compiler-label")
@@ -160,6 +171,19 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--runner-class")
     mpk.add_argument("--runner-approval-id")
     mpk.add_argument("--runner-approval-spec-revision")
+
+    package = subcommands.add_parser(
+        "assemble-package", help="assemble deterministic package bundles from verified component MPKs"
+    )
+    package.add_argument("--repository", type=Path, default=Path.cwd())
+    package.add_argument("--compiled-dir", type=Path, required=True)
+    package.add_argument("--output-dir", type=Path, required=True)
+    package.add_argument("--model")
+    package.add_argument("--build-profile")
+    package.add_argument("--package")
+    package.add_argument("--all", action="store_true", dest="all_packages")
+    package.add_argument("--resource-cache-dir", type=Path)
+    package.add_argument("--json", action="store_true", dest="json_output")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
     publish.add_argument("--repository", type=Path, default=Path.cwd())
@@ -225,16 +249,26 @@ def _validate_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def _selected_component(model: dict[str, object], component_id: str | None) -> dict[str, object]:
+    components = model["components"]
+    if component_id is None:
+        if len(components) != 1:
+            raise ModelRegistryError("--component is required when the model contains multiple components")
+        return components[0]
+    return component_for(model, component_id)
+
+
 def _fetch(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
-    source = SourceSpec.from_mapping(model["source"])
-    path, cache_hit = Fetcher(args.cache_dir).fetch(source)
+    component = _selected_component(model, args.component)
+    path, cache_hit, source_sha256, size_bytes = Fetcher(args.cache_dir).fetch_source(component["source"])
     result = {
         "cache_hit": cache_hit,
+        "component_id": component["id"],
         "model_id": model["id"],
         "path": str(path),
-        "sha256": source.sha256,
-        "size_bytes": source.size_bytes,
+        "sha256": source_sha256,
+        "size_bytes": size_bytes,
     }
     if args.json_output:
         print(json.dumps(result, sort_keys=True))
@@ -246,35 +280,42 @@ def _fetch(args: argparse.Namespace) -> int:
 
 def _fetch_calibration(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
-    calibration = model["calibration"]
-    requires_calibration = True
-    if args.variant:
-        variants = [item for item in model["compile_variants"] if item["id"] == args.variant]
-        if len(variants) != 1:
-            raise ModelRegistryError(f"unknown compile variant: {args.variant}")
-        requires_calibration = variant_requires_calibration(variants[0])
-    if calibration["status"] != "ready" or not requires_calibration:
-        result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    _, binding = profile_component_for(model, args.build_profile, args.component)
+    calibration_id = binding.get("calibration")
+    calibration = next((item for item in model["calibrations"] if item["id"] == calibration_id), None)
+    if calibration is None or calibration["status"] != "ready":
+        result = {
+            "kind": "none",
+            "model_id": model["id"],
+            "component_id": args.component,
+            "build_profile_id": args.build_profile,
+            "path": "",
+            "sha256": "",
+            "size_bytes": 0,
+        }
     elif "dataset" in calibration:
         dataset = calibration["dataset"]
         path = resolve_dataset(dataset, None, args.cache_dir)
         result = {
             "kind": "dataset",
             "model_id": model["id"],
+            "component_id": args.component,
+            "build_profile_id": args.build_profile,
             "path": str(path),
             "sha256": dataset["sha256"],
             "size_bytes": dataset["size_bytes"],
         }
     else:
-        source = SourceSpec.from_mapping(calibration["source"])
-        path, cache_hit = Fetcher(args.cache_dir).fetch(source)
+        path, cache_hit, source_sha256, size_bytes = Fetcher(args.cache_dir).fetch_source(calibration["source"])
         result = {
             "kind": "source",
             "cache_hit": cache_hit,
             "model_id": model["id"],
+            "component_id": args.component,
+            "build_profile_id": args.build_profile,
             "path": str(path),
-            "sha256": source.sha256,
-            "size_bytes": source.size_bytes,
+            "sha256": source_sha256,
+            "size_bytes": size_bytes,
         }
     if args.json_output:
         print(json.dumps(result, sort_keys=True))
@@ -287,11 +328,23 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
 
 def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
-    if args.variant and not any(item["id"] == args.variant for item in model["compile_variants"]):
-        raise ModelRegistryError(f"unknown compile variant: {args.variant}")
-    selected = find_accuracy_config(args.model_dir, model)
-    if selected is None or (args.variant and not accuracy_applies_to_variant(selected[1], args.variant)):
-        result = {"kind": "none", "model_id": model["id"], "path": "", "sha256": "", "size_bytes": 0}
+    profile_component_for(model, args.build_profile, args.component)
+    selected = find_accuracy_config(
+        args.model_dir,
+        model,
+        build_profile_id=args.build_profile,
+        component_id=args.component,
+    )
+    if selected is None:
+        result = {
+            "kind": "none",
+            "model_id": model["id"],
+            "component_id": args.component,
+            "build_profile_id": args.build_profile,
+            "path": "",
+            "sha256": "",
+            "size_bytes": 0,
+        }
     else:
         _, config = selected
         dataset = config["dataset"]
@@ -299,6 +352,8 @@ def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
         result = {
             "kind": "dataset",
             "model_id": model["id"],
+            "component_id": args.component,
+            "build_profile_id": args.build_profile,
             "path": str(path),
             "sha256": dataset["sha256"],
             "size_bytes": dataset["size_bytes"],
@@ -315,7 +370,8 @@ def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
 def _evaluate(args: argparse.Namespace) -> int:
     report = evaluate_accuracy(
         args.model_dir,
-        args.variant,
+        args.build_profile,
+        args.component,
         args.candidate_model,
         reference_model=args.reference_model,
         dataset_path=args.dataset,
@@ -335,7 +391,8 @@ def _evaluate(args: argparse.Namespace) -> int:
         samples = report["dataset"]
         candidate = report["metrics"]["candidate"]
         print(
-            f"Accuracy {report['model']['id']}/{report['model']['variant_id']}: "
+            f"Accuracy {report['model']['id']}/{report['model']['build_profile_id']}/"
+            f"{report['model']['component_id']}: "
             f"samples={samples['evaluated_samples']}/{samples['available_samples']} "
             f"top1={candidate['top1_accuracy']:.4f} output={output}"
         )
@@ -362,17 +419,23 @@ def _matrix(args: argparse.Namespace) -> int:
                 raise ModelRegistryError("--base and --head must be supplied together")
             paths.extend(git_changed_paths(args.repository, args.base, args.head))
         model_ids = select_model_ids(catalog, paths)
-    variant_ids = None
-    if args.variants is not None:
-        variant_ids = [item.strip() for item in args.variants.split(",") if item.strip()]
-        if not variant_ids:
-            raise ModelRegistryError("--variants must contain at least one variant ID")
+    profile_ids = None
+    if args.profiles is not None:
+        profile_ids = [item.strip() for item in args.profiles.split(",") if item.strip()]
+        if not profile_ids:
+            raise ModelRegistryError("--profiles must contain at least one build profile ID")
+    component_ids = None
+    if args.components is not None:
+        component_ids = [item.strip() for item in args.components.split(",") if item.strip()]
+        if not component_ids:
+            raise ModelRegistryError("--components must contain at least one component ID")
     print(
         json.dumps(
             build_matrix(
                 catalog,
                 model_ids,
-                variant_ids,
+                profile_ids,
+                component_ids,
                 repository=args.repository if args.compiler_version is not None else None,
                 compiler_version=args.compiler_version,
             ),
@@ -433,7 +496,8 @@ def _make_benchmark_manifest(args: argparse.Namespace) -> int:
         branch=args.branch,
         git_sha=args.git_sha,
         model_id=args.model,
-        variant_id=args.variant,
+        build_profile_id=args.build_profile,
+        component_id=args.component,
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"])
     return 0
@@ -442,7 +506,8 @@ def _make_benchmark_manifest(args: argparse.Namespace) -> int:
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
-        "variant_id",
+        "build_profile_id",
+        "component_id",
         "target",
         "compiler_version",
         "compiler_label",
@@ -459,6 +524,40 @@ def _verify_mpk(args: argparse.Namespace) -> int:
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
     result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid MPK: {result['archive']}")
+    return 0
+
+
+def _assemble_package(args: argparse.Namespace) -> int:
+    from .package import assemble_available_packages, assemble_package
+
+    explicit = (args.model, args.build_profile, args.package)
+    if args.all_packages == any(value is not None for value in explicit):
+        raise ModelRegistryError(
+            "select --all or provide --model, --build-profile, and --package"
+        )
+    if args.all_packages:
+        results = assemble_available_packages(
+            repository=args.repository,
+            compiled_dir=args.compiled_dir,
+            output_dir=args.output_dir,
+            resource_cache_dir=args.resource_cache_dir,
+        )
+    else:
+        if any(value is None for value in explicit):
+            raise ModelRegistryError("--model, --build-profile, and --package must be supplied together")
+        results = [
+            assemble_package(
+                repository=args.repository,
+                compiled_dir=args.compiled_dir,
+                output_dir=args.output_dir,
+                model_id=args.model,
+                build_profile_id=args.build_profile,
+                package_id=args.package,
+                resource_cache_dir=args.resource_cache_dir,
+            )
+        ]
+    payload = {"count": len(results), "packages": results}
+    print(json.dumps(payload, sort_keys=True) if args.json_output else f"Assembled {len(results)} package(s)")
     return 0
 
 
@@ -504,7 +603,8 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
     message = (
         json.dumps(result, sort_keys=True)
         if args.json_output
-        else f"Published benchmark {result['result_fingerprint']} for {result['model_id']}/{result['variant_id']}"
+        else f"Published benchmark {result['result_fingerprint']} for "
+        f"{result['model_id']}/{result['build_profile_id']}/{result['component_id']}"
     )
     print(message)
     return 0
@@ -553,6 +653,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _make_benchmark_manifest(args)
         if args.command == "verify-mpk":
             return _verify_mpk(args)
+        if args.command == "assemble-package":
+            return _assemble_package(args)
         if args.command == "publish":
             return _publish(args)
         if args.command == "publish-benchmark":

@@ -15,6 +15,7 @@ from urllib.parse import quote
 from .catalog import discover_catalog
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
+from .source import source_identity
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
@@ -259,7 +260,9 @@ def _require_sha256(value: Any, field: str) -> str:
     return digest
 
 
-def _accuracy_result(path: Path, *, model_id: str, variant_id: str, source_sha256: str) -> JsonObject:
+def _accuracy_result(
+    path: Path, *, model_id: str, build_profile_id: str, component_id: str, source_sha256: str
+) -> JsonObject:
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -269,7 +272,12 @@ def _accuracy_result(path: Path, *, model_id: str, variant_id: str, source_sha25
     model = report.get("model")
     if not isinstance(model, dict):
         raise ValidationError(f"{path}: accuracy result model must be an object")
-    expected_model = {"id": model_id, "variant_id": variant_id, "source_sha256": source_sha256}
+    expected_model = {
+        "id": model_id,
+        "build_profile_id": build_profile_id,
+        "component_id": component_id,
+        "source_sha256": source_sha256,
+    }
     for field, expected in expected_model.items():
         if model.get(field) != expected:
             raise ValidationError(f"{path}: accuracy result model.{field} must be {expected!r}")
@@ -327,7 +335,8 @@ def _accuracy_measurements(report: JsonObject, fingerprint: str) -> list[JsonObj
     dataset = report["dataset"]
     dimensions = {
         "model_id": report["model"]["id"],
-        "variant_id": report["model"]["variant_id"],
+        "build_profile_id": report["model"]["build_profile_id"],
+        "component_id": report["model"]["component_id"],
         "dataset_id": dataset["id"],
         "dataset_variant": dataset["variant"],
         "dataset_split": dataset["split"],
@@ -384,18 +393,39 @@ def publish_compilations(
     commit_tag = git_sha[:12]
     published: list[JsonObject] = []
 
-    for result_path in sorted(dist.glob("*/*/compile-result.json")):
-        model_id, variant_id = result_path.relative_to(dist).parts[:2]
+    for result_path in sorted(dist.glob("*/*/*/compile-result.json")):
+        model_id, build_profile_id, component_id = result_path.relative_to(dist).parts[:3]
         if model_id not in catalog:
             raise ValidationError(f"compiled output references unknown model: {model_id}")
-        variants = {item["id"]: item for item in catalog[model_id]["compile_variants"]}
-        if variant_id not in variants:
-            raise ValidationError(f"compiled output references unknown variant: {model_id}/{variant_id}")
+        model = catalog[model_id]
+        profiles = {item["id"]: item for item in model["build_profiles"]}
+        components = {item["id"]: item for item in model["components"]}
+        if build_profile_id not in profiles:
+            raise ValidationError(
+                f"compiled output references unknown build profile: {model_id}/{build_profile_id}"
+            )
+        if component_id not in components:
+            raise ValidationError(f"compiled output references unknown component: {model_id}/{component_id}")
+        profile = profiles[build_profile_id]
+        bindings = {item["id"]: item for item in profile["components"]}
+        if component_id not in bindings:
+            raise ValidationError(
+                f"compiled output references component outside build profile: "
+                f"{model_id}/{build_profile_id}/{component_id}"
+            )
+        component = components[component_id]
+        binding = bindings[component_id]
         result = json.loads(result_path.read_text(encoding="utf-8"))
         provenance = result.get("provenance")
         if not isinstance(provenance, dict):
             raise ValidationError(f"{result_path}: provenance must be an object")
-        expected = {"model_id": model_id, "variant_id": variant_id, "git_sha": git_sha, "environment": environment}
+        expected = {
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "component_id": component_id,
+            "git_sha": git_sha,
+            "environment": environment,
+        }
         for field, value in expected.items():
             if provenance.get(field) != value:
                 raise ValidationError(f"{result_path}: provenance {field} must be {value!r}")
@@ -415,21 +445,24 @@ def publish_compilations(
         compiler_label = _require_text(provenance.get("compiler_label"), "compiler_label")
         target = _require_text(provenance.get("target"), "target")
         source_sha = _require_sha256(provenance.get("source_sha256"), "source_sha256")
+        if source_sha != source_identity(component["source"]):
+            raise ValidationError(f"{result_path}: source_sha256 does not match the component source contract")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
-        model = catalog[model_id]
         categorization = validate_model_categorization(model, taxonomy)
-        variant = variants[variant_id]
         parameters = {
-            "schema_version": 1,
+            "schema_version": 2,
             "model_id": model_id,
-            "variant_id": variant_id,
+            "build_profile_id": build_profile_id,
+            "component_id": component_id,
             "target": target,
             "compiler_version": compiler_version,
             "compiler_label": compiler_label,
             "source_sha256": source_sha,
             "build_fingerprint": build_fingerprint,
-            "recipe": variant["recipe"],
-            "compile_parameters": variant.get("parameters", {}),
+            "recipe": component["recipe"],
+            "compile_parameters": binding.get("parameters", {}),
+            "shape_profile": binding.get("shape_profile"),
+            "calibration": binding.get("calibration"),
         }
         environment_document = {
             "schema_version": 1,
@@ -444,7 +477,8 @@ def publish_compilations(
         # A new attempt of the same workflow run resumes the same registry
         # transaction instead of creating a duplicate record per attempt.
         key_digest = hashlib.sha256(
-            f"{github_run_id}:{environment}:{branch}:{git_sha}:{model_id}:{variant_id}:{run_fingerprint}".encode()
+            f"{github_run_id}:{environment}:{branch}:{git_sha}:{model_id}:"
+            f"{build_profile_id}:{component_id}:{run_fingerprint}".encode()
         ).hexdigest()
         stable_key = f"models-{key_digest}"
         create = client.request(
@@ -468,7 +502,8 @@ def publish_compilations(
                 },
                 "metadata": {
                     "model_id": model_id,
-                    "variant_id": variant_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component_id,
                     "artifact_kind": "mpk",
                     "github_run_id": github_run_id,
                     "license": model["license"],
@@ -478,19 +513,25 @@ def publish_compilations(
             f"{stable_key}-create",
         )
         run_id = _require_text(create.get("run_id"), "run_id")
-        source_metadata = {"model_id": model_id}
+        source = component["source"]
+        source_metadata = {"model_id": model_id, "component_id": component_id, "source_type": source["type"]}
         model_card = model.get("upstream", {}).get("model_card")
         if isinstance(model_card, str) and model_card:
             source_metadata["model_card"] = model_card
+        source_reference = source.get("uri")
+        if not isinstance(source_reference, str):
+            source_reference = f"{model['upstream']['repository']}#{source['entrypoint']}"
         client.request(
             "PUT",
-            f"/v1/runs/{run_id}/inputs/source-model",
+            f"/v1/runs/{run_id}/inputs/source-component",
             {
-                "input_type": "onnx",
-                "source_reference": model["source"]["uri"],
+                "input_type": "onnx" if source["type"] == "file" else "onnx-file-set",
+                "source_reference": source_reference,
                 "sha256": source_sha,
-                "size_bytes": model["source"]["size_bytes"],
-                "media_type": model["source"].get("media_type", "application/onnx"),
+                "size_bytes": source.get(
+                    "size_bytes", sum(int(member["size_bytes"]) for member in source.get("files", ()))
+                ),
+                "media_type": source.get("media_type", "application/vnd.sima.onnx-file-set+json"),
                 "metadata": source_metadata,
             },
             f"{stable_key}-input",
@@ -517,7 +558,12 @@ def publish_compilations(
                 "size_bytes": stored.size_bytes,
                 "media_type": "application/gzip",
                 "retention_class": "branch",
-                "metadata": {"model_id": model_id, "variant_id": variant_id, "target": target},
+                "metadata": {
+                    "model_id": model_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component_id,
+                    "target": target,
+                },
             },
             f"{stable_key}-artifact",
         )
@@ -538,13 +584,14 @@ def publish_compilations(
             accuracy = _accuracy_result(
                 accuracy_path,
                 model_id=model_id,
-                variant_id=variant_id,
+                build_profile_id=build_profile_id,
+                component_id=component_id,
                 source_sha256=source_sha,
             )
             accuracy_sha, _ = sha256_file(accuracy_path)
             accuracy_fingerprint = canonical_sha256(accuracy)
             accuracy_key = (
-                f"models/{branch_key}/{commit_tag}/{model_id}/{variant_id}/accuracy/"
+                f"models/{branch_key}/{commit_tag}/{model_id}/{build_profile_id}/{component_id}/accuracy/"
                 f"{accuracy_fingerprint}/accuracy-result-v{accuracy['schema_version']}.json"
             )
             accuracy_stored = store.ensure_native_sha256(
@@ -567,7 +614,8 @@ def publish_compilations(
                     "retention_class": "branch",
                     "metadata": {
                         "model_id": model_id,
-                        "variant_id": variant_id,
+                        "build_profile_id": build_profile_id,
+                        "component_id": component_id,
                         "dataset_id": accuracy["dataset"]["id"],
                         "dataset_variant": accuracy["dataset"]["variant"],
                         "dataset_split": accuracy["dataset"]["split"],
@@ -615,7 +663,8 @@ def publish_compilations(
         published.append(
             {
                 "model_id": model_id,
-                "variant_id": variant_id,
+                "build_profile_id": build_profile_id,
+                "component_id": component_id,
                 "run_id": run_id,
                 "s3_key": stored.key,
                 "accuracy": accuracy_publication,

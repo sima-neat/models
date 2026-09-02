@@ -10,10 +10,11 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "variant_id", "path", "sha256"],
+      "required": ["id", "build_profile_id", "component_id", "path", "sha256"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "variant_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "build_profile_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "component_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
         "path": {"type": "string", "minLength": 1},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "uri": {"type": "string", "minLength": 1}

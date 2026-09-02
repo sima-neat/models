@@ -1,5 +1,5 @@
 name: Vulcan Model Benchmarking
-run-name: Benchmarking (${{ inputs.model_id }}, ${{ inputs.variant_id }})
+run-name: Benchmarking (${{ inputs.model_id }}/${{ inputs.component_id }}, ${{ inputs.build_profile_id }})
 
 on:
   workflow_dispatch:
@@ -22,8 +22,12 @@ on:
         description: Model ID to benchmark
         required: true
         type: string
-      variant_id:
-        description: Variant ID to benchmark
+      build_profile_id:
+        description: Build profile ID to benchmark
+        required: true
+        type: string
+      component_id:
+        description: Component ID to benchmark
         required: true
         type: string
 
@@ -34,17 +38,17 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_run_id }}-${{ inputs.model_id }}-${{ inputs.variant_id }}
+  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_run_id }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
   cancel-in-progress: false
 
 jobs:
   stage-dispatched-benchmark:
-    name: Stage ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark input
+    name: Stage ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) benchmark input
     needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.environment == 'staging' &&
       inputs.source_run_id != '' && inputs.source_sha != '' &&
-      inputs.model_id != '' && inputs.variant_id != ''
+      inputs.model_id != '' && inputs.build_profile_id != '' && inputs.component_id != ''
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
@@ -61,7 +65,8 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           MODEL_ID: ${{ inputs.model_id }}
-          VARIANT_ID: ${{ inputs.variant_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPONENT_ID: ${{ inputs.component_id }}
         run: |
           set -euo pipefail
           run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
@@ -70,7 +75,7 @@ jobs:
             <<< "$run_json" >/dev/null
           echo "branch=$(jq -er '.head_branch' <<< "$run_json")" >> "$GITHUB_OUTPUT"
           echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
-          artifact_name="compiled-model-$MODEL_ID-$VARIANT_ID"
+          artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID"
           artifact_count="$(
             gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
               jq --arg artifact "$artifact_name" \
@@ -81,7 +86,7 @@ jobs:
       - name: Download this compiled model from its source run
         uses: actions/download-artifact@v7
         with:
-          name: compiled-model-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
           path: _compiled
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
@@ -90,9 +95,10 @@ jobs:
         id: publication
         env:
           MODEL_ID: ${{ inputs.model_id }}
-          VARIANT_ID: ${{ inputs.variant_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPONENT_ID: ${{ inputs.component_id }}
         run: |
-          publication="_compiled/$MODEL_ID/$VARIANT_ID/registry-publication.json"
+          publication="_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID/registry-publication.json"
           if [[ -f "$publication" ]]; then
             echo "required=false" >> "$GITHUB_OUTPUT"
           else
@@ -138,7 +144,8 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           MODEL_ID: ${{ inputs.model_id }}
-          VARIANT_ID: ${{ inputs.variant_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPONENT_ID: ${{ inputs.component_id }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
@@ -157,12 +164,12 @@ jobs:
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
             --json)"
           python -c 'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
-          printf '%s\n' "$result" > "_compiled/$MODEL_ID/$VARIANT_ID/registry-publication.json"
+          printf '%s\n' "$result" > "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID/registry-publication.json"
 
       - name: Retain benchmark input independently of compile-run cleanup
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
           path: _compiled
           if-no-files-found: error
           retention-days: 1
@@ -184,7 +191,7 @@ jobs:
     secrets: inherit
 
   benchmark-dispatched-model:
-    name: Benchmark ${{ inputs.model_id }} (${{ inputs.variant_id }}) on DevKit
+    name: Benchmark ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner]
     if: inputs.environment == 'staging'
     runs-on:
@@ -196,7 +203,8 @@ jobs:
       contents: read
     env:
       MODEL_ID: ${{ inputs.model_id }}
-      VARIANT_ID: ${{ inputs.variant_id }}
+      BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+      COMPONENT_ID: ${{ inputs.component_id }}
       SOURCE_BRANCH: ${{ needs.stage-dispatched-benchmark.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
@@ -209,7 +217,7 @@ jobs:
       - name: Download the staged compiled model output
         uses: actions/download-artifact@v7
         with:
-          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
           path: _compiled
 
       - name: Install registry tooling in an isolated environment
@@ -283,7 +291,8 @@ jobs:
             --branch "$GITHUB_REF_NAME" \
             --git-sha "$SOURCE_SHA" \
             --model "$MODEL_ID" \
-            --variant "$VARIANT_ID"
+            --build-profile "$BUILD_PROFILE_ID" \
+            --component "$COMPONENT_ID"
           set -o pipefail
           "$HOME/pyneat/bin/benchmarker" \
             --manifest _benchmark/performance-test.json \
@@ -294,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
           path: |
             _benchmark/performance-result-v3.json
             _benchmark/benchmark.log
@@ -302,7 +311,7 @@ jobs:
           retention-days: 14
 
   publish-dispatched-benchmark:
-    name: Publish ${{ inputs.model_id }} (${{ inputs.variant_id }}) benchmark to Vulcan
+    name: Publish ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) benchmark to Vulcan
     needs: [benchmark-dispatched-model, resolve-dispatched-benchmark-config]
     if: >-
       always() &&
@@ -327,7 +336,7 @@ jobs:
       - run: python -m pip install .
       - uses: actions/download-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
           path: _benchmarks
       - uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -374,11 +383,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MODEL_ID: ${{ inputs.model_id }}
-          VARIANT_ID: ${{ inputs.variant_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPONENT_ID: ${{ inputs.component_id }}
         run: |
           set -euo pipefail
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$VARIANT_ID\" or .name == \"benchmark-$MODEL_ID-$VARIANT_ID\") | .id" |
+            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID\") | .id" |
           while read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"

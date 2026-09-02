@@ -95,13 +95,15 @@ def test_surgery_renames_and_reorders_static_heads_without_compute_stages(
 def test_model_pins_exact_immutable_v2_source_contract() -> None:
     surgery = load_module("surgery")
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    assert metadata["source"] == {
+    component = metadata["components"][0]
+    assert component["source"] == {
+        "type": "file",
         "uri": ("hf://models/Kalray/ssd-mobilenet-v2@25a67532e30418eb68d1f49888374c16e8abfa73/ssd-mobilenet-v2.onnx"),
         "sha256": surgery.SOURCE_SHA256,
         "size_bytes": 67387440,
         "media_type": "application/onnx",
     }
-    assert metadata["interface"]["opset"] == 13
+    assert component["interface"]["opset"] == 13
     assert surgery.EXPECTED_CONVOLUTION_COUNT == 76
 
 
@@ -367,9 +369,10 @@ def test_recipe_uses_supported_compiler_2_1_3_api_only() -> None:
 
 def test_model_declares_exact_four_variant_cross_product() -> None:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
-        (variant["parameters"]["precision"], variant["parameters"]["tessellation_mla"])
-        for variant in metadata["compile_variants"]
+        (binding["parameters"]["precision"], binding["parameters"]["tessellation_mla"])
+        for binding in bindings
     }
     assert matrix == {("int8", False), ("int8", True), ("bf16", False), ("bf16", True)}
-    assert all(variant["parameters"]["calibration_samples"] == 128 for variant in metadata["compile_variants"])
+    assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)

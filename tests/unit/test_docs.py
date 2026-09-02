@@ -56,7 +56,7 @@ def test_local_qualification_is_required_before_submission() -> None:
 
     assert "submission prerequisites, not optional CI substitutes" in overview_words
     assert "complete the entire loop before submitting a model pull request" in local
-    assert "Do not start submission until every supported variant" in contributing
+    assert "Do not start submission until every supported component/profile pair" in contributing
     assert "checks not run locally" not in contributing
 
 
@@ -121,11 +121,11 @@ def test_contribution_path_wraps_without_horizontal_scrolling() -> None:
     assert "@container (max-width: 480px)" in css
 
 
-def test_local_guide_passes_variant_calibration_to_the_recipe() -> None:
+def test_local_guide_passes_scoped_calibration_to_the_recipe() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 
     assert "fetch-calibration \\" in text
-    assert "models/<model-id> --variant <variant-id> --json" in text
+    assert "models/<model-id> --build-profile <profile-id> --component <component-id> --json" in text
     assert 'recipe_args=(--dataset "$calibration_path")' in text
     assert 'source)' in text
     assert 'export CALIBRATION_PATH="$calibration_path"' in text
@@ -157,7 +157,7 @@ def test_local_guide_covers_the_complete_local_qualification_loop() -> None:
     for expected in (
         "Compile locally from `model.yaml`",
         "Model Compiler Python APIs available",
-        "compile.py --model <verified-source>",
+        "compile.py --model <verified-entrypoint>",
         "model-registry verify-mpk",
         "Benchmark locally on a Modalix DevKit",
         "type dk || type devkit-run",

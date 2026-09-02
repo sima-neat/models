@@ -24,8 +24,8 @@ def test_invalid_fixture_reports_field_paths() -> None:
     with pytest.raises(ValidationError) as error:
         load_and_validate_model(FIXTURES / "invalid_model", SCHEMA)
     message = str(error.value)
-    assert "source.sha256" in message
-    assert "source.uri" in message
+    assert "components[0].source" in message
+    assert "not valid under any of the given schemas" in message
 
 
 def test_directory_id_must_match(tmp_path: Path) -> None:
@@ -37,41 +37,80 @@ def test_directory_id_must_match(tmp_path: Path) -> None:
         load_and_validate_model(directory, SCHEMA)
 
 
-def test_duplicate_variant_ids_fail() -> None:
+def test_duplicate_build_profile_ids_fail() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["compile_variants"].append(copy.deepcopy(model["compile_variants"][0]))
-    with pytest.raises(ValidationError, match="duplicate compile variant ids"):
+    model["build_profiles"].append(copy.deepcopy(model["build_profiles"][0]))
+    with pytest.raises(ValidationError, match="duplicate build profile ids"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_unsupported_variant_requires_reason() -> None:
+def test_unsupported_component_build_requires_reason() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["compile_variants"][0]["status"] = "unsupported"
-    with pytest.raises(ValidationError, match="compile_variants.*reason.*required"):
+    model["build_profiles"][0]["components"][0]["status"] = "unsupported"
+    with pytest.raises(ValidationError, match="components.*reason.*required"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def test_runner_class_is_optional_and_validated() -> None:
     model = load_model(FIXTURES / "fixture_model")
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-    model["compile_variants"][0]["runner_class"] = "expensive"
+    model["build_profiles"][0]["runner_class"] = "expensive"
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-    model["compile_variants"][0]["runner_class"] = "arbitrary-instance"
+    model["build_profiles"][0]["runner_class"] = "arbitrary-instance"
     with pytest.raises(ValidationError, match="runner_class"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_declarative_composition_validates_ports_and_package_contents() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    second = copy.deepcopy(model["components"][0])
+    second["id"] = "second_model"
+    model["components"].append(second)
+    model["build_profiles"][0]["components"].append({"id": "second_model", "parameters": {}})
+    model["compositions"] = [
+        {"id": "pipeline", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}
+    ]
+    model["packages"][0]["components"] = ["model", "second_model"]
+    model["packages"][0]["composition"] = "pipeline"
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+    model["packages"][0]["components"] = ["model"]
+    with pytest.raises(ValidationError, match="omits components required by composition"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def test_unapproved_https_host_is_a_validation_error() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["source"]["uri"] = "https://unapproved.example/model.onnx"
+    model["components"][0]["source"]["uri"] = "https://unapproved.example/model.onnx"
     with pytest.raises(ValidationError, match="source policy.*not approved"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def test_missing_model_local_test_config_fails() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["tests"]["correctness"] = [{"id": "missing", "config": "tests/missing.yaml"}]
+    model["tests"]["correctness"] = [
+        {
+            "id": "missing",
+            "config": "tests/missing.yaml",
+            "scope": {"type": "component", "component": "model"},
+            "build_profiles": ["fixture"],
+        }
+    ]
     with pytest.raises(ValidationError, match="referenced file does not exist"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_performance_configuration_is_validated_during_catalog_validation() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["tests"]["performance"] = [
+        {
+            "id": "latency",
+            "config": "invalid-performance.yaml",
+            "scope": {"type": "component", "component": "model"},
+            "build_profiles": ["fixture"],
+        }
+    ]
+    with pytest.raises(ValidationError, match="unsupported_setting.*unexpected"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
@@ -94,13 +133,15 @@ def test_catalog_model_is_valid() -> None:
         "paradigm": "cnn",
         "variant": "imagenet_1k",
     }
-    assert model["source"]["sha256"] == "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
-    variants = {variant["id"]: variant for variant in model["compile_variants"]}
-    assert set(variants) == {"modalix_bf16", "modalix_int8"}
-    assert variants["modalix_bf16"]["parameters"]["precision"] == "bf16"
-    assert variants["modalix_int8"]["parameters"]["precision"] == "int8"
-    assert variants["modalix_int8"]["parameters"]["calibration_samples"] == 500
-    assert model["calibration"]["dataset"] == {
+    assert model["components"][0]["source"]["sha256"] == (
+        "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
+    )
+    profiles = {profile["id"]: profile for profile in model["build_profiles"]}
+    assert set(profiles) == {"modalix_bf16", "modalix_int8"}
+    assert profiles["modalix_bf16"]["components"][0]["parameters"]["precision"] == "bf16"
+    assert profiles["modalix_int8"]["components"][0]["parameters"]["precision"] == "int8"
+    assert profiles["modalix_int8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
         "variant": "mini",
         "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",

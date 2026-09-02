@@ -44,7 +44,8 @@ def benchmark_identity_document(result: JsonObject) -> JsonObject:
         "benchmark_type": result["benchmark_type"],
         "model": {
             "id": result["model"]["id"],
-            "variant_id": result["model"]["variant_id"],
+            "build_profile_id": result["model"]["build_profile_id"],
+            "component_id": result["model"]["component_id"],
             "sha256": result["model"]["sha256"],
         },
         "compatibility": {
@@ -124,7 +125,8 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
     }
     dimensions = {
         "model_id": result["model"]["id"],
-        "variant_id": result["model"]["variant_id"],
+        "build_profile_id": result["model"]["build_profile_id"],
+        "component_id": result["model"]["component_id"],
         "benchmark_type": result["benchmark_type"],
     }
     values = []
@@ -184,7 +186,8 @@ def publish_benchmark_result(
 
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
-    variant_id = result["model"]["variant_id"]
+    build_profile_id = result["model"]["build_profile_id"]
+    component_id = result["model"]["component_id"]
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
     stable_digest = hashlib.sha256(
@@ -220,7 +223,8 @@ def publish_benchmark_result(
         },
         "metadata": {
             "model_id": model_id,
-            "variant_id": variant_id,
+            "build_profile_id": build_profile_id,
+            "component_id": component_id,
             "benchmark_type": result["benchmark_type"],
             "compile_run_id": parent_run_id,
             "benchmark_execution_digest": execution_digest,
@@ -243,7 +247,12 @@ def publish_benchmark_result(
             "source_reference": result["model"]["uri"] or f"vulcan://runs/{parent_run_id}/artifacts/mpk",
             "sha256": result["model"]["sha256"],
             "media_type": "application/gzip",
-            "metadata": {"model_id": model_id, "variant_id": variant_id, "compile_run_id": parent_run_id},
+            "metadata": {
+                "model_id": model_id,
+                "build_profile_id": build_profile_id,
+                "component_id": component_id,
+                "compile_run_id": parent_run_id,
+            },
         },
         f"{stable_key}-input",
     )
@@ -261,7 +270,7 @@ def publish_benchmark_result(
 
     result_sha, _ = sha256_file(path)
     result_prefix = (
-        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{variant_id}/"
+        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/{component_id}/"
         f"benchmarks/{fingerprint}/{execution_digest}"
     )
     object_key = f"{result_prefix}/performance-result-v{result['schema_version']}.json"
@@ -280,7 +289,8 @@ def publish_benchmark_result(
             "retention_class": "branch",
             "metadata": {
                 "model_id": model_id,
-                "variant_id": variant_id,
+                "build_profile_id": build_profile_id,
+                "component_id": component_id,
                 "result_fingerprint": fingerprint,
                 "benchmark_execution_digest": execution_digest,
             },
@@ -310,7 +320,11 @@ def publish_benchmark_result(
                 "size_bytes": log_stored.size_bytes,
                 "media_type": "text/plain",
                 "retention_class": "branch",
-                "metadata": {"model_id": model_id, "variant_id": variant_id},
+                "metadata": {
+                    "model_id": model_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component_id,
+                },
             },
             f"{stable_key}-log-artifact",
         )
@@ -341,7 +355,8 @@ def publish_benchmark_result(
         "benchmark_run_id": run_id,
         "compile_run_id": parent_run_id,
         "model_id": model_id,
-        "variant_id": variant_id,
+        "build_profile_id": build_profile_id,
+        "component_id": component_id,
         "result_fingerprint": fingerprint,
         "execution_digest": execution_digest,
         "s3_key": stored.key,

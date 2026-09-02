@@ -19,12 +19,6 @@
     "engine": {"const": "model_registry"},
     "status": {"enum": ["ready", "provisional", "pending"]},
     "task": {"const": "image_classification"},
-    "variants": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"}
-    },
     "dataset": {"$ref": "#/$defs/dataset"},
     "profiles": {
       "type": "object",
@@ -125,7 +119,7 @@
       "required": ["type", "artifact", "input_layout"],
       "properties": {
         "type": {"enum": ["onnxruntime", "afe_sima"]},
-        "artifact": {"enum": ["source", "compile_variant"]},
+        "artifact": {"enum": ["source", "compiled_component"]},
         "input_layout": {"enum": ["NCHW", "NHWC"]},
         "use_jax": {"type": "boolean"}
       }

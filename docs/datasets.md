@@ -83,13 +83,14 @@ declares the data used for accuracy evaluation. Both declarations identify the
 same registered bytes with an ID, variant, SHA-256, and byte size. The
 correctness declaration additionally defines loaders and splits.
 
-During local work, use Model Registry to resolve the variant-specific inputs:
+During local work, use Model Registry to resolve inputs for the selected
+component/profile pair:
 
 ```bash
 calibration_json="$(model-registry fetch-calibration \
-  models/<model-id> --variant <variant-id> --json)"
+  models/<model-id> --build-profile <profile-id> --component <component-id> --json)"
 accuracy_json="$(model-registry fetch-accuracy-dataset \
-  models/<model-id> --variant <variant-id> --json)"
+  models/<model-id> --build-profile <profile-id> --component <component-id> --json)"
 ```
 
 Those commands delegate registered dataset resolution to Dataset Registry and
@@ -176,7 +177,7 @@ before referencing it from a model.
 
 Add the exact dataset ID, variant, archive SHA-256, size, loader, splits, and
 profiles to the model declarations. Then run the full required local workflow:
-resolve the registered archive, compile every submitted supported variant,
+resolve the registered archive, compile every submitted supported component/profile pair,
 complete applicable accuracy evaluation, verify the MPK, and benchmark that
 exact MPK on a compatible Modalix DevKit.
 

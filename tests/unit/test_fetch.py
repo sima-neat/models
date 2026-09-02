@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
 from model_registry.errors import FetchError
 from model_registry.fetch import Fetcher
-from model_registry.source import SourceSpec
+from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
 DIGEST = hashlib.sha256(PAYLOAD).hexdigest()
@@ -52,6 +53,54 @@ def test_download_is_verified_and_reused_from_cache(tmp_path: Path) -> None:
     assert cache_hit
     assert same_path == path
     assert len(calls) == 1
+
+
+def test_file_set_is_verified_and_materialized_with_its_declared_layout(tmp_path: Path) -> None:
+    model = b"onnx"
+    weights = b"external weights"
+    payloads = {
+        "https://api.github.com/repos/example/models/releases/assets/1": model,
+        "https://api.github.com/repos/example/models/releases/assets/2": weights,
+    }
+
+    def opener(request: Request, timeout: int) -> Response:
+        return Response(payloads[request.full_url])
+
+    source_set = {
+        "type": "file_set",
+        "entrypoint": "graph/model.onnx",
+        "files": [
+            {
+                "path": "graph/model.onnx",
+                "uri": "https://api.github.com/repos/example/models/releases/assets/1",
+                "sha256": hashlib.sha256(model).hexdigest(),
+                "size_bytes": len(model),
+                "media_type": "application/onnx",
+            },
+            {
+                "path": "graph/model.data",
+                "uri": "https://api.github.com/repos/example/models/releases/assets/2",
+                "sha256": hashlib.sha256(weights).hexdigest(),
+                "size_bytes": len(weights),
+                "media_type": "application/octet-stream",
+            },
+        ],
+    }
+    fetcher = Fetcher(tmp_path, opener=opener)
+
+    entrypoint, cache_hit, identity, size = fetcher.fetch_source(source_set)
+    assert not cache_hit
+    assert identity == source_identity(source_set)
+    assert size == len(model) + len(weights)
+    assert entrypoint.read_bytes() == model
+    assert entrypoint.with_name("model.data").read_bytes() == weights
+    assert json.loads(entrypoint.parents[1].joinpath("source-set.json").read_text())["entrypoint"] == (
+        "graph/model.onnx"
+    )
+
+    same_entrypoint, cache_hit, _, _ = fetcher.fetch_source(source_set)
+    assert cache_hit
+    assert same_entrypoint == entrypoint
 
 
 def test_corrupt_cache_entry_is_replaced(tmp_path: Path) -> None:

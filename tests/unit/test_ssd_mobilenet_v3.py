@@ -189,20 +189,23 @@ def test_int8_reference_evaluator_adapts_opset17_qdq_dispatch(tmp_path: Path) ->
 def test_model_sources_match_pinned_v3_assets() -> None:
     calibration = load_module("calibration")
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    assert metadata["source"] == {
+    component = metadata["components"][0]
+    assert component["source"] == {
+        "type": "file",
         "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/502158604",
         "sha256": "5655500a6f5046b60c3e90b24d18d9c67977a732abeeccdbacadf9dfbce3ac5a",
         "size_bytes": 15784877,
         "media_type": "application/x-gtar",
     }
-    assert metadata["calibration"]["source"] == {
+    assert metadata["calibrations"][0]["source"] == {
+        "type": "file",
         "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/500803386",
         "sha256": calibration.ARCHIVE_SHA256,
         "size_bytes": 55112720,
         "media_type": "application/x-npz",
     }
-    assert metadata["surgery"]["parameters"]["bf16_source"] == "ssd_mobilenet_v3_torchvision_fp32.onnx"
-    assert metadata["surgery"]["parameters"]["int8_source"] == "ssd_mobilenet_v3_torchvision_qat_int8.onnx"
+    assert component["surgery"]["parameters"]["bf16_source"] == "ssd_mobilenet_v3_torchvision_fp32.onnx"
+    assert component["surgery"]["parameters"]["int8_source"] == "ssd_mobilenet_v3_torchvision_qat_int8.onnx"
 
 
 def test_calibration_split_has_128_representative_and_32_disjoint_samples() -> None:
@@ -568,35 +571,36 @@ def test_recipe_uses_supported_compiler_2_1_3_api_only() -> None:
 
 def test_model_declares_exact_four_variant_cross_product() -> None:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
-        (variant["parameters"]["precision"], variant["parameters"]["tessellation_mla"])
-        for variant in metadata["compile_variants"]
+        (binding["parameters"]["precision"], binding["parameters"]["tessellation_mla"])
+        for binding in bindings
     }
     assert matrix == {("int8", False), ("int8", True), ("bf16", False), ("bf16", True)}
-    assert all(variant["parameters"]["calibration_samples"] == 128 for variant in metadata["compile_variants"])
+    assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)
     assert {
-        (variant["parameters"]["precision"], variant["parameters"]["calibration_method"])
-        for variant in metadata["compile_variants"]
+        (binding["parameters"]["precision"], binding["parameters"]["calibration_method"])
+        for binding in bindings
     } == {("int8", "min_max"), ("bf16", "mse")}
     int8_parameters = [
-        variant["parameters"]
-        for variant in metadata["compile_variants"]
-        if variant["parameters"]["precision"] == "int8"
+        binding["parameters"]
+        for binding in bindings
+        if binding["parameters"]["precision"] == "int8"
     ]
     assert all(parameters["quantization_method"] == "qat" for parameters in int8_parameters)
     assert all(parameters.get("smooth_quant", False) is False for parameters in int8_parameters)
     assert all(parameters.get("bias_correction", "none") == "none" for parameters in int8_parameters)
     bf16_parameters = [
-        variant["parameters"]
-        for variant in metadata["compile_variants"]
-        if variant["parameters"]["precision"] == "bf16"
+        binding["parameters"]
+        for binding in bindings
+        if binding["parameters"]["precision"] == "bf16"
     ]
     assert all(parameters["quantization_method"] == "ptq" for parameters in bf16_parameters)
     status = {
-        (variant["parameters"]["precision"], variant["parameters"]["tessellation_mla"]): variant.get(
+        (binding["parameters"]["precision"], binding["parameters"]["tessellation_mla"]): binding.get(
             "status", "supported"
         )
-        for variant in metadata["compile_variants"]
+        for binding in bindings
     }
     assert status == {
         ("int8", False): "supported",

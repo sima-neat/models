@@ -72,8 +72,10 @@ def test_fetch_calibration_resolves_registered_dataset(monkeypatch, tmp_path: Pa
         [
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
-            "--variant",
+            "--build-profile",
             "modalix_int8",
+            "--component",
+            "model",
             "--json",
         ]
     )
@@ -94,8 +96,10 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
         [
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
-            "--variant",
+            "--build-profile",
             "modalix_bf16",
+            "--component",
+            "model",
             "--json",
         ]
     )
@@ -113,8 +117,10 @@ def test_fetch_accuracy_dataset_resolves_for_scoped_int8_variant(monkeypatch, tm
         [
             "fetch-accuracy-dataset",
             str(ROOT / "models" / "resnet_50"),
-            "--variant",
+            "--build-profile",
             "modalix_int8",
+            "--component",
+            "model",
             "--json",
         ]
     )
@@ -135,8 +141,10 @@ def test_fetch_accuracy_dataset_skips_bf16_outside_accuracy_scope(monkeypatch, c
         [
             "fetch-accuracy-dataset",
             str(ROOT / "models" / "resnet_50"),
-            "--variant",
+            "--build-profile",
             "modalix_bf16",
+            "--component",
+            "model",
             "--json",
         ]
     )
@@ -155,6 +163,10 @@ def test_fetch_accuracy_dataset_skips_legacy_correctness_declaration(monkeypatch
         [
             "fetch-accuracy-dataset",
             str(ROOT / "models" / "ssd_mobilenet_v1"),
+            "--build-profile",
+            "modalix_bf16_tess_mla",
+            "--component",
+            "model",
             "--json",
         ]
     )
@@ -166,7 +178,7 @@ def test_fetch_accuracy_dataset_skips_legacy_correctness_declaration(monkeypatch
 def test_invalid_model_has_nonzero_exit(capsys) -> None:
     result = main(["validate", str(ROOT / "tests" / "fixtures" / "invalid_model")])
     assert result == 2
-    assert "source.sha256" in capsys.readouterr().err
+    assert "components[0].source" in capsys.readouterr().err
 
 
 def test_matrix_emits_workflow_json(capsys) -> None:
@@ -183,8 +195,8 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     assert "unknown model id" in capsys.readouterr().err
 
 
-def test_matrix_selects_one_ssd_variant(capsys) -> None:
-    variant = "modalix_int8_tess_mla"
+def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
+    profile = "modalix_int8_tess_mla"
     result = main(
         [
             "matrix",
@@ -192,13 +204,13 @@ def test_matrix_selects_one_ssd_variant(capsys) -> None:
             str(ROOT),
             "--models",
             "ssd_mobilenet_v1",
-            "--variants",
-            variant,
+            "--profiles",
+            profile,
         ]
     )
     assert result == 0
     output = capsys.readouterr().out
-    assert f'"variant_id":"{variant}"' in output
+    assert f'"build_profile_id":"{profile}"' in output
     assert '"model_id":"ssd_mobilenet_v1"' in output
 
 

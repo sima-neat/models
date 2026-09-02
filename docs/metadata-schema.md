@@ -1,254 +1,233 @@
-# `model.yaml` reference
+# `model.yaml` v2 reference
 
 [`schemas/model.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/model.schema.json)
-is the authoritative
-schema-version 2 contract. YAML is loaded safely and validated with JSON Schema
-Draft 2020-12. Semantic validation then checks taxonomy references, source
-policy, duplicate variants, directory identity, and model-local file paths.
+is the authoritative contract. JSON Schema rejects unknown fields; semantic
+validation then checks references, dependency cycles, taxonomy compatibility,
+source policy, and model-local paths.
 
-Unknown fields are rejected. This makes misspellings fail instead of silently
-changing a build.
+Version 2 describes a deployable model product rather than assuming that one
+catalog entry always produces one MPK. A product can contain several compiled
+components, support several build profiles, include runtime resources, define
+how the pieces compose, and publish one or more downloadable packages.
 
-## Identity and ownership
-
-| Field | Requirement and intent |
-| --- | --- |
-| `schema_version` | Must be `2`; version 1 manifests are rejected. |
-| `id` | Lowercase snake case and identical to the model directory name. |
-| `display_name` | Human-readable product/model name. |
-| `description` | Concise statement of task, dataset or specialization, and important conversion details. |
-| `owners` | One or more GitHub users or teams such as `@sima-neat/models`. |
-| `maturity` | One of `experimental`, `staging`, `approved`, or `deprecated`. It reports lifecycle state; it does not waive other requirements. |
-
-Start new models as `experimental` unless the required qualification and
-release review have already occurred.
-
-## Taxonomy
-
-Every model declares the taxonomy version, broad model type, tasks, semantic
-input/output modalities, and architecture:
-
-```yaml
-taxonomy_version: 2
-model_type: vision
-tasks: [image_classification]
-modalities:
-  inputs: [image]
-  outputs: [class_scores]
-architecture:
-  id: resnet_50
-  variant: imagenet_1k
+```text
+model
+├── components ───── independently compiled ONNX units
+├── resources ────── packaged non-compiled files
+├── calibrations ─── reusable compile-time data
+├── build_profiles ─ target-wide settings plus component bindings
+├── compositions ─── how component entrypoints form an application
+├── packages ─────── what a user downloads
+└── tests ─────────── qualification scoped to a component or package
 ```
 
-`tags` are optional normalized secondary descriptors. IDs must satisfy the
-schema and sanctioned references must exist in
-[`model-taxonomy-v2.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v2.yaml).
-Task and
-architecture compatibility with `model_type` is checked semantically. Composite
-architectures may declare `components`, each with a `role` and
-`architecture_id`.
+## Product identity and provenance
 
-See [Model categorization taxonomy](model-taxonomy.md) before proposing a new
-category. Published taxonomy versions are immutable.
+The identity, taxonomy, ownership, license, `upstream`, and `maturity` fields
+retain their existing meaning. `schema_version` must be `2`, and `id` must
+match the model directory. See [Model taxonomy](model-taxonomy.md) for the
+sanctioned taxonomy values.
 
-## License
+`upstream` records human-reviewable provenance. Downloadable inputs belong in
+a component or resource `source`, where exact bytes are pinned.
+
+## Components and source sets
+
+Each member of `components` is independently compiled and has its own source,
+interface, preprocessing, postprocessing, surgery, and recipe:
 
 ```yaml
-license:
-  spdx: Apache-2.0
-  redistribution: allowed
-  attribution: Derived from the named upstream model and distributed under Apache-2.0.
+components:
+  - id: encoder
+    role: encoder
+    source:
+      type: file
+      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder.onnx
+      sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      size_bytes: 123456
+      media_type: application/onnx
+    interface:
+      format: onnx
+      opset: 17
+      entrypoints:
+        - id: default
+          inputs: [{name: input, dtype: float32, shape: [1, 80, frames]}]
+          outputs: [{name: state, dtype: float32, shape: [1, 512]}]
+      shape_profiles: []
+    preprocessing: {pipeline: []}
+    postprocessing: {pipeline: []}
+    surgery: {type: none}
+    recipe: compile.py
 ```
 
-`redistribution` is `allowed`, `restricted`, `prohibited`, or `unknown`.
-Use a valid SPDX expression when one exists and an approved `LicenseRef-*` for
-internal terms. Attribution must be meaningful. Restricted or internal assets
-need an approved distribution path; do not work around policy by committing the
-bytes or embedding a credentialed URL.
-
-## Immutable source and upstream provenance
-
-`source` identifies the exact downloaded bytes used by compilation:
+A source may be one `file` or a `file_set`. Use a file set when one compiler
+input consists of an ONNX entrypoint plus external data or related files:
 
 ```yaml
 source:
-  uri: hf://models/owner/repository@0123456789abcdef0123456789abcdef01234567/model.onnx
-  sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  size_bytes: 123456
-  media_type: application/onnx
+  type: file_set
+  entrypoint: encoder/model.onnx
+  files:
+    - path: encoder/model.onnx
+      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder/model.onnx
+      sha256: 1111111111111111111111111111111111111111111111111111111111111111
+      size_bytes: 1000
+      media_type: application/onnx
+    - path: encoder/model.onnx.data
+      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder/model.onnx.data
+      sha256: 2222222222222222222222222222222222222222222222222222222222222222
+      size_bytes: 2000
+      media_type: application/octet-stream
 ```
 
-The SHA-256 is exactly 64 lowercase hexadecimal characters and `size_bytes` is
-positive. Supported sources are full-commit Hugging Face resources or approved
-GitHub release assets. The enforced allowlist and URL shapes live in
-[`source.py`](https://github.com/sima-neat/models/blob/develop/tools/model_registry/source.py).
+Every member is verified separately. The tool materializes the declared
+relative layout in a content-addressed cache and passes the entrypoint to the
+recipe. `depends_on` may express ordering between components; cycles and
+unknown component IDs are rejected.
 
-`upstream` records human-reviewable provenance rather than downloadable build
-input:
+An interface contains named `entrypoints`. Each entrypoint declares its input
+and output tensors and may declare state and streaming behavior. Symbolic
+dimensions are allowed. Put supported concrete bindings in `shape_profiles`,
+then select one from a build-profile component binding.
+
+## Resources and calibrations
+
+`resources` are files shipped with a package but not compiled into an MPK—for
+example tokenizers, vocabularies, labels, or configuration:
 
 ```yaml
-upstream:
-  repository: https://huggingface.co/owner/repository
-  revision: 0123456789abcdef0123456789abcdef01234567
-  model_card: https://huggingface.co/owner/repository
-  derived_from: https://example.com/original-project
+resources:
+  - id: tokenizer
+    source:
+      type: file
+      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/tokenizer.json
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      size_bytes: 4096
+      media_type: application/json
+    install_path: resources/tokenizer.json
 ```
 
-`repository` and `revision` are required. `model_card` and `derived_from` are
-optional URLs. Keep them precise enough for a reviewer to trace the conversion.
+A resource can carry its own license when it differs from the model license.
+For a single-file source, `install_path` is the installed filename. For a file
+set, it is a directory prefix and the declared member layout is preserved
+below it. Packages list resources explicitly, so a resource is not shipped
+merely because it is declared.
 
-## ONNX interface
-
-`interface.format` is currently `onnx`. Declare at least one input and output:
+`calibrations` are named compile-time inputs. A ready calibration uses either
+an immutable `source` or a Dataset Registry reference. A pending calibration
+has a reason. A component binding references calibration by ID only when that
+build needs it:
 
 ```yaml
-interface:
-  format: onnx
-  opset: 17
-  inputs:
-    - name: images
-      dtype: float32
-      shape: [1, 3, height, width]
-      layout: NCHW
-      description: Normalized RGB image tensor.
-  outputs:
-    - name: logits
-      dtype: float32
-      shape: [1, 1000]
-      layout: NC
+calibrations:
+  - id: representative_images
+    status: ready
+    dataset: {id: imagenet-2012, variant: calibration, split: train}
 ```
 
-Tensor names must match the pinned ONNX. Dimensions are positive integers or
-lowercase symbolic names. Supported dtypes are `float16`, `float32`, `float64`,
-`int8`, `uint8`, `int32`, `int64`, and `bool`. `layout`, `description`, and
-`opset` are optional in the schema but should be present when they prevent
-ambiguity.
+Calibration prepares quantization ranges; it is not an accuracy measurement.
+Correctness tests separately compare model outputs against declared evidence.
+See [Datasets for local model development](datasets.md).
 
-## Preprocessing and postprocessing
+## Build profiles
 
-Both fields contain an ordered `pipeline`. Each stage has a snake-case `op` and
-an explicit `parameters` map:
+A build profile names one product-wide target configuration. Its component
+bindings say how each component is built under that profile:
 
 ```yaml
-preprocessing:
-  pipeline:
-    - op: resize
-      parameters: {height: 224, width: 224, resample: bilinear}
-    - op: transpose
-      parameters: {from: HWC, to: CHW}
-postprocessing:
-  pipeline:
-    - op: softmax
-      parameters: {axis: 1}
-```
-
-These declarations preserve the semantic contract even when operations are
-implemented by an application, Neat, or model-specific route. Record ownership
-or ordering parameters when that distinction matters. Use `pipeline: []` only
-when no operation is required.
-
-## Calibration
-
-Calibration is always explicit:
-
-- `pending` requires a reason describing the missing evidence;
-- `ready` requires an immutable source using the same URI, checksum, and size
-  policy as the model source;
-- `not_required` requires a reason explaining why.
-
-```yaml
-calibration:
-  status: pending
-  reason: A representative, redistribution-approved dataset is not yet pinned.
-```
-
-Synthetic data may exercise a compiler path, but it does not become
-representative accuracy evidence merely because compilation succeeds.
-
-## Surgery
-
-Use `type: none` when no model-specific transformation is needed. Python
-surgery requires an entry point in `path.py:function` form and an explicit
-parameter map:
-
-```yaml
-surgery:
-  type: python
-  entrypoint: surgery.py:prepare_model
-  parameters:
-    input_name: images
-```
-
-The referenced Python file must exist within the model directory. Keep reusable
-transformations in shared tooling rather than copying them between models.
-
-## Compile variants
-
-Every model has at least one compile variant:
-
-```yaml
-compile_variants:
+build_profiles:
   - id: modalix_int8
     target: modalix
-    recipe: compile.py
-    parameters:
-      precision: int8
-      calibration_samples: 128
+    components:
+      - id: encoder
+        shape_profile: batch_1
+        calibration: representative_audio
+        parameters: {precision: int8}
+      - id: decoder
+        parameters: {precision: int8}
 ```
 
-Variant IDs are unique lowercase snake case. The recipe is a model-local Python
-file and parameters are the canonical, reviewable inputs for that variant. The
-repository compiler pin in
-[`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json)
-applies to every variant.
+This avoids a Cartesian product of unrelated component configurations. The compile
+matrix emits one job for every supported component binding. `runner_class` may
+be set on the profile or overridden on a binding. A binding proven incompatible
+may use `status: unsupported` with a reason; untested work is not unsupported.
 
-`status` defaults to `supported`. A proven incompatible combination may use:
+The repository compiler version remains pinned centrally in
+[`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
+
+## Compositions and packages
+
+A composition explains how the compiled pieces are used together. A
+single-component model uses the built-in form:
 
 ```yaml
-status: unsupported
-reason: Model Compiler 2.x rejects the documented operator after the recorded qualification attempt.
+compositions:
+  - id: default
+    type: single
+    component: model
+    entrypoint: default
 ```
 
-Unsupported variants are visible in the manifest but omitted from matrices and
-release packaging. A non-empty reason is mandatory.
+A multi-component product uses `type: declarative` and points at a separately
+versioned model-local composition document. Keeping that document versioned
+independently lets orchestration evolve without changing the model contract
+for unrelated fields.
 
-`runner_class` is an optional per-variant resource request with allowed values
-`default`, `expensive`, and `most-expensive`. When omitted, it defaults to
-`default`. Elevated classes must have a matching approval in the Vulcan scaler
-specification and pass admission before scheduling. See [Compile runner class
-requests and approvals](runner-class-requests.md).
+A package is the retrieval unit visible to users:
 
-## Tests
+```yaml
+packages:
+  - id: default
+    default: true
+    components: [encoder, decoder]
+    resources: [tokenizer]
+    build_profiles: [modalix_int8]
+    composition: pipeline
+```
 
-Tests reference YAML files inside the model directory:
+Exactly one package is the default. Validation ensures each package includes
+the components required by its composition and declares only profiles that can
+build those components. Trusted assembly preserves each MPK intact inside one
+deterministic bundle with a manifest, the selected resources, and the
+declarative composition document when one is used.
+The embedded manifest is validated against
+[`package-manifest-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest-v1.schema.json).
+
+## Scoped tests
+
+Correctness and performance cases declare both their scope and applicable
+build profiles:
 
 ```yaml
 tests:
   correctness:
-    - id: dataset_accuracy
-      config: tests/correctness.yaml
+    - id: encoder_accuracy
+      config: tests/encoder-correctness.yaml
+      scope: {type: component, component: encoder}
+      build_profiles: [modalix_int8]
   performance:
-    - id: modalix_latency
-      config: tests/performance.yaml
+    - id: end_to_end_latency
+      config: tests/pipeline-performance.yaml
+      scope: {type: package, package: default}
+      build_profiles: [modalix_int8]
 ```
 
-Test IDs are lowercase and may include underscores or hyphens. Empty arrays are
-schema-valid, but a real contribution should make missing qualification work
-visible with a pending declaration instead of implying that testing is
-unnecessary. See [Synthetic model benchmarking](benchmarking.md) for supported
-performance settings and result semantics.
+Component tests qualify one MPK. Package tests qualify the composed product.
+The scope makes clear which artifact and interface the test exercises.
+Performance files are validated against
+[`performance-config-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-config-v1.schema.json)
+during catalog validation, including benchmark mode, sample counts, geometry,
+model-option value shapes, metrics, and unknown fields.
 
-## Validation behavior
+## Validation
 
-Run validation from the repository root. The author-safe `model-registry`
-package is read-only in these commands; validation does not compile or publish
-the model.
+Run both checks from the repository root:
 
 ```bash
 model-registry validate models/<model-id>
 model-registry validate-catalog --repository .
 ```
 
-Errors include paths such as `source.sha256` and the model directory. Catalog
-validation checks every manifest and taxonomy reference, which catches changes
-that are individually valid but inconsistent with repository-wide policy.
+Validation proves that the source-controlled contract is coherent. Developers
+must still compile and test every supported component/profile combination
+locally before submitting it.

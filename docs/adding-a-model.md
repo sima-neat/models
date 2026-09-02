@@ -1,239 +1,198 @@
 # Define the model contract
 
-This guide owns the source-controlled model contract: the model directory,
-immutable source, metadata, recipe, variants, and test declarations. It ends
-when those files validate. The separate [local qualification
-guide](local-development.md) owns compilation, accuracy, MPK verification, and
-DevKit testing.
+A Model Registry contribution describes a product that developers can find,
+build, test, and retrieve reproducibly. For a simple model, that product is one
+ONNX input and one compiled MPK. More involved products can contain several
+ONNX components, runtime resources, an explicit composition, and a combined
+download package. `model.yaml` is the source-controlled contract joining those
+pieces together.
 
-## 1. Confirm that the model is suitable
+This guide ends when the contract validates. You must then follow [Qualify
+locally](local-development.md) and compile and test every supported build
+before opening a pull request.
 
-Before creating files, establish:
+## 1. Decide what the product contains
 
-- an ONNX source that can be pinned to immutable content;
-- the source byte size and SHA-256;
-- an SPDX license expression or an internal `LicenseRef-*`, redistribution
-  policy, and required attribution;
-- a responsible GitHub user or team;
-- the exact input/output tensor contract and preprocessing/postprocessing;
-- the Modalix compile variants to attempt;
-- the calibration and correctness data needed for those variants.
+Before creating files, identify:
 
-Do not add a model whose source or license is still ambiguous. `experimental`
-maturity permits incomplete qualification evidence; it does not permit mutable
-provenance or unknown ownership.
+- the logical product and its responsible owner;
+- each independently compiled ONNX component;
+- whether a component source is one file or an ONNX file set;
+- the public entrypoints, tensors, shapes, state, and preprocessing behavior;
+- runtime files such as tokenizers, labels, or configuration;
+- the target-wide build profiles and component-specific compiler parameters;
+- how the components compose and what users should receive in each package;
+- the calibration and correctness data required by each build;
+- the component-level and end-to-end tests needed for qualification.
 
-## 2. Create the model directory
+Do not add a product whose source, ownership, or license remains ambiguous.
+`experimental` maturity may describe unfinished qualification; it does not
+permit mutable provenance.
 
-Model IDs use lowercase snake case. The directory name and `model.yaml` `id`
-must match.
+## 2. Create the directory
+
+The directory name and `model.yaml` `id` must be the same lowercase snake-case
+identifier.
 
 ```text
 models/<model-id>/
   README.md
   model.yaml
-  compile.py
-  surgery.py                 # only when model-specific surgery is required
+  compile.py                  # or one recipe per component
+  composition.yaml           # multi-component products only
+  surgery.py                  # only for model-specific preparation
   tests/
     correctness.yaml
     performance.yaml
 ```
 
-Use an existing model with a similar task as a reference:
+The README records upstream context, unusual compiler decisions, local
+qualification notes, and known limitations. Requirements that tooling needs to
+enforce must also appear in `model.yaml`.
 
-- [`resnet_50`](https://github.com/sima-neat/models/tree/develop/models/resnet_50) for a simple classification model with
-  no surgery and pending qualification data;
-- [`ssd_mobilenet_v1`](https://github.com/sima-neat/models/tree/develop/models/ssd_mobilenet_v1) for pinned calibration,
-  model-specific surgery, and several compile variants;
-- [`yolo26_tiny_drone`](https://github.com/sima-neat/models/tree/develop/models/yolo26_tiny_drone) for a restricted source,
-  qualified reference results, and route-specific benchmarking.
+## 3. Pin every input
 
-The model README should record upstream context, unusual preparation or
-compiler decisions, known limitations, and the meaning of each variant. It
-must not be the only place where a runtime requirement is declared.
+Each compiled component owns its source. Use `type: file` for a standalone
+ONNX file. Use `type: file_set` when an ONNX entrypoint needs external data or
+other files in a particular relative layout. Every file gets its own immutable
+URI, SHA-256, byte count, and media type.
 
-## 3. Pin the source
+Hugging Face sources use a full 40-character repository commit. Approved HTTPS
+sources include pinned Hugging Face resources and GitHub release assets.
+Mutable branches, credentials, query parameters, fragments, and unapproved
+hosts are rejected.
 
-Hugging Face sources use a full 40-character repository commit:
-
-```yaml
-source:
-  uri: hf://models/owner/repository@0123456789abcdef0123456789abcdef01234567/path/model.onnx
-  sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  size_bytes: 123456
-  media_type: application/onnx
-```
-
-`models`, `datasets`, and `spaces` are valid Hugging Face repository types.
-Mutable revisions such as `main`, credentials, query parameters, fragments,
-and unapproved hosts are rejected. Approved HTTPS sources are pinned Hugging
-Face resolve URLs and GitHub release assets. See `SourceSpec.resolve_url()` in
-[`source.py`](https://github.com/sima-neat/models/blob/develop/tools/model_registry/source.py)
-for the enforced source policy.
-
-Record checksums from the exact bytes the registry will download. On macOS use
-`shasum`; on Linux, `sha256sum` is usually available:
+Record hashes from the exact bytes the registry will fetch:
 
 ```bash
 shasum -a 256 /path/to/model.onnx
 wc -c < /path/to/model.onnx
 ```
 
-Do not add this temporary download to the repository. After entering its digest
-and byte count in `model.yaml`, verify the declaration:
+Do not commit downloaded inputs. Once they are declared, verify them by
+component:
 
 ```bash
 model-registry validate models/<model-id>
-model-registry fetch models/<model-id>
+model-registry fetch models/<model-id> --component <component-id>
 ```
 
-The fetch is streamed, checked for exact size and SHA-256, and atomically stored
-in a checksum-addressed cache. It never makes the downloaded binary a Git input.
+If the model has only one component, `--component` may be omitted.
 
-## 4. Describe the model contract
+## 4. Describe components and interfaces
 
-Create a schema-version 2 `model.yaml`. It must describe:
+Declare one `components` entry for each independently compiled unit. A
+component owns:
 
-- identity, ownership, license, upstream provenance, and maturity;
-- sanctioned taxonomy references from
-  [`model-taxonomy-v2.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/model-taxonomy-v2.yaml);
-- every ONNX input and output, including name, dtype, shape, and useful layout;
-- ordered preprocessing and postprocessing behavior;
-- calibration status and immutable calibration source when ready;
-- surgery behavior;
-- one or more compile variants;
-- correctness and performance test declarations.
+- its role and immutable source;
+- one or more named ONNX entrypoints;
+- tensor, state, streaming, and concrete shape-profile contracts;
+- preprocessing and postprocessing pipelines;
+- optional model-specific surgery;
+- the recipe that produces its MPK;
+- optional dependencies on other components.
 
-The manifest is a stable local contract. Do not rely on an upstream model card
-remaining unchanged or on a recipe silently inferring decisions that belong in
-metadata. Inspect the pinned ONNX with ONNX tooling and compare it with the
-upstream conversion; do not guess tensor names, shapes, layouts, or opset.
+Names and tensor details must match the pinned inputs. Inspect the ONNX files;
+do not infer them from a mutable model card. Use separate components when files
+must compile independently, as in an encoder/decoder system. Use one file-set
+source when several files jointly form one compiler input.
 
-If the correct category does not exist, follow the versioning rules in the
-[taxonomy guide](model-taxonomy.md). Do not invent an authoritative category in
-one model manifest.
+## 5. Add resources and calibration
 
-## 5. Declare calibration and tests
+Declare non-compiled files under `resources` and give each its package
+`install_path`. Examples include tokenizers, vocabularies, speaker embeddings,
+labels, and runtime configuration. Declare a separate license when a resource
+has different distribution terms.
 
-Use `calibration.status: ready` only when the declared source is immutable,
-checksummed, representative, and legally usable. Use `pending` with a concrete
-reason while evidence is being assembled, or `not_required` with a reason when
-the compile path does not require calibration.
+Declare reusable calibration inputs under `calibrations`. A ready calibration
+references either an immutable source or a registered dataset. A pending entry
+states what is missing. Build-profile component bindings select calibration by
+ID only when required.
 
-Add every referenced test file inside the model directory. A pending test file
-should say what evidence is missing. A qualified reference should identify the
-dataset checksum, thresholds, and measured values needed by reviewers. The
-model schema verifies that test paths exist; model-specific test formats and
-release gates may impose additional requirements.
+Calibration is compiler input for quantization; correctness or accuracy tests
+measure behavior. Do not treat calibration data as accuracy evidence. Any
+calibration or correctness dataset must resolve through Dataset Registry and
+requires working Artifactory access. See [Datasets for local model
+development](datasets.md).
 
-Every calibration or correctness dataset must resolve through Dataset Registry.
-Set up private Artifactory access and follow
-[Datasets for local model development](datasets.md) before adding dataset
-metadata. If the required dataset or variant is not registered, introduce it in
-`sima-neat/dataset` and complete that review before referencing it from the
-model.
+## 6. Define build profiles
 
-For image-classification accuracy measurement, add an executable correctness
-YAML with `engine: model_registry`. Keep sampling, workers, executors, metrics,
-and reporting declarative; do not add a model-local evaluator. Follow
-[Local accuracy development](local-accuracy-development.md) to compile and run
-the regular and qualification profiles inside the SDK.
-
-## 6. Add model-specific preparation and compilation
-
-Set surgery to `none` when the pinned source can be compiled directly:
+A build profile represents one compatible product-wide target configuration,
+such as `modalix_int8`. Within it, bind every participating component and put
+component-specific compiler parameters on that binding:
 
 ```yaml
-surgery:
-  type: none
-```
-
-For a genuinely model-specific transformation, keep the hook inside the model
-directory and declare its callable and parameters:
-
-```yaml
-surgery:
-  type: python
-  entrypoint: surgery.py:prepare_model
-  parameters:
-    input_name: images
-```
-
-Generic download, checksum, cache, MPK validation, and publication behavior
-belongs under `tools/`, not in model code.
-
-The model recipe is the developer-facing compilation interface. The
-author-safe `model-registry` package provides validation, verified input
-handling, matrix inspection, and artifact checks; it is not a model-author
-publishing client. CI retains separate registry publication commands.
-
-Each model owns a Python compile recipe with this interface:
-
-```text
-compile.py --model <verified-source> --output-dir <new-directory> --variant <variant-id>
-```
-
-The recipe must:
-
-- consume the already verified source passed by `--model`;
-- consume registered calibration datasets passed by `--dataset`, or immutable
-  `calibration.source` files passed through `CALIBRATION_PATH`;
-- read only the selected, declared variant parameters;
-- fail on an unknown or incompatible variant;
-- make preparation, quantization, and compilation deterministic;
-- create the new output directory rather than reuse stale output;
-- leave exactly one directly consumable `*_mpk.tar.gz` there;
-- never download an unpinned input, re-download a provided calibration input,
-  or select another compiler version.
-
-The repository-wide compiler version comes from
-[`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
-Do not put a compiler pin in a
-variant.
-
-## 7. Declare variants
-
-Give each meaningful target/configuration combination a unique snake-case ID
-and explicit parameters:
-
-```yaml
-compile_variants:
+build_profiles:
   - id: modalix_int8
     target: modalix
-    recipe: compile.py
-    parameters:
-      precision: int8
-      input_shape: [1, 3, 224, 224]
+    components:
+      - id: encoder
+        calibration: speech_calibration
+        parameters: {precision: int8}
+      - id: decoder
+        parameters: {precision: int8}
 ```
 
-Variants are supported by default. If qualification proves that a declared
-combination cannot work with the repository compiler, retain it as
-`status: unsupported` and provide the evidence in `reason`. Unsupported
-variants remain documented but are excluded from compilation and packaging.
-Do not mark an untested or temporarily failing variant unsupported.
+The matrix creates one compile job per supported component binding. This keeps
+compatible component builds together without inventing every possible
+cross-product. A component binding proven incompatible may be retained as
+`status: unsupported` with a reason. Do not use unsupported for untested work.
 
-Variants may request a logical runner class when the default runner is
-insufficient. Read [Compile runner class requests and
-approvals](runner-class-requests.md) before adding one. Elevated capacity must
-be approved in the Vulcan scaler specification and is enforced before the build
-is scheduled; a model manifest cannot authorize its own infrastructure cost.
+Each component recipe has this interface:
 
-## 8. Check the contract
+```text
+compile.py --model <verified-entrypoint> --output-dir <new-directory> \
+  --build-profile <profile-id> --component <component-id>
+```
 
-Before moving to qualification, check the model directory and its effect on the
-complete catalog:
+The recipe reads only its selected profile binding, consumes already verified
+inputs, uses the repository-pinned compiler, creates exactly one MPK, and never
+downloads undeclared data. Shared download, checksum, MPK validation, and
+publication behavior belongs in `tools/`, not model code.
+
+Elevated `runner_class` requests require Vulcan approval. See [Compile runner
+class requests and approvals](runner-class-requests.md).
+
+## 7. Define composition and retrieval packages
+
+A one-component product uses a `single` composition naming its component and
+entrypoint. A product with several components uses a separately versioned
+declarative composition file to describe connections and product-level
+behavior.
+
+Then declare one or more packages. A package selects:
+
+- the components whose MPKs it contains;
+- the runtime resources to install;
+- the compatible build profiles;
+- the composition that explains how to use them.
+
+Exactly one package is `default: true`. Trusted assembly places the intact MPKs
+and resources into one deterministic archive, so a user can retrieve and
+extract the complete product without downloading each artifact separately.
+
+## 8. Scope the tests
+
+Every correctness and performance test states which build profiles it applies
+to and whether it exercises a component or a package. Use component scope for
+one compiled unit and package scope for an end-to-end composed product. Keep
+test configuration inside the model directory and make missing qualification
+work visible.
+
+For executable accuracy tests, follow [Local accuracy
+development](local-accuracy-development.md). For device performance tests,
+follow [Synthetic model benchmarking](benchmarking.md).
+
+## 9. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>
 model-registry validate-catalog --repository .
 ```
 
-These checks prove that the files form a coherent contract; they do not prove
-that the model compiles or runs.
+These checks establish contract coherence, not successful compilation or
+execution. The local qualification guide owns matrix inspection and build
+selection.
 
-## Next: qualify the model locally
-
-Continue with [Qualify locally](local-development.md). Complete
-its full qualification loop for every submitted supported variant before
-opening a pull request. When that work passes, the local guide sends you to the
-Git and pull-request guide.
+Continue with [Qualify locally](local-development.md) and complete the full
+loop for every matrix entry before submitting the contribution.

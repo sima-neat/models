@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
 import ssl
 import tempfile
 import time
@@ -15,7 +17,7 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .errors import FetchError
-from .source import SourceSpec, redact_url
+from .source import SourceSpec, redact_url, source_identity
 
 OpenUrl = Callable[..., BinaryIO]
 Sleeper = Callable[[float], None]
@@ -166,6 +168,64 @@ class Fetcher:
                 self.sleeper(2 ** (attempt - 1))
 
         raise AssertionError("unreachable")
+
+    def fetch_source(self, source: dict[str, object]) -> tuple[Path, bool, str, int]:
+        """Fetch one source contract and return its compiler entrypoint."""
+        identity = source_identity(source)
+        if source["type"] == "file":
+            spec = SourceSpec.from_mapping(source)
+            path, cache_hit = self.fetch(spec)
+            return path, cache_hit, identity, spec.size_bytes
+
+        members = list(source["files"])
+        resolved: list[tuple[dict[str, object], Path]] = []
+        cache_hit = True
+        total_size = 0
+        for member in members:
+            spec = SourceSpec.from_mapping(member)
+            path, member_hit = self.fetch(spec)
+            resolved.append((member, path))
+            cache_hit = cache_hit and member_hit
+            total_size += spec.size_bytes
+
+        source_root = self.cache_dir / "source-sets" / identity[:2] / identity
+        manifest_path = source_root / "source-set.json"
+        if source_root.is_dir():
+            for member, _ in resolved:
+                self._verify(source_root / str(member["path"]), SourceSpec.from_mapping(member))
+            if not manifest_path.is_file():
+                raise FetchError(f"cached source set {identity} is missing source-set.json")
+            return source_root / str(source["entrypoint"]), True, identity, total_size
+
+        source_root.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=f".{identity}.", dir=source_root.parent))
+        try:
+            for member, cached in resolved:
+                destination = temporary / str(member["path"])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(cached, destination)
+                except OSError:
+                    shutil.copyfile(cached, destination)
+            manifest = {
+                "schema_version": 1,
+                "identity": identity,
+                "entrypoint": source["entrypoint"],
+                "files": sorted(members, key=lambda item: str(item["path"])),
+            }
+            (temporary / "source-set.json").write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            try:
+                os.replace(temporary, source_root)
+                temporary = None
+            except OSError:
+                if not source_root.is_dir():
+                    raise
+        finally:
+            if temporary is not None:
+                shutil.rmtree(temporary, ignore_errors=True)
+        return source_root / str(source["entrypoint"]), cache_hit, identity, total_size
 
 
 def urlsplit_hostname(url: str) -> str:

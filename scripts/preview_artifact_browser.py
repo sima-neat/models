@@ -65,7 +65,8 @@ def _run(index: int = 0) -> dict:
         "target_platform": "modalix",
         "metadata": {
             "model_id": model_id,
-            "variant_id": variant_id,
+            "build_profile_id": variant_id,
+            "component_id": "model",
             "model_name": model_id,
             "license": {
                 "spdx": "Apache-2.0",
@@ -112,7 +113,8 @@ def _benchmark_result(index: int) -> dict:
     result = _read_result()
     model_id, variant_id, _, compiler, _ = PREVIEW_RUNS[index]
     result["model"]["id"] = model_id
-    result["model"]["variant_id"] = variant_id
+    result["model"]["build_profile_id"] = variant_id
+    result["model"]["component_id"] = "model"
     result["compatibility"]["actual_platform_version"] = compiler
     latency = round(3.15 + index * 0.37, 3)
     throughput = round(510.0 - index * 21.5, 1)
@@ -149,7 +151,8 @@ def _accuracy_result(index: int) -> dict | None:
         "report_scope": "sampled_accuracy_smoke",
         "model": {
             "id": model_id,
-            "variant_id": variant_id,
+            "build_profile_id": variant_id,
+            "component_id": "model",
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
         },
         "dataset": {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -18,6 +20,23 @@ HF_RESOLVE_RE = re.compile(r"^/(?:(?:datasets|spaces)/)?[^/]+/[^/]+/resolve/[a-f
 GITHUB_RELEASE_RE = re.compile(r"^/[^/]+/[^/]+/releases/download/[^/]+/[^/]+$")
 GITHUB_RELEASE_API_RE = re.compile(r"^/repos/[^/]+/[^/]+/releases/assets/[0-9]+$")
 DEFAULT_HTTPS_HOSTS = {"api.github.com", "github.com", "huggingface.co"}
+
+
+def source_identity(source: dict[str, Any]) -> str:
+    """Return the canonical content identity of a single file or file set."""
+    if source["type"] == "file":
+        return str(source["sha256"])
+    members = [
+        {
+            "path": member["path"],
+            "sha256": member["sha256"],
+            "size_bytes": member["size_bytes"],
+            "media_type": member.get("media_type", "application/octet-stream"),
+        }
+        for member in sorted(source["files"], key=lambda item: item["path"])
+    ]
+    document = {"schema_version": 1, "entrypoint": source["entrypoint"], "files": members}
+    return hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def redact_url(value: str) -> str:

@@ -66,9 +66,17 @@ def build_reference_evaluator(path: Path, precision: str) -> Any:
     class DequantizeLinear(DequantizeLinear_19):
         op_domain = ""
 
-        def _run(self, x: Any, x_scale: Any, x_zero_point: Any = None, axis: Any = None, block_size: Any = None) -> Any:
-            if block_size not in {None, 0}:
-                raise ValueError("opset-17 DequantizeLinear cannot use blocked quantization")
+        def _run(
+            self,
+            x: Any,
+            x_scale: Any,
+            x_zero_point: Any = None,
+            axis: Any = None,
+            block_size: Any = None,
+            output_dtype: Any = None,
+        ) -> Any:
+            if block_size not in {None, 0} or output_dtype not in {None, 0}:
+                raise ValueError("opset-17 DequantizeLinear cannot use blocked quantization or output_dtype")
             return super()._run(x, x_scale, x_zero_point, axis)
 
     class QuantizeLinear(QuantizeLinear_19):
@@ -83,8 +91,9 @@ def build_reference_evaluator(path: Path, precision: str) -> Any:
             saturate: Any = None,
             block_size: Any = None,
             output_dtype: Any = None,
+            precision: Any = None,
         ) -> Any:
-            if block_size not in {None, 0} or output_dtype not in {None, 0}:
+            if block_size not in {None, 0} or output_dtype not in {None, 0} or precision not in {None, 0}:
                 raise ValueError("opset-17 QuantizeLinear cannot use blocked quantization or output_dtype")
             return super()._run(x, y_scale, zero_point, axis, saturate)
 
@@ -93,10 +102,12 @@ def build_reference_evaluator(path: Path, precision: str) -> Any:
 
 def variant_config(variant_id: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    matches = [item for item in metadata["compile_variants"] if item["id"] == variant_id]
+    matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one SSD-MobileNet V3 variant named {variant_id!r}")
-    variant = matches[0]
+    profile = matches[0]
+    binding = next(item for item in profile["components"] if item["id"] == "model")
+    variant = {**profile, "parameters": binding["parameters"]}
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
         raise ValueError("SSD-MobileNet V3 supports only declared Modalix INT8 and BF16 variants")
@@ -127,7 +138,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
 
 def calibration_source() -> SourceSpec:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    calibration = metadata["calibration"]
+    calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
     if calibration.get("status") != "ready":
         raise ValueError("SSD-MobileNet V3 requires pinned representative calibration data")
     return SourceSpec.from_mapping(calibration["source"])
@@ -592,9 +603,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--variant", required=True)
+    parser.add_argument("--build-profile", required=True)
+    parser.add_argument("--component", required=True)
     parser.add_argument("--validation-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.component != "model":
+        parser.error(f"unsupported component: {args.component}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
@@ -602,14 +616,14 @@ def main() -> int:
         parser.error(f"model does not exist: {source}")
     output_dir = args.output_dir.expanduser().resolve()
     if args.validation_only:
-        archive = validate_saved_model(source, output_dir, args.variant)
+        archive = validate_saved_model(source, output_dir, args.build_profile)
         LOG.info("Compiled MPK: %s", archive)
         # The dedicated worker has persisted every validation result. Avoid
         # native Model Compiler teardown, which can crash after V3 execution.
         logging.shutdown()
         os._exit(0)
     else:
-        compile_model(source, output_dir, args.variant)
+        compile_model(source, output_dir, args.build_profile)
         os.execv(
             sys.executable,
             [
@@ -619,8 +633,8 @@ def main() -> int:
                 str(source),
                 "--output-dir",
                 str(output_dir),
-                "--variant",
-                args.variant,
+                "--build-profile",
+                args.build_profile,
                 "--validation-only",
             ],
         )

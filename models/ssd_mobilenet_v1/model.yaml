@@ -5,104 +5,163 @@ description: COCO SSD-MobileNet V1 raw box and class predictor heads for Neat-ow
 taxonomy_version: 2
 model_type: vision
 tasks:
-  - object_detection
+- object_detection
 modalities:
   inputs:
-    - image
+  - image
   outputs:
-    - bounding_boxes
-    - class_scores
+  - bounding_boxes
+  - class_scores
 architecture:
   id: ssd_mobilenet_v1
   variant: coco_300x300
 owners:
-  - "@sima-neat/models"
+- '@sima-neat/models'
 license:
   spdx: Apache-2.0
   redistribution: allowed
   attribution: Derived from the ONNX Model Zoo SSD-MobileNet V1 model distributed under Apache-2.0.
-source:
-  uri: hf://models/onnxmodelzoo/ssd_mobilenet_v1_12@019281f3fcb151a90e491f3b2f0273f9f31bd6be/ssd_mobilenet_v1_12.onnx
-  sha256: b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058
-  size_bytes: 29461455
-  media_type: application/onnx
 upstream:
   repository: https://github.com/onnx/models
   revision: 019281f3fcb151a90e491f3b2f0273f9f31bd6be
   model_card: https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12
   derived_from: https://github.com/tensorflow/models/tree/master/research/object_detection
-interface:
-  format: onnx
-  opset: 12
-  inputs:
-    - name: images
-      dtype: float32
-      shape: [1, 3, 300, 300]
-      layout: NCHW
-      description: RGB image after stretch resize and normalization to [-1, 1].
-  outputs:
-    - name: ssd_loc_0
-      dtype: float32
-      shape: [1, 12, 19, 19]
-      layout: NCHW
-      description: Level 0 raw box encodings, three anchors and four coordinates per anchor.
-    - name: ssd_loc_1
-      dtype: float32
-      shape: [1, 24, 10, 10]
-      layout: NCHW
-      description: Level 1 raw box encodings, six anchors and four coordinates per anchor.
-    - name: ssd_loc_2
-      dtype: float32
-      shape: [1, 24, 5, 5]
-      layout: NCHW
-      description: Level 2 raw box encodings.
-    - name: ssd_loc_3
-      dtype: float32
-      shape: [1, 24, 3, 3]
-      layout: NCHW
-      description: Level 3 raw box encodings.
-    - name: ssd_loc_4
-      dtype: float32
-      shape: [1, 24, 2, 2]
-      layout: NCHW
-      description: Level 4 raw box encodings.
-    - name: ssd_loc_5
-      dtype: float32
-      shape: [1, 24, 1, 1]
-      layout: NCHW
-      description: Level 5 raw box encodings.
-    - name: ssd_confidence_0
-      dtype: float32
-      shape: [1, 273, 19, 19]
-      layout: NCHW
-      description: Level 0 raw class logits, three anchors and 91 classes per anchor.
-    - name: ssd_confidence_1
-      dtype: float32
-      shape: [1, 546, 10, 10]
-      layout: NCHW
-      description: Level 1 raw class logits, six anchors and 91 classes per anchor.
-    - name: ssd_confidence_2
-      dtype: float32
-      shape: [1, 546, 5, 5]
-      layout: NCHW
-      description: Level 2 raw class logits.
-    - name: ssd_confidence_3
-      dtype: float32
-      shape: [1, 546, 3, 3]
-      layout: NCHW
-      description: Level 3 raw class logits.
-    - name: ssd_confidence_4
-      dtype: float32
-      shape: [1, 546, 2, 2]
-      layout: NCHW
-      description: Level 4 raw class logits.
-    - name: ssd_confidence_5
-      dtype: float32
-      shape: [1, 546, 1, 1]
-      layout: NCHW
-      description: Level 5 raw class logits.
-preprocessing:
-  pipeline:
+components:
+- id: model
+  role: inference
+  source:
+    type: file
+    uri: hf://models/onnxmodelzoo/ssd_mobilenet_v1_12@019281f3fcb151a90e491f3b2f0273f9f31bd6be/ssd_mobilenet_v1_12.onnx
+    sha256: b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058
+    size_bytes: 29461455
+    media_type: application/onnx
+  interface:
+    format: onnx
+    opset: 12
+    entrypoints:
+    - id: default
+      inputs:
+      - name: images
+        dtype: float32
+        shape:
+        - 1
+        - 3
+        - 300
+        - 300
+        layout: NCHW
+        description: RGB image after stretch resize and normalization to [-1, 1].
+      outputs:
+      - name: ssd_loc_0
+        dtype: float32
+        shape:
+        - 1
+        - 12
+        - 19
+        - 19
+        layout: NCHW
+        description: Level 0 raw box encodings, three anchors and four coordinates per anchor.
+      - name: ssd_loc_1
+        dtype: float32
+        shape:
+        - 1
+        - 24
+        - 10
+        - 10
+        layout: NCHW
+        description: Level 1 raw box encodings, six anchors and four coordinates per anchor.
+      - name: ssd_loc_2
+        dtype: float32
+        shape:
+        - 1
+        - 24
+        - 5
+        - 5
+        layout: NCHW
+        description: Level 2 raw box encodings.
+      - name: ssd_loc_3
+        dtype: float32
+        shape:
+        - 1
+        - 24
+        - 3
+        - 3
+        layout: NCHW
+        description: Level 3 raw box encodings.
+      - name: ssd_loc_4
+        dtype: float32
+        shape:
+        - 1
+        - 24
+        - 2
+        - 2
+        layout: NCHW
+        description: Level 4 raw box encodings.
+      - name: ssd_loc_5
+        dtype: float32
+        shape:
+        - 1
+        - 24
+        - 1
+        - 1
+        layout: NCHW
+        description: Level 5 raw box encodings.
+      - name: ssd_confidence_0
+        dtype: float32
+        shape:
+        - 1
+        - 273
+        - 19
+        - 19
+        layout: NCHW
+        description: Level 0 raw class logits, three anchors and 91 classes per anchor.
+      - name: ssd_confidence_1
+        dtype: float32
+        shape:
+        - 1
+        - 546
+        - 10
+        - 10
+        layout: NCHW
+        description: Level 1 raw class logits, six anchors and 91 classes per anchor.
+      - name: ssd_confidence_2
+        dtype: float32
+        shape:
+        - 1
+        - 546
+        - 5
+        - 5
+        layout: NCHW
+        description: Level 2 raw class logits.
+      - name: ssd_confidence_3
+        dtype: float32
+        shape:
+        - 1
+        - 546
+        - 3
+        - 3
+        layout: NCHW
+        description: Level 3 raw class logits.
+      - name: ssd_confidence_4
+        dtype: float32
+        shape:
+        - 1
+        - 546
+        - 2
+        - 2
+        layout: NCHW
+        description: Level 4 raw class logits.
+      - name: ssd_confidence_5
+        dtype: float32
+        shape:
+        - 1
+        - 546
+        - 1
+        - 1
+        layout: NCHW
+        description: Level 5 raw class logits.
+    shape_profiles: []
+  preprocessing:
+    pipeline:
     - op: decode_image
       parameters:
         color_space: RGB
@@ -117,42 +176,57 @@ preprocessing:
         factor: 0.00392156862745098
     - op: normalize
       parameters:
-        mean: [0.5, 0.5, 0.5]
-        std: [0.5, 0.5, 0.5]
+        mean:
+        - 0.5
+        - 0.5
+        - 0.5
+        std:
+        - 0.5
+        - 0.5
+        - 0.5
     - op: transpose
       parameters:
         from: HWC
         to: CHW
-postprocessing:
-  pipeline:
+  postprocessing:
+    pipeline:
     - op: ssd_decode
       parameters:
         owner: neat
-        head_order: "loc[0..5],confidence[0..5]"
+        head_order: loc[0..5],confidence[0..5]
         classes_per_anchor: 91
         coordinates_per_anchor: 4
     - op: non_maximum_suppression
       parameters:
         owner: neat
-calibration:
+  surgery:
+    type: python
+    entrypoint: surgery.py:prepare_model
+    parameters:
+      source_boundary: Preprocessor/sub:0
+      input_name: images
+      input_shape:
+      - 1
+      - 3
+      - 300
+      - 300
+      output_order: loc[0..5],confidence[0..5]
+  recipe: compile.py
+resources: []
+calibrations:
+- id: default
   status: ready
   source:
+    type: file
     uri: https://api.github.com/repos/sima-neat/models/releases/assets/500754757
     sha256: ae4d46084839c7659c679a170366e8e2d143b1c42c911697bb59c5639e3bce20
     size_bytes: 48695578
     media_type: application/x-npz
-surgery:
-  type: python
-  entrypoint: surgery.py:prepare_model
-  parameters:
-    source_boundary: "Preprocessor/sub:0"
-    input_name: images
-    input_shape: [1, 3, 300, 300]
-    output_order: "loc[0..5],confidence[0..5]"
-compile_variants:
-  - id: modalix_int8_tess_mla
-    target: modalix
-    recipe: compile.py
+build_profiles:
+- id: modalix_int8_tess_mla
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -161,9 +235,11 @@ compile_variants:
       calibration_samples: 128
       requantization: sima
       tessellation_mla: true
-  - id: modalix_int8_tess_off_mla
-    target: modalix
-    recipe: compile.py
+    calibration: default
+- id: modalix_int8_tess_off_mla
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -172,9 +248,11 @@ compile_variants:
       calibration_samples: 128
       requantization: sima
       tessellation_mla: false
-  - id: modalix_bf16_tess_mla
-    target: modalix
-    recipe: compile.py
+    calibration: default
+- id: modalix_bf16_tess_mla
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: bf16
       activation_quantization: bfloat16
@@ -183,9 +261,11 @@ compile_variants:
       calibration_samples: 128
       requantization: sima
       tessellation_mla: true
-  - id: modalix_bf16_tess_off_mla
-    target: modalix
-    recipe: compile.py
+    calibration: default
+- id: modalix_bf16_tess_off_mla
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: bf16
       activation_quantization: bfloat16
@@ -194,11 +274,45 @@ compile_variants:
       calibration_samples: 128
       requantization: sima
       tessellation_mla: false
+    calibration: default
+compositions:
+- id: default
+  type: single
+  component: model
+  entrypoint: default
+packages:
+- id: default
+  default: true
+  components:
+  - model
+  resources: []
+  build_profiles:
+  - modalix_int8_tess_mla
+  - modalix_int8_tess_off_mla
+  - modalix_bf16_tess_mla
+  - modalix_bf16_tess_off_mla
+  composition: default
 tests:
   correctness:
-    - id: coco_val2017_quantization
-      config: tests/correctness.yaml
+  - id: coco_val2017_quantization
+    config: tests/correctness.yaml
+    scope:
+      type: component
+      component: model
+    build_profiles:
+    - modalix_int8_tess_mla
+    - modalix_int8_tess_off_mla
+    - modalix_bf16_tess_mla
+    - modalix_bf16_tess_off_mla
   performance:
-    - id: modalix_latency
-      config: tests/performance.yaml
+  - id: modalix_latency
+    config: tests/performance.yaml
+    scope:
+      type: component
+      component: model
+    build_profiles:
+    - modalix_int8_tess_mla
+    - modalix_int8_tess_off_mla
+    - modalix_bf16_tess_mla
+    - modalix_bf16_tess_off_mla
 maturity: experimental

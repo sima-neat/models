@@ -72,7 +72,8 @@ The input follows
   "schema_version": 1,
   "model": {
     "id": "resnet_50",
-    "variant_id": "modalix_bf16",
+    "build_profile_id": "modalix_bf16",
+    "component_id": "model",
     "path": "/workspace/models/resnet_50_modalix_bf16_mpk.tar.gz",
     "sha256": "<64 lowercase hexadecimal characters>"
   },

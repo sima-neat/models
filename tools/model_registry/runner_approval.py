@@ -50,14 +50,15 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
         raise ValidationError("Vulcan spec model_runner_approvals must be an array")
 
     validated: list[dict[str, Any]] = []
-    identities: set[tuple[str, str, str, str]] = set()
+    identities: set[tuple[str, str, str, str, str]] = set()
     for index, raw in enumerate(approvals):
         if not isinstance(raw, dict):
             raise ValidationError(f"model_runner_approvals[{index}] must be an object")
         record = dict(raw)
         repository = _non_empty_string(record, "repository", index)
         model_id = _non_empty_string(record, "model_id", index)
-        variant_id = _non_empty_string(record, "variant_id", index)
+        component_id = _non_empty_string(record, "component_id", index)
+        build_profile_id = _non_empty_string(record, "build_profile_id", index)
         environment = _non_empty_string(record, "environment", index)
         maximum = _non_empty_string(record, "maximum_runner_class", index)
         _non_empty_string(record, "approved_by", index)
@@ -68,8 +69,10 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
             raise ValidationError(f"model_runner_approvals[{index}].repository is invalid")
         if _IDENTIFIER.fullmatch(model_id) is None:
             raise ValidationError(f"model_runner_approvals[{index}].model_id is invalid")
-        if _IDENTIFIER.fullmatch(variant_id) is None:
-            raise ValidationError(f"model_runner_approvals[{index}].variant_id is invalid")
+        if _IDENTIFIER.fullmatch(component_id) is None:
+            raise ValidationError(f"model_runner_approvals[{index}].component_id is invalid")
+        if _IDENTIFIER.fullmatch(build_profile_id) is None:
+            raise ValidationError(f"model_runner_approvals[{index}].build_profile_id is invalid")
         if maximum not in ELEVATED_RUNNER_CLASSES:
             raise ValidationError(
                 f"model_runner_approvals[{index}].maximum_runner_class must be expensive or most-expensive"
@@ -85,11 +88,11 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
                 raise ValidationError(f"model_runner_approvals[{index}].expires_at must follow approved_at")
             record["_expires_at"] = expires_at
 
-        identity = (repository, model_id, variant_id, environment)
+        identity = (repository, model_id, component_id, build_profile_id, environment)
         if identity in identities:
             raise ValidationError(
                 "duplicate Vulcan model runner approval for "
-                f"{repository}/{model_id}/{variant_id} in {environment}"
+                f"{repository}/{model_id}/{build_profile_id}/{component_id} in {environment}"
             )
         identities.add(identity)
         validated.append(record)
@@ -123,11 +126,12 @@ def authorize_runner_matrix(
             raise ValidationError(f"compile matrix include[{index}] must be an object")
         entry = copy.deepcopy(raw_entry)
         model_id = str(entry.get("model_id") or "")
-        variant_id = str(entry.get("variant_id") or "")
+        component_id = str(entry.get("component_id") or "")
+        build_profile_id = str(entry.get("build_profile_id") or "")
         requested = str(entry.get("requested_runner_class") or "default")
         if requested not in RUNNER_CLASS_RANK:
             raise ValidationError(
-                f"{model_id}/{variant_id} requests unknown runner class {requested!r}"
+                f"{model_id}/{build_profile_id}/{component_id} requests unknown runner class {requested!r}"
             )
 
         approval_id = ""
@@ -137,27 +141,29 @@ def authorize_runner_matrix(
                 for record in approvals
                 if record["repository"] == repository
                 and record["model_id"] == model_id
-                and record["variant_id"] == variant_id
+                and record["component_id"] == component_id
+                and record["build_profile_id"] == build_profile_id
                 and record["environment"] == environment
             ]
             if len(matches) != 1:
                 raise ValidationError(
-                    f"{model_id}/{variant_id} requests {requested} but has no unique "
+                    f"{model_id}/{build_profile_id}/{component_id} requests {requested} but has no unique "
                     f"Vulcan approval for {repository} in {environment}"
                 )
             approval = matches[0]
             expires_at = approval.get("_expires_at")
             if expires_at is not None and expires_at <= current:
                 raise ValidationError(
-                    f"Vulcan runner approval for {model_id}/{variant_id} expired at "
+                    f"Vulcan runner approval for {model_id}/{build_profile_id}/{component_id} expired at "
                     f"{approval['expires_at']}"
                 )
             maximum = str(approval["maximum_runner_class"])
             if RUNNER_CLASS_RANK[requested] > RUNNER_CLASS_RANK[maximum]:
                 raise ValidationError(
-                    f"{model_id}/{variant_id} requests {requested}, above approved maximum {maximum}"
+                    f"{model_id}/{build_profile_id}/{component_id} requests {requested}, "
+                    f"above approved maximum {maximum}"
                 )
-            approval_id = f"{repository}:{model_id}:{variant_id}:{environment}"
+            approval_id = f"{repository}:{model_id}:{build_profile_id}:{component_id}:{environment}"
 
         entry["requested_runner_class"] = requested
         entry["runner_class"] = requested

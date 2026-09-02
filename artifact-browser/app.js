@@ -475,10 +475,19 @@ function taxonomyLabel(section, id) {
   return state.taxonomy?.[section]?.[id]?.display_name || id || "";
 }
 
+function buildIdentity(run) {
+  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  const component = run.metadata?.component_id;
+  if (profile && component) return `${profile} · ${component}`;
+  return profile || component || "default artifact";
+}
+
 function runSearchDocument(run) {
   return [
     run.metadata?.model_id, run.metadata?.model_name, run.metadata?.display_name,
-    run.metadata?.variant_id, run.git_ref, run.commit_sha, run.run_type,
+    run.metadata?.build_profile_id, run.metadata?.component_id,
+    run.metadata?.variant_id, run.metadata?.package_id,
+    run.git_ref, run.commit_sha, run.run_type,
     run.toolchain_version, run.target_platform,
     taxonomyLabel("model_types", run.model_type),
     taxonomyLabel("architectures", run.architecture_id),
@@ -561,7 +570,7 @@ function renderRuns() {
 
   elements["result-list"].innerHTML = runs.map((run) => {
     const model = run.metadata?.model_id || run.run_type.replaceAll("_", " ");
-    const variant = run.metadata?.variant_id || "default artifact";
+    const variant = buildIdentity(run);
     const selected = run.id === state.selectedId;
     const compared = state.compareSelection.has(run.id);
     if (compared) state.compareSelection.set(run.id, run);
@@ -648,7 +657,7 @@ function renderComparisonTable(entries) {
   const definition = field ? metricDefinition(field, sampleMetric) : null;
   const rows = entries.map(({ run, artifacts, benchmark }) => {
     const model = run.metadata?.model_id || run.run_type?.replaceAll("_", " ") || "Unknown model";
-    const variant = run.metadata?.variant_id || "default artifact";
+    const variant = buildIdentity(run);
     const artifactBytes = artifacts.reduce((total, artifact) => (
       total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
     ), 0);
@@ -671,7 +680,7 @@ function renderComparisonTable(entries) {
   <div class="comparison-table-wrap"><table class="comparison-table">
     <caption class="sr-only">Artifact sizes and benchmark measurements for ${entries.length} builds</caption>
     <thead><tr>
-      <th scope="col">Model / variant</th><th scope="col">Branch</th><th scope="col">Compiler</th>
+      <th scope="col">Model / build</th><th scope="col">Branch</th><th scope="col">Compiler</th>
       <th scope="col">Artifact size</th><th scope="col">${escapeHtml(definition?.label || "Measurement")}</th>
     </tr></thead><tbody>${rows}</tbody>
   </table></div>`;
@@ -948,7 +957,7 @@ function renderDetail(detail) {
   const input = provenance.inputs?.[0];
   const tests = detail.tests.test_results || [];
   const model = run.metadata?.model_id || run.run_type;
-  const variant = run.metadata?.variant_id || "default";
+  const variant = buildIdentity(run);
   const precision = parameters.compile_parameters?.precision;
   const categories = run.model_categories || {};
   const license = run.metadata?.license;
@@ -1204,7 +1213,7 @@ elements["result-list"].addEventListener("change", (event) => {
   if (checkbox.checked) state.compareSelection.set(run.id, run);
   else state.compareSelection.delete(run.id);
   checkbox.closest(".run-entry")?.classList.toggle("compared", checkbox.checked);
-  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${run.metadata?.model_id || run.run_type} ${run.metadata?.variant_id || "default artifact"} ${checkbox.checked ? "from" : "to"} comparison`);
+  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${run.metadata?.model_id || run.run_type} ${buildIdentity(run)} ${checkbox.checked ? "from" : "to"} comparison`);
   checkbox.closest("label")?.setAttribute("title", `${checkbox.checked ? "Remove from" : "Add to"} comparison`);
   updateCompareAction();
 });

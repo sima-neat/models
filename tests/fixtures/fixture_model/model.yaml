@@ -4,50 +4,80 @@ display_name: Fixture Model
 description: Minimal valid schema fixture.
 taxonomy_version: 2
 model_type: vision
-tasks: [image_classification]
+tasks:
+- image_classification
 modalities:
-  inputs: [image]
-  outputs: [class_scores]
+  inputs:
+  - image
+  outputs:
+  - class_scores
 architecture:
   id: resnet_50
   variant: fixture
-owners: ["@sima-neat/models"]
+owners:
+- '@sima-neat/models'
 license:
   spdx: Apache-2.0
   redistribution: allowed
   attribution: Test fixture only.
-source:
-  uri: hf://models/example/model@0123456789abcdef0123456789abcdef01234567/model.onnx
-  sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  size_bytes: 4
-  media_type: application/onnx
 upstream:
   repository: https://huggingface.co/example/model
   revision: 0123456789abcdef0123456789abcdef01234567
-interface:
-  format: onnx
-  inputs:
-    - name: input
-      dtype: float32
-      shape: [batch, 1]
-  outputs:
-    - name: output
-      dtype: float32
-      shape: [batch, 1]
-preprocessing:
-  pipeline: []
-postprocessing:
-  pipeline: []
-calibration:
-  status: not_required
-  reason: Test fixture.
-surgery:
-  type: none
-compile_variants:
-  - id: fixture
-    target: modalix
-    recipe: compile.py
+components:
+- id: model
+  role: inference
+  source:
+    type: file
+    uri: hf://models/example/model@0123456789abcdef0123456789abcdef01234567/model.onnx
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    size_bytes: 4
+    media_type: application/onnx
+  interface:
+    format: onnx
+    entrypoints:
+    - id: default
+      inputs:
+      - name: input
+        dtype: float32
+        shape:
+        - batch
+        - 1
+      outputs:
+      - name: output
+        dtype: float32
+        shape:
+        - batch
+        - 1
+    shape_profiles: []
+  preprocessing:
+    pipeline: []
+  postprocessing:
+    pipeline: []
+  surgery:
+    type: none
+  recipe: compile.py
+resources: []
+calibrations: []
+build_profiles:
+- id: fixture
+  target: modalix
+  components:
+  - id: model
     parameters: {}
+compositions:
+- id: default
+  type: single
+  component: model
+  entrypoint: default
+packages:
+- id: default
+  default: true
+  components:
+  - model
+  resources: []
+  build_profiles:
+  - fixture
+  composition: default
 tests:
   correctness: []
   performance: []

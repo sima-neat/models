@@ -4,7 +4,7 @@ This registry entry publishes the qualified one-class, 1600-pixel YOLO26n-P2
 detector used by the Apps tiny-drone tracker. The source is the epoch-7 QAT
 export; its held-out AP50 is 0.9649 and tiny-object recall50 is 0.9810.
 
-The `modalix_int8_tessellation_mla` variant uses exactly 128 representative
+The `modalix_int8_tessellation_mla` build profile uses exactly 128 representative
 MultiUAV training images. The calibration archive pins every JPEG digest and
 the reconstructed NHWC FP32 tensor digest. CI revalidates those bytes and then
 compiles the immutable, qualified ModelSDK 2.1.3 quantized snapshot; it does not

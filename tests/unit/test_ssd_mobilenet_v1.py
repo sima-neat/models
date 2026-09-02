@@ -287,9 +287,10 @@ def test_recipe_uses_supported_compiler_2_1_3_api_only() -> None:
 
 def test_model_declares_exact_four_variant_cross_product() -> None:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
-        (variant["parameters"]["precision"], variant["parameters"]["tessellation_mla"])
-        for variant in metadata["compile_variants"]
+        (binding["parameters"]["precision"], binding["parameters"]["tessellation_mla"])
+        for binding in bindings
     }
     assert matrix == {("int8", False), ("int8", True), ("bf16", False), ("bf16", True)}
-    assert all(variant["parameters"]["calibration_samples"] == 128 for variant in metadata["compile_variants"])
+    assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)

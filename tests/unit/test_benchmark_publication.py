@@ -44,7 +44,8 @@ def valid_result(tmp_path: Path) -> Path:
         "schema_version": 1,
         "model": {
             "id": "resnet_50",
-            "variant_id": "modalix_bf16",
+            "build_profile_id": "modalix_bf16",
+            "component_id": "model",
             "path": str(tmp_path / "model.tar.gz"),
             "sha256": "a" * 64,
         },
@@ -126,6 +127,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert published["compile_run_id"] == COMPILE_RUN_ID
     assert published["benchmark_run_id"] == BENCHMARK_RUN_ID
     assert published["model_id"] == "resnet_50"
+    assert published["component_id"] == "model"
     result = json.loads(path.read_text(encoding="utf-8"))
     assert published["execution_digest"] == canonical_sha256(result)
     assert [endpoint for _, endpoint, _, _ in calls] == [

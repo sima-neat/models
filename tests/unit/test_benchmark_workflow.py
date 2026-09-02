@@ -12,7 +12,14 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert workflow["name"] == "Vulcan Model Benchmarking"
     assert list(workflow["on"]) == ["workflow_dispatch"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert set(inputs) == {"environment", "source_run_id", "source_sha", "model_id", "variant_id"}
+    assert set(inputs) == {
+        "environment",
+        "source_run_id",
+        "source_sha",
+        "model_id",
+        "build_profile_id",
+        "component_id",
+    }
     assert all(value["required"] == "true" for value in inputs.values())
     assert "operation" not in inputs
     assert "model-benchmark-" in workflow["concurrency"]["group"]
@@ -31,7 +38,9 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
     assert ".head_sha == $sha" in verify["run"]
     download = next(step for step in stage["steps"] if step.get("uses") == "actions/download-artifact@v7")
-    assert download["with"]["name"] == "compiled-model-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+    assert download["with"]["name"] == (
+        "compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}"
+    )
     assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
     checkout = next(
         step
@@ -51,7 +60,9 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert '--github-run-attempt "$SOURCE_RUN_ATTEMPT"' in publication["run"]
     assert 'registry-publication.json' in publication["run"]
     upload = next(step for step in stage["steps"] if step.get("uses") == "actions/upload-artifact@v7")
-    assert upload["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+    assert upload["with"]["name"] == (
+        "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}"
+    )
 
 
 def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
@@ -79,7 +90,9 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     checkout = next(step for step in steps if step.get("name") == "Check out the trusted revision")
     assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
     download = next(step for step in steps if step.get("name") == "Download the staged compiled model output")
-    assert download["with"]["name"] == "benchmark-input-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+    assert download["with"]["name"] == (
+        "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}"
+    )
     runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
     install = next(step for step in steps if step.get("name") == "Install branch benchmarker and Neat dependency")
     execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
@@ -100,7 +113,8 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert 'getattr(benchmarker, "RESULT_SCHEMA_VERSION", None) == 3' in install["run"]
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
-    assert '--variant "$VARIANT_ID"' in execute["run"]
+    assert '--build-profile "$BUILD_PROFILE_ID"' in execute["run"]
+    assert '--component "$COMPONENT_ID"' in execute["run"]
     assert "performance-result-v3.json" in execute["run"]
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
@@ -114,7 +128,9 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     checkout = next(step for step in publish["steps"] if step.get("uses") == "actions/checkout@v6")
     assert checkout["with"]["ref"] == "${{ github.sha }}"
     download = next(step for step in publish["steps"] if step.get("uses") == "actions/download-artifact@v7")
-    assert download["with"]["name"] == "benchmark-${{ inputs.model_id }}-${{ inputs.variant_id }}"
+    assert download["with"]["name"] == (
+        "benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}"
+    )
     publication = next(
         step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v3 result and log"
     )

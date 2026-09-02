@@ -44,7 +44,7 @@ python3 scripts/preview_artifact_browser.py
 ```
 
 Open the URL printed by the script. The local server provides a realistic model
-catalog with fourteen builds spanning multiple models, variants, branches,
+catalog with fourteen builds spanning multiple models, build profiles, branches,
 artifact sizes, accuracy evidence, and benchmark availability states. The
 initial ResNet-50 INT8 build uses the 500-image local accuracy result so the
 sample scope, reference comparison, and provisional status can be reviewed.
@@ -88,7 +88,7 @@ while refreshing. If branch discovery is temporarily unavailable, the browser
 keeps saved branches and can infer additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
-model and variant names together with category names; secondary branch,
+model, build-profile, and component names together with category names; secondary branch,
 compiler, type, task, architecture, paradigm, and input facets are collapsed by
 default and display an active-filter count when used.
 The branch filter defaults to `main`. A branch selected by the user is saved per

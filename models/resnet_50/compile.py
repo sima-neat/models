@@ -34,10 +34,12 @@ MODEL_DIR = Path(__file__).resolve().parent
 
 def _variant(variant_id: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    matches = [item for item in metadata["compile_variants"] if item["id"] == variant_id]
+    matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
-        raise ValueError(f"expected exactly one compile variant named {variant_id!r}")
-    return matches[0]
+        raise ValueError(f"expected exactly one build profile named {variant_id!r}")
+    profile = matches[0]
+    binding = next(item for item in profile["components"] if item["id"] == "model")
+    return {**profile, "parameters": binding["parameters"]}
 
 
 def _tessellation(quantized_model: Any) -> dict[str, TensorTessellateParameters]:
@@ -116,16 +118,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--variant", required=True)
+    parser.add_argument("--build-profile", required=True)
+    parser.add_argument("--component", required=True)
     parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
     args = parser.parse_args()
+    if args.component != "model":
+        parser.error(f"unsupported component: {args.component}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.variant, dataset)
+    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile, dataset)
     LOG.info("Compiled MPK: %s", archive)
     return 0
 

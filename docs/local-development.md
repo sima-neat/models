@@ -1,7 +1,7 @@
 # Qualify locally
 
 This guide covers the complete local qualification loop: validate `model.yaml`,
-fetch immutable inputs, compile a declared variant, measure declared accuracy,
+fetch immutable inputs, compile a declared component/profile pair, measure declared accuracy,
 benchmark the resulting MPK on a Modalix DevKit, and review the local evidence.
 Commands assume the repository root as the current directory.
 
@@ -13,13 +13,13 @@ complete the entire loop before submitting a model pull request.
 
 ## Local-first qualification loop
 
-For each supported variant, complete this sequence before opening a pull
+For each supported component/profile pair, complete this sequence before opening a pull
 request:
 
 1. Validate the model directory and complete catalog.
 2. Fetch and checksum the declared source and calibration snapshot.
 3. Confirm the pinned compiler and YAML-derived compile matrix.
-4. Compile the variant in the pinned Model Compiler environment.
+4. Compile the component with the selected build profile in the pinned Model Compiler environment.
 5. Validate the generated MPK.
 6. Run the declared dataset-backed accuracy evaluation when it applies.
 7. Run the declared performance test on a compatible Modalix DevKit.
@@ -55,8 +55,8 @@ or invoke the executable from its `bin` directory if it is not already on
 `PATH`.
 
 This is an author-safe command surface for validation, verified downloads,
-matrix inspection, and MPK checks. It cannot package or publish models,
-taxonomy, or benchmark results; those operations remain CI-only.
+matrix inspection, MPK checks, and local retrieval-bundle assembly. It cannot
+publish models, taxonomy, or benchmark results; those operations remain CI-only.
 
 Models that require calibration or accuracy data also require Dataset Registry
 and working private Artifactory access. Complete
@@ -70,7 +70,7 @@ model-registry validate models/<model-id>
 ```
 
 This checks the JSON Schema, taxonomy references and compatibility, immutable
-source policy, matching directory and model IDs, unique variant IDs, and every
+source policy, matching directory and model IDs, component/profile references, and every
 referenced recipe, surgery hook, and test file. Fix the first reported field
 paths in `model.yaml`; do not weaken a declaration just to pass validation.
 
@@ -86,8 +86,9 @@ checked too.
 ## Fetch and verify immutable inputs
 
 ```bash
-model-registry fetch models/<model-id>
-model-registry fetch-calibration models/<model-id>
+model-registry fetch models/<model-id> --component <component-id>
+model-registry fetch-calibration models/<model-id> \
+  --build-profile <profile-id> --component <component-id>
 ```
 
 `fetch` verifies exact byte size and SHA-256 before atomically installing the
@@ -109,7 +110,7 @@ URLs, or cache content in model metadata or Git.
 
 ## Inspect compile selection
 
-Confirm the repository compiler pin and the variants selected by a model-local
+Confirm the repository compiler pin and the component builds selected by a model-local
 change:
 
 ```bash
@@ -119,12 +120,13 @@ model-registry matrix \
   --changed-path models/<model-id>/model.yaml
 ```
 
-The matrix output is deterministic JSON. It includes supported variants only.
-To inspect a model or variant explicitly:
+The matrix output is deterministic JSON. It includes supported component
+bindings only. To inspect a model, profile, or component explicitly:
 
 ```bash
 model-registry matrix --repository . --models <model-id>
-model-registry matrix --repository . --models <model-id> --variants <variant-id>
+model-registry matrix --repository . --models <model-id> \
+  --profiles <profile-id> --components <component-id>
 ```
 
 Changes below `models/<model-id>/` select that model. Repository-wide compile
@@ -138,8 +140,8 @@ Compiler version reported by `model-registry resolve-compiler`. A normal Python
 virtual environment is not that compiler environment.
 
 Model Compiler does not consume the registry's `model.yaml` directly. The
-manifest declares the supported variants, their parameters, and the
-model-local `recipe`. The recipe reads the selected variant from `model.yaml`
+manifest declares the supported build profiles, component bindings, and the
+component-local `recipe`. The recipe reads the selected binding from `model.yaml`
 and translates that declarative contract into model-specific importer,
 quantization, surgery, tessellation, and compiler calls.
 
@@ -147,12 +149,13 @@ Compilation is intentionally model-owned; `model-registry` does not provide a
 public compile command. Use the model recipe directly:
 
 ```text
-compile.py --model <verified-source> --output-dir <new-directory> --variant <variant-id>
+compile.py --model <verified-entrypoint> --output-dir <new-directory> \
+  --build-profile <profile-id> --component <component-id>
 ```
 
 In the pinned Model Compiler environment:
 
-1. Resolve the compiler version and choose a supported variant from the matrix.
+1. Resolve the compiler version and choose a supported component/profile pair from the matrix.
 2. Activate that exact locally installed Model Compiler environment using its
    installation instructions, then verify that its Python APIs and compiler
    executable are available:
@@ -162,26 +165,26 @@ In the pinned Model Compiler environment:
    command -v mla-masm
    ```
 
-3. Fetch the source and variant-specific calibration input as JSON, then take
+3. Fetch the component source and its profile-specific calibration input as JSON, then take
    the returned verified paths:
 
    ```bash
-   source_json="$(model-registry fetch models/<model-id> --json)"
+   source_json="$(model-registry fetch models/<model-id> --component <component-id> --json)"
    source_path="$(jq -r .path <<<"$source_json")"
 
    calibration_json="$(model-registry fetch-calibration \
-     models/<model-id> --variant <variant-id> --json)"
+     models/<model-id> --build-profile <profile-id> --component <component-id> --json)"
    calibration_kind="$(jq -r .kind <<<"$calibration_json")"
    calibration_path="$(jq -r .path <<<"$calibration_json")"
    ```
 
    `calibration_kind` distinguishes three outcomes: `dataset` resolves a
    registered dataset archive, `source` resolves the immutable file declared
-   by `calibration.source`, and `none` has no calibration input or path. Keep a
+   by a named calibration `source`, and `none` has no calibration input or path. Keep a
    nonempty path from either resolved kind; do not make the recipe download the
    same input again.
 
-4. Invoke the recipe declared by the selected `compile_variants` entry, using a
+4. Invoke the recipe declared by the selected component, using a
    new output directory:
 
    ```bash
@@ -206,13 +209,14 @@ In the pinned Model Compiler environment:
    python models/<model-id>/compile.py \
      --model "$source_path" \
      --output-dir <new-output-directory> \
-     --variant <variant-id> \
+     --build-profile <profile-id> \
+     --component <component-id> \
      "${recipe_args[@]}"
    ```
 
    Dataset-based recipes receive `--dataset`. Source-based recipes read the
    already verified file from `CALIBRATION_PATH`; this environment variable is
-   the standard recipe interface for `calibration.source`. A recipe must not
+   the standard recipe interface for a calibration source. A recipe must not
    fall back to a network download when that variable is present.
 
 5. Verify that the directory contains exactly one `*_mpk.tar.gz` and validate
@@ -222,6 +226,36 @@ In the pinned Model Compiler environment:
    model-registry verify-mpk <new-output-directory>
    ```
 
+For a multi-component product, repeat these steps for every matrix entry. Place
+the verified output directories under
+`<compiled-root>/<model-id>/<profile-id>/<component-id>`. To exercise the same
+bundle boundary users will retrieve, write each compile manifest with the
+matching model, profile, component, target, and source digest, then assemble
+the declared package:
+
+```bash
+model-registry verify-mpk \
+  <compiled-root>/<model-id>/<profile-id>/<component-id> \
+  --write-manifest \
+  --model-id <model-id> \
+  --build-profile-id <profile-id> \
+  --component-id <component-id> \
+  --target modalix \
+  --source-sha256 "$(jq -r .sha256 <<<"$source_json")"
+
+model-registry assemble-package \
+  --repository . \
+  --compiled-dir <compiled-root> \
+  --output-dir <package-output> \
+  --model <model-id> \
+  --build-profile <profile-id> \
+  --package <package-id>
+```
+
+Inspect and extract the resulting bundle. Confirm that it contains every
+declared component MPK, resource path, and `manifest.json`. Package assembly
+does not replace component MPK validation or end-to-end application testing.
+
 Use a location outside the repository or an ignored build directory. Never
 commit the MPK or compiler intermediates. If the pinned compiler environment is
 not installed, obtain access to it before continuing; validation alone is not
@@ -229,7 +263,7 @@ sufficient for model submission.
 
 ## Measure declared accuracy locally
 
-If the selected variant has an executable correctness declaration with
+If the selected component/profile pair has an executable correctness declaration with
 `engine: model_registry`, evaluate the saved `.sima` candidate produced by the
 recipe before benchmarking the MPK. This compares the candidate graph with the
 pinned reference model over the declared correctness dataset; it does not run
@@ -237,9 +271,14 @@ the MPK on the DevKit.
 
 Follow [Local accuracy development](local-accuracy-development.md) for dataset
 resolution, regular versus qualification profiles, the `evaluate` command, and
-result interpretation. If `fetch-accuracy-dataset --variant <variant-id>`
-returns `kind: none`, the declaration does not apply to that variant and both
-local development and CI skip the accuracy step.
+result interpretation. If the following command returns `kind: none`, the
+declaration does not apply and both local development and CI skip the accuracy
+step:
+
+```bash
+model-registry fetch-accuracy-dataset models/<model-id> \
+  --build-profile <profile-id> --component <component-id> --json
+```
 
 ## Benchmark locally on a Modalix DevKit
 
@@ -250,7 +289,7 @@ accuracy or measure application preprocessing and postprocessing.
 
 Complete the installation and compatibility checks in [Synthetic model
 benchmarking](benchmarking.md#install-on-a-devkit) once for the target DevKit.
-For each qualified variant, follow this shorter model-contribution sequence.
+For each qualified component/profile pair, follow this shorter sequence.
 
 ### 1. Prepare the exact MPK and manifest
 
@@ -263,7 +302,7 @@ bash -lic 'type dk || type devkit-run'
 Copy the compiled `*_mpk.tar.gz` under `/workspace`, calculate its SHA-256, and
 create `/workspace/benchmark-test.json` from the [benchmark manifest
 reference](benchmarking.md#create-a-benchmark-manifest). Keep its model,
-variant, compatibility, and test settings consistent with the checked-in
+component, build profile, compatibility, and test settings consistent with the checked-in
 contracts. For a local run, `provenance.compile_run_id` may be omitted.
 
 The published contributor command intentionally does not expose CI's
@@ -285,7 +324,7 @@ benchmarker \
 
 Confirm that the command exits successfully and that
 `performance-result.json` reports a successful result with the expected model,
-variant, platform, Neat version, and measured sample count. Retain the JSON and
+component, build profile, platform, Neat version, and measured sample count. Retain the JSON and
 log outside the repository, but do not commit either file.
 
 See [Synthetic model benchmarking](benchmarking.md) for runner installation,
@@ -297,12 +336,12 @@ semantics.
 Before leaving the local workflow, confirm:
 
 - the model and complete catalog validate;
-- each intended supported variant appears in the matrix;
-- each locally tested variant produces exactly one valid MPK;
-- each applicable dataset-backed accuracy run records the expected variant,
+- each intended supported component/profile pair appears in the matrix;
+- each locally tested component/profile pair produces exactly one valid MPK;
+- each applicable dataset-backed accuracy run records the expected component,
   profile, and sample count;
 - the DevKit benchmark succeeds for that exact MPK;
-- the reported model, variant, versions, and sample count are correct; and
+- the reported model, component, build profile, versions, and sample count are correct; and
 - fetched inputs, MPKs, result JSON, and logs remain outside the repository.
 
 Summarize the result of each stage in the pull request. A compact record such
@@ -323,5 +362,5 @@ request, and submission guidance.
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
 | Source host or URL rejected | Use a full-commit Hugging Face resource or an approved GitHub release asset. |
 | Referenced file does not exist | Keep recipe, surgery, and test paths relative to and inside the model directory. |
-| Variant missing from the matrix | Check its `status`, requested IDs, and changed path. |
+| Build missing from the matrix | Check the component binding `status`, requested IDs, and changed path. |
 | More than one MPK produced | Clean the new output directory and make the recipe emit exactly one archive. |

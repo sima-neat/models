@@ -35,8 +35,12 @@ on:
         description: Comma-separated model IDs; leave empty to build the entire catalog
         required: false
         type: string
-      variants:
-        description: Comma-separated variant IDs within selected models; leave empty to build every variant
+      profiles:
+        description: Comma-separated build profile IDs within selected models; leave empty to build every build profile
+        required: false
+        type: string
+      components:
+        description: Comma-separated component IDs within selected models; leave empty to build every component
         required: false
         type: string
       base_branch:
@@ -44,7 +48,7 @@ on:
         required: false
         type: string
       accuracy_samples:
-        description: Validation samples for dataset-backed variants (500 smoke, 5000 qualification)
+        description: Validation samples for dataset-backed builds (500 smoke, 5000 qualification)
         required: true
         default: "500"
         type: choice
@@ -62,7 +66,7 @@ concurrency:
 
 jobs:
   select:
-    name: Select model variants
+    name: Select model component builds
     runs-on: ubuntu-latest
     outputs:
       count: ${{ steps.matrix.outputs.count }}
@@ -154,23 +158,28 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_MODELS: ${{ inputs.models }}
-          REQUESTED_VARIANTS: ${{ inputs.variants }}
+          REQUESTED_PROFILES: ${{ inputs.profiles }}
+          REQUESTED_COMPONENTS: ${{ inputs.components }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           COMPARISON_BASE: ${{ steps.base.outputs.comparison_base }}
           COMPILER_VERSION: ${{ steps.compiler.outputs.version }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            variant_args=()
-            if [[ -n "${REQUESTED_VARIANTS:-}" ]]; then
-              variant_args=(--variants "$REQUESTED_VARIANTS")
+            profile_args=()
+            if [[ -n "${REQUESTED_PROFILES:-}" ]]; then
+              profile_args=(--profiles "$REQUESTED_PROFILES")
+            fi
+            component_args=()
+            if [[ -n "${REQUESTED_COMPONENTS:-}" ]]; then
+              component_args=(--components "$REQUESTED_COMPONENTS")
             fi
             if [[ -n "${REQUESTED_MODELS:-}" ]]; then
               matrix="$(model-registry matrix --repository . --models "$REQUESTED_MODELS" \
-                --compiler-version "$COMPILER_VERSION" "${variant_args[@]}")"
+                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
             else
               matrix="$(model-registry matrix --repository . --all \
-                --compiler-version "$COMPILER_VERSION" "${variant_args[@]}")"
+                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
             fi
           else
             matrix="$(model-registry matrix --repository . \
@@ -179,14 +188,14 @@ jobs:
           fi
           count="$(python -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))' <<< "$matrix")"
           publishable=true
-          if [[ -n "${REQUESTED_VARIANTS:-}" ]]; then
+          if [[ -n "${REQUESTED_PROFILES:-}" || -n "${REQUESTED_COMPONENTS:-}" ]]; then
             publishable=false
-            echo "Targeted variant dispatch is compile-only; catalog publication is skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Targeted build-profile dispatch is compile-only; catalog publication is skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
-          echo "Selected $count model variant(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Selected $count component build job(s)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain pull-request safety boundary
         if: github.event_name == 'pull_request'
@@ -245,11 +254,11 @@ jobs:
           echo "matrix=$authorized" >> "$GITHUB_OUTPUT"
           count="$(jq -er '.include | length' <<< "$authorized")"
           elevated="$(jq -r '[.include[] | select(.runner_class != "default")] | length' <<< "$authorized")"
-          echo "Authorized $count variant(s), including $elevated elevated runner request(s)." \
+          echo "Authorized $count component build job(s), including $elevated elevated runner request(s)." \
             >> "$GITHUB_STEP_SUMMARY"
 
   compile:
-    name: Compile ${{ matrix.model_id }} (${{ matrix.variant_id }})
+    name: Compile ${{ matrix.model_id }}/${{ matrix.component_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes]
     if: github.event_name != 'pull_request' && needs.select.outputs.count != '0'
     environment: ${{ needs.select.outputs.vulcan_environment }}
@@ -269,13 +278,15 @@ jobs:
       - ${{ needs.select.outputs.model_compiler_label }}
       - ${{ matrix.runner_class }}
       - model-id-${{ matrix.model_id }}
-      - variant-id-${{ matrix.variant_id }}
+      - build-profile-id-${{ matrix.build_profile_id }}
+      - component-id-${{ matrix.component_id }}
     timeout-minutes: 90
     env:
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ matrix.model_id }}
       MODEL_DIR: ${{ matrix.model_dir }}
-      VARIANT_ID: ${{ matrix.variant_id }}
+      BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
+      COMPONENT_ID: ${{ matrix.component_id }}
       RECIPE: ${{ matrix.recipe }}
       EXPECTED_COMPILER_VERSION: ${{ needs.select.outputs.model_compiler_version }}
       MODEL_COMPILER_LABEL: ${{ needs.select.outputs.model_compiler_label }}
@@ -292,7 +303,7 @@ jobs:
       - name: Prepare isolated output location
         run: |
           echo "ARTIFACT_ROOT=$RUNNER_TEMP/model-registry-output" >> "$GITHUB_ENV"
-          echo "OUTPUT_DIR=$RUNNER_TEMP/model-registry-output/$MODEL_ID/$VARIANT_ID" >> "$GITHUB_ENV"
+          echo "OUTPUT_DIR=$RUNNER_TEMP/model-registry-output/$MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID" >> "$GITHUB_ENV"
 
       - name: Verify the pinned Model Compiler environment
         run: |
@@ -358,7 +369,8 @@ jobs:
         run: |
           set -euo pipefail
           result="$RUNNER_TEMP/source.json"
-          "$MODEL_COMPILER_PYTHON" -m model_registry fetch "$MODEL_DIR" --json > "$result"
+          "$MODEL_COMPILER_PYTHON" -m model_registry fetch "$MODEL_DIR" \
+            --component "$COMPONENT_ID" --json > "$result"
           source_path="$("$MODEL_COMPILER_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$result")"
           source_sha256="$("$MODEL_COMPILER_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$result")"
           echo "path=$source_path" >> "$GITHUB_OUTPUT"
@@ -372,7 +384,8 @@ jobs:
           set -euo pipefail
           result="$RUNNER_TEMP/calibration.json"
           "$MODEL_COMPILER_PYTHON" -m model_registry fetch-calibration "$MODEL_DIR" \
-            --variant "$VARIANT_ID" --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
+            --build-profile "$BUILD_PROFILE_ID" --component "$COMPONENT_ID" \
+            --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
           calibration_path="$("$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; print(json.load(open(sys.argv[1])).get("path", ""))' "$result")"
           calibration_sha256="$("$MODEL_COMPILER_PYTHON" -c \
@@ -391,7 +404,8 @@ jobs:
           set -euo pipefail
           result="$RUNNER_TEMP/accuracy-dataset.json"
           "$MODEL_COMPILER_PYTHON" -m model_registry fetch-accuracy-dataset "$MODEL_DIR" \
-            --variant "$VARIANT_ID" --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
+            --build-profile "$BUILD_PROFILE_ID" --component "$COMPONENT_ID" \
+            --cache-dir "$RUNNER_TEMP/datasets" --json > "$result"
           accuracy_dataset_path="$("$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; print(json.load(open(sys.argv[1])).get("path", ""))' "$result")"
           accuracy_dataset_kind="$("$MODEL_COMPILER_PYTHON" -c \
@@ -421,7 +435,8 @@ jobs:
           python "$MODEL_DIR/$RECIPE" \
             --model "$SOURCE_PATH" \
             --output-dir "$OUTPUT_DIR" \
-            --variant "$VARIANT_ID" \
+            --build-profile "$BUILD_PROFILE_ID" \
+            --component "$COMPONENT_ID" \
             "${dataset_args[@]}"
 
           shopt -s nullglob
@@ -444,14 +459,15 @@ jobs:
           set -euo pipefail
           source /etc/profile.d/vulcan-model-compiler.sh
           activate-model-compiler
-          candidate_model="$OUTPUT_DIR/${MODEL_ID}_${VARIANT_ID}.sima"
+          candidate_model="$OUTPUT_DIR/${MODEL_ID}_${BUILD_PROFILE_ID}.sima"
           test -f "$candidate_model"
           accuracy_profile=regular
           if [[ "$ACCURACY_SAMPLES" == "5000" ]]; then
             accuracy_profile=qualification
           fi
           python -m model_registry evaluate "$MODEL_DIR" \
-            --variant "$VARIANT_ID" \
+            --build-profile "$BUILD_PROFILE_ID" \
+            --component "$COMPONENT_ID" \
             --reference-model "$SOURCE_PATH" \
             --candidate-model "$candidate_model" \
             --dataset "$ACCURACY_DATASET_PATH" \
@@ -481,7 +497,8 @@ jobs:
           "$MODEL_COMPILER_PYTHON" -m model_registry verify-mpk "$OUTPUT_DIR" \
             --write-manifest --json \
             --model-id "$MODEL_ID" \
-            --variant-id "$VARIANT_ID" \
+            --build-profile-id "$BUILD_PROFILE_ID" \
+            --component-id "$COMPONENT_ID" \
             --target "${{ matrix.target }}" \
             --compiler-version "$EXPECTED_COMPILER_VERSION" \
             --compiler-label "$MODEL_COMPILER_LABEL" \
@@ -534,12 +551,12 @@ jobs:
           "$MODEL_COMPILER_PYTHON" -c \
             'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
           printf '%s\n' "$result" > "$OUTPUT_DIR/registry-publication.json"
-          echo "Published $MODEL_ID/$VARIANT_ID to the model registry." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID to the model registry." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain the validated model output for benchmark handoff
         uses: actions/upload-artifact@v7
         with:
-          name: compiled-model-${{ matrix.model_id }}-${{ matrix.variant_id }}
+          name: compiled-model-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-${{ matrix.component_id }}
           path: ${{ env.ARTIFACT_ROOT }}
           if-no-files-found: error
           retention-days: 14
@@ -547,13 +564,15 @@ jobs:
       - name: Start this model benchmark without waiting for the compile matrix
         if: >-
           needs.select.outputs.vulcan_environment == 'staging' &&
-          matrix.target == 'modalix'
+          matrix.target == 'modalix' &&
+          matrix.benchmark_test_id != ''
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
           BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
-          BENCHMARK_VARIANT_ID: ${{ matrix.variant_id }}
+          BENCHMARK_BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
+          BENCHMARK_COMPONENT_ID: ${{ matrix.component_id }}
         run: |
           set -euo pipefail
           "$MODEL_COMPILER_PYTHON" - <<'PY'
@@ -572,7 +591,8 @@ jobs:
                   "source_run_id": os.environ["GITHUB_RUN_ID"],
                   "source_sha": os.environ["GITHUB_SHA"],
                   "model_id": os.environ["BENCHMARK_MODEL_ID"],
-                  "variant_id": os.environ["BENCHMARK_VARIANT_ID"],
+                  "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
+                  "component_id": os.environ["BENCHMARK_COMPONENT_ID"],
               },
           }
           endpoint = (
@@ -600,9 +620,65 @@ jobs:
               raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
           print(
               "Dispatched benchmark for "
-              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_VARIANT_ID']}"
+              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_BUILD_PROFILE_ID']}/"
+              f"{os.environ['BENCHMARK_COMPONENT_ID']}"
           )
           PY
+
+  assemble-packages:
+    name: Assemble complete model packages
+    needs: [select, compile]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.compile.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the trusted revision
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install registry tooling
+        run: python -m pip install .
+
+      - name: Download every compiled component
+        uses: actions/download-artifact@v7
+        with:
+          pattern: compiled-model-*
+          path: _compiled
+          merge-multiple: true
+
+      - name: Assemble every complete package
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          model-registry assemble-package \
+            --repository . \
+            --compiled-dir _compiled \
+            --output-dir _packages \
+            --resource-cache-dir "$RUNNER_TEMP/model-registry-resources" \
+            --all \
+            --json > "$RUNNER_TEMP/packages.json"
+          count="$(jq -er '.count' "$RUNNER_TEMP/packages.json")"
+          (( count > 0 )) || { echo "No complete packages were assembled" >&2; exit 1; }
+          echo "Assembled $count complete model package(s)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain deterministic package bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-packages-${{ github.sha }}
+          path: _packages
+          if-no-files-found: error
+          retention-days: 14
 
   resolve-vulcan-config:
     name: Resolve Vulcan publication config

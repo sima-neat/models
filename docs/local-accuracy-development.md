@@ -24,7 +24,7 @@ packages.
 
 Complete [Datasets for local model development](datasets.md) before continuing.
 That guide owns Dataset Registry installation, Artifactory authentication,
-proof that the exact variant resolves, and the process for introducing missing
+proof that the exact dataset variant resolves, and the process for introducing missing
 data.
 
 ## Compile and evaluate locally
@@ -32,25 +32,27 @@ data.
 Resolve the immutable inputs first:
 
 ```bash
-source_json="$(python -m model_registry fetch models/resnet_50 --json)"
+source_json="$(python -m model_registry fetch models/resnet_50 --component model --json)"
 source_path="$(jq -r .path <<<"$source_json")"
-dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50 --variant modalix_int8 --json)"
+dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50 \
+  --build-profile modalix_int8 --component model --json)"
 dataset_path="$(jq -r .path <<<"$dataset_json")"
 ```
 
-Accuracy dataset resolution is independent of calibration. An optional
-top-level `variants` list in the correctness config scopes evaluation to named
-compile variants. ResNet-50 currently measures INT8 only, so BF16 resolution
+Accuracy dataset resolution is independent of calibration. The correctness
+test entry in `model.yaml` scopes evaluation to named build profiles. ResNet-50
+currently measures INT8 only, so BF16 resolution
 returns `kind: none` and CI skips its accuracy step.
 
-Compile the variant. Compilation consumes calibration samples declared by the
+Compile the component/profile pair. Compilation consumes calibration samples declared by the
 correctness YAML but does not contain accuracy logic:
 
 ```bash
 python models/resnet_50/compile.py \
   --model "$source_path" \
   --dataset "$dataset_path" \
-  --variant modalix_int8 \
+  --build-profile modalix_int8 \
+  --component model \
   --output-dir /tmp/resnet50-int8
 ```
 
@@ -59,7 +61,8 @@ graph:
 
 ```bash
 python -m model_registry evaluate models/resnet_50 \
-  --variant modalix_int8 \
+  --build-profile modalix_int8 \
+  --component model \
   --reference-model "$source_path" \
   --candidate-model /tmp/resnet50-int8/resnet_50_modalix_int8.sima \
   --dataset "$dataset_path" \
@@ -81,7 +84,7 @@ memory: every worker loads an independent ONNX Runtime session and AFE graph.
 
 Every JSON report records:
 
-- model, variant, source, candidate, and dataset hashes;
+- model, component, build profile, source, candidate, and dataset hashes;
 - evaluation profile and configuration status;
 - evaluated and available sample counts;
 - deterministic selection hash and sampling method;
@@ -110,7 +113,7 @@ publishes the report on the same Vulcan compile run as three forms of evidence:
 
 The model browser reads the test-result summary and always displays the
 evaluated sample count and provisional or qualification status beside the accuracy
-numbers. A missing `accuracy.json` remains valid for variants without an
+numbers. A missing `accuracy.json` remains valid for component/profile pairs without an
 executable dataset-backed correctness specification.
 
 The browser requests `GET /v1/runs/<compile-run-id>/accuracy/latest`. Vulcan
@@ -128,7 +131,7 @@ the coverage represented by each label.
 Add a correctness case to `model.yaml`, then create its YAML with:
 
 - `engine: model_registry` and `task: image_classification`;
-- an optional `variants` list when accuracy applies only to specific compile variants;
+- an explicit `build_profiles` list matching the scoped correctness case;
 - immutable dataset identity and archive loader/split definitions;
 - regular and qualification profiles;
 - ONNX Runtime reference and AFE `.sima` candidate executors;

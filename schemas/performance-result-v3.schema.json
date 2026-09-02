@@ -32,9 +32,10 @@
       "enum": [null, "configuration", "compatibility", "model", "benchmark", "infrastructure"]
     },
     "model": {
-      "type": "object", "required": ["id", "variant_id", "path", "sha256", "uri", "contract"],
+      "type": "object", "required": ["id", "build_profile_id", "component_id", "path", "sha256", "uri", "contract"],
       "properties": {
-        "id": {"type": ["string", "null"]}, "variant_id": {"type": ["string", "null"]},
+        "id": {"type": ["string", "null"]}, "build_profile_id": {"type": ["string", "null"]},
+        "component_id": {"type": ["string", "null"]},
         "path": {"type": ["string", "null"]},
         "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "uri": {"type": ["string", "null"]}, "contract": {"type": ["object", "null"]},

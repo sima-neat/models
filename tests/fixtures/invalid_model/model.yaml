@@ -1,42 +1,52 @@
 schema_version: 2
 id: invalid_model
 display_name: Invalid Model
-description: Invalid fixture with a mutable, unchecked source.
+description: Invalid fixture with a mutable, unchecked component source.
+taxonomy_version: 2
+model_type: vision
+tasks: [image_classification]
+modalities: {inputs: [image], outputs: [class_scores]}
+architecture: {id: resnet_50, variant: invalid}
 owners: ["@sima-neat/models"]
 license:
   spdx: Apache-2.0
   redistribution: allowed
   attribution: Test fixture only.
-source:
-  uri: hf://models/example/model@main/model.onnx
-  size_bytes: 4
 upstream:
   repository: https://huggingface.co/example/model
   revision: main
-interface:
-  format: onnx
-  inputs:
-    - name: input
-      dtype: float32
-      shape: [batch, 1]
-  outputs:
-    - name: output
-      dtype: float32
-      shape: [batch, 1]
-preprocessing:
-  pipeline: []
-postprocessing:
-  pipeline: []
-calibration:
-  status: pending
-  reason: Test fixture.
-surgery:
-  type: none
-compile_variants:
+components:
+  - id: model
+    role: inference
+    source:
+      type: file
+      uri: hf://models/example/model@main/model.onnx
+      size_bytes: 4
+    interface:
+      format: onnx
+      entrypoints:
+        - id: default
+          inputs: [{name: input, dtype: float32, shape: [batch, 1]}]
+          outputs: [{name: output, dtype: float32, shape: [batch, 1]}]
+      shape_profiles: []
+    preprocessing: {pipeline: []}
+    postprocessing: {pipeline: []}
+    surgery: {type: none}
+    recipe: compile.py
+resources: []
+calibrations: []
+build_profiles:
   - id: fixture
     target: modalix
-    parameters: {}
-tests:
-  correctness: []
-  performance: []
+    components: [{id: model, parameters: {}}]
+compositions:
+  - {id: default, type: single, component: model, entrypoint: default}
+packages:
+  - id: default
+    default: true
+    components: [model]
+    resources: []
+    build_profiles: [fixture]
+    composition: default
+tests: {correctness: [], performance: []}
 maturity: experimental

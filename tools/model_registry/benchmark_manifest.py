@@ -5,26 +5,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
+from .model import load_and_validate_model
+from .performance_config import benchmark_settings, load_performance_config
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
-DEFAULT_BENCHMARK = {
-    "samples": 1000,
-    "trials": 3,
-    "include_plugin_latency": False,
-}
-BOUNDED_RUNNER_FIELDS = {
-    "mode",
-    "samples",
-    "trials",
-    "warmup_samples",
-    "include_plugin_latency",
-    "original_width",
-    "original_height",
-}
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
@@ -37,53 +23,24 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def _performance_configuration(root: Path, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    path = root / "models" / model_id / "tests" / "performance.yaml"
-    try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise ValidationError(f"could not read benchmark configuration {path}: {exc}") from exc
-    if not isinstance(document, dict):
-        raise ValidationError(f"benchmark configuration must be a mapping: {path}")
-    model_options = document.get("model_options", {})
-    if not isinstance(model_options, dict):
-        raise ValidationError(f"model_options must be a mapping: {path}")
-    configured = document.get("benchmark")
-    if configured is None:
-        return dict(DEFAULT_BENCHMARK), model_options
-    if not isinstance(configured, dict):
-        raise ValidationError(f"benchmark must be a mapping: {path}")
-    unknown = sorted(set(configured) - BOUNDED_RUNNER_FIELDS)
-    if unknown:
-        raise ValidationError(f"benchmark contains unknown field(s): {', '.join(unknown)}")
-    if configured.get("mode") != "bounded_runner":
-        raise ValidationError("benchmark.mode must be bounded_runner")
-    samples = configured.get("samples")
-    trials = configured.get("trials", DEFAULT_BENCHMARK["trials"])
-    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in (samples, trials)):
-        raise ValidationError("benchmark samples and trials must be positive integers")
-    if trials > 100:
-        raise ValidationError("benchmark.trials must be <= 100")
-    result = {
-        "samples": samples,
-        "trials": trials,
-        "include_plugin_latency": configured.get("include_plugin_latency", False),
-    }
-    if not isinstance(result["include_plugin_latency"], bool):
-        raise ValidationError("benchmark.include_plugin_latency must be a boolean")
-    width, height = configured.get("original_width"), configured.get("original_height")
-    if (width is None) != (height is None):
-        raise ValidationError("benchmark.original_width and original_height must be provided together")
-    if width is not None:
-        if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in (width, height)):
-            raise ValidationError("benchmark original_width and original_height must be positive integers")
-        result.update({"original_width": width, "original_height": height})
-    warmup_samples = configured.get("warmup_samples")
-    if not isinstance(warmup_samples, int) or isinstance(warmup_samples, bool) or warmup_samples <= 0:
-        raise ValidationError("benchmark.warmup_samples must be a positive integer")
-    result.update({"mode": "bounded_runner", "warmup_samples": warmup_samples})
-
-    return result, model_options
+def _performance_configuration(
+    root: Path, model_id: str, component_id: str, build_profile_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    model_dir = root / "models" / model_id
+    model = load_and_validate_model(model_dir, root / "schemas" / "model.schema.json")
+    cases = [
+        case
+        for case in model["tests"]["performance"]
+        if case["scope"] == {"type": "component", "component": component_id}
+        and build_profile_id in case["build_profiles"]
+    ]
+    if len(cases) != 1:
+        raise ValidationError(
+            f"expected exactly one performance test for {model_id}/{build_profile_id}/{component_id}"
+        )
+    path = model_dir / cases[0]["config"]
+    document = load_performance_config(path, root / "schemas" / "performance-config-v1.schema.json")
+    return benchmark_settings(document)
 
 
 def make_benchmark_manifest(
@@ -94,27 +51,34 @@ def make_benchmark_manifest(
     branch: str,
     git_sha: str,
     model_id: str,
-    variant_id: str,
+    build_profile_id: str,
+    component_id: str,
 ) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
     output = Path(output_path).expanduser().resolve()
     if IDENTIFIER.fullmatch(model_id) is None:
         raise ValidationError(f"invalid benchmark model id: {model_id}")
-    if IDENTIFIER.fullmatch(variant_id) is None:
-        raise ValidationError(f"invalid benchmark variant id: {variant_id}")
+    if IDENTIFIER.fullmatch(build_profile_id) is None:
+        raise ValidationError(f"invalid benchmark build profile id: {build_profile_id}")
+    if IDENTIFIER.fullmatch(component_id) is None:
+        raise ValidationError(f"invalid benchmark component id: {component_id}")
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
 
-    variant_dir = compiled / model_id / variant_id
-    compile_result = _load_json(variant_dir / "compile-result.json", "compile result")
-    publication = _load_json(variant_dir / "registry-publication.json", "registry publication")
+    component_dir = compiled / model_id / build_profile_id / component_id
+    compile_result = _load_json(component_dir / "compile-result.json", "compile result")
+    publication = _load_json(component_dir / "registry-publication.json", "registry publication")
     runs = publication.get("runs")
     if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
         raise ValidationError("registry publication must contain exactly one run")
     published = runs[0]
-    if published.get("model_id") != model_id or published.get("variant_id") != variant_id:
-        raise ValidationError("registry publication model/variant does not match the requested benchmark")
+    if (
+        published.get("model_id") != model_id
+        or published.get("build_profile_id") != build_profile_id
+        or published.get("component_id") != component_id
+    ):
+        raise ValidationError("registry publication build unit does not match the requested benchmark")
 
     archive = compile_result.get("archive")
     sha256 = compile_result.get("sha256")
@@ -127,13 +91,14 @@ def make_benchmark_manifest(
         raise ValidationError("registry publication run_id must be a non-empty string")
 
     runtime = resolve_benchmark_runtime(root)
-    benchmark, model_options = _performance_configuration(root, model_id)
+    benchmark, model_options = _performance_configuration(root, model_id, component_id, build_profile_id)
     manifest = {
         "schema_version": 1,
         "model": {
             "id": model_id,
-            "variant_id": variant_id,
-            "path": str((variant_dir / archive).resolve()),
+            "build_profile_id": build_profile_id,
+            "component_id": component_id,
+            "path": str((component_dir / archive).resolve()),
             "sha256": sha256,
             "uri": f"vulcan://runs/{compile_run_id}/artifacts/mpk",
         },

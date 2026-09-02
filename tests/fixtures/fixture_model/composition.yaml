@@ -1,0 +1,17 @@
+schema_version: 1
+components:
+  - id: first
+    component: model
+    entrypoint: default
+  - id: second
+    component: second_model
+    entrypoint: default
+connections:
+  - from: {component: first, output: output}
+    to: {component: second, input: input}
+inputs:
+  - name: input
+    to: {component: first, input: input}
+outputs:
+  - name: output
+    from: {component: second, output: output}

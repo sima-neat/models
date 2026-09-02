@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .accuracy_config import accuracy_applies_to_variant, select_accuracy_config
+from .accuracy_config import select_accuracy_config
 from .errors import ModelRegistryError
 from .model import load_and_validate_model
 
@@ -279,19 +279,23 @@ def load_calibration_samples(
     import numpy as np
 
     model = load_and_validate_model(model_dir)
-    _, config = select_accuracy_config(model_dir, model, test_id)
+    config_path, config = select_accuracy_config(model_dir, model, test_id)
+    relative_config = config_path.relative_to(Path(model_dir).expanduser().resolve()).as_posix()
+    test_case = next(case for case in model["tests"]["correctness"] if case["config"] == relative_config)
+    component = next(item for item in model["components"] if item["id"] == test_case["scope"]["component"])
+    entrypoint = component["interface"]["entrypoints"][0]
     dataset = resolve_dataset(config["dataset"], dataset_path)
     records = index_split(dataset, config["dataset"], "calibration")
     if sample_count != len(records):
         raise AccuracyError(f"calibration requires exactly {len(records)} samples, found request for {sample_count}")
-    model_input = model["interface"]["inputs"]
+    model_input = entrypoint["inputs"]
     if len(model_input) != 1:
         raise AccuracyError("the image-classification evaluator currently supports exactly one model input")
     source_layout = str(model_input[0]["layout"])
     samples = []
     with tarfile.open(dataset, "r:gz") as archive:
         for record in records:
-            sample = preprocess_image(_read_member(archive, record), model["preprocessing"]["pipeline"])
+            sample = preprocess_image(_read_member(archive, record), component["preprocessing"]["pipeline"])
             samples.append(convert_sample_layout(sample, source_layout, output_layout)[0])
     return np.stack(samples).astype(np.float32, copy=False)
 
@@ -401,7 +405,8 @@ def _metrics(counts: dict[str, int], sample_count: int, top_k: tuple[int, ...]) 
 
 def evaluate_accuracy(
     model_dir: str | Path,
-    variant_id: str,
+    build_profile_id: str,
+    component_id: str,
     candidate_model: Path,
     *,
     reference_model: Path | None = None,
@@ -419,23 +424,48 @@ def evaluate_accuracy(
     started = time.perf_counter()
     directory = Path(model_dir).expanduser().resolve()
     model = load_and_validate_model(directory)
-    config_path, config = select_accuracy_config(directory, model, test_id)
-    variants = [item for item in model["compile_variants"] if item["id"] == variant_id]
-    if len(variants) != 1:
-        raise AccuracyError(f"{directory}: expected exactly one compile variant named {variant_id!r}")
-    variant = variants[0]
-    if not accuracy_applies_to_variant(config, variant_id):
-        raise AccuracyError(f"accuracy test {config_path} does not apply to variant {variant_id!r}")
-    if variant["target"] != "modalix":
-        raise AccuracyError(f"variant {variant_id!r} does not target Modalix")
+    config_path, config = select_accuracy_config(
+        directory,
+        model,
+        test_id,
+        build_profile_id=build_profile_id,
+        component_id=component_id,
+    )
+    profiles = [item for item in model["build_profiles"] if item["id"] == build_profile_id]
+    if len(profiles) != 1:
+        raise AccuracyError(f"{directory}: expected exactly one build profile named {build_profile_id!r}")
+    build_profile = profiles[0]
+    bindings = [item for item in build_profile["components"] if item["id"] == component_id]
+    if len(bindings) != 1:
+        raise AccuracyError(
+            f"{directory}: build profile {build_profile_id!r} does not contain component {component_id!r}"
+        )
+    binding = bindings[0]
+    if build_profile["target"] != "modalix":
+        raise AccuracyError(f"build profile {build_profile_id!r} does not target Modalix")
 
-    calibration = model["calibration"].get("dataset")
+    relative_config = config_path.relative_to(directory).as_posix()
+    test_case = next(case for case in model["tests"]["correctness"] if case["config"] == relative_config)
+    if build_profile_id not in test_case["build_profiles"]:
+        raise AccuracyError(f"accuracy test {config_path} does not apply to build profile {build_profile_id!r}")
+    if test_case["scope"] != {"type": "component", "component": component_id}:
+        raise AccuracyError(f"accuracy test {config_path} does not target component {component_id!r}")
+    component = next(item for item in model["components"] if item["id"] == component_id)
+    entrypoint = component["interface"]["entrypoints"][0]
+
+    calibration_id = binding.get("calibration")
+    calibration_entry = next(
+        (item for item in model["calibrations"] if item["id"] == calibration_id), None
+    )
+    calibration = calibration_entry.get("dataset") if calibration_entry is not None else None
     dataset_config = config["dataset"]
     if calibration is None or any(calibration[key] != dataset_config[key] for key in calibration):
         raise AccuracyError("accuracy dataset identity does not match model calibration dataset metadata")
     dataset = resolve_dataset(dataset_config, dataset_path, dataset_cache_dir)
 
-    source_spec = SourceSpec.from_mapping(model["source"])
+    if component["source"]["type"] != "file":
+        raise AccuracyError("the image-classification evaluator requires a single-file component source")
+    source_spec = SourceSpec.from_mapping(component["source"])
     if reference_model is None:
         reference, _ = Fetcher(model_cache_dir).fetch(source_spec)
     else:
@@ -444,10 +474,12 @@ def evaluate_accuracy(
     if not candidate.is_file():
         raise AccuracyError(f"candidate model does not exist: {candidate}")
 
-    profiles = config["profiles"]
-    if profile_name not in profiles:
-        raise AccuracyError(f"unknown accuracy profile {profile_name!r}; choose from {', '.join(sorted(profiles))}")
-    profile = profiles[profile_name]
+    evaluation_profiles = config["profiles"]
+    if profile_name not in evaluation_profiles:
+        raise AccuracyError(
+            f"unknown accuracy profile {profile_name!r}; choose from {', '.join(sorted(evaluation_profiles))}"
+        )
+    profile = evaluation_profiles[profile_name]
     validation = index_split(dataset, dataset_config, "validation")
     configured_samples = len(validation) if profile["samples"] == "all" else int(profile["samples"])
     requested_samples = sample_count if sample_count is not None else configured_samples
@@ -466,17 +498,17 @@ def evaluate_accuracy(
         raise AccuracyError("workers must be at least 1")
     worker_count = min(worker_count, requested_samples)
 
-    model_inputs = model["interface"]["inputs"]
+    model_inputs = entrypoint["inputs"]
     if len(model_inputs) != 1:
         raise AccuracyError("the image-classification evaluator currently supports exactly one model input")
-    input_name = str(variant["parameters"]["input_name"])
+    input_name = str(binding["parameters"]["input_name"])
     if input_name != model_inputs[0]["name"]:
-        raise AccuracyError(f"variant input {input_name!r} does not match model interface")
+        raise AccuracyError(f"build-profile input {input_name!r} does not match component interface")
     executors = config["executors"]
     if executors["reference"]["type"] != "onnxruntime" or executors["candidate"]["type"] != "afe_sima":
         raise AccuracyError("the current engine requires onnxruntime reference and afe_sima candidate executors")
-    if executors["reference"]["artifact"] != "source" or executors["candidate"]["artifact"] != "compile_variant":
-        raise AccuracyError("executor artifact roles must be source reference and compile_variant candidate")
+    if executors["reference"]["artifact"] != "source" or executors["candidate"]["artifact"] != "compiled_component":
+        raise AccuracyError("executor artifact roles must be source reference and compiled_component candidate")
     if executors["reference"]["input_layout"] != "NCHW" or executors["candidate"]["input_layout"] != "NHWC":
         raise AccuracyError("the current engine requires NCHW reference and NHWC AFE candidate inputs")
 
@@ -491,8 +523,8 @@ def evaluate_accuracy(
             candidate_model=candidate,
             dataset=dataset,
             records=tuple(shard),
-            preprocessing=tuple(model["preprocessing"]["pipeline"]),
-            postprocessing=tuple(model["postprocessing"]["pipeline"]),
+            preprocessing=tuple(component["preprocessing"]["pipeline"]),
+            postprocessing=tuple(component["postprocessing"]["pipeline"]),
             source_layout=str(model_inputs[0]["layout"]),
             reference_layout=str(executors["reference"]["input_layout"]),
             candidate_layout=str(executors["candidate"]["input_layout"]),
@@ -532,8 +564,9 @@ def evaluate_accuracy(
         "report_scope": str(profile["report_scope"]),
         "model": {
             "id": model["id"],
+            "component_id": component_id,
             "source_sha256": source_spec.sha256,
-            "variant_id": variant_id,
+            "build_profile_id": build_profile_id,
         },
         "artifacts": {
             "reference": {"type": "onnx", "sha256": source_spec.sha256, "size_bytes": reference.stat().st_size},

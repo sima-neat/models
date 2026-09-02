@@ -4,7 +4,7 @@ This entry deploys the 12 raw predictor heads of TorchVision's pretrained
 `ssdlite320_mobilenet_v3_large` COCO model. Neat owns anchor decode, scoring,
 and NMS, so postprocessing is deliberately outside the compiled graph.
 
-## Four supported variants
+## Four supported build profiles
 
 | Variant | Precision source | Tessellation | Public ABI |
 | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ the same precision source and can differ only in compiler placement.
 Model Compiler 2.1.3 lacks `quantization_mla` and public BF16/FP32 boundary
 APIs, so this recipe does not use them. The public buffers remain FP32. The
 serialized graph and MPK audits prove internal precision and placement instead
-of inferring them from a variant name.
+of inferring them from a profile name.
 
 ## Why INT8 uses QAT
 
@@ -96,7 +96,7 @@ the images.
 ## Run on Vulcan
 
 Dispatch `Vulcan Model Compile` in staging with model `ssd_mobilenet_v3`.
-Leaving `variants` empty builds all four supported combinations; one variant ID
+Leaving `profiles` empty builds all four supported combinations; one profile ID
 can be supplied for focused diagnosis. Compilation, fresh-process numerical
 validation, structural graph audit, MPK audit, and artifact publication must
-all succeed before a variant is usable.
+all succeed before a build profile is usable.

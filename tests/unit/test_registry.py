@@ -36,7 +36,7 @@ class FakeStore:
 
 def _packaged_result(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
-    output = dist / "resnet_50" / "modalix_bf16"
+    output = dist / "resnet_50" / "modalix_bf16" / "model"
     output.mkdir(parents=True)
     payload = tmp_path / "payload.elf"
     metadata = tmp_path / "fixture_mpk.json"
@@ -56,7 +56,8 @@ def _packaged_result(tmp_path: Path) -> Path:
         "status": "success",
         "provenance": {
             "model_id": "resnet_50",
-            "variant_id": "modalix_bf16",
+            "build_profile_id": "modalix_bf16",
+            "component_id": "model",
             "target": "modalix",
             "compiler_version": "2.1.3",
             "compiler_label": "model-compiler-2.1.3-sha-fixture",
@@ -71,7 +72,7 @@ def _packaged_result(tmp_path: Path) -> Path:
 
 
 def _add_accuracy_result(dist: Path) -> Path:
-    path = dist / "resnet_50" / "modalix_bf16" / "accuracy.json"
+    path = dist / "resnet_50" / "modalix_bf16" / "model" / "accuracy.json"
     path.write_text(
         json.dumps(
             {
@@ -79,7 +80,8 @@ def _add_accuracy_result(dist: Path) -> Path:
                 "report_scope": "sampled_accuracy_smoke",
                 "model": {
                     "id": "resnet_50",
-                    "variant_id": "modalix_bf16",
+                    "build_profile_id": "modalix_bf16",
+                    "component_id": "model",
                     "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
                 },
                 "dataset": {
@@ -146,7 +148,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     assert [path for _, path, _, _ in calls] == [
         "/v1/repositories/sima-neat/models/taxonomies/2",
         "/v1/runs",
-        "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-model",
+        "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-component",
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
         "/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/mpk",
         "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/compile/mpk-validation",
@@ -161,7 +163,8 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     assert create["run_type"] == "model_compile"
     assert create["metadata"] == {
         "model_id": "resnet_50",
-        "variant_id": "modalix_bf16",
+        "build_profile_id": "modalix_bf16",
+        "component_id": "model",
         "artifact_kind": "mpk",
         "github_run_id": "1234",
         "license": {
@@ -183,6 +186,8 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     assert source_input["source_reference"].startswith("hf://models/onnx-community/resnet-50-ONNX@")
     assert source_input["metadata"] == {
         "model_id": "resnet_50",
+        "component_id": "model",
+        "source_type": "file",
         "model_card": "https://huggingface.co/onnx-community/resnet-50-ONNX",
     }
     parameters = calls[3][2]["parameters"]

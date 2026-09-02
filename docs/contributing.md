@@ -7,7 +7,7 @@ it does not repeat the local qualification procedure.
 
 ## Entry requirement
 
-Do not start submission until every supported variant in the change has
+Do not start submission until every supported component/profile pair in the change has
 completed the local qualification loop. Keep the resulting MPKs, accuracy
 reports, benchmark JSON, and logs outside Git. You will summarize that evidence
 in the pull request so reviewers can see exactly what was tested.
@@ -92,7 +92,7 @@ Give reviewers enough evidence to reproduce and assess the contribution:
 - model purpose, upstream project, immutable revision, and conversion history;
 - license and redistribution assessment;
 - source, calibration, and correctness dataset identities and hashes;
-- compile variants and any model-specific surgery or compiler workarounds;
+- components, build profiles, packages, and any model-specific surgery or compiler workarounds;
 - exact local commands and pass/fail summaries for compilation, applicable
   accuracy, MPK verification, and Modalix benchmarking;
 - pinned Model Compiler, DevKit, dataset, and test-profile versions used;
@@ -119,10 +119,11 @@ Vulcan runner.
 For a model change, interpret a successful pull-request workflow as confirmation
 that:
 
-- the complete catalog and taxonomy are structurally valid;
+- the complete catalog, taxonomy, accuracy configuration, performance
+  configuration, and declarative compositions are structurally valid;
 - the repository-wide Model Compiler dependency resolves;
 - the comparison base and changed models were identified; and
-- the resulting supported-variant matrix is deterministic.
+- the resulting supported component/profile matrix is deterministic.
 
 It is **not** evidence that the recipe compiled, the MPK passed validation,
 accuracy met a threshold, or the model ran on a DevKit. Those claims must come
@@ -131,7 +132,7 @@ from stated local evidence or the trusted staging workflow after merge.
 ## After merge: trusted staging automation
 
 When the change is merged to `develop`, the trusted push workflow selects the
-affected variants and then:
+affected component/profile pairs and then:
 
 1. authorizes each requested runner class against the protected Vulcan
    environment specification;
@@ -141,16 +142,17 @@ affected variants and then:
 4. evaluates declared dataset-backed accuracy when it applies;
 5. requires and validates exactly one MPK;
 6. publishes the compilation and provenance to the staging registry; and
-7. dispatches each newly compiled Modalix variant to the dedicated DevKit
+7. assembles every complete declared package; and
+8. dispatches each newly compiled Modalix component to the dedicated DevKit
    benchmark workflow, which publishes the successful result.
 
 The compile and benchmark are separate GitHub Actions runs. A successful
 compile does not by itself mean the dispatched benchmark succeeded; inspect the
-per-variant `Vulcan Model Benchmarking` run and the model's staging registry
+per-component/profile `Vulcan Model Benchmarking` run and the model's staging registry
 record. If trusted compilation or benchmarking fails, follow up with a focused
 manifest or recipe change and reproducible evidence.
 
-Production is an explicit protected workflow choice. Targeted manual variants
+Production is an explicit protected workflow choice. Targeted manual profiles
 publish independently without updating shared mutable catalog pointers.
 
 ## Review and merge expectations

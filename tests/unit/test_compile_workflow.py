@@ -18,7 +18,8 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
     assert "${{ matrix.runner_class }}" in compile_job["runs-on"]
     assert "model-id-${{ matrix.model_id }}" in compile_job["runs-on"]
-    assert "variant-id-${{ matrix.variant_id }}" in compile_job["runs-on"]
+    assert "build-profile-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
+    assert "component-id-${{ matrix.component_id }}" in compile_job["runs-on"]
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
@@ -96,7 +97,8 @@ def test_dispatch_can_request_full_mini_accuracy() -> None:
 
 def test_dispatch_can_select_expensive_variants_and_passes_private_asset_token() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assert "variants" in workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "profiles" in workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "components" in workflow["on"]["workflow_dispatch"]["inputs"]
     compile_steps = workflow["jobs"]["compile"]["steps"]
     source_step = next(step for step in compile_steps if step.get("id") == "source")
     recipe_step = next(
@@ -198,7 +200,7 @@ def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
         for value in node.args
         if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("--")
     }
-    assert {"--model", "--output-dir", "--variant", "--dataset"} <= option_strings
+    assert {"--model", "--output-dir", "--build-profile", "--dataset"} <= option_strings
     assert "--accuracy-samples" not in option_strings
     assert "--accuracy-workers" not in option_strings
 
@@ -225,7 +227,7 @@ def test_compile_workflow_resolves_registered_calibration_input() -> None:
     steps = workflow["jobs"]["compile"]["steps"]
     calibration = next(step for step in steps if step.get("id") == "calibration")
     assert "model_registry fetch-calibration" in calibration["run"]
-    assert '--variant "$VARIANT_ID"' in calibration["run"]
+    assert '--build-profile "$BUILD_PROFILE_ID"' in calibration["run"]
     assert 'get("kind", "none")' in calibration["run"]
 
 
@@ -236,7 +238,7 @@ def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> No
     accuracy_step = next(step for step in steps if step.get("name") == "Measure model accuracy")
 
     assert "model_registry fetch-accuracy-dataset" in accuracy_dataset["run"]
-    assert '--variant "$VARIANT_ID"' in accuracy_dataset["run"]
+    assert '--build-profile "$BUILD_PROFILE_ID"' in accuracy_dataset["run"]
     assert accuracy_dataset["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset'"
     assert accuracy_step["env"]["SOURCE_PATH"] == "${{ steps.source.outputs.path }}"
@@ -339,7 +341,7 @@ def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
     assert '"source_run_id": os.environ["GITHUB_RUN_ID"]' in dispatch["run"]
     assert '"source_sha": os.environ["GITHUB_SHA"]' in dispatch["run"]
     assert '"model_id": os.environ["BENCHMARK_MODEL_ID"]' in dispatch["run"]
-    assert '"variant_id": os.environ["BENCHMARK_VARIANT_ID"]' in dispatch["run"]
+    assert '"build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"]' in dispatch["run"]
     dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     compile(dispatch_python, "<benchmark-dispatch>", "exec")
     retain_index = next(

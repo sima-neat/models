@@ -2,7 +2,6 @@ schema_version: 1
 engine: model_registry
 status: provisional
 task: image_classification
-variants: [modalix_int8]
 dataset:
   id: imagenet-2012
   variant: mini
@@ -40,7 +39,7 @@ executors:
     input_layout: NCHW
   candidate:
     type: afe_sima
-    artifact: compile_variant
+    artifact: compiled_component
     input_layout: NHWC
     use_jax: true
 metrics:

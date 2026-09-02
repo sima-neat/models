@@ -5,48 +5,68 @@ description: ImageNet-1k image classification using the ONNX Community conversio
 taxonomy_version: 2
 model_type: vision
 tasks:
-  - image_classification
+- image_classification
 modalities:
   inputs:
-    - image
+  - image
   outputs:
-    - class_scores
+  - class_scores
 architecture:
   id: resnet_50
   variant: imagenet_1k
 owners:
-  - "@sima-neat/models"
+- '@sima-neat/models'
 license:
   spdx: Apache-2.0
   redistribution: allowed
   attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
-source:
-  uri: hf://models/onnx-community/resnet-50-ONNX@b6ef686fe842388c9449c7acb7269d02c69bacfb/onnx/model.onnx
-  sha256: de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50
-  size_bytes: 102182062
-  media_type: application/onnx
 upstream:
   repository: https://huggingface.co/onnx-community/resnet-50-ONNX
   revision: b6ef686fe842388c9449c7acb7269d02c69bacfb
   model_card: https://huggingface.co/onnx-community/resnet-50-ONNX
   derived_from: https://huggingface.co/microsoft/resnet-50/tree/34c2154c194f829b11125337b98c8f5f9965ff19
-interface:
-  format: onnx
-  opset: 11
-  inputs:
-    - name: pixel_values
-      dtype: float32
-      shape: [batch_size, num_channels, height, width]
-      layout: NCHW
-      description: Normalized RGB image tensor.
-  outputs:
-    - name: logits
-      dtype: float32
-      shape: [batch_size, 1000]
-      layout: NC
-      description: ImageNet-1k class logits.
-preprocessing:
-  pipeline:
+components:
+- id: model
+  role: inference
+  source:
+    type: file
+    uri: hf://models/onnx-community/resnet-50-ONNX@b6ef686fe842388c9449c7acb7269d02c69bacfb/onnx/model.onnx
+    sha256: de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50
+    size_bytes: 102182062
+    media_type: application/onnx
+  interface:
+    format: onnx
+    opset: 11
+    entrypoints:
+    - id: default
+      inputs:
+      - name: pixel_values
+        dtype: float32
+        shape:
+        - batch_size
+        - num_channels
+        - height
+        - width
+        layout: NCHW
+        description: Normalized RGB image tensor.
+      outputs:
+      - name: logits
+        dtype: float32
+        shape:
+        - batch_size
+        - 1000
+        layout: NC
+        description: ImageNet-1k class logits.
+    shape_profiles:
+    - id: compile_input
+      entrypoint: default
+      bindings:
+        batch_size: 1
+        num_channels: 3
+        height: 224
+        width: 224
+  preprocessing:
+    pipeline:
     - op: decode_image
       parameters:
         color_space: RGB
@@ -63,53 +83,101 @@ preprocessing:
         factor: 0.00392156862745098
     - op: normalize
       parameters:
-        mean: [0.485, 0.456, 0.406]
-        std: [0.229, 0.224, 0.225]
+        mean:
+        - 0.485
+        - 0.456
+        - 0.406
+        std:
+        - 0.229
+        - 0.224
+        - 0.225
     - op: transpose
       parameters:
         from: HWC
         to: CHW
-postprocessing:
-  pipeline:
+  postprocessing:
+    pipeline:
     - op: softmax
       parameters:
         axis: 1
     - op: top_k
       parameters:
         k: 5
-calibration:
+  surgery:
+    type: none
+  recipe: compile.py
+resources: []
+calibrations:
+- id: default
   status: ready
   dataset:
     id: imagenet-2012
     variant: mini
     sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
     size_bytes: 356052889
-surgery:
-  type: none
-compile_variants:
-  - id: modalix_bf16
-    target: modalix
-    recipe: compile.py
-    runner_class: expensive
+build_profiles:
+- id: modalix_bf16
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: bf16
       input_name: pixel_values
-      input_shape: [1, 3, 224, 224]
+      input_shape:
+      - 1
+      - 3
+      - 224
+      - 224
       mla_tessellation: true
-  - id: modalix_int8
-    target: modalix
-    recipe: compile.py
+    runner_class: expensive
+    shape_profile: compile_input
+- id: modalix_int8
+  target: modalix
+  components:
+  - id: model
     parameters:
       precision: int8
       input_name: pixel_values
-      input_shape: [1, 3, 224, 224]
+      input_shape:
+      - 1
+      - 3
+      - 224
+      - 224
       calibration_samples: 500
       mla_tessellation: true
+    shape_profile: compile_input
+    calibration: default
+compositions:
+- id: default
+  type: single
+  component: model
+  entrypoint: default
+packages:
+- id: default
+  default: true
+  components:
+  - model
+  resources: []
+  build_profiles:
+  - modalix_bf16
+  - modalix_int8
+  composition: default
 tests:
   correctness:
-    - id: imagenet_top5_smoke
-      config: tests/correctness.yaml
+  - id: imagenet_top5_smoke
+    config: tests/correctness.yaml
+    scope:
+      type: component
+      component: model
+    build_profiles:
+    - modalix_int8
   performance:
-    - id: modalix_latency
-      config: tests/performance.yaml
+  - id: modalix_latency
+    config: tests/performance.yaml
+    scope:
+      type: component
+      component: model
+    build_profiles:
+    - modalix_bf16
+    - modalix_int8
 maturity: experimental

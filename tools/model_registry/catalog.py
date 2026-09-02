@@ -19,12 +19,6 @@ MODEL_COMPILE_INPUT_PATHS = {
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-_IGNORED_MODEL_BUILD_NAMES = {"README.md"}
-# Benchmark dispatch currently follows the compile matrix, so configuration
-# changes must invalidate reuse even though they do not alter the MPK bytes.
-_MODEL_BENCHMARK_CONFIGURATION = Path("tests/performance.yaml")
-
-
 def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
     root = Path(repository).expanduser().resolve()
     model_root = root / "models"
@@ -125,7 +119,13 @@ def resolve_base_branch(
     return {"base_branch": branch, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
 
 
-def _build_input_files(root: Path, model_id: str) -> list[Path]:
+def _component_build_input_files(
+    root: Path,
+    model: dict[str, Any],
+    component: dict[str, Any],
+    profile_id: str,
+) -> list[Path]:
+    model_id = str(model["id"])
     candidates: list[Path] = []
     global_prefixes = GLOBAL_COMPILE_INPUT_PATHS
     model_prefixes = MODEL_COMPILE_INPUT_PATHS.get(model_id, ())
@@ -138,16 +138,18 @@ def _build_input_files(root: Path, model_id: str) -> list[Path]:
         elif prefix in model_prefixes:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
+    candidates.append(model_dir / component["recipe"])
+    if component["surgery"]["type"] == "python":
+        candidates.append(model_dir / component["surgery"]["entrypoint"].split(":", 1)[0])
     candidates.extend(
-        item
-        for item in model_dir.rglob("*")
-        if item.is_file()
-        and item.name not in _IGNORED_MODEL_BUILD_NAMES
-        and (
-            "tests" not in item.relative_to(model_dir).parts
-            or item.relative_to(model_dir) == _MODEL_BENCHMARK_CONFIGURATION
-        )
+        model_dir / case["config"]
+        for case in model["tests"]["performance"]
+        if case["scope"] == {"type": "component", "component": component["id"]}
+        and profile_id in case["build_profiles"]
     )
+    missing = sorted(path for path in candidates if not path.is_file())
+    if missing:
+        raise ValidationError(f"model compile input not found: {missing[0]}")
     symlinks = sorted(item for item in candidates if item.is_symlink())
     if symlinks:
         relative = ", ".join(item.relative_to(root).as_posix() for item in symlinks)
@@ -163,15 +165,39 @@ def _build_input_files(root: Path, model_id: str) -> list[Path]:
     )
 
 
-def model_build_fingerprint(repository: str | Path, model_id: str, compiler_version: str) -> str:
+def component_build_fingerprint(
+    repository: str | Path,
+    model_id: str,
+    component_id: str,
+    profile_id: str,
+    compiler_version: str,
+) -> str:
     root = Path(repository).expanduser().resolve()
     compiler = compiler_version.strip()
     if not compiler:
         raise ValidationError("compiler version must not be empty")
     digest = hashlib.sha256()
-    identity = {"schema": 1, "model_id": model_id, "compiler_version": compiler}
+    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+    try:
+        component = next(item for item in model["components"] if item["id"] == component_id)
+        profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
+        binding = next(item for item in profile["components"] if item["id"] == component_id)
+    except StopIteration as exc:
+        raise ValidationError(f"unknown build unit: {model_id}/{profile_id}/{component_id}") from exc
+    identity = {
+        "schema": 2,
+        "model_id": model_id,
+        "component": component,
+        "build_profile": {
+            "id": profile_id,
+            "target": profile["target"],
+            "compatibility": profile.get("compatibility", {}),
+            "component": binding,
+        },
+        "compiler_version": compiler,
+    }
     digest.update(json.dumps(identity, sort_keys=True).encode())
-    for path in _build_input_files(root, model_id):
+    for path in _component_build_input_files(root, model, component, profile_id):
         relative = path.relative_to(root).as_posix().encode()
         payload = path.read_bytes()
         digest.update(len(relative).to_bytes(8, "big"))
@@ -215,7 +241,8 @@ def select_model_ids(catalog: dict[str, dict[str, Any]], changed_paths: list[str
 def build_matrix(
     catalog: dict[str, dict[str, Any]],
     model_ids: list[str],
-    variant_ids: list[str] | None = None,
+    profile_ids: list[str] | None = None,
+    component_ids: list[str] | None = None,
     *,
     repository: str | Path | None = None,
     compiler_version: str | None = None,
@@ -224,50 +251,62 @@ def build_matrix(
     if unknown:
         raise ValidationError(f"unknown model id(s): {', '.join(unknown)}")
 
-    requested_variants = set(variant_ids or [])
-    available_variants = {
-        variant["id"] for model_id in set(model_ids) for variant in catalog[model_id]["compile_variants"]
+    requested_profiles = set(profile_ids or [])
+    available_profiles = {
+        profile["id"] for model_id in set(model_ids) for profile in catalog[model_id]["build_profiles"]
     }
-    unknown_variants = sorted(requested_variants - available_variants)
-    if unknown_variants:
-        raise ValidationError(f"unknown variant id(s): {', '.join(unknown_variants)}")
+    unknown_profiles = sorted(requested_profiles - available_profiles)
+    if unknown_profiles:
+        raise ValidationError(f"unknown build profile id(s): {', '.join(unknown_profiles)}")
 
-    unsupported_only: list[str] = []
-    for variant_id in sorted(requested_variants):
-        matches = [
-            (model_id, variant)
-            for model_id in sorted(set(model_ids))
-            for variant in catalog[model_id]["compile_variants"]
-            if variant["id"] == variant_id
-        ]
-        if matches and all(variant.get("status", "supported") == "unsupported" for _, variant in matches):
-            evidence = "; ".join(f"{model_id}: {variant['reason']}" for model_id, variant in matches)
-            unsupported_only.append(f"{variant_id} ({evidence})")
-    if unsupported_only:
-        raise ValidationError(f"requested variant id(s) are unsupported: {', '.join(unsupported_only)}")
+    requested_components = set(component_ids or [])
+    available_components = {
+        component["id"] for model_id in set(model_ids) for component in catalog[model_id]["components"]
+    }
+    unknown_components = sorted(requested_components - available_components)
+    if unknown_components:
+        raise ValidationError(f"unknown component id(s): {', '.join(unknown_components)}")
 
     include: list[dict[str, str]] = []
     for model_id in sorted(set(model_ids)):
         model = catalog[model_id]
-        fingerprint = ""
         if repository is not None or compiler_version is not None:
             if repository is None or compiler_version is None:
                 raise ValidationError("repository and compiler version must be supplied together")
-            fingerprint = model_build_fingerprint(repository, model_id, compiler_version)
-        for variant in sorted(model["compile_variants"], key=lambda item: item["id"]):
-            if requested_variants and variant["id"] not in requested_variants:
+        components = {item["id"]: item for item in model["components"]}
+        for profile in sorted(model["build_profiles"], key=lambda item: item["id"]):
+            if requested_profiles and profile["id"] not in requested_profiles:
                 continue
-            if variant.get("status", "supported") == "unsupported":
-                continue
-            include.append(
-                {
-                    "model_dir": f"models/{model_id}",
-                    "model_id": model_id,
-                    "recipe": variant["recipe"],
-                    "requested_runner_class": variant.get("runner_class", "default"),
-                    "target": variant["target"],
-                    "variant_id": variant["id"],
-                    **({"build_fingerprint": fingerprint} if fingerprint else {}),
-                }
-            )
+            for binding in sorted(profile["components"], key=lambda item: item["id"]):
+                component_id = binding["id"]
+                if requested_components and component_id not in requested_components:
+                    continue
+                if binding.get("status", "supported") == "unsupported":
+                    continue
+                fingerprint = ""
+                if repository is not None and compiler_version is not None:
+                    fingerprint = component_build_fingerprint(
+                        repository, model_id, component_id, profile["id"], compiler_version
+                    )
+                benchmark_cases = [
+                    case
+                    for case in model["tests"]["performance"]
+                    if case["scope"] == {"type": "component", "component": component_id}
+                    and profile["id"] in case["build_profiles"]
+                ]
+                include.append(
+                    {
+                        "model_dir": f"models/{model_id}",
+                        "model_id": model_id,
+                        "component_id": component_id,
+                        "build_profile_id": profile["id"],
+                        "recipe": components[component_id]["recipe"],
+                        "requested_runner_class": binding.get(
+                            "runner_class", profile.get("runner_class", "default")
+                        ),
+                        "target": profile["target"],
+                        "benchmark_test_id": benchmark_cases[0]["id"] if benchmark_cases else "",
+                        **({"build_fingerprint": fingerprint} if fingerprint else {}),
+                    }
+                )
     return {"include": include}

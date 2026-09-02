@@ -6,14 +6,14 @@ Hugging Face repository commit and verifies the 102 MB ONNX file by SHA-256.
 
 ```bash
 model-registry validate models/resnet_50
-model-registry fetch models/resnet_50
+model-registry fetch models/resnet_50 --component model
 dataset-registry resolve imagenet-2012 --variant mini
 ```
 
-The `modalix_bf16` and `modalix_int8` variants use the repository-wide Model
+The `modalix_bf16` and `modalix_int8` build profiles use the repository-wide Model
 Compiler version pinned in `deps/manifest.json`. `compile.py` loads the verified ONNX, applies the
-variant's quantization scheme and direct-MLA tessellation, and emits one
-directly consumable MPK archive per variant.
+profile's quantization scheme and direct-MLA tessellation, and emits one
+directly consumable MPK archive per build profile.
 
 BF16 uses one zero-valued sample because the quantization entrypoint requires
 an iterable. INT8 uses all 500 calibration images in the registered
@@ -29,14 +29,16 @@ python models/resnet_50/compile.py \
   --model /path/to/model.onnx \
   --dataset "$dataset" \
   --output-dir /tmp/resnet50-int8 \
-  --variant modalix_int8
+  --build-profile modalix_int8 \
+  --component model
 ```
 
 Run the regular 500-image profile after compilation:
 
 ```bash
 model-registry evaluate models/resnet_50 \
-  --variant modalix_int8 \
+  --build-profile modalix_int8 \
+  --component model \
   --reference-model /path/to/model.onnx \
   --candidate-model /tmp/resnet50-int8/resnet_50_modalix_int8.sima \
   --dataset "$dataset" \

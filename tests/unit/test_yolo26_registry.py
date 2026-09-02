@@ -26,23 +26,25 @@ MODEL_DIR = ROOT / "models" / "yolo26_tiny_drone"
 
 def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
     model = load_and_validate_model(MODEL_DIR)
-    variant = model["compile_variants"][0]
+    profile = model["build_profiles"][0]
+    binding = profile["components"][0]
 
-    assert model["source"] == {
+    assert model["components"][0]["source"] == {
+        "type": "file",
         "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/508126877",
         "sha256": "2627762fc29dbd377a3f471a3ab0407569dd39c13cd324d46ca426629ec80f66",
         "size_bytes": 2798186,
         "media_type": "application/onnx",
     }
-    assert model["calibration"]["source"]["sha256"] == (
+    assert model["calibrations"][0]["source"]["sha256"] == (
         "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b"
     )
-    assert variant["id"] == "modalix_int8_tessellation_mla"
-    assert variant["parameters"]["calibration_samples"] == 128
-    assert variant["parameters"]["calibration_tensor_sha256"] == (
+    assert profile["id"] == "modalix_int8_tessellation_mla"
+    assert binding["parameters"]["calibration_samples"] == 128
+    assert binding["parameters"]["calibration_tensor_sha256"] == (
         "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"
     )
-    assert variant["parameters"]["quantized_source"] == {
+    assert binding["parameters"]["quantized_source"] == {
         "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/508162355",
         "sha256": "9d8444f989563e71f32ab2569f4f49e02607036b92c376f0c64b79e3ac4530cc",
         "size_bytes": 9644979,
@@ -61,7 +63,7 @@ def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
         if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("--")
     }
 
-    assert {"--model", "--output-dir", "--variant"} <= option_strings
+    assert {"--model", "--output-dir", "--build-profile"} <= option_strings
     assert "audit_onnx(source, contract)" in source
     assert "validate_calibration(" in source
     assert "materialize=False" in source

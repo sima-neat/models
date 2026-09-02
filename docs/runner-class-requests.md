@@ -4,9 +4,9 @@ The schema and compilation workflow support this contract. Elevated requests
 remain unusable until a matching approval is deployed through the Vulcan
 environment specification.
 
-Model compilation requirements vary substantially. Most variants should use the
+Model compilation requirements vary substantially. Most component builds should use the
 default runner, while a small number may need more CPU, memory, or time. The
-Model Registry should let a variant request a logical runner class without
+Model Registry lets a build-profile component binding request a logical runner class without
 letting a model contribution authorize additional infrastructure cost.
 
 This document defines the contract between a model manifest, the compilation
@@ -14,30 +14,32 @@ workflow, and the Vulcan scaler.
 
 ## Manifest contract
 
-`runner_class` is an optional property of each compile variant:
+`runner_class` is optional on a build profile and may be overridden by a
+component binding:
 
 ```yaml
-compile_variants:
+build_profiles:
   - id: modalix_bf16
     target: modalix
-    recipe: compile.py
     runner_class: expensive
-    parameters:
-      precision: bf16
-      input_shape: [1, 3, 1536, 1536]
+    components:
+      - id: detector
+        parameters:
+          precision: bf16
+          input_shape: [1, 3, 1536, 1536]
 ```
 
 The field is a **resource request, not an approval**.
 
-- If the field is absent, the variant requests `default`.
+- If the field is absent at both levels, the build requests `default`.
 - Values must come from a centrally defined logical-class allowlist.
 - A model manifest must never name an EC2 instance type, Kubernetes node type,
   memory quantity, or scaler implementation detail.
-- The class is declared per variant because resource requirements can differ
-  between variants of the same model.
+- A binding override is useful when components in one profile have different
+  resource requirements.
 - A class above `default` requires a matching approval in the Vulcan scaler
   specification.
-- `status: unsupported` variants are not scheduled and therefore do not
+- `status: unsupported` component bindings are not scheduled and therefore do not
   consume a runner approval.
 
 The platform owns the mapping from logical classes such as `default` and
@@ -57,7 +59,8 @@ The Vulcan approval must identify, at minimum:
 | --- | --- |
 | repository | Prevents an approval from being reused by another registry. |
 | model ID | Identifies the model requesting elevated resources. |
-| variant ID | Limits approval to the variant with measured need. |
+| build profile ID | Limits approval to one target-wide configuration. |
+| component ID | Limits approval to the independently compiled unit with measured need. |
 | environment | Separates development, staging, and production authority. |
 | maximum runner class | Caps the class that the scaler may provision. |
 | approver and approval time | Provides an auditable decision record. |
@@ -70,7 +73,8 @@ An illustrative Vulcan record is:
 model_runner_approvals:
   - repository: sima-neat/models
     model_id: example_detector
-    variant_id: modalix_bf16
+    build_profile_id: modalix_bf16
+    component_id: detector
     environment: staging
     maximum_runner_class: expensive
     approved_by: platform-team
@@ -104,7 +108,8 @@ approved logical runner label
 job scheduling and scaler provisioning
 ```
 
-The admission check matches repository, model ID, variant ID, environment, and
+The admission check matches repository, model ID, build profile ID, component
+ID, environment, and
 requested class against the Vulcan record. It returns only an approved logical
 runner label.
 
@@ -135,7 +140,7 @@ approval fails before the self-hosted compile job is scheduled.
 
 1. Start with the default runner and capture evidence from the compile attempt.
 2. Reduce avoidable resource use in the recipe before requesting a larger class.
-3. Add the smallest sufficient `runner_class` to the affected variant only.
+3. Add the smallest sufficient `runner_class` to the affected component binding only.
 4. Explain the request and link the evidence in the model pull request.
 5. Obtain a matching Vulcan approval through the infrastructure review process
    and link its review evidence in the pull request.
@@ -143,8 +148,8 @@ approval fails before the self-hosted compile job is scheduled.
    expecting the compile job to be scheduled.
 7. Re-evaluate or remove the request when the compiler, recipe, or model changes.
 
-Changes that increase runner class should be conspicuous in review. A variant
-rename or model rename invalidates the old approval unless the Vulcan policy
+Changes that increase runner class should be conspicuous in review. A model,
+component, or build-profile rename invalidates the old approval unless the Vulcan policy
 explicitly migrates it.
 
 ## Build provenance
@@ -155,7 +160,7 @@ Compilation results should record:
 - the approved runner class;
 - the Vulcan specification revision or approval identifier;
 - the actual infrastructure selected by the scaler; and
-- the model revision, variant ID, compiler version, duration, and outcome.
+- the model revision, component ID, build profile ID, compiler version, duration, and outcome.
 
 This allows cost, reliability, and compile-time analysis without coupling the
 model manifest to a particular EC2 instance type.

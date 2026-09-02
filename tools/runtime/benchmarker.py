@@ -35,7 +35,7 @@ SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 OPTION_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 MODEL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
-VARIANT_ID = re.compile(r"^[a-z][a-z0-9_-]*$")
+BUILD_PROFILE_ID = re.compile(r"^[a-z][a-z0-9_-]*$")
 REFERENCE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
 PACKAGE_DISTRIBUTION = "sima-neat-benchmarker"
 DEFAULT_TRIALS = 3
@@ -124,9 +124,10 @@ def load_manifest(path: Path) -> dict[str, Any]:
         raise ConfigurationError("schema_version must be 1")
 
     model = _require_mapping(manifest.get("model"), "model")
-    _reject_unknown(model, {"id", "variant_id", "path", "sha256", "uri"}, "model")
+    _reject_unknown(model, {"id", "build_profile_id", "component_id", "path", "sha256", "uri"}, "model")
     _require_pattern(model.get("id"), "model.id", MODEL_ID)
-    _require_pattern(model.get("variant_id"), "model.variant_id", VARIANT_ID)
+    _require_pattern(model.get("build_profile_id"), "model.build_profile_id", BUILD_PROFILE_ID)
+    _require_pattern(model.get("component_id"), "model.component_id", MODEL_ID)
     for field in ("path", "sha256"):
         _require_string(model.get(field), f"model.{field}")
     if not SHA256.fullmatch(model["sha256"]):
@@ -1177,7 +1178,8 @@ def benchmark_identity_document(result: dict[str, Any]) -> dict[str, Any] | None
     compatibility = result["compatibility"]
     required = (
         model.get("id"),
-        model.get("variant_id"),
+        model.get("build_profile_id"),
+        model.get("component_id"),
         model.get("sha256"),
         compatibility.get("expected_platform_version"),
         compatibility.get("expected_neat_version"),
@@ -1191,7 +1193,8 @@ def benchmark_identity_document(result: dict[str, Any]) -> dict[str, Any] | None
         "benchmark_type": result["benchmark_type"],
         "model": {
             "id": model["id"],
-            "variant_id": model["variant_id"],
+            "build_profile_id": model["build_profile_id"],
+            "component_id": model["component_id"],
             "sha256": model["sha256"],
         },
         "compatibility": {
@@ -1289,7 +1292,10 @@ def _result_base(
         "failure_classification": None,
         "model": {
             "id": model.get("id") if isinstance(model.get("id"), str) else None,
-            "variant_id": model.get("variant_id") if isinstance(model.get("variant_id"), str) else None,
+            "build_profile_id": (
+                model.get("build_profile_id") if isinstance(model.get("build_profile_id"), str) else None
+            ),
+            "component_id": model.get("component_id") if isinstance(model.get("component_id"), str) else None,
             "path": str(model_path) if model_path is not None else None,
             "sha256": model_sha if isinstance(model_sha, str) and SHA256.fullmatch(model_sha) else None,
             "uri": model.get("uri") if isinstance(model.get("uri"), str) else None,
