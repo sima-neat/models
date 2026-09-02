@@ -65,69 +65,38 @@ export default function ContributionPath(): React.JSX.Element {
 
   return (
     <div className="contribution-path-frame">
-      <svg
+      <ol
         className="contribution-path"
-        viewBox="0 0 1344 368"
-        role="img"
-        aria-labelledby="contribution-path-title contribution-path-desc">
-        <title id="contribution-path-title">Path to a successful model contribution</title>
-        <desc id="contribution-path-desc">
-          Six linked stages establish the model contract, qualify it locally,
-          benchmark the exact MPK, prepare the Git contribution, validate the
-          pull request safely, and run trusted staging automation after merge.
-          Each stage links to its detailed guide.
-        </desc>
-        <defs>
-          <marker id="contribution-path-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path className="contribution-path-arrowhead" d="M 0 0 L 8 4 L 0 8 Z" />
-          </marker>
-        </defs>
-
-        <g className="contribution-path-connectors" aria-hidden="true">
-          <line x1="216" y1="184" x2="236" y2="184" markerEnd="url(#contribution-path-arrow)" />
-          <line x1="440" y1="184" x2="460" y2="184" markerEnd="url(#contribution-path-arrow)" />
-          <line x1="664" y1="184" x2="684" y2="184" markerEnd="url(#contribution-path-arrow)" />
-          <line x1="888" y1="184" x2="908" y2="184" markerEnd="url(#contribution-path-arrow)" />
-          <line x1="1112" y1="184" x2="1132" y2="184" markerEnd="url(#contribution-path-arrow)" />
-        </g>
-
+        aria-label="Path to a successful model contribution">
         {stages.map((stage, index) => {
-          const x = 16 + index * 224;
-          const center = x + 100;
           const focalClass = index === stages.length - 1 ? ' contribution-path-stage--focal' : '';
 
           return (
-            <a
-              className={`contribution-path-link${focalClass}`}
-              href={`${docsBaseUrl}/${stage.guide}`}
-              aria-label={`${stage.title}: open ${stage.guideLabel}`}
+            <li
+              className={`contribution-path-item contribution-path-item--${stage.number}`}
               key={stage.number}>
-              <rect className="contribution-path-stage" x={x} y="40" width="200" height="288" rx="4" />
-              <text className="contribution-path-step" x={center} y="72" textAnchor="middle">
-                {stage.number}
-              </text>
-              <text className="contribution-path-name" x={center} y="108" textAnchor="middle">
-                {stage.title}
-              </text>
-              <text className="contribution-path-copy" x={center} y="148" textAnchor="middle">
-                <tspan x={center} dy="0">{stage.action[0]}</tspan>
-                <tspan x={center} dy="20">{stage.action[1]}</tspan>
-              </text>
-              <line className="contribution-path-rule" x1={x + 16} y1="196" x2={x + 184} y2="196" />
-              <text className="contribution-path-label" x={center} y="224" textAnchor="middle">
-                SUCCESS
-              </text>
-              <text className="contribution-path-copy" x={center} y="248" textAnchor="middle">
-                <tspan x={center} dy="0">{stage.success[0]}</tspan>
-                <tspan x={center} dy="20">{stage.success[1]}</tspan>
-              </text>
-              <text className="contribution-path-guide" x={center} y="308" textAnchor="middle">
-                {stage.guideLabel} →
-              </text>
-            </a>
+              <a
+                className={`contribution-path-link${focalClass}`}
+                href={`${docsBaseUrl}/${stage.guide}`}
+                aria-label={`${stage.title}: open ${stage.guideLabel}`}>
+                <span className="contribution-path-step" aria-hidden="true">{stage.number}</span>
+                <span className="contribution-path-name">{stage.title}</span>
+                <span className="contribution-path-copy contribution-path-action">
+                  <span>{stage.action[0]}</span>
+                  <span>{stage.action[1]}</span>
+                </span>
+                <span className="contribution-path-rule" aria-hidden="true" />
+                <span className="contribution-path-label">Success</span>
+                <span className="contribution-path-copy contribution-path-result">
+                  <span>{stage.success[0]}</span>
+                  <span>{stage.success[1]}</span>
+                </span>
+                <span className="contribution-path-guide">{stage.guideLabel} →</span>
+              </a>
+            </li>
           );
         })}
-      </svg>
+      </ol>
     </div>
   );
 }

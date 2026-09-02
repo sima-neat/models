@@ -78,6 +78,17 @@ def test_dataset_guide_covers_artifactory_access_and_registration() -> None:
     assert "Do not add a one-off download path to the model recipe" in text
 
 
+def test_contribution_path_wraps_without_horizontal_scrolling() -> None:
+    component = (ROOT / "website" / "src" / "components" / "ContributionPath.tsx").read_text(encoding="utf-8")
+    css = (ROOT / "website" / "src" / "css" / "custom.css").read_text(encoding="utf-8")
+
+    assert "<ol" in component
+    assert "<svg" not in component
+    assert "'six five four'" in css
+    assert "@container (max-width: 700px)" in css
+    assert "@container (max-width: 480px)" in css
+
+
 def test_local_guide_passes_variant_calibration_to_the_recipe() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 
