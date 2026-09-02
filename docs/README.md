@@ -2,14 +2,17 @@ import ContributionPath from '@site/src/components/ContributionPath';
 
 # Contribute a model
 
-Bringing a model into the registry starts with proving that it works in your
-hands. You pin the exact source, describe the model in `model.yaml`, compile
-every supported variant with the pinned Model Compiler, and test each resulting
-MPK on a compatible Modalix DevKit before opening a pull request. Git carries
-the reproducible model contract—not downloaded inputs or generated artifacts.
-Pull-request checks make sure that contract is coherent and safe to review.
-After merge, trusted automation rebuilds the trusted revision, publishes it to
-staging, and records its benchmark evidence.
+A model contribution is eligible for review only after completing the required
+local qualification. Pin the model source and required datasets to immutable
+revisions, define the reproducible contract in `model.yaml`, compile every
+supported variant with the repository-pinned Model Compiler, complete each
+applicable accuracy evaluation, verify the resulting MPK, and benchmark that
+exact MPK on a compatible Modalix DevKit. Commit only the source-controlled
+contract; downloaded inputs and generated artifacts must remain outside Git.
+Pull-request checks validate the structure, consistency, and safety of the
+submitted contract. After merge, trusted automation rebuilds the reviewed
+revision, publishes qualified artifacts to staging, and records benchmark
+results and provenance.
 
 ## Understand the three execution boundaries
 
