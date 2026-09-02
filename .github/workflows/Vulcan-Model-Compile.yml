@@ -484,6 +484,7 @@ jobs:
         if: >-
           needs.select.outputs.vulcan_environment == 'staging' &&
           matrix.target == 'modalix'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}

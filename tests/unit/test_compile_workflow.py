@@ -288,6 +288,7 @@ def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
     )
 
     assert compile_job["permissions"]["actions"] == "write"
+    assert dispatch["continue-on-error"] == "true"
     assert "needs.select.outputs.publishable" not in dispatch["if"]
     assert "needs.select.outputs.vulcan_environment == 'staging'" in dispatch["if"]
     assert "matrix.target == 'modalix'" in dispatch["if"]
