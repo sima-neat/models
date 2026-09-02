@@ -2,17 +2,26 @@ import ContributionPath from '@site/src/components/ContributionPath';
 
 # Contribute a model
 
-A model contribution is eligible for review only after completing the required
-local qualification. Pin the model source and required datasets to immutable
-revisions, define the reproducible contract in `model.yaml`, compile every
-supported variant with the repository-pinned Model Compiler, complete each
-applicable accuracy evaluation, verify the resulting MPK, and benchmark that
-exact MPK on a compatible Modalix DevKit. Commit only the source-controlled
+The Model Registry provides a controlled way to make models discoverable,
+reproducible, and deployable on SiMa.ai platforms. A registry contribution is
+more than a model binary: it is a versioned contract that records the exact
+source, ownership, model interface, compiler recipe, supported variants,
+datasets, and qualification evidence.
+
+This documentation is for model developers creating or updating that contract.
+It explains how to define a model, qualify it locally, submit it for review, and
+understand the trusted automation that publishes and benchmarks an accepted
+contribution.
+
+Before a contribution is eligible for review, pin the model source and required
+datasets to immutable revisions, define the contract in `model.yaml`, compile
+every supported variant with the repository-pinned Model Compiler, complete
+each applicable accuracy evaluation, verify the resulting MPK, and benchmark
+that exact MPK on a compatible Modalix DevKit. Commit only the source-controlled
 contract; downloaded inputs and generated artifacts must remain outside Git.
-Pull-request checks validate the structure, consistency, and safety of the
-submitted contract. After merge, trusted automation rebuilds the reviewed
-revision, publishes qualified artifacts to staging, and records benchmark
-results and provenance.
+Pull-request checks validate the submitted contract. After merge, trusted
+automation rebuilds the reviewed revision, publishes qualified artifacts to
+staging, and records benchmark results and provenance.
 
 ## Understand the three execution boundaries
 
