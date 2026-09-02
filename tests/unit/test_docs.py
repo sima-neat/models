@@ -48,6 +48,18 @@ def test_contributor_docs_distinguish_pr_checks_from_trusted_automation() -> Non
     assert "if: github.event_name != 'pull_request'" in workflow
 
 
+def test_local_qualification_is_required_before_submission() -> None:
+    overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    local = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
+    overview_words = " ".join(overview.split())
+
+    assert "submission prerequisites, not optional CI substitutes" in overview_words
+    assert "complete the entire loop before submitting a model pull request" in local
+    assert "on a compatible Modalix DevKit;" in contributing
+    assert "checks not run locally" not in contributing
+
+
 def test_local_guide_passes_variant_calibration_to_the_recipe() -> None:
     text = (ROOT / "docs" / "local-development.md").read_text(encoding="utf-8")
 

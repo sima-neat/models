@@ -76,10 +76,11 @@ Before committing, confirm:
   match the pinned source and intended Neat route;
 - recipe and surgery behavior is deterministic and all inputs are declared;
 - every intended supported variant appears in the matrix;
-- each intended variant was compiled with the pinned Model Compiler when that
-  environment was available, and its output passed `model-registry verify-mpk`;
+- each intended variant was compiled with the pinned Model Compiler, and its
+  output passed `model-registry verify-mpk`;
 - the exact locally compiled MPK was exercised by the declared performance test
-  on a compatible Modalix DevKit when one was available;
+  on a compatible Modalix DevKit;
+- each applicable dataset-backed accuracy evaluation completed successfully;
 - local compiler and DevKit result summaries are ready for the pull request,
   while MPKs, JSON results, and logs remain unstaged;
 - unsupported variants include durable qualification evidence;
@@ -120,8 +121,7 @@ Give reviewers enough evidence to reproduce and assess the contribution:
 - correctness datasets, thresholds, measured results, and remaining gaps;
 - performance configuration and any existing Modalix measurements;
 - exact local commands run and their results;
-- compiler or DevKit checks not run locally, with the environment limitation
-  that prevented them;
+- pinned Model Compiler and DevKit versions used for local qualification;
 - known limitations, unsupported combinations, and follow-up work.
 
 Link the model's tracking issue and any upstream model card or conversion PR.
@@ -186,11 +186,12 @@ publish independently without updating shared mutable catalog pointers.
 
 ## Review and merge expectations
 
-A model is ready to merge when its declarative contract is accurate, local and
-PR checks pass, and reviewers accept its licensing, ownership, test plan, and
-remaining maturity gaps. Merge does not automatically mean production
-approval. Compilation, device evidence, and promotion remain separate trusted
-stages.
+A model is ready to merge when its declarative contract is accurate, every
+submitted supported variant has passed the required local compiler, accuracy,
+MPK, and DevKit checks, PR checks pass, and reviewers accept its licensing,
+ownership, test plan, and remaining maturity gaps. Merge does not automatically
+mean production approval. Trusted staging verifies the committed revision and
+promotion remains a separate protected stage.
 
 If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only

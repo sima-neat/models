@@ -226,12 +226,12 @@ model-registry validate-catalog --repository .
 `ready`. Inspect the matrix JSON and confirm that it contains every intended
 supported variant and no unintended model.
 
-When the exact pinned Model Compiler environment and a compatible Modalix
-DevKit are available, continue through local compilation, MPK verification, and
-the declared performance test in
-[Local development and testing](local-development.md). If either environment is
-unavailable, stop at the last completed stage and state exactly which compiler
-or DevKit checks were not run in the pull request.
+Continue through local compilation, applicable accuracy evaluation, MPK
+verification, and the declared performance test in
+[Local development and testing](local-development.md) using the exact pinned
+Model Compiler environment and a compatible Modalix DevKit. Completing this
+qualification for every submitted supported variant is required before opening
+the pull request.
 
 ## 9. Submit the change
 

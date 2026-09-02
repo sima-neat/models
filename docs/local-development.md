@@ -8,8 +8,8 @@ Commands assume the repository root as the current directory.
 Schema, catalog, dependency, and matrix checks run on an ordinary development
 machine with the contributor tool installed. Compilation requires the exact
 pinned Model Compiler environment. Performance measurement requires a
-compatible Modalix DevKit. Treat those as distinct environments and state in
-the pull request when one was unavailable.
+compatible Modalix DevKit. Treat those as distinct required environments and
+complete the entire loop before submitting a model pull request.
 
 ## Local-first qualification loop
 
@@ -145,7 +145,7 @@ public compile command. Use the model recipe directly:
 compile.py --model <verified-source> --output-dir <new-directory> --variant <variant-id>
 ```
 
-When the pinned environment is available:
+In the pinned Model Compiler environment:
 
 1. Resolve the compiler version and choose a supported variant from the matrix.
 2. Activate that exact locally installed Model Compiler environment using its
@@ -199,8 +199,8 @@ When the pinned environment is available:
 
 Use a location outside the repository or an ignored build directory. Never
 commit the MPK or compiler intermediates. If the pinned compiler environment is
-not available, stop after validation rather than claiming a successful
-local compile.
+not installed, obtain access to it before continuing; validation alone is not
+sufficient for model submission.
 
 ## Measure declared accuracy locally
 
@@ -299,8 +299,8 @@ Before leaving the local workflow, confirm:
 
 Summarize the result of each stage in the pull request. A compact record such
 as `validate: pass`, `compile modalix_int8: pass`, `accuracy: not applicable`,
-and `DevKit benchmark: not run — no compatible DevKit` is clearer than a broad
-claim that local testing passed.
+and `DevKit benchmark: pass` is clearer than a broad claim that local testing
+passed.
 
 When this checklist passes, continue to
 [Contributing with Git and GitHub](contributing.md) for commit, push, pull

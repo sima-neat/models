@@ -3,24 +3,28 @@ import ContributionPath from '@site/src/components/ContributionPath';
 # Contribute a model
 
 Take a model from a pinned source to a review-ready contribution: describe it
-in `model.yaml`, validate its immutable inputs, compile and test it where the
-required hardware is available, and submit only the source-controlled contract
-through Git. Pull-request checks validate that contract without executing
-contributor code on SiMa infrastructure. Trusted automation compiles,
-publishes, and benchmarks the model after merge.
+in `model.yaml`, validate its immutable inputs, compile it with the pinned Model
+Compiler, test it on a compatible Modalix DevKit, and submit only the
+source-controlled contract through Git. Model developers are responsible for
+completing local qualification before submission. Pull-request checks validate
+the committed contract without executing contributor code on SiMa
+infrastructure. Trusted automation compiles, publishes, and benchmarks the
+model after merge.
 
 ## Understand the three execution boundaries
 
 | Phase | What runs | What it proves |
 | --- | --- | --- |
-| Local development | Schema and catalog validation, verified downloads, matrix inspection, model-owned compilation, declared accuracy evaluation, MPK validation, and DevKit benchmarking when those environments are available. | The author has reproducible evidence for the declared model and tested variants. |
+| Local development | Schema and catalog validation, verified downloads, matrix inspection, model-owned compilation, applicable declared accuracy evaluation, MPK validation, and DevKit benchmarking. | The author has reproducible evidence for every submitted supported variant. |
 | Pull request | Catalog and taxonomy validation, compiler dependency resolution, changed-model discovery, and deterministic matrix construction on GitHub-hosted infrastructure. | The committed contract is safe to review and selects the intended work. Pull requests do **not** run recipe or surgery code on Vulcan runners. |
 | Trusted automation | On a trusted push, runner admission, compilation, optional dataset-backed accuracy, MPK verification, staging publication, and a dispatched Modalix benchmark. | Staging artifacts, device evidence, and provenance were produced from the trusted revision. Production remains an explicit protected maintainer action. |
 
-Local compiler or DevKit access may be unavailable. In that case, run every
-check your environment supports and list the omitted commands and limitation in
-the pull request. The trusted workflow is not a substitute for claiming local
-evidence that was never produced.
+The pinned Model Compiler and a compatible Modalix DevKit are submission
+prerequisites, not optional CI substitutes. Do not open a model pull request
+until every submitted supported variant has compiled successfully, produced one
+valid MPK, completed each applicable accuracy evaluation, and benchmarked that
+exact MPK on the DevKit. Trusted automation verifies the committed revision; it
+does not replace the developer's local qualification responsibility.
 
 ## Workflow
 
@@ -30,11 +34,10 @@ in the infographic to open its detailed guide.
 
 <ContributionPath />
 
-By the time you open the pull request, the model contract is complete and every
-available local check has run. Each locally tested variant should produce one
-valid MPK, and that exact MPK should have a machine-readable benchmark result.
-If an environment was unavailable, record the missing check instead of
-implying that it passed.
+By the time you open the pull request, the model contract is complete, every
+submitted supported variant produces one valid MPK, each applicable accuracy
+evaluation completes successfully, and that exact MPK has a successful
+machine-readable DevKit benchmark result.
 
 ## Before you begin
 
