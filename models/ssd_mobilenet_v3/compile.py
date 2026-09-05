@@ -635,8 +635,6 @@ def main() -> int:
                 str(output_dir),
                 "--build-profile",
                 args.build_profile,
-                "--component",
-                args.component,
                 "--validation-only",
             ],
         )

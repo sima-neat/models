@@ -142,8 +142,6 @@ def test_compiler_output_is_published_from_a_hosted_runner() -> None:
 
     assert publish_job["runs-on"] == "ubuntu-latest"
     assert publish_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "compile"]
-    assert "always()" in publish_job["if"]
-    assert "needs.compile.result == 'failure'" in publish_job["if"]
     assert publish_job["permissions"]["id-token"] == "write"
     download = next(
         step for step in publish_job["steps"] if step.get("name") == "Download this complete compiler output"

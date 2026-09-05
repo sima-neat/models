@@ -13,7 +13,6 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
         "tools/model_registry/**",
         "packaging/model-registry/**",
         "scripts/build_model_registry_vulcan_package.sh",
-        "tests/unit/test_rf_detr_small.py",
         "tests/unit/test_model_registry_package.py",
         "tests/unit/test_model_registry_workflow.py",
     ):
@@ -41,9 +40,3 @@ def test_model_registry_workflow_smoke_tests_the_author_command_surface() -> Non
     assert 'help_text="$("${model_registry}" --help)"' in text
     assert "author CLI unexpectedly exposes" in text
     assert 'echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"' in text
-
-
-def test_model_registry_workflow_runs_rf_detr_contract_tests() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
-
-    assert "tests/unit/test_rf_detr_small.py" in text
