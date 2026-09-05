@@ -183,9 +183,9 @@ A grouped recipe with `engine: model_recipe` correctness writes one
 `schemas/numerical-fidelity-v1.schema.json` and records numerical agreement for
 the full composed pipeline. Its correctness configuration names that owner with
 `result_component` and declares the output metrics. CI validates the report
-against that configuration before publishing any component;
-the recipe owns the comparison and fails when its declared thresholds are not
-met.
+against that configuration before publishing any component. Numerical metrics
+are diagnostic and do not gate compilation or publication. Execution failures,
+invalid reports, and incomplete component sets still fail validation.
 
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).

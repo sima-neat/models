@@ -13,7 +13,6 @@
     "status",
     "dataset",
     "selection",
-    "thresholds",
     "samples",
     "metrics"
   ],
@@ -23,7 +22,9 @@
     "build_profile_id": {"$ref": "#/$defs/id"},
     "component_id": {"$ref": "#/$defs/id"},
     "scope": {"enum": ["component", "full_pipeline"]},
-    "status": {"enum": ["provisional", "ready"]},
+    "status": {"enum": ["diagnostic", "provisional", "ready"]},
+    "reference": {"type": "string", "minLength": 1},
+    "candidate": {"type": "string", "minLength": 1},
     "dataset": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "variant", "sha256"],
@@ -41,14 +42,6 @@
         "seed": {"type": "integer", "minimum": 0},
         "offset": {"type": "integer", "minimum": 0},
         "samples": {"type": "integer", "minimum": 1}
-      }
-    },
-    "thresholds": {
-      "type": "object", "additionalProperties": false,
-      "required": ["minimum_cosine_similarity", "maximum_normalized_rmse"],
-      "properties": {
-        "minimum_cosine_similarity": {"type": "number", "minimum": -1, "maximum": 1},
-        "maximum_normalized_rmse": {"type": "number", "minimum": 0}
       }
     },
     "samples": {"type": "integer", "minimum": 1},

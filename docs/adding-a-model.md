@@ -168,8 +168,12 @@ component; CI resolves that verified input once for the shared recipe.
 For model-owned numerical comparison, declare a package-scoped correctness
 test with `engine: model_recipe`, write `fidelity.json` next to its owning MPK,
 name that component with `result_component`, and reference the report from the
-grouped output manifest. The recipe enforces the declared thresholds before CI
-publishes the complete component set.
+grouped output manifest. Numerical fidelity is diagnostic, not task accuracy;
+CI checks report integrity and dataset identity, not similarity thresholds.
+
+Each model build is independent. A failed compile invocation must not prevent
+other invocations from publishing or benchmarking. Within a grouped invocation,
+every declared MPK must be present and verified before any component publishes.
 
 A component binding proven incompatible may be retained as
 `status: unsupported` with a reason. Do not use unsupported for untested work.

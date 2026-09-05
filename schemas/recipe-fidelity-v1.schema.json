@@ -11,13 +11,12 @@
     "result_component",
     "dataset",
     "selection",
-    "outputs",
-    "thresholds"
+    "outputs"
   ],
   "properties": {
     "schema_version": {"const": 1},
     "engine": {"const": "model_recipe"},
-    "status": {"enum": ["provisional", "ready"]},
+    "status": {"enum": ["diagnostic", "provisional", "ready"]},
     "result_component": {"$ref": "#/$defs/id"},
     "dataset": {
       "type": "object",
@@ -46,15 +45,6 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1}
-    },
-    "thresholds": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["minimum_cosine_similarity", "maximum_normalized_rmse"],
-      "properties": {
-        "minimum_cosine_similarity": {"type": "number", "minimum": -1, "maximum": 1},
-        "maximum_normalized_rmse": {"type": "number", "minimum": 0}
-      }
     }
   },
   "$defs": {

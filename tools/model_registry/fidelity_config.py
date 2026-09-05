@@ -45,7 +45,6 @@ def validate_recipe_fidelity_result(
             for key in ("id", "variant", "sha256")
         },
         "selection": config["selection"],
-        "thresholds": config["thresholds"],
         "samples": config["selection"]["samples"],
     }
     for field, value in expected.items():
@@ -55,18 +54,6 @@ def validate_recipe_fidelity_result(
     metrics = {metric["name"]: metric for metric in report["metrics"]}
     if set(metrics) != set(config["outputs"]):
         raise ValidationError(f"{report_path}: numerical fidelity metrics do not match configured outputs")
-    minimum_cosine = config["thresholds"]["minimum_cosine_similarity"]
-    maximum_nrmse = config["thresholds"]["maximum_normalized_rmse"]
-    failures = [
-        name
-        for name, metric in metrics.items()
-        if metric["cosine_similarity"] < minimum_cosine
-        or metric["normalized_rmse"] > maximum_nrmse
-    ]
-    if failures:
-        raise ValidationError(
-            f"{report_path}: numerical fidelity thresholds failed for: {', '.join(sorted(failures))}"
-        )
 
 
 def find_recipe_fidelity_config(

@@ -24,7 +24,6 @@ def _report(config: dict) -> dict:
             for key in ("id", "variant", "sha256")
         },
         "selection": config["selection"],
-        "thresholds": config["thresholds"],
         "samples": config["selection"]["samples"],
         "metrics": [
             {
@@ -43,10 +42,20 @@ def test_fidelity_result_matches_its_declared_contract() -> None:
     validate_recipe_fidelity_result(config, _report(config), "fidelity.json")
 
 
-def test_fidelity_result_rejects_failed_thresholds() -> None:
+def test_diagnostic_fidelity_accepts_low_similarity() -> None:
     config = load_recipe_fidelity_config(CONFIG_PATH, SCHEMA_PATH)
     report = copy.deepcopy(_report(config))
     report["metrics"][0]["cosine_similarity"] = 0.1
 
-    with pytest.raises(ValidationError, match="thresholds failed"):
+    report["metrics"][0]["normalized_rmse"] = 2.0
+
+    validate_recipe_fidelity_result(config, report, "fidelity.json")
+
+
+def test_fidelity_result_still_requires_the_declared_samples() -> None:
+    config = load_recipe_fidelity_config(CONFIG_PATH, SCHEMA_PATH)
+    report = _report(config)
+    report["samples"] -= 1
+
+    with pytest.raises(ValidationError, match="samples does not match"):
         validate_recipe_fidelity_result(config, report, "fidelity.json")

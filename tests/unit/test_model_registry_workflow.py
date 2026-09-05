@@ -13,8 +13,10 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
         "tools/model_registry/**",
         "packaging/model-registry/**",
         "scripts/build_model_registry_vulcan_package.sh",
-        "tests/unit/test_model_registry_package.py",
-        "tests/unit/test_model_registry_workflow.py",
+        "tests/unit/**",
+        "models/**",
+        "schemas/**",
+        "taxonomies/**",
     ):
         assert f'      - "{path}"' in text
     assert "scripts/build_model_registry_vulcan_package.sh" in text
@@ -32,6 +34,16 @@ def test_model_registry_pushes_default_to_staging() -> None:
 
     assert "inputs.environment || 'staging'" in text
     assert "vars.VULCAN_ENV" not in text
+
+
+def test_ci_runs_grouped_build_and_recipe_regressions() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for name in (
+        "rf_detr_small", "ssd_mobilenet_v3", "compile_workflow", "catalog",
+        "artifact", "registry", "fidelity_config", "artifact_browser",
+        "benchmark_manifest", "benchmark_publication", "benchmark_workflow",
+    ):
+        assert f"tests/unit/test_{name}.py" in text
 
 
 def test_model_registry_workflow_smoke_tests_the_author_command_surface() -> None:

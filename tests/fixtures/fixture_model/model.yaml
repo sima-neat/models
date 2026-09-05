@@ -2,7 +2,7 @@ schema_version: 2
 id: fixture_model
 display_name: Fixture Model
 description: Minimal valid schema fixture.
-taxonomy_version: 3
+taxonomy_version: 1
 model_type: vision
 tasks:
 - image_classification

@@ -39,7 +39,10 @@ calibrates the BF16 transformer, and writes:
 ```
 
 The fidelity report compares the quantized AFE backbone, CPU bridge, and
-quantized AFE transformer with the original exported ONNX model. Each MPK is
+quantized AFE transformer with the original exported ONNX model. These metrics
+are diagnostic, not detection accuracy: query reordering can reduce numerical
+similarity even for equivalent detections. They do not gate publication.
+Each MPK is
 benchmarked separately; the CI benchmark job runs them sequentially on one
 Modalix board and publishes each result.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import io
 import sys
@@ -43,6 +44,18 @@ def test_preprocessing_produces_normalized_nchw_image() -> None:
         :, 0, 0
     ]
     np.testing.assert_allclose(result[:, 0, 0], expected)
+
+
+def test_surgery_import_does_not_require_onnxruntime(monkeypatch) -> None:
+    original_import = builtins.__import__
+
+    def without_runtime(name, *args, **kwargs):
+        if name == "onnxruntime":
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_runtime)
+    assert callable(load_module("surgery").prepare_model)
 
 
 def test_image_selection_is_seeded_and_disjoint(tmp_path: Path) -> None:

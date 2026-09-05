@@ -645,9 +645,12 @@ jobs:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
     if: >-
+      !cancelled() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.count != '0' &&
-      needs.compile.result == 'success'
+      needs.resolve-vulcan-config.result == 'success' &&
+      needs.authorize-runner-classes.result == 'success' &&
+      (needs.compile.result == 'success' || needs.compile.result == 'failure')
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -676,6 +679,7 @@ jobs:
         run: python -m pip install .
 
       - name: Download this complete compiler output
+        # A missing output fails only this invocation's publisher.
         uses: actions/download-artifact@v7
         with:
           name: compiler-output-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-${{ matrix.compile_invocation_id }}

@@ -524,7 +524,13 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert "fidelityPanel(tests, run.id)" in script
     assert 'data-download="numerical-fidelity"' in script
     assert 'class="fidelity-summary"' in script
-    assert "Mean absolute error" in script
+    panel = script.split("function fidelityPanel(", 1)[1].split("function licensePanel(", 1)[0]
+    assert "Mean absolute error" not in panel
+    assert "Maximum absolute error" not in panel
+    assert "Output similarity, not task accuracy" in panel
+    assert 'keyValue("Reference", report.reference)' in panel
+    assert 'keyValue("Candidate", report.candidate)' in panel
+    assert "report.dataset?.id" in panel
     assert ".fidelity-output" in styles
     assert '"name": "numerical-fidelity"' in preview
 

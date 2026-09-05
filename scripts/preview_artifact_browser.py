@@ -290,6 +290,10 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                         "build_profile_id": "modalix_bf16",
                         "component_id": PREVIEW_RUNS[index][1],
                         "scope": "full_pipeline",
+                        "status": "diagnostic",
+                        "reference": "Original ONNX (ONNX Runtime)",
+                        "candidate": "Quantized AFE network (JAX execute)",
+                        "dataset": {"id": "imagenet-2012", "variant": "mini"},
                         "samples": 8,
                         "metrics": [{
                             "name": "logits",

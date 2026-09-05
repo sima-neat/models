@@ -45,6 +45,30 @@ architectures:
     display_name: ResNet-50
     paradigm: cnn
     allowed_model_types: [vision]
+  rf_detr:
+    display_name: RF-DETR
+    paradigm: encoder_transformer
+    allowed_model_types: [vision]
+  ssd_mobilenet_v1:
+    display_name: SSD-MobileNet V1
+    paradigm: cnn
+    allowed_model_types: [vision]
+  ssd_mobilenet_v2:
+    display_name: SSD-MobileNet V2
+    paradigm: cnn
+    allowed_model_types: [vision]
+  ssdlite_mobilenet_v3_large:
+    display_name: SSDLite-MobileNet V3 Large
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo_26:
+    display_name: YOLO26
+    paradigm: cnn
+    allowed_model_types: [vision]
+  depthart:
+    display_name: DepthART
+    paradigm: encoder_transformer
+    allowed_model_types: [vision]
   gemma_3:
     display_name: Gemma 3
     paradigm: decoder_transformer

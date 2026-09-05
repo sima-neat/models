@@ -3,10 +3,54 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Compile.yml"
+
+
+@pytest.mark.parametrize(
+    ("compile_result", "event", "cancelled", "authorized", "expected"),
+    [
+        ("success", "push", False, True, True),
+        ("failure", "push", False, True, True),
+        ("failure", "workflow_dispatch", False, True, True),
+        ("failure", "pull_request", False, True, False),
+        ("failure", "push", True, True, False),
+        ("failure", "push", False, False, False),
+        ("cancelled", "push", False, True, False),
+        ("skipped", "push", False, True, False),
+    ],
+)
+def test_publication_is_independent_of_other_compile_failures(
+    compile_result, event, cancelled, authorized, expected,
+) -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    publisher = workflow["jobs"]["publish-compilations"]
+    condition = publisher["if"]
+    replacements = {
+        "!cancelled()": not cancelled,
+        "github.event_name": event,
+        "needs.select.outputs.count": "2",
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.authorize-runner-classes.result": "success" if authorized else "failure",
+        "needs.compile.result": compile_result,
+    }
+    for name, value in replacements.items():
+        condition = condition.replace(name, repr(value))
+    condition = condition.replace("&&", "and").replace("||", "or")
+    assert eval(condition, {"__builtins__": {}}, {}) is expected
+    assert publisher["strategy"]["fail-fast"] == "false"
+    download = next(step for step in publisher["steps"] if step.get("uses", "").startswith("actions/download-artifact"))
+    assert download["with"]["name"] == (
+        "compiler-output-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-${{ matrix.compile_invocation_id }}"
+    )
+    assert "continue-on-error" not in download
+    verify = next(step for step in publisher["steps"] if step["name"] == "Verify the complete component set")
+    publish = next(step for step in publisher["steps"] if step["name"] == "Publish the complete component set")
+    assert publisher["steps"].index(download) < publisher["steps"].index(verify) < publisher["steps"].index(publish)
+    assert "validate-compile-outputs" in verify["run"]
 
 
 def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:

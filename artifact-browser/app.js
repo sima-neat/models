@@ -948,14 +948,14 @@ function fidelityPanel(tests, runId) {
     <dl>
       ${keyValue("Cosine similarity", Number(metric.cosine_similarity).toFixed(6))}
       ${keyValue("Normalized RMSE", Number(metric.normalized_rmse).toExponential(3))}
-      ${keyValue("Mean absolute error", Number(metric.mean_absolute_error).toExponential(3))}
-      ${keyValue("Maximum absolute error", Number(metric.max_absolute_error).toExponential(3))}
     </dl>
   </div>`).join("");
   const scope = report.scope === "full_pipeline" ? "Full pipeline" : "Component";
   return `<section class="fidelity-section">
     <div class="detail-section-title"><h3>Numerical fidelity</h3><button class="text-button" type="button" data-download="numerical-fidelity" data-run-id="${escapeHtml(runId)}">Download JSON</button></div>
-    <p class="fidelity-scope"><strong>${escapeHtml(scope)}</strong> · ${escapeHtml(report.status)} · ${Number(report.samples).toLocaleString()} samples</p>
+    <p class="fidelity-scope"><strong>${escapeHtml(scope)}</strong> · ${escapeHtml(report.status)} · ${Number(report.samples).toLocaleString()} samples · ${escapeHtml(report.dataset?.id || "Dataset unavailable")} ${escapeHtml(report.dataset?.variant || "")}</p>
+    <p>Output similarity, not task accuracy. Output reordering can affect these metrics.</p>
+    <dl>${keyValue("Reference", report.reference)}${keyValue("Candidate", report.candidate)}</dl>
     <div class="fidelity-summary">${metrics}</div>
   </section>`;
 }

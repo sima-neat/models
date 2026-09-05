@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import onnx
-import onnxruntime as ort
 
 INPUT = "input"
 FEATURES = "backbone_features"
@@ -143,6 +142,7 @@ def validate_float_split(
     transformer: Path,
     image: np.ndarray,
 ) -> None:
+    import onnxruntime as ort
     from calibration import stable_topk_gather
 
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])

@@ -2,7 +2,7 @@ schema_version: 2
 id: invalid_model
 display_name: Invalid Model
 description: Invalid fixture with a mutable, unchecked component source.
-taxonomy_version: 2
+taxonomy_version: 1
 model_type: vision
 tasks: [image_classification]
 modalities: {inputs: [image], outputs: [class_scores]}

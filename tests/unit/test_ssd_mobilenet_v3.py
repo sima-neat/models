@@ -58,6 +58,31 @@ def load_qat_module(name: str) -> ModuleType:
     return module
 
 
+def test_validation_restart_preserves_component(tmp_path: Path, monkeypatch) -> None:
+    recipe = load_module("compile")
+    source = tmp_path / "source.onnx"
+    source.touch()
+    profile = "modalix_int8_tess_mla"
+    monkeypatch.setattr(sys, "argv", [
+        "compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"),
+        "--build-profile", profile, "--component", "model",
+    ])
+    monkeypatch.setattr(recipe, "compile_model", lambda *args: None)
+    captured = []
+
+    def capture_restart(executable, argv):
+        captured.extend(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(recipe.os, "execv", capture_restart)
+    with pytest.raises(SystemExit) as stopped:
+        recipe.main()
+    assert stopped.value.code == 0
+    assert captured[captured.index("--component") + 1] == "model"
+    assert captured[captured.index("--build-profile") + 1] == profile
+    assert "--validation-only" in captured
+
+
 def synthetic_source(path: Path, contract: ModuleType, *, qat: bool) -> Path:
     nodes: list[onnx.NodeProto] = []
     initializers: list[onnx.TensorProto] = []

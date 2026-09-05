@@ -1,6 +1,6 @@
 # Model categorization taxonomy
 
-`taxonomies/model-taxonomy-v3.yaml` is the current canonical source of searchable model
+`taxonomies/model-taxonomy-v1.yaml` is the canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
 references; the Model Registry semantic validator resolves those references
@@ -10,7 +10,7 @@ Do not copy sanctioned lists into model definitions, browser code, API code, or
 database migrations. Individual schema-version 2 models declare references:
 
 ```yaml
-taxonomy_version: 3
+taxonomy_version: 1
 model_type: vision
 tasks: [image_classification]
 modalities:
@@ -32,7 +32,12 @@ The facets are intentionally independent:
 
 ## Versioning and rollout
 
-The taxonomy is immutable once its version is published. Every additive or
+The initial release uses one consolidated taxonomy, version 1. Pre-release
+versions 2 and 3 are folded into this baseline. Existing staging taxonomy and
+dependent records need a coordinated reset before publishing this baseline;
+changing repository files does not overwrite immutable registry records.
+
+After the initial release, the taxonomy is immutable. Every additive or
 corrective change requires a new taxonomy version, including display-label
 corrections, so historical records remain deterministic. Adding sanctioned IDs
 therefore evolves taxonomy data without requiring another model-schema or
@@ -40,9 +45,7 @@ database-schema redesign.
 
 Model schema v2 and all authoritative category facets are mandatory. Catalog
 validation rejects a missing field, an unknown sanctioned ID, or an incompatible
-model type before any compilation job can be scheduled. Taxonomy v1 remains in
-the repository as immutable publication history; taxonomy v2 adds the SSD and
-YOLO architecture families needed by the fully categorized catalog.
+model type before any compilation job can be scheduled.
 
 Registry publication uploads the immutable taxonomy before a categorized run
 and records canonical category IDs with that run. Existing records are not
