@@ -645,9 +645,10 @@ jobs:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
     if: >-
+      always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.count != '0' &&
-      needs.compile.result == 'success'
+      (needs.compile.result == 'success' || needs.compile.result == 'failure')
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:

@@ -380,7 +380,7 @@ request, and submission guidance.
 | Failure | What to check |
 | --- | --- |
 | `id must match directory name` | Rename the directory or correct `id`; both must use the same snake-case value. |
-| Unknown or incompatible taxonomy ID | Select a sanctioned v3 ID or propose a separately reviewed taxonomy version. |
+| Unknown or incompatible taxonomy ID | Select a sanctioned v4 ID or propose a separately reviewed taxonomy version. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
 | Source host or URL rejected | Use a full-commit Hugging Face resource, an approved GitHub release asset, or another approved checksum-verified upstream host. |
 | Referenced file does not exist | Keep recipe, surgery, and test paths relative to and inside the model directory. |

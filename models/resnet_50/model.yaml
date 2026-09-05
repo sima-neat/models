@@ -2,7 +2,7 @@ schema_version: 2
 id: resnet_50
 display_name: ResNet-50
 description: ImageNet-1k image classification using the ONNX Community conversion of microsoft/resnet-50.
-taxonomy_version: 3
+taxonomy_version: 4
 model_type: vision
 tasks:
 - image_classification

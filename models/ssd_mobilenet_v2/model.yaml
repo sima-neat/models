@@ -2,7 +2,7 @@ schema_version: 2
 id: ssd_mobilenet_v2
 display_name: SSD-MobileNet V2 300x300
 description: COCO SSD-MobileNet V2 raw box and class predictor heads for Neat-owned decode and NMS.
-taxonomy_version: 3
+taxonomy_version: 4
 model_type: vision
 tasks:
 - object_detection

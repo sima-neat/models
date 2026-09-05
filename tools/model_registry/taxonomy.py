@@ -11,7 +11,7 @@ import yaml
 
 from .errors import ValidationError
 
-TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v3.yaml")
+TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v4.yaml")
 TAXONOMY_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
@@ -85,7 +85,7 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
         if unknown:
             details.append(f"unknown fields: {', '.join(unknown)}")
         raise ValidationError(f"{taxonomy_path}: taxonomy {'; '.join(details)}")
-    if taxonomy["version"] != 3:
+    if taxonomy["version"] != 4:
         raise ValidationError(f"{taxonomy_path}: unsupported taxonomy version {taxonomy['version']!r}")
 
     model_types = _mapping(taxonomy["model_types"], "model_types")

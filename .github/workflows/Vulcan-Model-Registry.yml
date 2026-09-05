@@ -9,6 +9,7 @@ on:
       - "packaging/model-registry/**"
       - "scripts/build_model_registry_vulcan_package.sh"
       - "tests/unit/test_cli.py"
+      - "tests/unit/test_rf_detr_small.py"
       - "tests/unit/test_model_registry_package.py"
       - "tests/unit/test_model_registry_workflow.py"
       - "tools/model_registry/**"
@@ -21,6 +22,7 @@ on:
       - "packaging/model-registry/**"
       - "scripts/build_model_registry_vulcan_package.sh"
       - "tests/unit/test_cli.py"
+      - "tests/unit/test_rf_detr_small.py"
       - "tests/unit/test_model_registry_package.py"
       - "tests/unit/test_model_registry_workflow.py"
       - "tools/model_registry/**"
@@ -85,6 +87,7 @@ jobs:
         run: |
           python -m pytest \
             tests/unit/test_cli.py \
+            tests/unit/test_rf_detr_small.py \
             tests/unit/test_model_registry_package.py \
             tests/unit/test_model_registry_workflow.py
 
