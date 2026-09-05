@@ -13,7 +13,7 @@ from model_registry.taxonomy import load_taxonomy, validate_model_categorization
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v4.yaml"
 
 
 def _two_component_model() -> dict:

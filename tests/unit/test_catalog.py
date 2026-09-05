@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v1.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v4.yaml"
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -62,7 +62,7 @@ def catalog_repository(tmp_path: Path) -> Path:
         PERFORMANCE_SCHEMA.read_text(encoding="utf-8"), encoding="utf-8"
     )
     (tmp_path / "taxonomies").mkdir()
-    (tmp_path / "taxonomies" / "model-taxonomy-v1.yaml").write_text(
+    (tmp_path / "taxonomies" / "model-taxonomy-v4.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
     )
     _write_model(tmp_path, "alpha")

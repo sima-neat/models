@@ -275,7 +275,7 @@ def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -
             }
             for component_id in components
         ],
-        "taxonomy": {"version": 1, "sha256": "a" * 64},
+        "taxonomy": {"version": 4, "sha256": "a" * 64},
     }
     monkeypatch.setattr("model_registry.registry.publish_compilations", lambda **_: publication)
     args = argparse.Namespace(

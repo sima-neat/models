@@ -1,6 +1,6 @@
 # Model categorization taxonomy
 
-`taxonomies/model-taxonomy-v1.yaml` is the canonical source of searchable model
+`taxonomies/model-taxonomy-v4.yaml` is the canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
 references; the Model Registry semantic validator resolves those references
@@ -10,7 +10,7 @@ Do not copy sanctioned lists into model definitions, browser code, API code, or
 database migrations. Individual schema-version 2 models declare references:
 
 ```yaml
-taxonomy_version: 1
+taxonomy_version: 4
 model_type: vision
 tasks: [image_classification]
 modalities:
@@ -32,12 +32,11 @@ The facets are intentionally independent:
 
 ## Versioning and rollout
 
-The initial release uses one consolidated taxonomy, version 1. Pre-release
-versions 2 and 3 are folded into this baseline. Existing staging taxonomy and
-dependent records need a coordinated reset before publishing this baseline;
-changing repository files does not overwrite immutable registry records.
+Version 4 combines the existing categories, including DepthART, with RF-DETR.
+Earlier published versions remain unchanged in the Registry; no staging reset
+is needed.
 
-After the initial release, the taxonomy is immutable. Every additive or
+The taxonomy is immutable once published. Every additive or
 corrective change requires a new taxonomy version, including display-label
 corrections, so historical records remain deterministic. Adding sanctioned IDs
 therefore evolves taxonomy data without requiring another model-schema or
