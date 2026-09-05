@@ -53,6 +53,11 @@ on:
         default: "500"
         type: choice
         options: ["500", "5000"]
+      force_rebuild_all:
+        description: Recompile every model regardless of semantic fingerprints
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -77,6 +82,12 @@ jobs:
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       publishable: ${{ steps.matrix.outputs.publishable }}
       base_branch: ${{ steps.base.outputs.base_branch }}
+      validation_count: ${{ steps.matrix.outputs.validation_count }}
+      validation_matrix: ${{ steps.matrix.outputs.validation_matrix }}
+      benchmark_count: ${{ steps.matrix.outputs.benchmark_count }}
+      benchmark_matrix: ${{ steps.matrix.outputs.benchmark_matrix }}
+      metadata_changed: ${{ steps.matrix.outputs.metadata_changed }}
+      taxonomy_changed: ${{ steps.matrix.outputs.taxonomy_changed }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v6
@@ -168,6 +179,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           COMPARISON_BASE: ${{ steps.base.outputs.comparison_base }}
           COMPILER_VERSION: ${{ steps.compiler.outputs.version }}
+          FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -179,7 +191,10 @@ jobs:
             if [[ -n "${REQUESTED_COMPONENTS:-}" ]]; then
               component_args=(--components "$REQUESTED_COMPONENTS")
             fi
-            if [[ -n "${REQUESTED_MODELS:-}" ]]; then
+            if [[ "${FORCE_REBUILD_ALL:-false}" == "true" ]]; then
+              matrix="$(model-registry matrix --repository . --all \
+                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
+            elif [[ -n "${REQUESTED_MODELS:-}" ]]; then
               matrix="$(model-registry matrix --repository . --models "$REQUESTED_MODELS" \
                 --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
             else
@@ -192,6 +207,12 @@ jobs:
               --compiler-version "$COMPILER_VERSION")"
           fi
           count="$(python -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))' <<< "$matrix")"
+          validation_matrix="$(jq -c '{include: [(.validation_include // [])[] | select(.compile_changed == false)]}' <<< "$matrix")"
+          benchmark_matrix="$(jq -c '{include: [(.benchmark_include // [])[] | select(.compile_changed == false)]}' <<< "$matrix")"
+          validation_count="$(jq -r '.include | length' <<< "$validation_matrix")"
+          benchmark_count="$(jq -r '.include | length' <<< "$benchmark_matrix")"
+          metadata_changed="$(jq -r '.metadata_changed // false' <<< "$matrix")"
+          taxonomy_changed="$(jq -r '.taxonomy_changed // false' <<< "$matrix")"
           publishable=true
           if [[ -n "${REQUESTED_PROFILES:-}" || -n "${REQUESTED_COMPONENTS:-}" ]]; then
             publishable=false
@@ -201,8 +222,15 @@ jobs:
             echo "matrix=$matrix"
             echo "count=$count"
             echo "publishable=$publishable"
+            echo "validation_count=$validation_count"
+            echo "validation_matrix=$validation_matrix"
+            echo "benchmark_count=$benchmark_count"
+            echo "benchmark_matrix=$benchmark_matrix"
+            echo "metadata_changed=$metadata_changed"
+            echo "taxonomy_changed=$taxonomy_changed"
           } >> "$GITHUB_OUTPUT"
-          echo "Selected $count component build job(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Catalog metadata changed: $metadata_changed; taxonomy changed: $taxonomy_changed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Selected $count compile invocation(s), $validation_count independent validation unit(s), and $benchmark_count independent benchmark invocation(s)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain pull-request safety boundary
         if: github.event_name == 'pull_request'
@@ -873,13 +901,15 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
-  publish-taxonomy:
-    name: Publish model taxonomy
-    needs: [select, resolve-vulcan-config]
+  publish-catalog:
+    name: Publish complete model catalog snapshot
+    needs: [select, resolve-vulcan-config, publish-compilations]
     if: >-
+      always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
-      needs.select.outputs.vulcan_environment == 'staging'
+      needs.resolve-vulcan-config.result == 'success' &&
+      (needs.select.outputs.count == '0' || needs.publish-compilations.result == 'success')
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -898,21 +928,70 @@ jobs:
       - name: Install registry tooling
         run: python -m pip install .
 
+      - name: Download newly published compilation receipts
+        if: needs.select.outputs.count != '0'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: compiled-model-*
+          path: _compiled
+          merge-multiple: true
+
       - name: Configure artifact-registry publisher credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-          role-session-name: models-taxonomy-${{ github.run_id }}-${{ github.run_attempt }}
+          role-session-name: models-catalog-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Publish canonical taxonomy
+      - name: Publish and promote the complete catalog snapshot
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
-          model-registry publish-taxonomy \
+          compiled_args=()
+          if [[ -d _compiled ]]; then
+            compiled_args=(--compiled-dir _compiled)
+          fi
+          model-registry publish-catalog \
             --repository . \
+            "${compiled_args[@]}" \
             --api-url "$REGISTRY_API_URL" \
-            --aws-region "$AWS_REGION"
+            --aws-region "$AWS_REGION" \
+            --branch "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA"
+
+  dispatch-reused-benchmarks:
+    name: Dispatch benchmarks that reuse current compile runs
+    needs: [select, publish-catalog]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.publish-catalog.result == 'success' &&
+      needs.select.outputs.vulcan_environment == 'staging' &&
+      needs.select.outputs.benchmark_count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.benchmark_matrix) }}
+    steps:
+      - name: Dispatch benchmark against durable registry MPKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_IDS: ${{ join(matrix.component_ids, ',') }}
+        run: |
+          set -euo pipefail
+          gh workflow run Vulcan-Model-Benchmarking.yml \
+            --ref "$GITHUB_REF_NAME" \
+            -f environment=staging \
+            -f source_run_id= \
+            -f source_sha="$GITHUB_SHA" \
+            -f model_id="${{ matrix.model_id }}" \
+            -f build_profile_id="${{ matrix.build_profile_id }}" \
+            -f compile_invocation_id="${{ matrix.compile_invocation_id }}" \
+            -f component_ids="$COMPONENT_IDS"
+          echo "Dispatched registry-backed benchmark for ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} ($COMPONENT_IDS)." \
+            >> "$GITHUB_STEP_SUMMARY"

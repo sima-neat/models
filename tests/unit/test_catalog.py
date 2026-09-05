@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 from model_registry.catalog import (
+    benchmark_fingerprint,
     build_matrix,
     compile_invocation_fingerprint,
     component_build_fingerprint,
@@ -14,6 +16,8 @@ from model_registry.catalog import (
     git_changed_paths,
     resolve_base_branch,
     select_model_ids,
+    semantic_change_plan,
+    validation_fingerprint,
 )
 from model_registry.errors import ValidationError
 
@@ -21,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v4.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -54,6 +58,21 @@ def _declare_grouped_invocation(model: dict) -> None:
     ]
 
 
+def _commit(repository: Path, message: str) -> str:
+    subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repository, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _initialize_repository(repository: Path) -> str:
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
+    return _commit(repository, "base")
+
+
 @pytest.fixture
 def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
@@ -61,9 +80,23 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas" / "performance-config-v1.schema.json").write_text(
         PERFORMANCE_SCHEMA.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    (tmp_path / "schemas" / "recipe-fidelity-v1.schema.json").write_text(
+        (ROOT / "schemas" / "recipe-fidelity-v1.schema.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (tmp_path / "taxonomies").mkdir()
-    (tmp_path / "taxonomies" / "model-taxonomy-v4.yaml").write_text(
+    (tmp_path / "taxonomies" / "model-taxonomy.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (tmp_path / "deps").mkdir()
+    (tmp_path / "deps" / "manifest.json").write_text(
+        (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (tmp_path / "tools" / "model_registry").mkdir(parents=True)
+    (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
+        "COMPILE_FINGERPRINT_SCHEMA = 3\n"
+        "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
+        "BENCHMARK_FINGERPRINT_SCHEMA = 1\n",
+        encoding="utf-8",
     )
     _write_model(tmp_path, "alpha")
     _write_model(tmp_path, "bravo")
@@ -116,6 +149,8 @@ def test_yolo26_training_inputs_select_only_the_tiny_drone_model(catalog_reposit
 @pytest.mark.parametrize(
     "path",
     [
+        "training/yolo26_tiny_drone/evaluate.py",
+        "training/yolo26_tiny_drone/train_qat.py",
         "training/yolo26_tiny_drone_extra/compile.py",
         "training/unrelated_model/compile.py",
     ],
@@ -352,18 +387,18 @@ def test_git_diff_reports_added_modified_and_deleted_paths(tmp_path: Path) -> No
 
 
 def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(catalog_repository: Path) -> None:
-    (catalog_repository / "deps").mkdir()
     manifest = catalog_repository / "deps" / "manifest.json"
-    manifest.write_text('{"model-compiler":"2.1.3"}\n', encoding="utf-8")
     first = _fingerprint(catalog_repository, "alpha", "2.1.3")
 
     (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
     model_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert model_changed != first
 
-    manifest.write_text('{"model-compiler":"2.1.3", "revision":2}\n', encoding="utf-8")
+    dependency = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    dependency["unrelated-publication-revision"] = 2
+    manifest.write_text(json.dumps(dependency), encoding="utf-8")
     dependency_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
-    assert dependency_changed != model_changed
+    assert dependency_changed == model_changed
     assert _fingerprint(catalog_repository, "alpha", "2.1.4") != dependency_changed
 
 
@@ -389,6 +424,41 @@ def test_compile_invocation_fingerprint_includes_every_component_binding(
     )
 
 
+def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
+    catalog_repository: Path,
+) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    _declare_grouped_invocation(model)
+    model["tests"]["correctness"] = [{
+        "id": "recipe_fidelity",
+        "config": "tests/correctness.yaml",
+        "scope": {"type": "package", "package": "default"},
+        "build_profiles": ["fixture"],
+    }]
+    tests_dir = manifest.parent / "tests"
+    tests_dir.mkdir()
+    correctness = tests_dir / "correctness.yaml"
+    correctness.write_text(
+        "schema_version: 1\nengine: model_recipe\nstatus: diagnostic\n"
+        "result_component: model\n"
+        "dataset:\n  id: fixture-data\n  variant: mini\n  sha256: " + "d" * 64 + "\n  size_bytes: 1\n"
+        "selection:\n  method: seeded_random_without_replacement\n  seed: 1\n  offset: 0\n  samples: 1\n"
+        "outputs: [output]\n",
+        encoding="utf-8",
+    )
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    first = compile_invocation_fingerprint(catalog_repository, "alpha", "combined", "fixture", "2.1.3")
+
+    correctness.write_text(
+        correctness.read_text(encoding="utf-8").replace("samples: 1", "samples: 2"),
+        encoding="utf-8",
+    )
+
+    assert compile_invocation_fingerprint(
+        catalog_repository, "alpha", "combined", "fixture", "2.1.3"
+    ) != first
+
 def test_build_fingerprint_includes_model_local_recipe_helpers(catalog_repository: Path) -> None:
     helper = catalog_repository / "models" / "alpha" / "calibration.py"
     helper.write_text("# calibration helper\n", encoding="utf-8")
@@ -405,8 +475,9 @@ def test_yolo26_build_fingerprint_includes_its_training_subtree(
     _write_model(catalog_repository, "yolo26_tiny_drone")
     training_dir = catalog_repository / "training" / "yolo26_tiny_drone"
     training_dir.mkdir(parents=True)
+    for name in ("compile.py", "contract.py", "dataset.py", "onnx_audit.py", "paths.py"):
+        (training_dir / name).write_text("# qualified helper\n", encoding="utf-8")
     helper = training_dir / "compile.py"
-    helper.write_text("# qualified helper\n", encoding="utf-8")
     first = _fingerprint(catalog_repository, "yolo26_tiny_drone", "2.1.3")
 
     helper.write_text("# changed helper\n", encoding="utf-8")
@@ -455,7 +526,7 @@ def test_build_fingerprint_ignores_model_documentation_and_non_benchmark_tests(c
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
 
 
-def test_build_fingerprint_invalidates_benchmark_configuration_changes(catalog_repository: Path) -> None:
+def test_benchmark_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "tests").mkdir()
     benchmark = model_dir / "tests" / "performance.yaml"
@@ -475,7 +546,8 @@ def test_build_fingerprint_invalidates_benchmark_configuration_changes(catalog_r
         }
     ]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    first = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
 
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
@@ -483,7 +555,33 @@ def test_build_fingerprint_invalidates_benchmark_configuration_changes(catalog_r
         encoding="utf-8",
     )
 
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") != first
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
+
+
+def test_correctness_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "tests").mkdir()
+    correctness = model_dir / "tests" / "correctness.yaml"
+    correctness.write_text("schema_version: 1\nstatus: diagnostic\n", encoding="utf-8")
+    manifest = model_dir / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["tests"]["correctness"] = [
+        {
+            "id": "fidelity",
+            "config": "tests/correctness.yaml",
+            "scope": {"type": "component", "component": "model"},
+            "build_profiles": ["fixture"],
+        }
+    ]
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+
+    correctness.write_text("schema_version: 1\nstatus: provisional\n", encoding="utf-8")
+
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != validation_before
 
 
 def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repository: Path) -> None:
@@ -520,6 +618,7 @@ def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repo
     )
 
     assert [(entry["model_id"], entry["build_profile_id"]) for entry in matrix["include"]] == [("alpha", "fixture")]
+    assert set(matrix["include"][0]["benchmark_fingerprints"]) == {"model"}
 
 
 def test_matrix_records_fingerprints_without_catalog_carry_forward(catalog_repository: Path) -> None:
@@ -533,6 +632,140 @@ def test_matrix_records_fingerprints_without_catalog_carry_forward(catalog_repos
 
     assert {entry["model_id"] for entry in matrix["include"]} == {"alpha", "bravo"}
     assert all(len(entry["build_fingerprint"]) == 64 for entry in matrix["include"])
+
+
+def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["display_name"] = "A clearer Alpha label"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    head = _commit(catalog_repository, "metadata")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert plan["include"] == []
+    assert plan["validation_include"] == []
+    assert plan["benchmark_include"] == []
+    assert plan["metadata_changed"] is True
+
+
+def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
+    head = _commit(catalog_repository, "recipe")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
+    assert plan["metadata_changed"] is False
+
+
+def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "tests").mkdir()
+    benchmark = model_dir / "tests" / "performance.yaml"
+    benchmark.write_text(
+        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
+        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        encoding="utf-8",
+    )
+    manifest = model_dir / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["tests"]["performance"] = [{
+        "id": "latency",
+        "config": "tests/performance.yaml",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+    }]
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    base = _initialize_repository(catalog_repository)
+    benchmark.write_text(
+        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
+        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 100\n",
+        encoding="utf-8",
+    )
+    head = _commit(catalog_repository, "benchmark")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert plan["include"] == []
+    assert [(item["model_id"], item["component_ids"]) for item in plan["benchmark_include"]] == [
+        ("alpha", ["model"])
+    ]
+
+
+def test_semantic_plan_selects_validation_without_compile(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    (model_dir / "tests").mkdir()
+    correctness = model_dir / "tests" / "correctness.yaml"
+    correctness.write_text("schema_version: 1\nstatus: diagnostic\n", encoding="utf-8")
+    manifest = model_dir / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["tests"]["correctness"] = [{
+        "id": "fidelity",
+        "config": "tests/correctness.yaml",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+    }]
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    base = _initialize_repository(catalog_repository)
+    correctness.write_text("schema_version: 1\nstatus: provisional\n", encoding="utf-8")
+    head = _commit(catalog_repository, "validation")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert plan["include"] == []
+    assert [(item["model_id"], item["component_id"]) for item in plan["validation_include"]] == [
+        ("alpha", "model")
+    ]
+
+
+def test_semantic_plan_reports_removed_invocation_without_rebuild(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    for path in (catalog_repository / "models" / "bravo").iterdir():
+        path.unlink()
+    (catalog_repository / "models" / "bravo").rmdir()
+    head = _commit(catalog_repository, "remove model")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert plan["include"] == []
+    assert plan["deleted_invocations"] == [{
+        "model_id": "bravo",
+        "build_profile_id": "fixture",
+        "compile_invocation_id": "model",
+    }]
+    assert plan["metadata_changed"] is True
+
+
+def test_semantic_plan_taxonomy_label_change_validates_without_rebuild(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    taxonomy_path = catalog_repository / "taxonomies" / "model-taxonomy.yaml"
+    taxonomy = yaml.safe_load(taxonomy_path.read_text(encoding="utf-8"))
+    taxonomy["tasks"]["image_classification"]["display_name"] = "Image categorization"
+    taxonomy_path.write_text(yaml.safe_dump(taxonomy, sort_keys=False), encoding="utf-8")
+    head = _commit(catalog_repository, "taxonomy label")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert plan["include"] == []
+    assert plan["taxonomy_changed"] is True
+    assert plan["metadata_changed"] is False
+
+
+def test_compile_fingerprint_schema_bump_forces_all_invocations(
+    catalog_repository: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _initialize_repository(catalog_repository)
+    marker = catalog_repository / "schema-bump.txt"
+    marker.write_text("changed\n", encoding="utf-8")
+    head = _commit(catalog_repository, "schema bump")
+    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
 
 
 def test_resolve_base_prefers_explicit_branch_and_returns_merge_base(tmp_path: Path) -> None:

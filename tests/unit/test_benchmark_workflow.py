@@ -21,7 +21,8 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
         "compile_invocation_id",
         "component_ids",
     }
-    assert all(value["required"] == "true" for value in inputs.values())
+    assert inputs["source_run_id"]["required"] == "false"
+    assert all(value["required"] == "true" for name, value in inputs.items() if name != "source_run_id")
     assert "operation" not in inputs
     assert "model-benchmark-" in workflow["concurrency"]["group"]
 
@@ -53,8 +54,14 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     publication = next(
         step for step in stage["steps"] if step.get("name") == "Register an unpublished compilation for benchmarking"
     )
-    assert publication["if"] == "steps.publication.outputs.required == 'true'"
+    assert publication["if"] == "inputs.source_run_id != '' && steps.publication.outputs.required == 'true'"
     assert "model-registry publish" in publication["run"]
+    restore = next(
+        step for step in stage["steps"]
+        if step.get("name") == "Restore the current immutable compilation from the registry"
+    )
+    assert restore["if"] == "inputs.source_run_id == ''"
+    assert "model-registry stage-registry-build" in restore["run"]
     assert '--repository _registry_source' in publication["run"]
     assert '--dist-dir _compiled' in publication["run"]
     assert '--github-run-id "$SOURCE_RUN_ID"' in publication["run"]

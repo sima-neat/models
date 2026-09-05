@@ -26,9 +26,10 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
         "make-benchmark-manifest",
         "publish",
         "publish-benchmark",
-        "publish-taxonomy",
+        "publish-catalog",
         "resolve-base",
         "resolve-benchmark-runtime",
+        "stage-registry-build",
     ],
 )
 def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -43,7 +44,7 @@ def test_repository_cli_retains_ci_only_commands() -> None:
     parser = cli._parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
 
-    assert {"publish", "publish-benchmark", "publish-taxonomy"} <= set(subcommands.choices)
+    assert {"publish", "publish-benchmark", "publish-catalog"} <= set(subcommands.choices)
     assert {"package", "fetch-previous"}.isdisjoint(subcommands.choices)
 
 

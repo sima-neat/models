@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .artifact import validate_compile_outputs
 from .catalog import build_matrix
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
+from .fetch import sha256_file
 from .model import load_and_validate_model
 from .performance_config import benchmark_settings, load_performance_config
 
@@ -41,14 +42,44 @@ def validate_benchmark_components(
     if invocation is None:
         raise ValidationError(f"unknown benchmark compile invocation: {compile_invocation_id}")
     output_root = compiled_dir / model_id / build_profile_id
-    validate_compile_outputs(
-        output_root / "compile-outputs.json",
-        output_root,
-        model_id=model_id,
-        build_profile_id=build_profile_id,
-        compile_invocation_id=compile_invocation_id,
-        component_ids=invocation["component_ids"],
-    )
+    staged_path = output_root / "registry-staged.json"
+    if staged_path.is_file():
+        staged = _load_json(staged_path, "registry staging manifest")
+        expected_fields = {"schema_version", "model_id", "build_profile_id", "compile_invocation_id", "outputs"}
+        if set(staged) != expected_fields or any(
+            staged.get(field) != expected for field, expected in {
+                "schema_version": 1,
+                "model_id": model_id,
+                "build_profile_id": build_profile_id,
+                "compile_invocation_id": compile_invocation_id,
+            }.items()
+        ):
+            raise ValidationError("registry staging manifest identity is invalid")
+        outputs = staged.get("outputs")
+        staged_components = {
+            item.get("component_id") for item in outputs if isinstance(item, dict)
+        } if isinstance(outputs, list) else set()
+        if not isinstance(outputs, list) or staged_components != set(invocation["component_ids"]):
+            raise ValidationError("registry staging manifest must cover the complete invocation")
+        for item in outputs:
+            if not isinstance(item, dict) or set(item) != {"component_id", "mpk_path", "mpk_sha256", "run_id"}:
+                raise ValidationError("registry staging output fields are invalid")
+            relative = PurePosixPath(str(item["mpk_path"]))
+            if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
+                raise ValidationError("registry staging manifest contains an unsafe MPK path")
+            archive = output_root.joinpath(*relative.parts)
+            digest, _ = sha256_file(archive)
+            if digest != item["mpk_sha256"]:
+                raise ValidationError(f"registry-staged MPK SHA-256 does not match: {item['component_id']}")
+    else:
+        validate_compile_outputs(
+            output_root / "compile-outputs.json",
+            output_root,
+            model_id=model_id,
+            build_profile_id=build_profile_id,
+            compile_invocation_id=compile_invocation_id,
+            component_ids=invocation["component_ids"],
+        )
     if not component_ids or component_ids != invocation["benchmark_component_ids"]:
         raise ValidationError("dispatched benchmark components do not match the declared performance tests")
 

@@ -40,8 +40,9 @@ and the GitHub review checklist.
 ## Vulcan compilation
 
 [`Vulcan-Model-Compile.yml`](.github/workflows/Vulcan-Model-Compile.yml) validates
-pull requests without granting them a self-hosted runner. Trusted pushes build
-only changed models on staging. The first build of a new branch resolves its
+pull requests without granting them a self-hosted runner. Trusted pushes compare
+semantic compile, validation, and benchmark fingerprints on staging. The first
+build of a new branch resolves its
 closest base branch and compares from the merge base, so GitHub's all-zero
 previous SHA does not force a full rebuild. A maintainer can
 run the workflow manually, choose `staging` or protected `production`, and
@@ -68,8 +69,10 @@ The workflow first resolves the repository-wide Model Compiler pin from
 item validates its complete output and uploads one GitHub Actions artifact. A
 GitHub-hosted job checks that artifact, publishes each component under an
 immutable object key, records its checksum, provenance, exact S3 object version,
-and taxonomy through the IAM-authenticated Model Registry API, then finalizes
-each component run.
+through the IAM-authenticated Model Registry API, then finalizes each component
+run. A hosted job publishes one complete catalog snapshot identified by the full
+Git SHA and a taxonomy checksum. Metadata-only changes reuse matching immutable
+compile runs; benchmark-only changes restore their MPKs from the registry.
 
 Model discovery and checksum-verified downloads use registry database records
 and presigned artifact URLs:

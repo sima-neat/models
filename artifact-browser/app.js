@@ -344,12 +344,12 @@ function setCategoryFiltersDisabled(disabled) {
   });
 }
 
-async function loadTaxonomy() {
+async function loadTaxonomy(branch = elements["branch-filter"].value || DEFAULT_BRANCH) {
   const repo = state.repository;
   const payload = await api(
-    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/taxonomies/latest`,
+    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
   );
-  state.taxonomy = payload.taxonomy?.document || null;
+  state.taxonomy = payload.catalog?.document?.taxonomy || null;
   if (!state.taxonomy) throw new Error("The registry did not return a model taxonomy.");
   populateCategoryFilters();
   setCategoryFiltersDisabled(false);
@@ -1082,9 +1082,12 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   const requestId = ++state.runsRequestId;
   elements["load-more"].disabled = true;
   const query = new URLSearchParams({ limit: String(limit) });
-  query.set("status", "completed");
-  query.set("run_type", "model_compile");
-  if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
+  const historical = elements["history-filter"].checked || !branch;
+  if (historical) {
+    query.set("status", "completed");
+    query.set("run_type", "model_compile");
+    if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
+  }
   if (branch) query.set("git_ref", `refs/heads/${branch}`);
   if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
   Object.entries(categoryFilters()).forEach(([name, value]) => {
@@ -1093,7 +1096,29 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   if (append && state.cursor) query.set("cursor", state.cursor);
 
   try {
-    const payload = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/runs?${query}`);
+    let payload = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/${historical ? "runs" : "models"}?${query}`);
+    if (!historical) {
+      const gitRef = `refs/heads/${branch}`;
+      payload = {
+        runs: payload.models.flatMap((model) => model.builds.map((build) => ({
+          id: build.run_id,
+          run_type: "model_compile",
+          status: "completed",
+          git_ref: gitRef,
+          commit_sha: model.catalog_revision,
+          toolchain_version: build.toolchain_version || null,
+          metadata: {
+            model_id: model.model_id,
+            display_name: model.display_name,
+            build_profile_id: build.build_profile_id,
+            component_id: build.component_id,
+            compile_invocation_id: build.compile_invocation_id,
+          },
+          model_categories: model.categories,
+        }))),
+        has_more: false,
+      };
+    }
     if (requestId !== state.runsRequestId) return;
     applyCatalog(payload, { append });
   } catch (error) {
@@ -1135,7 +1160,14 @@ async function initialize() {
   }
 
   try {
-    const [taxonomyResult, branchResult] = await Promise.allSettled([loadTaxonomy(), loadBranches()]);
+    const branchResult = await Promise.resolve(loadBranches()).then(
+      () => ({ status: "fulfilled" }),
+      (reason) => ({ status: "rejected", reason }),
+    );
+    const taxonomyResult = await Promise.resolve(loadTaxonomy(elements["branch-filter"].value || DEFAULT_BRANCH)).then(
+      () => ({ status: "fulfilled" }),
+      (reason) => ({ status: "rejected", reason }),
+    );
     if (taxonomyResult.status === "rejected") {
       setCategoryFiltersDisabled(true);
       showToast(`Category filters are temporarily unavailable. ${taxonomyResult.reason.message}`, true);
@@ -1179,6 +1211,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   writeBranchPreference(state.preferredBranch);
   updateFilterDisclosure();
   try {
+    await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
     showToast(error.message, true);

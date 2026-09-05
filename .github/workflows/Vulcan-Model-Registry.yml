@@ -132,7 +132,7 @@ jobs:
           for command in validate validate-catalog fetch fetch-calibration matrix resolve-compiler verify-mpk; do
             grep -q "${command}" <<< "${help_text}"
           done
-          for command in package publish publish-benchmark publish-taxonomy; do
+          for command in package publish publish-benchmark publish-catalog; do
             if "${model_registry}" "${command}" --help >/dev/null 2>&1; then
               echo "author CLI unexpectedly exposes ${command}" >&2
               exit 1

@@ -6,15 +6,19 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from model_registry.catalog import build_matrix, component_build_fingerprint, discover_catalog
+from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.registry import (
     RegistryPublicationError,
     S3Object,
     SigV4RegistryClient,
     _component_source_media_type,
+    build_catalog_snapshot,
     canonical_sha256,
+    publish_catalog,
     publish_compilations,
-    publish_taxonomy,
+    stage_catalog_build,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,7 +70,9 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": "b" * 64,
+            "build_fingerprint": component_build_fingerprint(
+                ROOT, "resnet_50", "model", "modalix_bf16", "2.1.3"
+            ),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -213,7 +219,6 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
 
     assert result["count"] == 1
     assert [path for _, path, _, _ in calls] == [
-        "/v1/repositories/sima-neat/models/taxonomies/4",
         "/v1/runs",
         "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-component",
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
@@ -221,11 +226,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/compile/mpk-validation",
         "/v1/runs/00000000-0000-4000-8000-000000000001/finalize",
     ]
-    taxonomy = calls[0][2]
-    assert taxonomy is not None
-    assert taxonomy["taxonomy"]["tasks"]["image_classification"]["display_name"] == "Image Classification"
-    assert canonical_sha256(taxonomy["taxonomy"]) == taxonomy["canonical_sha256"]
-    create = calls[1][2]
+    create = calls[0][2]
     assert create is not None
     assert create["run_type"] == "model_compile"
     assert create["metadata"] == {
@@ -240,15 +241,8 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
             "attribution": "Derived from microsoft/resnet-50 and distributed under Apache-2.0.",
         },
     }
-    assert create["model_categories"] == {
-        "taxonomy_version": 4,
-        "model_type": "vision",
-        "tasks": ["image_classification"],
-        "modalities": {"inputs": ["image"], "outputs": ["class_scores"]},
-        "architecture": {"id": "resnet_50", "paradigm": "cnn", "variant": "imagenet_1k"},
-        "tags": [],
-    }
-    source_input = calls[2][2]
+    assert "model_categories" not in create
+    source_input = calls[1][2]
     assert source_input is not None
     assert source_input["input_type"] == "onnx"
     assert source_input["media_type"] == "application/onnx"
@@ -259,11 +253,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         "source_type": "file",
         "model_card": "https://huggingface.co/onnx-community/resnet-50-ONNX",
     }
-    parameters = calls[3][2]["parameters"]
+    parameters = calls[2][2]["parameters"]
     assert parameters["compiler_version"] == "2.1.3"
     assert parameters["compile_invocation_id"] == "model"
     assert parameters["target"] == "modalix"
-    artifact = calls[4][2]
+    artifact = calls[3][2]
     assert artifact["s3_version_id"] == "version-1"
     assert artifact["s3_key"].startswith("models/feature%2Fmodels/aaaaaaaaaaaa/")
     assert store.objects[0][1] == artifact["s3_key"]
@@ -438,8 +432,7 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
 
     assert result["count"] == 0
     assert result["runs"] == []
-    assert result["taxonomy"]["version"] == 4
-    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/4"]
+    assert calls == []
 
 
 def test_publish_rejects_archive_not_bound_to_output_manifest(tmp_path: Path) -> None:
@@ -506,17 +499,131 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
-def test_publish_taxonomy_is_independent_of_model_compilation() -> None:
+def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
+    catalog = discover_catalog(ROOT)
+    compiler_version = resolve_model_compiler(ROOT)["version"]
+    first = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="a" * 40,
+        compiled_dir=None,
+        previous={
+            "models": [
+                {
+                    "id": model_id,
+                    "builds": [
+                        {
+                            "build_profile_id": entry["build_profile_id"],
+                            "component_id": component_id,
+                            "compile_fingerprint": entry["build_fingerprint"],
+                            "artifact_sha256": "e" * 64,
+                            "run_id": f"00000000-0000-4000-8000-{index:012d}",
+                        }
+                        for entry in build_matrix(
+                            catalog,
+                            [model_id],
+                            repository=ROOT,
+                            compiler_version=compiler_version,
+                        )["include"]
+                        for component_id in entry["component_ids"]
+                    ],
+                }
+                for index, model_id in enumerate(catalog, 1)
+            ]
+        },
+    )
+
+    assert first["catalog_revision"] == "a" * 40
+    assert len(first["taxonomy_sha256"]) == 64
+    assert "version" not in first["taxonomy"]
+    assert all("taxonomy_version" not in model["categories"] for model in first["models"])
+
+
+def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
 
-    result = publish_taxonomy(
+    previous = {"models": []}
+    monkeypatch.setattr(
+        "model_registry.registry.build_catalog_snapshot",
+        lambda **kwargs: {
+            "schema_version": 1,
+            "repository": "sima-neat/models",
+            "git_ref": "refs/heads/develop",
+            "catalog_revision": "a" * 40,
+            "taxonomy_sha256": "b" * 64,
+            "taxonomy": {},
+            "models": [],
+        },
+    )
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if method == "GET":
+            return {"catalog": {"document": previous}}
+        return {"stored": True}
+
+    result = publish_catalog(
         repository=ROOT,
         api_url="https://registry.example.invalid",
         aws_region="us-west-2",
-        request=lambda *args: calls.append(args) or {"stored": True},
+        branch="develop",
+        git_sha="a" * 40,
+        request=request,
     )
 
-    assert result["version"] == 4
     assert result["registry"] == {"stored": True}
-    assert len(calls) == 1
-    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/4")
+    assert calls[0][0] == "GET"
+    assert "catalogs/current?git_ref=refs%2Fheads%2Fdevelop" in calls[0][1]
+    assert calls[1][0:2] == ("PUT", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40)
+
+
+def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+    source_archive = next(dist.glob("resnet_50/modalix_bf16/model/*_mpk.tar.gz"))
+    payload = source_archive.read_bytes()
+    run_id = "00000000-0000-4000-8000-000000000001"
+    catalog = {
+        "catalog_revision": "a" * 40,
+        "models": [{
+            "id": "resnet_50",
+            "builds": [{
+                "build_profile_id": "modalix_bf16",
+                "compile_invocation_id": "model",
+                "component_id": "model",
+                "run_id": run_id,
+                "artifact_sha256": hashlib.sha256(payload).hexdigest(),
+            }],
+        }],
+    }
+
+    def read(url: str) -> dict:
+        if "/catalogs/current?" in url:
+            return {"catalog": {"document": catalog}}
+        if url.endswith("/artifacts/mpk"):
+            return {"artifact": {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+                "download_url": "https://download.example.invalid/mpk",
+            }}
+        if url.endswith(run_id):
+            return {"run": {"toolchain_version": "2.1.3"}}
+        raise AssertionError(url)
+
+    result = stage_catalog_build(
+        repository=ROOT,
+        output_dir=tmp_path / "staged",
+        api_url="https://registry.example.invalid",
+        branch="develop",
+        catalog_revision="a" * 40,
+        model_id="resnet_50",
+        build_profile_id="modalix_bf16",
+        compile_invocation_id="model",
+        read_request=read,
+        download_request=lambda url: payload,
+    )
+
+    assert result["count"] == 1
+    profile = tmp_path / "staged" / "resnet_50" / "modalix_bf16"
+    assert (profile / "registry-staged.json").is_file()
+    assert (profile / "model" / "registry-publication.json").is_file()
+    build_catalog_snapshot,

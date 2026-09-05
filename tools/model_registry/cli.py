@@ -10,7 +10,13 @@ from pathlib import Path
 from .accuracy import evaluate_accuracy, resolve_dataset
 from .accuracy_config import find_accuracy_config
 from .artifact import validate_compile_outputs, verify_mpk
-from .catalog import build_matrix, discover_catalog, git_changed_paths, resolve_base_branch, select_model_ids
+from .catalog import (
+    build_matrix,
+    discover_catalog,
+    resolve_base_branch,
+    select_model_ids,
+    semantic_change_plan,
+)
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ModelRegistryError
 from .fetch import Fetcher
@@ -116,6 +122,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--base")
     matrix.add_argument("--head")
     matrix.add_argument("--compiler-version")
+    matrix.add_argument("--force-rebuild-all", action="store_true")
 
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
@@ -241,13 +248,29 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_set.add_argument("--git-sha", required=True)
     benchmark_set.add_argument("--json", action="store_true", dest="json_output")
 
-    publish_taxonomy_parser = subcommands.add_parser(
-        "publish-taxonomy", help="publish the canonical model taxonomy to the Vulcan registry"
+    publish_catalog_parser = subcommands.add_parser(
+        "publish-catalog", help="publish and atomically promote a complete model catalog snapshot"
     )
-    publish_taxonomy_parser.add_argument("--repository", type=Path, default=Path.cwd())
-    publish_taxonomy_parser.add_argument("--api-url", required=True)
-    publish_taxonomy_parser.add_argument("--aws-region", default="us-west-2")
-    publish_taxonomy_parser.add_argument("--json", action="store_true", dest="json_output")
+    publish_catalog_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    publish_catalog_parser.add_argument("--compiled-dir", type=Path)
+    publish_catalog_parser.add_argument("--api-url", required=True)
+    publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
+    publish_catalog_parser.add_argument("--branch", required=True)
+    publish_catalog_parser.add_argument("--git-sha", required=True)
+    publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
+
+    stage_registry = subcommands.add_parser(
+        "stage-registry-build", help="restore a current catalog build from durable registry MPKs"
+    )
+    stage_registry.add_argument("--repository", type=Path, default=Path.cwd())
+    stage_registry.add_argument("--output-dir", type=Path, required=True)
+    stage_registry.add_argument("--api-url", required=True)
+    stage_registry.add_argument("--branch", required=True)
+    stage_registry.add_argument("--catalog-revision", required=True)
+    stage_registry.add_argument("--model-id", required=True)
+    stage_registry.add_argument("--build-profile-id", required=True)
+    stage_registry.add_argument("--compile-invocation-id", required=True)
+    stage_registry.add_argument("--json", action="store_true", dest="json_output")
 
     if author_safe:
         for command in tuple(subcommands.choices):
@@ -468,12 +491,24 @@ def _matrix(args: argparse.Namespace) -> int:
         model_ids = [item.strip() for item in args.models.split(",") if item.strip()]
         if not model_ids:
             raise ModelRegistryError("--models must contain at least one model ID")
+    elif args.base or args.head:
+        if not args.base or not args.head:
+            raise ModelRegistryError("--base and --head must be supplied together")
+        if args.profiles is not None or args.components is not None:
+            raise ModelRegistryError("--profiles and --components are not supported for semantic revision comparison")
+        if args.compiler_version is None:
+            raise ModelRegistryError("--compiler-version is required for semantic revision comparison")
+        result = semantic_change_plan(
+            args.repository,
+            args.base,
+            args.head,
+            compiler_version=args.compiler_version,
+            force_rebuild_all=args.force_rebuild_all,
+        )
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 0
     else:
         paths = list(args.changed_path)
-        if args.base or args.head:
-            if not args.base or not args.head:
-                raise ModelRegistryError("--base and --head must be supplied together")
-            paths.extend(git_changed_paths(args.repository, args.base, args.head))
         model_ids = select_model_ids(catalog, paths)
     profile_ids = None
     if args.profiles is not None:
@@ -689,16 +724,40 @@ def _validate_benchmark_set(args: argparse.Namespace) -> int:
     return 0
 
 
-def _publish_taxonomy(args: argparse.Namespace) -> int:
-    from .registry import publish_taxonomy
+def _publish_catalog(args: argparse.Namespace) -> int:
+    from .registry import publish_catalog
 
-    result = publish_taxonomy(
+    result = publish_catalog(
         repository=args.repository,
+        compiled_dir=args.compiled_dir,
         api_url=args.api_url,
         aws_region=args.aws_region,
+        branch=args.branch,
+        git_sha=args.git_sha,
     )
-    message = json.dumps(result, sort_keys=True) if args.json_output else f"Published taxonomy v{result['version']}"
+    message = (
+        json.dumps(result, sort_keys=True)
+        if args.json_output
+        else f"Published catalog {result['catalog']['catalog_revision']}"
+    )
     print(message)
+    return 0
+
+
+def _stage_registry_build(args: argparse.Namespace) -> int:
+    from .registry import stage_catalog_build
+
+    result = stage_catalog_build(
+        repository=args.repository,
+        output_dir=args.output_dir,
+        api_url=args.api_url,
+        branch=args.branch,
+        catalog_revision=args.catalog_revision,
+        model_id=args.model_id,
+        build_profile_id=args.build_profile_id,
+        compile_invocation_id=args.compile_invocation_id,
+    )
+    print(json.dumps(result, sort_keys=True) if args.json_output else f"Staged {result['count']} registry MPK(s)")
     return 0
 
 
@@ -742,8 +801,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _publish_benchmark(args)
         if args.command == "validate-benchmark-set":
             return _validate_benchmark_set(args)
-        if args.command == "publish-taxonomy":
-            return _publish_taxonomy(args)
+        if args.command == "publish-catalog":
+            return _publish_catalog(args)
+        if args.command == "stage-registry-build":
+            return _stage_registry_build(args)
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)

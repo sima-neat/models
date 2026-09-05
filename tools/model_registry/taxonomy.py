@@ -11,7 +11,7 @@ import yaml
 
 from .errors import ValidationError
 
-TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy-v4.yaml")
+TAXONOMY_RELATIVE_PATH = Path("taxonomies/model-taxonomy.yaml")
 TAXONOMY_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
@@ -75,7 +75,7 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
     except (OSError, yaml.YAMLError) as exc:
         raise ValidationError(f"{taxonomy_path}: could not load taxonomy: {exc}") from exc
     taxonomy = _mapping(value, "<root>")
-    expected = {"version", "model_types", "modalities", "architecture_paradigms", "architectures", "tasks"}
+    expected = {"model_types", "modalities", "architecture_paradigms", "architectures", "tasks"}
     unknown = sorted(set(taxonomy) - expected)
     missing = sorted(expected - set(taxonomy))
     if unknown or missing:
@@ -85,9 +85,6 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
         if unknown:
             details.append(f"unknown fields: {', '.join(unknown)}")
         raise ValidationError(f"{taxonomy_path}: taxonomy {'; '.join(details)}")
-    if taxonomy["version"] != 4:
-        raise ValidationError(f"{taxonomy_path}: unsupported taxonomy version {taxonomy['version']!r}")
-
     model_types = _mapping(taxonomy["model_types"], "model_types")
     modalities = _mapping(taxonomy["modalities"], "modalities")
     paradigms = _mapping(taxonomy["architecture_paradigms"], "architecture_paradigms")
@@ -137,11 +134,6 @@ def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any
     if schema_version != 2:
         raise ValidationError("model schema_version 2 is required; taxonomy categorization is mandatory")
 
-    taxonomy_version = model["taxonomy_version"]
-    if taxonomy_version != taxonomy["version"]:
-        raise ValidationError(
-            f"taxonomy_version {taxonomy_version!r} does not match available taxonomy version {taxonomy['version']}"
-        )
     model_type = model["model_type"]
     if model_type not in taxonomy["model_types"]:
         raise ValidationError(f"model_type references unknown taxonomy ID {model_type!r}")
@@ -182,7 +174,6 @@ def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any
             )
 
     return {
-        "taxonomy_version": taxonomy_version,
         "model_type": model_type,
         "tasks": list(task_ids),
         "modalities": {"inputs": list(inputs), "outputs": list(outputs)},

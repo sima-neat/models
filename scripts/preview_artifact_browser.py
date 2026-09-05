@@ -202,6 +202,24 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if path == "/v1/repositories/sima-neat/models/runs":
             self._json({"runs": runs, "has_more": False})
             return
+        if path == "/v1/repositories/sima-neat/models/models":
+            self._json({"models": [
+                {
+                    "model_id": run["metadata"]["model_id"],
+                    "display_name": run["metadata"].get("display_name", run["metadata"]["model_id"]),
+                    "catalog_revision": run["commit_sha"],
+                    "categories": run.get("model_categories", {}),
+                    "builds": [{
+                        "run_id": run["id"],
+                        "build_profile_id": run["metadata"]["build_profile_id"],
+                        "component_id": run["metadata"]["component_id"],
+                        "compile_invocation_id": run["metadata"].get("compile_invocation_id", run["metadata"]["component_id"]),
+                        "toolchain_version": run.get("toolchain_version"),
+                    }],
+                }
+                for run in runs
+            ], "count": len(runs)})
+            return
         if path == "/v1/repositories/sima-neat/models/branches":
             branches = sorted({item["git_ref"] for item in runs})
             self._json({"branches": [
@@ -214,8 +232,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 for branch in branches
             ]})
             return
-        if path == "/v1/repositories/sima-neat/models/taxonomies/latest":
-            self._json({"taxonomy": {"document": {
+        if path == "/v1/repositories/sima-neat/models/catalogs/current":
+            self._json({"catalog": {"document": {"taxonomy": {
                 "model_types": {"vision": {"display_name": "Vision"}},
                 "tasks": {"image_classification": {"display_name": "Image classification"}},
                 "architectures": {"resnet_50": {"display_name": "ResNet-50"}},
@@ -224,7 +242,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "image": {"display_name": "Image"},
                     "classification": {"display_name": "Classification"},
                 },
-            }}})
+            }}}})
             return
         if path.startswith("/v1/runs/"):
             parts = path.strip("/").split("/")
