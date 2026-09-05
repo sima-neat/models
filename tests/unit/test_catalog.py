@@ -8,6 +8,7 @@ import pytest
 import yaml
 from model_registry.catalog import (
     build_matrix,
+    compile_invocation_fingerprint,
     component_build_fingerprint,
     discover_catalog,
     git_changed_paths,
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v2.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v3.yaml"
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -43,6 +44,16 @@ def _write_model(repository: Path, model_id: str, *, declared_id: str | None = N
     (model_dir / "compile.py").write_text("# fixture\n", encoding="utf-8")
 
 
+def _declare_grouped_invocation(model: dict) -> None:
+    second = copy.deepcopy(model["components"][0])
+    second["id"] = "second_model"
+    model["components"].append(second)
+    model["build_profiles"][0]["components"].append({"id": "second_model", "parameters": {}})
+    model["build_profiles"][0]["compile_invocations"] = [
+        {"id": "combined", "components": ["model", "second_model"]}
+    ]
+
+
 @pytest.fixture
 def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
@@ -51,7 +62,7 @@ def catalog_repository(tmp_path: Path) -> Path:
         PERFORMANCE_SCHEMA.read_text(encoding="utf-8"), encoding="utf-8"
     )
     (tmp_path / "taxonomies").mkdir()
-    (tmp_path / "taxonomies" / "model-taxonomy-v2.yaml").write_text(
+    (tmp_path / "taxonomies" / "model-taxonomy-v3.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
     )
     _write_model(tmp_path, "alpha")
@@ -67,6 +78,11 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     assert "compiler_version" not in matrix["include"][0]
     assert matrix["include"][0]["recipe"] == "compile.py"
     assert matrix["include"][0]["requested_runner_class"] == "default"
+    assert matrix["include"][0]["compile_invocation_id"] == "model"
+    assert matrix["include"][0]["component_ids"] == ["model"]
+    assert matrix["include"][0]["component_id"] == "model"
+    assert matrix["include"][0]["benchmark_component_ids"] == []
+    assert matrix["include"][0]["explicit_invocation"] is False
 
 
 @pytest.mark.parametrize(
@@ -212,6 +228,73 @@ def test_matrix_carries_explicit_per_component_runner_class(catalog_repository: 
     assert matrix["include"][0]["requested_runner_class"] == "expensive"
 
 
+def test_matrix_emits_one_row_per_declared_compile_invocation(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    _declare_grouped_invocation(catalog["alpha"])
+
+    matrix = build_matrix(catalog, ["alpha"])
+
+    assert len(matrix["include"]) == 1
+    assert matrix["include"][0]["compile_invocation_id"] == "combined"
+    assert matrix["include"][0]["component_id"] == "model"
+    assert matrix["include"][0]["component_ids"] == ["model", "second_model"]
+    assert matrix["include"][0]["explicit_invocation"] is True
+
+
+def test_explicit_singleton_uses_invocation_recipe_contract(catalog_repository: Path) -> None:
+    catalog = discover_catalog(catalog_repository)
+    catalog["alpha"]["build_profiles"][0]["compile_invocations"] = [
+        {"id": "export_and_compile", "components": ["model"]}
+    ]
+
+    entry = build_matrix(catalog, ["alpha"])["include"][0]
+
+    assert entry["explicit_invocation"] is True
+    assert entry["compile_invocation_id"] == "export_and_compile"
+    assert entry["component_ids"] == ["model"]
+
+
+def test_rf_detr_matrix_carries_declared_python_packages() -> None:
+    catalog = discover_catalog(ROOT)
+
+    matrix = build_matrix(catalog, ["rf_detr_small"])
+
+    assert matrix["include"][0]["python_packages"] == [
+        {
+            "path": "rfdetr-1.9.4-py3-none-any.whl",
+            "imports": [
+                "numpy",
+                "onnx",
+                "onnxruntime",
+                "PIL",
+                "rfdetr",
+                "torch",
+                "yaml",
+            ],
+        },
+        {"path": "pydeprecate-0.9.0-py3-none-any.whl", "imports": ["deprecate"]},
+        {"path": "annotated_types-0.8.0-py3-none-any.whl", "imports": ["annotated_types"]},
+        {
+            "path": "pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+            "imports": ["pydantic_core"],
+        },
+        {"path": "typing_inspection-0.4.4-py3-none-any.whl", "imports": ["typing_inspection"]},
+        {"path": "pydantic-2.12.5-py3-none-any.whl", "imports": ["pydantic"]},
+    ]
+
+
+@pytest.mark.parametrize("component_id", ["model", "second_model"])
+def test_component_filter_selects_the_full_compile_invocation(
+    catalog_repository: Path, component_id: str
+) -> None:
+    catalog = discover_catalog(catalog_repository)
+    _declare_grouped_invocation(catalog["alpha"])
+
+    matrix = build_matrix(catalog, ["alpha"], component_ids=[component_id])
+
+    assert [entry["component_ids"] for entry in matrix["include"]] == [["model", "second_model"]]
+
+
 def test_matrix_excludes_explicitly_unsupported_component_builds(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
     unsupported = copy.deepcopy(catalog["alpha"]["build_profiles"][0])
@@ -282,6 +365,28 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(cat
     dependency_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert dependency_changed != model_changed
     assert _fingerprint(catalog_repository, "alpha", "2.1.4") != dependency_changed
+
+
+def test_compile_invocation_fingerprint_includes_every_component_binding(
+    catalog_repository: Path,
+) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    _declare_grouped_invocation(model)
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    first = compile_invocation_fingerprint(
+        catalog_repository, "alpha", "combined", "fixture", "2.1.3"
+    )
+
+    model["build_profiles"][0]["components"][1]["parameters"]["output_name"] = "second"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    assert (
+        compile_invocation_fingerprint(
+            catalog_repository, "alpha", "combined", "fixture", "2.1.3"
+        )
+        != first
+    )
 
 
 def test_build_fingerprint_includes_model_local_recipe_helpers(catalog_repository: Path) -> None:

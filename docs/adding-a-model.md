@@ -38,7 +38,8 @@ identifier.
 models/<model-id>/
   README.md
   model.yaml
-  compile.py                  # or one recipe per component
+  compile.py                  # one recipe, optionally shared by a compile group
+  export.py                   # only for an upstream checkpoint source
   composition.yaml           # multi-component products only
   surgery.py                  # only for model-specific preparation
   tests/
@@ -53,8 +54,8 @@ enforce must also appear in `model.yaml`.
 ## 3. Pin every input
 
 Each compiled component owns its source. Use `type: file` for a standalone
-ONNX file. Use `type: file_set` when an ONNX entrypoint needs external data or
-other files in a particular relative layout. Every file gets its own immutable
+artifact. Use `type: file_set` when the recipe needs several related files in a
+particular relative layout. Every file gets its own immutable
 URI, SHA-256, byte count, and media type.
 
 Hugging Face sources use a full 40-character repository commit. Approved HTTPS
@@ -78,6 +79,13 @@ model-registry fetch models/<model-id> --component <component-id>
 ```
 
 If the model has only one component, `--component` may be omitted.
+
+When upstream publishes a checkpoint instead of ONNX, declare the checkpoint
+and its pinned exporter package as one file set. CI fetches and verifies both.
+The model-local `export.py` converts the local checkpoint to ONNX; it must not
+download an undeclared model. The compiler runner must already provide the
+exporter's dependencies. CI installs the verified exporter package without
+resolving dependencies from the network. Generated ONNX files remain temporary.
 
 ## 4. Describe components and interfaces
 
@@ -133,9 +141,37 @@ build_profiles:
         parameters: {precision: int8}
 ```
 
-The matrix creates one compile job per supported component binding. This keeps
-compatible component builds together without inventing every possible
-cross-product. A component binding proven incompatible may be retained as
+By default, the matrix creates one compile job per supported component binding.
+Components that must share preparation or intermediate calibration data can be
+placed in one compile invocation:
+
+```yaml
+compile_invocations:
+  - id: detector
+    components: [backbone, transformer]
+    python_packages:
+      - path: exporter-1.2.3-py3-none-any.whl
+        imports: [exporter]
+```
+
+Every component in a compile invocation must share one source, recipe, and
+runner class. The recipe runs once and writes one MPK per component plus
+`compile-outputs.json`. Declare any verified source-set Python package and the
+imports CI must check under `python_packages`; CI never discovers dependencies
+from filenames. The manifest maps each component to its MPK and records derived
+graph hashes and the one declared correctness result.
+CI accepts the bundle only when every declared output is present and its hash
+matches. Existing models do not need this field. When the group needs
+calibration data, put its single calibration reference on the first listed
+component; CI resolves that verified input once for the shared recipe.
+
+For model-owned numerical comparison, declare a package-scoped correctness
+test with `engine: model_recipe`, write `fidelity.json` next to its owning MPK,
+name that component with `result_component`, and reference the report from the
+grouped output manifest. The recipe enforces the declared thresholds before CI
+publishes the complete component set.
+
+A component binding proven incompatible may be retained as
 `status: unsupported` with a reason. Do not use unsupported for untested work.
 
 Each component recipe has this interface:
@@ -149,6 +185,15 @@ The recipe reads only its selected profile binding, consumes already verified
 inputs, uses the repository-pinned compiler, creates exactly one MPK, and never
 downloads undeclared data. Shared download, checksum, MPK validation, and
 publication behavior belongs in `tools/`, not model code.
+
+A grouped recipe uses this interface instead:
+
+```text
+compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
+  --correctness-dataset <verified-correctness-dataset> \
+  --output-dir <new-directory> --build-profile <profile-id> \
+  --compile-invocation <invocation-id>
+```
 
 Elevated `runner_class` requests require Vulcan approval. See [Compile runner
 class requests and approvals](runner-class-requests.md).

@@ -249,13 +249,38 @@
       },
       "allOf": [{"if": {"properties": {"status": {"const": "unsupported"}}, "required": ["status"]}, "then": {"required": ["reason"]}}]
     },
+    "compileInvocation": {
+      "type": "object", "additionalProperties": false, "required": ["id", "components"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "components": {
+          "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}
+        },
+        "python_packages": {
+          "type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/pythonPackage"}
+        }
+      }
+    },
+    "pythonPackage": {
+      "type": "object", "additionalProperties": false, "required": ["path", "imports"],
+      "properties": {
+        "path": {"allOf": [{"$ref": "#/$defs/relativePath"}, {"pattern": "\\.whl$"}]},
+        "imports": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"}
+        }
+      }
+    },
     "buildProfile": {
       "type": "object", "additionalProperties": false, "required": ["id", "target", "components"],
       "properties": {
         "id": {"$ref": "#/$defs/id"}, "target": {"type": "string", "minLength": 1},
         "runner_class": {"enum": ["default", "expensive", "most-expensive"]},
         "compatibility": {"$ref": "#/$defs/compatibility"},
-        "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildComponent"}}
+        "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildComponent"}},
+        "compile_invocations": {
+          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/compileInvocation"}
+        }
       }
     },
     "composition": {

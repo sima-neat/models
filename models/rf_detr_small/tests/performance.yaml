@@ -1,0 +1,19 @@
+schema_version: 1
+status: provisional
+target: modalix
+benchmark:
+  mode: bounded_runner
+  warmup_samples: 10
+  samples: 100
+  trials: 3
+metrics:
+- latency_avg_ms
+- latency_p50_ms
+- latency_p95_ms
+- throughput_fps
+- avg_power_watts
+- energy_per_inference_joules
+- mla_memory_peak_delta_mib
+required_metrics:
+- avg_power_watts
+- energy_per_inference_joules

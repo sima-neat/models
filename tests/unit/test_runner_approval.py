@@ -26,6 +26,14 @@ def _matrix(runner_class: str = "default") -> dict:
     }
 
 
+def _grouped_matrix(runner_class: str = "default") -> dict:
+    matrix = _matrix(runner_class)
+    entry = matrix["include"][0]
+    entry["compile_invocation_id"] = "combined"
+    entry["component_ids"] = ["model", "postprocessor"]
+    return matrix
+
+
 def _approval(maximum: str = "expensive", **overrides: str) -> dict:
     value = {
         "repository": "sima-neat/models",
@@ -75,6 +83,34 @@ def test_matching_approval_authorizes_only_the_requested_class() -> None:
     assert entry["runner_approval_id"] == (
         "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging"
     )
+
+
+def test_grouped_default_runner_preserves_component_list_without_approval() -> None:
+    entry = _authorize(_grouped_matrix(), _spec())["include"][0]
+
+    assert entry["component_ids"] == ["model", "postprocessor"]
+    assert entry["runner_approval_id"] == ""
+    assert entry["runner_approval_ids"] == []
+
+
+def test_grouped_elevated_runner_requires_and_records_every_component_approval() -> None:
+    entry = _authorize(
+        _grouped_matrix("expensive"),
+        _spec(_approval(), _approval(component_id="postprocessor")),
+    )["include"][0]
+
+    assert entry["runner_approval_id"] == (
+        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging"
+    )
+    assert entry["runner_approval_ids"] == [
+        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging",
+        "sima-neat/models:efficientdet_d3:modalix_int8_1536:postprocessor:staging",
+    ]
+
+
+def test_grouped_elevated_runner_fails_when_one_component_lacks_approval() -> None:
+    with pytest.raises(ValidationError, match="postprocessor.*has no unique Vulcan approval"):
+        _authorize(_grouped_matrix("expensive"), _spec(_approval()))
 
 
 def test_legacy_variant_approval_is_limited_to_conventional_model_component() -> None:

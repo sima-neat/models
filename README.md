@@ -9,9 +9,10 @@ artifacts do not belong in Git. Model directories contain immutable provenance
 and checksums; shared lifecycle implementation lives in `tools/model_registry`.
 
 Model directories do own model-specific surgery and compile recipes. Those
-recipes consume verified sources and must emit exactly one directly consumable
-`*_mpk.tar.gz`; common discovery, downloading, runner selection, MPK validation,
-checksumming, and publication remain shared.
+recipes consume verified sources. A normal invocation emits one directly
+consumable `*_mpk.tar.gz`; a declared grouped invocation emits one per component
+and a manifest for the complete set. Common discovery, downloading, runner
+selection, MPK validation, checksumming, and publication remain shared.
 
 `model-registry` is an author-safe `sima-cli` package for local validation,
 verified input handling, variant inspection, and MPK checks. It is not a direct
@@ -44,8 +45,8 @@ only changed models on staging. The first build of a new branch resolves its
 closest base branch and compares from the merge base, so GitHub's all-zero
 previous SHA does not force a full rebuild. A maintainer can
 run the workflow manually, choose `staging` or protected `production`, and
-optionally provide a comma-separated model list and variant list or an explicit
-base branch; empty model and variant lists build the full catalog.
+optionally provide comma-separated model, profile, and component lists or an explicit
+base branch; empty model and profile lists build the full catalog.
 
 Each successful staging Modalix compile dispatches the dedicated
 [`Vulcan-Model-Benchmarking.yml`](.github/workflows/Vulcan-Model-Benchmarking.yml)
@@ -63,11 +64,12 @@ installs the benchmarker wheel into the Core-managed pyneat environment.
 
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
-`model-compiler`, and the derived `model-compiler-<version>` label. Successful matrix outputs are
-published individually. Each successful matrix item validates its MPK, uploads
-it under an immutable object key, records its checksum, provenance, exact S3
-object version, and taxonomy through the IAM-authenticated Model Registry API,
-and then finalizes the registry run.
+`model-compiler`, and the derived `model-compiler-<version>` label. Each matrix
+item validates its complete output and uploads one GitHub Actions artifact. A
+GitHub-hosted job checks that artifact, publishes each component under an
+immutable object key, records its checksum, provenance, exact S3 object version,
+and taxonomy through the IAM-authenticated Model Registry API, then finalizes
+each component run.
 
 Model discovery and checksum-verified downloads use registry database records
 and presigned artifact URLs:
@@ -88,7 +90,7 @@ version, build fingerprint, and exact versioned S3 MPK. For staging feature
 branches, the workflow discovers the Modalix compile artifacts actually produced
 by the current run and benchmarks each one on the resolved Modalix GitHub runner.
 The runner verifies the manifest-pinned platform, installs the pinned benchmarker
-and Neat runtime, and returns a schema-v3 result and log for each model variant. A
+and Neat runtime, and returns a schema-v4 result and log for each model variant. A
 trusted hosted job publishes every completed result under its model's S3 hierarchy
 and records an immutable `model_benchmark` child of the matching compile run.
 

@@ -10,8 +10,9 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import load_accuracy_config, validate_accuracy_model_contract
 from .errors import SourcePolicyError, ValidationError
+from .fidelity_config import load_recipe_fidelity_config
 from .performance_config import load_performance_config
-from .source import SourceSpec
+from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
 MODEL_FILE = "model.yaml"
@@ -56,6 +57,21 @@ def profile_component_for(
 def profile_component_requires_calibration(model: dict[str, Any], profile_id: str, component_id: str) -> bool:
     _, binding = profile_component_for(model, profile_id, component_id)
     return "calibration" in binding
+
+
+def effective_runner_class(profile: dict[str, Any], binding: dict[str, Any]) -> str:
+    return str(binding.get("runner_class", profile.get("runner_class", "default")))
+
+
+def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    declared = profile.get("compile_invocations")
+    if declared is not None:
+        return declared
+    return [
+        {"id": binding["id"], "components": [binding["id"]]}
+        for binding in profile["components"]
+        if binding.get("status", "supported") == "supported"
+    ]
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
@@ -392,6 +408,95 @@ def validate_model(
                     f"references unknown shape profile {shape_profile_id!r}"
                 )
 
+        if "compile_invocations" not in profile:
+            continue
+        invocations = _by_id(profile["compile_invocations"], f"compile invocation in build profile {profile_id}")
+        invocation_components = [
+            component_id
+            for invocation in invocations.values()
+            for component_id in invocation["components"]
+        ]
+        unknown_invocation_components = set(invocation_components) - set(bindings)
+        if unknown_invocation_components:
+            raise ValidationError(
+                f"{directory}: build profile {profile_id!r} compile invocations reference unknown components: "
+                f"{', '.join(sorted(unknown_invocation_components))}"
+            )
+        unsupported_invocation_components = {
+            component_id
+            for component_id in invocation_components
+            if bindings[component_id].get("status", "supported") == "unsupported"
+        }
+        if unsupported_invocation_components:
+            raise ValidationError(
+                f"{directory}: build profile {profile_id!r} compile invocations include unsupported components: "
+                f"{', '.join(sorted(unsupported_invocation_components))}"
+            )
+        duplicate_invocation_components = {
+            component_id
+            for component_id in invocation_components
+            if invocation_components.count(component_id) > 1
+        }
+        if duplicate_invocation_components:
+            raise ValidationError(
+                f"{directory}: build profile {profile_id!r} compile invocations duplicate components: "
+                f"{', '.join(sorted(duplicate_invocation_components))}"
+            )
+        supported_components = {
+            component_id
+            for component_id, binding in bindings.items()
+            if binding.get("status", "supported") == "supported"
+        }
+        omitted_components = supported_components - set(invocation_components)
+        if omitted_components:
+            raise ValidationError(
+                f"{directory}: build profile {profile_id!r} compile invocations omit supported components: "
+                f"{', '.join(sorted(omitted_components))}"
+            )
+
+        for invocation_id, invocation in invocations.items():
+            grouped_components = [components[component_id] for component_id in invocation["components"]]
+            recipes = {component["recipe"] for component in grouped_components}
+            if len(recipes) != 1:
+                raise ValidationError(
+                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
+                    "components must share one recipe"
+                )
+            source_identities = {source_identity(component["source"]) for component in grouped_components}
+            if len(source_identities) != 1:
+                raise ValidationError(
+                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
+                    "components must share one source content identity"
+                )
+            source = grouped_components[0]["source"]
+            source_paths = {path for path, _ in source_members(source)}
+            package_paths = {package["path"] for package in invocation.get("python_packages", ())}
+            if package_paths - source_paths:
+                raise ValidationError(
+                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
+                    "python packages must be declared members of the shared source"
+                )
+            runner_classes = {
+                effective_runner_class(profile, bindings[component_id])
+                for component_id in invocation["components"]
+            }
+            if len(runner_classes) != 1:
+                raise ValidationError(
+                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
+                    "components must share one effective runner class"
+                )
+            calibration_ids = {
+                bindings[component_id]["calibration"]
+                for component_id in invocation["components"]
+                if "calibration" in bindings[component_id]
+            }
+            primary_calibration = bindings[invocation["components"][0]].get("calibration")
+            if len(calibration_ids) > 1 or (calibration_ids and primary_calibration not in calibration_ids):
+                raise ValidationError(
+                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
+                    "must select one shared calibration on its first component"
+                )
+
     composition_components: dict[str, set[str]] = {}
     for composition_id, composition in compositions.items():
         if composition["type"] == "single":
@@ -515,6 +620,30 @@ def validate_model(
         if isinstance(raw, dict) and raw.get("engine") == "model_registry":
             config = load_accuracy_config(candidate)
             validate_accuracy_model_contract(model, config, candidate, case)
+        elif isinstance(raw, dict) and raw.get("engine") == "model_recipe":
+            if case["scope"]["type"] != "package":
+                raise ValidationError(f"{candidate}: model_recipe correctness requires package scope")
+            config = load_recipe_fidelity_config(
+                candidate,
+                schema_file.parent / "recipe-fidelity-v1.schema.json",
+            )
+            package = packages[case["scope"]["package"]]
+            result_component = config["result_component"]
+            if result_component not in package["components"]:
+                raise ValidationError(
+                    f"{candidate}: result_component {result_component!r} is not in the tested package"
+                )
+            output_names = {
+                output["name"]
+                for entrypoint in components[result_component]["interface"]["entrypoints"]
+                for output in entrypoint["outputs"]
+            }
+            unknown_outputs = set(config["outputs"]) - output_names
+            if unknown_outputs:
+                raise ValidationError(
+                    f"{candidate}: fidelity outputs are not exposed by {result_component!r}: "
+                    f"{', '.join(sorted(unknown_outputs))}"
+                )
 
     performance_schema = schema_file.parent / "performance-config-v1.schema.json"
     for case in model["tests"]["performance"]:

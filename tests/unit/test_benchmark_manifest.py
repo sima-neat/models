@@ -1,12 +1,63 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
+import model_registry.benchmark_manifest as benchmark_manifest
 import pytest
-from model_registry.benchmark_manifest import make_benchmark_manifest
+from model_registry.benchmark_manifest import make_benchmark_manifest, validate_benchmark_components
+from model_registry.errors import ValidationError
+from model_registry.model import load_and_validate_model
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset(tmp_path: Path, monkeypatch) -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    model["tests"]["performance"] = model["tests"]["performance"][:1]
+    monkeypatch.setattr(benchmark_manifest, "load_and_validate_model", lambda *args: model)
+    output_root = tmp_path / "rf_detr_small" / "modalix_int8_bf16"
+    outputs = []
+    for component in ("backbone", "transformer"):
+        directory = output_root / component
+        directory.mkdir(parents=True)
+        archive = directory / f"{component}_mpk.tar.gz"
+        archive.write_bytes(component.encode())
+        outputs.append(
+            {
+                "component_id": component,
+                "mpk_path": f"{component}/{archive.name}",
+                "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            }
+        )
+    fidelity = output_root / "transformer" / "fidelity.json"
+    fidelity.write_text("{}")
+    manifest = {
+        "schema_version": 2,
+        "model_id": "rf_detr_small",
+        "build_profile_id": "modalix_int8_bf16",
+        "compile_invocation_id": "rf_detr",
+        "outputs": outputs,
+        "derived_graphs": [
+            {"component_id": component, "sha256": "a" * 64} for component in ("backbone", "transformer")
+        ],
+        "correctness": {
+            "component_id": "transformer",
+            "path": "transformer/fidelity.json",
+            "sha256": hashlib.sha256(fidelity.read_bytes()).hexdigest(),
+        },
+    }
+    (output_root / "compile-outputs.json").write_text(json.dumps(manifest))
+    args = (ROOT, tmp_path, "rf_detr_small", "modalix_int8_bf16", "rf_detr")
+
+    validate_benchmark_components(*args, ["backbone"])
+    for components in (["transformer"], ["backbone", "transformer"], ["backbone", "backbone"], []):
+        with pytest.raises(ValidationError, match="declared performance tests"):
+            validate_benchmark_components(*args, components)
+    (output_root / "transformer" / "transformer_mpk.tar.gz").unlink()
+    with pytest.raises(ValidationError, match="MPK does not exist"):
+        validate_benchmark_components(*args, ["backbone"])
 
 
 @pytest.mark.parametrize(
@@ -61,9 +112,7 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["id"] == model_id
     assert manifest["model"]["build_profile_id"] == build_profile_id
     assert manifest["model"]["component_id"] == component_id
-    assert manifest["model"]["path"].endswith(
-        f"/{model_id}/{build_profile_id}/{component_id}/{model_id}_mpk.tar.gz"
-    )
+    assert manifest["model"]["path"].endswith(f"/{model_id}/{build_profile_id}/{component_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
     if model_id == "yolo26_tiny_drone":

@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from .benchmark_manifest import load_component_performance_config
 from .errors import ValidationError
 from .fetch import sha256_file
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
@@ -96,6 +97,51 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     if result["identity"]["fingerprint"] != expected:
         raise ValidationError("benchmark result identity fingerprint does not match its canonical inputs")
     return result
+
+
+def validate_benchmark_set(
+    *,
+    repository: str | Path,
+    result_root: str | Path,
+    model_id: str,
+    build_profile_id: str,
+    component_ids: list[str],
+    git_sha: str,
+) -> JsonObject:
+    root = Path(repository).expanduser().resolve()
+    results_root = Path(result_root).expanduser().resolve()
+    if len(component_ids) != len(set(component_ids)) or not component_ids:
+        raise ValidationError("benchmark component IDs must be non-empty and unique")
+    commit_sha = _require_git_sha(git_sha)
+    expected_paths = {
+        (results_root / component_id / "performance-result-v4.json").resolve()
+        for component_id in component_ids
+    }
+    actual_paths = {path.resolve() for path in results_root.rglob("performance-result-v4.json")}
+    if actual_paths != expected_paths:
+        raise ValidationError("benchmark result tree does not match the declared component set")
+
+    validated = []
+    result_schema = root / "schemas" / "performance-result-v4.schema.json"
+    for component_id in component_ids:
+        path = results_root / component_id / "performance-result-v4.json"
+        result = load_benchmark_result(path, result_schema)
+        model = result["model"]
+        expected = (model_id, build_profile_id, component_id)
+        actual = (model["id"], model["build_profile_id"], model["component_id"])
+        if actual != expected:
+            raise ValidationError(f"{path}: benchmark identity does not match {expected}")
+        provenance = result["provenance"]
+        if provenance.get("models_commit") != commit_sha:
+            raise ValidationError(f"{path}: benchmark models_commit does not match the source revision")
+        _require_compile_run_id(result, None)
+        config = load_component_performance_config(root, model_id, component_id, build_profile_id)
+        for metric_name in config.get("required_metrics", ()):
+            metric = result["metrics"].get(metric_name)
+            if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
+                raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
+        validated.append(str(path.resolve()))
+    return {"count": len(validated), "results": validated}
 
 
 def _build_identity(result: JsonObject) -> tuple[str, str]:

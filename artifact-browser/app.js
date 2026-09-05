@@ -935,6 +935,31 @@ function accuracyPanel(payload, tests = []) {
   </section>`;
 }
 
+function fidelityPanel(tests, runId) {
+  const result = tests.find((item) =>
+    item.suite === "correctness"
+    && item.name === "numerical-fidelity"
+    && item.summary?.schema_version === 1
+  );
+  const report = result?.summary;
+  if (!report) return "";
+  const metrics = (report.metrics || []).map((metric) => `<div class="fidelity-output">
+    <strong>${escapeHtml(metric.name)}</strong>
+    <dl>
+      ${keyValue("Cosine similarity", Number(metric.cosine_similarity).toFixed(6))}
+      ${keyValue("Normalized RMSE", Number(metric.normalized_rmse).toExponential(3))}
+      ${keyValue("Mean absolute error", Number(metric.mean_absolute_error).toExponential(3))}
+      ${keyValue("Maximum absolute error", Number(metric.max_absolute_error).toExponential(3))}
+    </dl>
+  </div>`).join("");
+  const scope = report.scope === "full_pipeline" ? "Full pipeline" : "Component";
+  return `<section class="fidelity-section">
+    <div class="detail-section-title"><h3>Numerical fidelity</h3><button class="text-button" type="button" data-download="numerical-fidelity" data-run-id="${escapeHtml(runId)}">Download JSON</button></div>
+    <p class="fidelity-scope"><strong>${escapeHtml(scope)}</strong> · ${escapeHtml(report.status)} · ${Number(report.samples).toLocaleString()} samples</p>
+    <div class="fidelity-summary">${metrics}</div>
+  </section>`;
+}
+
 function licensePanel(license) {
   if (!license?.spdx) return "";
   const redistribution = license.redistribution
@@ -966,6 +991,7 @@ function renderDetail(detail) {
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
   const benchmarkMarkup = benchmarkPanel(detail.benchmark);
   const accuracyMarkup = accuracyPanel(detail.accuracy, tests);
+  const fidelityMarkup = fidelityPanel(tests, run.id);
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
   const primaryArtifact = artifacts[0];
   const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
@@ -998,6 +1024,8 @@ function renderDetail(detail) {
     ${licensePanel(license)}
 
     ${accuracyMarkup}
+
+    ${fidelityMarkup}
 
     ${benchmarkMarkup}
 

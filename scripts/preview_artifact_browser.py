@@ -278,6 +278,28 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "version": "1",
                     "summary": accuracy,
                 })
+            if index == 0:
+                test_results.append({
+                    "suite": "correctness",
+                    "name": "numerical-fidelity",
+                    "status": "passed",
+                    "version": "1",
+                    "summary": {
+                        "schema_version": 1,
+                        "model_id": PREVIEW_RUNS[index][0],
+                        "build_profile_id": "modalix_bf16",
+                        "component_id": PREVIEW_RUNS[index][1],
+                        "scope": "full_pipeline",
+                        "samples": 8,
+                        "metrics": [{
+                            "name": "logits",
+                            "cosine_similarity": 0.999842,
+                            "normalized_rmse": 0.00312,
+                            "mean_absolute_error": 0.0048,
+                            "max_absolute_error": 0.0184,
+                        }],
+                    },
+                })
             self._json({"run_id": runs[index]["id"], "test_results": test_results})
             return
         if index is not None and len(parts) == 4 and parts[3] == "metrics":

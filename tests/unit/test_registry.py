@@ -6,6 +6,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.registry import (
     RegistryPublicationError,
     S3Object,
@@ -69,6 +70,24 @@ def _packaged_result(tmp_path: Path) -> Path:
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
+    (output.parent / "compile-outputs.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "model_id": "resnet_50",
+                "build_profile_id": "modalix_bf16",
+                "compile_invocation_id": "model",
+                "outputs": [
+                    {
+                        "component_id": "model",
+                        "mpk_path": f"model/{archive.name}",
+                        "mpk_sha256": digest,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return dist
 
 
@@ -106,6 +125,42 @@ def _add_accuracy_result(dist: Path) -> Path:
     return path
 
 
+def _add_fidelity_result(dist: Path) -> Path:
+    path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "model_id": "resnet_50",
+                "build_profile_id": "modalix_bf16",
+                "component_id": "model",
+                "scope": "component",
+                "status": "provisional",
+                "dataset": {"id": "imagenet-2012", "variant": "mini", "sha256": "d" * 64},
+                "selection": {
+                    "method": "seeded_random_without_replacement",
+                    "seed": 42,
+                    "offset": 0,
+                    "samples": 4,
+                },
+                "thresholds": {"minimum_cosine_similarity": 0.9, "maximum_normalized_rmse": 0.5},
+                "samples": 4,
+                "metrics": [
+                    {
+                        "name": "logits",
+                        "cosine_similarity": 0.999,
+                        "normalized_rmse": 0.01,
+                        "mean_absolute_error": 0.02,
+                        "max_absolute_error": 0.1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
@@ -114,7 +169,7 @@ def test_canonical_sha256_is_stable() -> None:
     ("source", "expected"),
     [
         ({"type": "file"}, "application/onnx"),
-        ({"type": "file_set"}, "application/vnd.sima.onnx-file-set+json"),
+        ({"type": "file_set"}, "application/vnd.sima.source-file-set+json"),
         ({"type": "file", "media_type": "application/custom"}, "application/custom"),
     ],
 )
@@ -159,7 +214,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
 
     assert result["count"] == 1
     assert [path for _, path, _, _ in calls] == [
-        "/v1/repositories/sima-neat/models/taxonomies/2",
+        "/v1/repositories/sima-neat/models/taxonomies/3",
         "/v1/runs",
         "/v1/runs/00000000-0000-4000-8000-000000000001/inputs/source-component",
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
@@ -187,7 +242,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
         },
     }
     assert create["model_categories"] == {
-            "taxonomy_version": 2,
+        "taxonomy_version": 3,
         "model_type": "vision",
         "tasks": ["image_classification"],
         "modalities": {"inputs": ["image"], "outputs": ["class_scores"]},
@@ -196,6 +251,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     }
     source_input = calls[2][2]
     assert source_input is not None
+    assert source_input["input_type"] == "onnx"
     assert source_input["media_type"] == "application/onnx"
     assert source_input["source_reference"].startswith("hf://models/onnx-community/resnet-50-ONNX@")
     assert source_input["metadata"] == {
@@ -206,6 +262,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     }
     parameters = calls[3][2]["parameters"]
     assert parameters["compiler_version"] == "2.1.3"
+    assert parameters["compile_invocation_id"] == "model"
     assert parameters["target"] == "modalix"
     artifact = calls[4][2]
     assert artifact["s3_version_id"] == "version-1"
@@ -274,6 +331,90 @@ def test_publish_attaches_accuracy_artifact_test_result_and_measurements(tmp_pat
     assert store.objects[1][3] == "application/json"
 
 
+def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+    fidelity_path = _add_fidelity_result(dist)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "00000000-0000-4000-8000-000000000001"}
+        if path.endswith("/artifacts/numerical-fidelity"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000002"}
+        return {"ok": True}
+
+    store = FakeStore()
+    result = publish_compilations(
+        repository=ROOT,
+        dist_dir=dist,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        kms_key_id=None,
+        environment="staging",
+        branch="develop",
+        git_sha="a" * 40,
+        github_run_id="1234",
+        github_run_attempt="1",
+        github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
+        request=request,
+        artifact_store=store,
+    )
+
+    run_id = "00000000-0000-4000-8000-000000000001"
+    endpoints = [path for _, path, _, _ in calls]
+    assert f"/v1/runs/{run_id}/artifacts/numerical-fidelity" in endpoints
+    assert f"/v1/runs/{run_id}/test-results/correctness/numerical-fidelity" in endpoints
+    measurements = next(
+        body["measurements"] for _, path, body, _ in calls if path.endswith("/measurements/batch") and body is not None
+    )
+    assert {measurement["name"] for measurement in measurements} == {
+        "model.fidelity.cosine_similarity",
+        "model.fidelity.normalized_rmse",
+        "model.fidelity.mean_absolute_error",
+        "model.fidelity.max_absolute_error",
+    }
+    maximum = next(
+        measurement for measurement in measurements if measurement["name"] == "model.fidelity.max_absolute_error"
+    )
+    assert maximum["aggregation"] == "max"
+    assert result["runs"][0]["fidelity"]["samples"] == 4
+    assert store.objects[1][0] == fidelity_path
+    assert store.objects[1][3] == "application/json"
+
+
+def test_publish_preflights_all_evidence_before_external_writes(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+    fidelity_path = _add_fidelity_result(dist)
+    fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
+    fidelity["unexpected"] = True
+    fidelity_path.write_text(json.dumps(fidelity), encoding="utf-8")
+    calls = []
+    store = FakeStore()
+
+    with pytest.raises(ValidationError, match="Additional properties"):
+        publish_compilations(
+            repository=ROOT,
+            dist_dir=dist,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            kms_key_id=None,
+            environment="staging",
+            branch="develop",
+            git_sha="a" * 40,
+            github_run_id="1234",
+            github_run_attempt="1",
+            github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
+            request=lambda *args: calls.append(args),
+            artifact_store=store,
+        )
+
+    assert calls == []
+    assert store.objects == []
+
+
 def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -298,8 +439,41 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
 
     assert result["count"] == 0
     assert result["runs"] == []
-    assert result["taxonomy"]["version"] == 2
-    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/2"]
+    assert result["taxonomy"]["version"] == 3
+    assert [call[1] for call in calls] == ["/v1/repositories/sima-neat/models/taxonomies/3"]
+
+
+def test_publish_rejects_archive_not_bound_to_output_manifest(tmp_path: Path) -> None:
+    dist = _packaged_result(tmp_path)
+    result_path = dist / "resnet_50" / "modalix_bf16" / "model" / "compile-result.json"
+    result = json.loads(result_path.read_text())
+    stale = result_path.parent / "stale.tar.gz"
+    stale.write_bytes((result_path.parent / result["archive"]).read_bytes())
+    result["archive"] = stale.name
+    result_path.write_text(json.dumps(result))
+    calls = []
+    store = FakeStore()
+
+    with pytest.raises(ValidationError, match="archive does not match the compile output manifest"):
+        publish_compilations(
+            repository=ROOT,
+            dist_dir=dist,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            kms_key_id=None,
+            environment="staging",
+            branch="develop",
+            git_sha="a" * 40,
+            github_run_id="1234",
+            github_run_attempt="1",
+            github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
+            request=lambda *args: calls.append(args),
+            artifact_store=store,
+        )
+
+    assert calls == []
+    assert store.objects == []
 
 
 def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Path) -> None:
@@ -343,7 +517,7 @@ def test_publish_taxonomy_is_independent_of_model_compilation() -> None:
         request=lambda *args: calls.append(args) or {"stored": True},
     )
 
-    assert result["version"] == 2
+    assert result["version"] == 3
     assert result["registry"] == {"stored": True}
     assert len(calls) == 1
-    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/2")
+    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/taxonomies/3")

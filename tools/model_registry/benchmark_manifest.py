@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .artifact import validate_compile_outputs
+from .catalog import build_matrix
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import load_and_validate_model
@@ -23,9 +25,37 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def _performance_configuration(
+def validate_benchmark_components(
+    repository: Path,
+    compiled_dir: Path,
+    model_id: str,
+    build_profile_id: str,
+    compile_invocation_id: str,
+    component_ids: list[str],
+) -> None:
+    model = load_and_validate_model(repository / "models" / model_id, repository / "schemas" / "model.schema.json")
+    matrix = build_matrix({model_id: model}, [model_id], [build_profile_id])
+    invocation = next(
+        (item for item in matrix["include"] if item["compile_invocation_id"] == compile_invocation_id), None
+    )
+    if invocation is None:
+        raise ValidationError(f"unknown benchmark compile invocation: {compile_invocation_id}")
+    output_root = compiled_dir / model_id / build_profile_id
+    validate_compile_outputs(
+        output_root / "compile-outputs.json",
+        output_root,
+        model_id=model_id,
+        build_profile_id=build_profile_id,
+        compile_invocation_id=compile_invocation_id,
+        component_ids=invocation["component_ids"],
+    )
+    if not component_ids or component_ids != invocation["benchmark_component_ids"]:
+        raise ValidationError("dispatched benchmark components do not match the declared performance tests")
+
+
+def load_component_performance_config(
     root: Path, model_id: str, component_id: str, build_profile_id: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
     model_dir = root / "models" / model_id
     model = load_and_validate_model(model_dir, root / "schemas" / "model.schema.json")
     cases = [
@@ -35,12 +65,15 @@ def _performance_configuration(
         and build_profile_id in case["build_profiles"]
     ]
     if len(cases) != 1:
-        raise ValidationError(
-            f"expected exactly one performance test for {model_id}/{build_profile_id}/{component_id}"
-        )
+        raise ValidationError(f"expected exactly one performance test for {model_id}/{build_profile_id}/{component_id}")
     path = model_dir / cases[0]["config"]
-    document = load_performance_config(path, root / "schemas" / "performance-config-v1.schema.json")
-    return benchmark_settings(document)
+    return load_performance_config(path, root / "schemas" / "performance-config-v1.schema.json")
+
+
+def _performance_configuration(
+    root: Path, model_id: str, component_id: str, build_profile_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    return benchmark_settings(load_component_performance_config(root, model_id, component_id, build_profile_id))
 
 
 def make_benchmark_manifest(

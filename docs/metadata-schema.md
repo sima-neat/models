@@ -60,8 +60,8 @@ components:
     recipe: compile.py
 ```
 
-A source may be one `file` or a `file_set`. Use a file set when one compiler
-input consists of an ONNX entrypoint plus external data or related files:
+A source may be one `file` or a `file_set`. Use a file set when one recipe input
+consists of an entrypoint plus related files:
 
 ```yaml
 source:
@@ -84,6 +84,12 @@ Every member is verified separately. The tool materializes the declared
 relative layout in a content-addressed cache and passes the entrypoint to the
 recipe. `depends_on` may express ordering between components; cycles and
 unknown component IDs are rejected.
+
+The entrypoint may be an upstream checkpoint when the same file set also pins
+the model-specific exporter package. In that case the recipe calls a local
+`export.py` and keeps the generated ONNX temporary. Registry tooling only
+fetches and verifies the declared files; it does not interpret checkpoint
+formats or provide a universal converter.
 
 An interface contains named `entrypoints`. Each entrypoint declares its input
 and output tensors and may declare state and streaming behavior. Symbolic
@@ -147,10 +153,39 @@ build_profiles:
         parameters: {precision: int8}
 ```
 
-This avoids a Cartesian product of unrelated component configurations. The compile
-matrix emits one job for every supported component binding. `runner_class` may
+This avoids a Cartesian product of unrelated component configurations. The
+compile matrix emits one job for every supported component binding unless the
+profile declares `compile_invocations`:
+
+```yaml
+compile_invocations:
+  - id: detector
+    components: [backbone, transformer]
+    python_packages:
+      - path: exporter-1.2.3-py3-none-any.whl
+        imports: [exporter]
+```
+
+One invocation runs the shared recipe once and must emit a schema-v2
+`compile-outputs.json` with one MPK path for every listed component, derived
+graph hashes, and one correctness result. `python_packages` explicitly names
+verified file-set members and imports needed by the recipe; CI does not infer
+them from filenames. Grouped
+components must share their source content, recipe, and effective runner class.
+Selecting one grouped component selects the whole invocation. `runner_class` may
 be set on the profile or overridden on a binding. A binding proven incompatible
 may use `status: unsupported` with a reason; untested work is not unsupported.
+If the invocation needs calibration data, its first component selects the one
+shared calibration input that CI passes to the recipe.
+
+A grouped recipe with `engine: model_recipe` correctness writes one
+`fidelity.json` beside its owning component MPK. The report follows
+`schemas/numerical-fidelity-v1.schema.json` and records numerical agreement for
+the full composed pipeline. Its correctness configuration names that owner with
+`result_component` and declares the output metrics. CI validates the report
+against that configuration before publishing any component;
+the recipe owns the comparison and fails when its declared thresholds are not
+met.
 
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).

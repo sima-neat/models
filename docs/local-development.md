@@ -121,7 +121,8 @@ model-registry matrix \
 ```
 
 The matrix output is deterministic JSON. It includes supported component
-bindings only. To inspect a model, profile, or component explicitly:
+bindings and declared compile invocations. To inspect a model, profile, or
+component explicitly:
 
 ```bash
 model-registry matrix --repository . --models <model-id>
@@ -151,6 +152,27 @@ public compile command. Use the model recipe directly:
 ```text
 compile.py --model <verified-entrypoint> --output-dir <new-directory> \
   --build-profile <profile-id> --component <component-id>
+```
+
+For a grouped matrix entry, invoke its shared recipe once:
+
+```text
+compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
+  --correctness-dataset <verified-correctness-dataset> \
+  --output-dir <new-directory> --build-profile <profile-id> \
+  --compile-invocation <invocation-id>
+```
+
+The grouped output directory contains one subdirectory per component and a
+root schema-v2 `compile-outputs.json`. It records each component MPK, both
+derived graph hashes, and the declared correctness result. Validate that
+contract before checking each MPK:
+
+```bash
+model-registry validate-compile-outputs <output>/compile-outputs.json \
+  --output-root <output> --model-id <model-id> \
+  --build-profile-id <profile-id> --compile-invocation-id <invocation-id> \
+  --components <component-a>,<component-b>
 ```
 
 In the pinned Model Compiler environment:
@@ -226,7 +248,8 @@ In the pinned Model Compiler environment:
    model-registry verify-mpk <new-output-directory>
    ```
 
-For a multi-component product, repeat these steps for every matrix entry. Place
+For a multi-component product, repeat these steps for every matrix entry. A
+grouped invocation is one matrix entry even though it emits several MPKs. Place
 the verified output directories under
 `<compiled-root>/<model-id>/<profile-id>/<component-id>`. To exercise the same
 bundle boundary users will retrieve, write each compile manifest with the
@@ -263,11 +286,10 @@ sufficient for model submission.
 
 ## Measure declared accuracy locally
 
-If the selected component/profile pair has an executable correctness declaration with
-`engine: model_registry`, evaluate the saved `.sima` candidate produced by the
-recipe before benchmarking the MPK. This compares the candidate graph with the
-pinned reference model over the declared correctness dataset; it does not run
-the MPK on the DevKit.
+If correctness uses `engine: model_registry`, evaluate the saved `.sima`
+candidate before benchmarking. For `engine: model_recipe`, pass the separately
+resolved correctness dataset to the grouped recipe; the recipe compares the
+full candidate pipeline and emits the declared numerical fidelity report.
 
 Follow [Local accuracy development](local-accuracy-development.md) for dataset
 resolution, regular versus qualification profiles, the `evaluate` command, and
@@ -358,9 +380,9 @@ request, and submission guidance.
 | Failure | What to check |
 | --- | --- |
 | `id must match directory name` | Rename the directory or correct `id`; both must use the same snake-case value. |
-| Unknown or incompatible taxonomy ID | Select a sanctioned v2 ID or propose a separately reviewed taxonomy version. |
+| Unknown or incompatible taxonomy ID | Select a sanctioned v3 ID or propose a separately reviewed taxonomy version. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
-| Source host or URL rejected | Use a full-commit Hugging Face resource or an approved GitHub release asset. |
+| Source host or URL rejected | Use a full-commit Hugging Face resource, an approved GitHub release asset, or another approved checksum-verified upstream host. |
 | Referenced file does not exist | Keep recipe, surgery, and test paths relative to and inside the model directory. |
 | Build missing from the matrix | Check the component binding `status`, requested IDs, and changed path. |
-| More than one MPK produced | Clean the new output directory and make the recipe emit exactly one archive. |
+| Unexpected MPK count | Clean the output directory. A normal invocation emits one archive; a grouped invocation emits exactly its declared component set. |

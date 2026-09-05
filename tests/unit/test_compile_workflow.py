@@ -59,13 +59,9 @@ def test_runner_classes_are_authorized_before_compile_matrix_is_queued() -> None
     assert admission["permissions"]["id-token"] == "write"
     authorization = next(step for step in admission["steps"] if step.get("id") == "authorization")
     assert "authorize-runner-matrix" in authorization["run"]
-    assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == (
-        "${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}"
-    )
+    assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == ("${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}")
     assert compile_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
-    assert compile_job["strategy"]["matrix"] == (
-        "${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}"
-    )
+    assert compile_job["strategy"]["matrix"] == ("${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}")
 
 
 def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
@@ -130,30 +126,45 @@ def test_json_catalog_and_package_publication_are_retired() -> None:
     assert "vulcan-update-latest-artifacts" not in text
 
 
-def test_each_successful_matrix_item_publishes_directly_to_registry() -> None:
+def test_compiler_output_is_published_from_a_hosted_runner() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     compile_job = workflow["jobs"]["compile"]
+    publish_job = workflow["jobs"]["publish-compilations"]
 
     assert compile_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
-    assert compile_job["permissions"]["id-token"] == "write"
+    assert "id-token" not in compile_job["permissions"]
+    assert all("aws-actions/configure-aws-credentials" not in step.get("uses", "") for step in compile_job["steps"])
+    assert all("model_registry publish" not in step.get("run", "") for step in compile_job["steps"])
+    compiler_output = next(
+        step for step in compile_job["steps"] if step.get("name") == "Retain the complete compiler output"
+    )
+    assert compiler_output["with"]["name"].startswith("compiler-output-")
+
+    assert publish_job["runs-on"] == "ubuntu-latest"
+    assert publish_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "compile"]
+    assert publish_job["permissions"]["id-token"] == "write"
+    download = next(
+        step for step in publish_job["steps"] if step.get("name") == "Download this complete compiler output"
+    )
+    assert download["with"]["name"].startswith("compiler-output-")
+    verify = next(step for step in publish_job["steps"] if step.get("name") == "Verify the complete component set")
+    assert "validate-compile-outputs" in verify["run"]
+    assert "compile-result.json" in verify["run"]
     credentials = next(
-        step for step in compile_job["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
+        step for step in publish_job["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
     )
-    assert "if" not in credentials
     assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
-    publish = next(step for step in compile_job["steps"] if step.get("name") == "Publish this model compilation")
-    assert "if" not in publish
+    publish = next(step for step in publish_job["steps"] if step.get("name") == "Publish the complete component set")
     assert publish["env"]["REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
-    assert "-m model_registry publish" in publish["run"]
-    assert '--dist-dir "$ARTIFACT_ROOT"' in publish["run"]
-    assert 'result["count"] == 1' in publish["run"]
-    publish_index = compile_job["steps"].index(publish)
-    retain_index = next(
-        index
-        for index, step in enumerate(compile_job["steps"])
-        if step.get("name") == "Retain the validated model output for benchmark handoff"
+    assert "model-registry publish" in publish["run"]
+    assert "--dist-dir _compiled" in publish["run"]
+    assert "path.write_text" not in publish["run"]
+    published_output = next(
+        step
+        for step in publish_job["steps"]
+        if step.get("name") == "Retain the published model output for benchmark handoff"
     )
-    assert publish_index < retain_index
+    assert published_output["with"]["name"].startswith("compiled-model-")
 
 
 def test_taxonomy_publication_does_not_require_a_model_compile() -> None:
@@ -251,9 +262,49 @@ def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
     assert "activate-model-compiler" in compile_script
     assert "command -v mla-masm" in compile_script
     assert 'archives=("$OUTPUT_DIR"/*_mpk.tar.gz)' in compile_script
+    assert '--compile-invocation "$COMPILE_INVOCATION_ID"' in compile_script
     assert '--dataset "$CALIBRATION_PATH"' in compile_script
     assert 'if [[ "$CALIBRATION_KIND" == "dataset" ]]' in compile_script
     assert "python -m model_registry evaluate" not in compile_script
+
+
+def test_verified_exporter_is_layered_on_the_model_compiler_interpreter() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compile"]["steps"]
+    exporter = next(step for step in steps if step.get("name") == "Prepare the verified model exporter")
+
+    assert "json.loads(sys.argv[3])" in exporter["run"]
+    assert 'package["path"]' in exporter["run"]
+    assert 'package["imports"]' in exporter["run"]
+    assert '"--no-deps"' in exporter["run"]
+    assert '"--target"' in exporter["run"]
+    assert "--system-site-packages" not in exporter["run"]
+    assert 'importlib.import_module("afe")' in exporter["run"]
+    assert 'echo "PYTHONPATH=$exporter_packages' in exporter["run"]
+
+
+def test_grouped_recipe_receives_the_declared_correctness_dataset() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    recipe = next(
+        step
+        for step in workflow["jobs"]["compile"]["steps"]
+        if step.get("name") == "Run model-specific surgery and compilation recipe"
+    )
+
+    assert recipe["env"]["CORRECTNESS_DATASET_PATH"] == "${{ steps.accuracy_dataset.outputs.path }}"
+    assert 'correctness_args=(--correctness-dataset "$CORRECTNESS_DATASET_PATH")' in recipe["run"]
+
+
+def test_grouped_compile_validates_and_verifies_each_component_output() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    compile_job = workflow["jobs"]["compile"]
+    verify = next(step for step in compile_job["steps"] if step.get("name") == "Validate and checksum every MPK")
+    retain = next(step for step in compile_job["steps"] if step.get("uses") == "actions/upload-artifact@v7")
+
+    assert "validate-compile-outputs" in verify["run"]
+    assert 'for index in "${!components[@]}"' in verify["run"]
+    assert 'verify-mpk "$PROFILE_OUTPUT_DIR/$component"' in verify["run"]
+    assert retain["with"]["name"].startswith("compiler-output-")
 
 
 def test_compile_workflow_resolves_registered_calibration_input() -> None:
@@ -274,7 +325,9 @@ def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> No
     assert "model_registry fetch-accuracy-dataset" in accuracy_dataset["run"]
     assert '--build-profile "$BUILD_PROFILE_ID"' in accuracy_dataset["run"]
     assert accuracy_dataset["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
-    assert accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset'"
+    assert (
+        accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset' && matrix.explicit_invocation != true"
+    )
     assert accuracy_step["env"]["SOURCE_PATH"] == "${{ steps.source.outputs.path }}"
     assert accuracy_step["env"]["ACCURACY_DATASET_PATH"] == "${{ steps.accuracy_dataset.outputs.path }}"
     assert "source /etc/profile.d/vulcan-model-compiler.sh" in accuracy_step["run"]
@@ -290,13 +343,11 @@ def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> No
 def test_compile_result_records_runner_authorization_provenance() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     compile_job = workflow["jobs"]["compile"]
-    verify = next(step for step in compile_job["steps"] if step.get("id") == "mpk")
+    verify = next(step for step in compile_job["steps"] if step.get("name") == "Validate and checksum every MPK")
 
     assert compile_job["env"]["REQUESTED_RUNNER_CLASS"] == "${{ matrix.requested_runner_class }}"
     assert compile_job["env"]["RUNNER_CLASS"] == "${{ matrix.runner_class }}"
-    assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == (
-        "${{ matrix.runner_approval_spec_revision }}"
-    )
+    assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == ("${{ matrix.runner_approval_spec_revision }}")
     assert "--requested-runner-class" in verify["run"]
     assert "--runner-class" in verify["run"]
     assert "--runner-approval-id" in verify["run"]
@@ -344,7 +395,7 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     compile_step = next(
         step for step in steps if step.get("name") == "Run model-specific surgery and compilation recipe"
     )
-    verify_step = next(step for step in steps if step.get("name") == "Validate and checksum the MPK")
+    verify_step = next(step for step in steps if step.get("name") == "Validate and checksum every MPK")
 
     assert "model_registry fetch-calibration" in calibration["run"]
     assert calibration["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
@@ -353,16 +404,12 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     assert "--calibration-sha256" in verify_step["run"]
 
 
-def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
+def test_published_compile_dispatches_one_grouped_benchmark() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    compile_job = workflow["jobs"]["compile"]
-    dispatch = next(
-        step
-        for step in compile_job["steps"]
-        if step.get("name") == "Start this model benchmark without waiting for the compile matrix"
-    )
+    publish_job = workflow["jobs"]["publish-compilations"]
+    dispatch = next(step for step in publish_job["steps"] if step.get("name") == "Start the component benchmarks")
 
-    assert compile_job["permissions"]["actions"] == "write"
+    assert publish_job["permissions"]["actions"] == "write"
     assert dispatch["continue-on-error"] == "true"
     assert "needs.select.outputs.publishable" not in dispatch["if"]
     assert "needs.select.outputs.vulcan_environment == 'staging'" in dispatch["if"]
@@ -380,10 +427,10 @@ def test_each_successful_compile_dispatches_its_benchmark_immediately() -> None:
     compile(dispatch_python, "<benchmark-dispatch>", "exec")
     retain_index = next(
         index
-        for index, step in enumerate(compile_job["steps"])
-        if step.get("name") == "Retain the validated model output for benchmark handoff"
+        for index, step in enumerate(publish_job["steps"])
+        if step.get("name") == "Retain the published model output for benchmark handoff"
     )
-    assert retain_index < compile_job["steps"].index(dispatch)
+    assert retain_index < publish_job["steps"].index(dispatch)
     assert "discover-benchmark-matrix" not in workflow["jobs"]
     assert "inputs.operation" not in workflow["concurrency"]["group"]
     assert "stage-dispatched-benchmark" not in workflow["jobs"]

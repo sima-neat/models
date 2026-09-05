@@ -7,12 +7,22 @@ import pytest
 import yaml
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model, load_model, validate_model
+from model_registry.performance_config import load_performance_config
 from model_registry.taxonomy import load_taxonomy, validate_model_categorization
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
-TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v2.yaml"
+TAXONOMY = ROOT / "taxonomies" / "model-taxonomy-v3.yaml"
+
+
+def _two_component_model() -> dict:
+    model = load_model(FIXTURES / "fixture_model")
+    second = copy.deepcopy(model["components"][0])
+    second["id"] = "second_model"
+    model["components"].append(second)
+    model["build_profiles"][0]["components"].append({"id": "second_model", "parameters": {}})
+    return model
 
 
 def test_valid_fixture_passes() -> None:
@@ -61,15 +71,144 @@ def test_runner_class_is_optional_and_validated() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
+def test_compile_invocation_can_group_components_with_shared_inputs() -> None:
+    model = _two_component_model()
+    model["build_profiles"][0]["compile_invocations"] = [{"id": "combined", "components": ["model", "second_model"]}]
+
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_compile_invocation_declares_python_packages_from_shared_source() -> None:
+    model = _two_component_model()
+    original = model["components"][0]["source"]
+    source = {
+        "type": "file_set",
+        "entrypoint": "model.onnx",
+        "files": [
+            {"path": "model.onnx", **{key: value for key, value in original.items() if key != "type"}},
+            {
+                "path": "exporter.whl",
+                "uri": original["uri"],
+                "sha256": original["sha256"],
+                "size_bytes": original["size_bytes"],
+            },
+        ],
+    }
+    for component in model["components"]:
+        component["source"] = copy.deepcopy(source)
+    invocation = {
+        "id": "combined",
+        "components": ["model", "second_model"],
+        "python_packages": [{"path": "exporter.whl", "imports": ["exporter"]}],
+    }
+    model["build_profiles"][0]["compile_invocations"] = [invocation]
+
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+    invocation["python_packages"][0]["path"] = "missing.whl"
+    with pytest.raises(ValidationError, match="python packages must be declared members"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("invocations", "expected"),
+    [
+        ([{"id": "combined", "components": ["model", "missing"]}], "unknown components: missing"),
+        (
+            [
+                {"id": "first", "components": ["model"]},
+                {"id": "second", "components": ["model", "second_model"]},
+            ],
+            "duplicate components: model",
+        ),
+        ([{"id": "first", "components": ["model"]}], "omit supported components: second_model"),
+    ],
+)
+def test_compile_invocations_partition_supported_components(invocations: list[dict], expected: str) -> None:
+    model = _two_component_model()
+    model["build_profiles"][0]["compile_invocations"] = invocations
+
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_compile_invocation_rejects_unsupported_component() -> None:
+    model = _two_component_model()
+    model["build_profiles"][0]["components"][1].update({"status": "unsupported", "reason": "compiler limitation"})
+    model["build_profiles"][0]["compile_invocations"] = [{"id": "combined", "components": ["model", "second_model"]}]
+
+    with pytest.raises(ValidationError, match="include unsupported components: second_model"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (lambda model: model["components"][1].update({"recipe": "other.py"}), "share one recipe"),
+        (
+            lambda model: model["components"][1]["source"].update({"sha256": "b" * 64}),
+            "share one source content identity",
+        ),
+        (
+            lambda model: model["build_profiles"][0]["components"][1].update({"runner_class": "expensive"}),
+            "share one effective runner class",
+        ),
+    ],
+)
+def test_compile_invocation_components_must_share_compile_contract(change, expected: str) -> None:
+    model = _two_component_model()
+    model["build_profiles"][0]["compile_invocations"] = [{"id": "combined", "components": ["model", "second_model"]}]
+    change(model)
+
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_compile_invocation_uses_the_first_components_shared_calibration() -> None:
+    model = _two_component_model()
+    model["calibrations"] = [
+        {"id": "first", "status": "pending", "reason": "fixture"},
+        {"id": "second", "status": "pending", "reason": "fixture"},
+    ]
+    model["build_profiles"][0]["compile_invocations"] = [{"id": "combined", "components": ["model", "second_model"]}]
+    bindings = model["build_profiles"][0]["components"]
+    bindings[1]["calibration"] = "first"
+
+    with pytest.raises(ValidationError, match="shared calibration on its first component"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+    bindings[0]["calibration"] = "first"
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+    bindings[1]["calibration"] = "second"
+    with pytest.raises(ValidationError, match="shared calibration on its first component"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        {"id": "Not Valid", "components": ["model"]},
+        {"id": "combined", "components": []},
+        {"id": "combined", "components": ["model", "model"]},
+    ],
+)
+def test_compile_invocation_schema_requires_normal_id_and_unique_non_empty_components(
+    invocation: dict,
+) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["build_profiles"][0]["compile_invocations"] = [invocation]
+
+    with pytest.raises(ValidationError, match="compile_invocations"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
 def test_declarative_composition_validates_ports_and_package_contents() -> None:
     model = load_model(FIXTURES / "fixture_model")
     second = copy.deepcopy(model["components"][0])
     second["id"] = "second_model"
     model["components"].append(second)
     model["build_profiles"][0]["components"].append({"id": "second_model", "parameters": {}})
-    model["compositions"] = [
-        {"id": "pipeline", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}
-    ]
+    model["compositions"] = [{"id": "pipeline", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}]
     model["packages"][0]["components"] = ["model", "second_model"]
     model["packages"][0]["composition"] = "pipeline"
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
@@ -112,6 +251,17 @@ def test_performance_configuration_is_validated_during_catalog_validation() -> N
     ]
     with pytest.raises(ValidationError, match="unsupported_setting.*unexpected"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_required_performance_metrics_must_be_declared(tmp_path: Path) -> None:
+    path = tmp_path / "performance.yaml"
+    path.write_text(
+        "schema_version: 1\nstatus: provisional\nmetrics: [latency_avg_ms]\nrequired_metrics: [avg_power_watts]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="required_metrics are not declared"):
+        load_performance_config(path, ROOT / "schemas" / "performance-config-v1.schema.json")
 
 
 def test_yaml_uses_safe_loader(tmp_path: Path) -> None:

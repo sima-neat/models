@@ -108,6 +108,29 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
     return revision, validated
 
 
+def _matrix_component_ids(entry: dict[str, Any], index: int) -> list[str]:
+    raw_component_ids = entry.get("component_ids")
+    if raw_component_ids is None:
+        component_id = entry.get("component_id")
+        if not isinstance(component_id, str) or not component_id:
+            raise ValidationError(f"compile matrix include[{index}].component_id must be a non-empty string")
+        return [component_id]
+    if not isinstance(raw_component_ids, list) or not raw_component_ids:
+        raise ValidationError(f"compile matrix include[{index}].component_ids must be a non-empty array")
+    if any(not isinstance(component_id, str) or not component_id for component_id in raw_component_ids):
+        raise ValidationError(
+            f"compile matrix include[{index}].component_ids must contain non-empty strings"
+        )
+    if len(raw_component_ids) != len(set(raw_component_ids)):
+        raise ValidationError(f"compile matrix include[{index}].component_ids must be unique")
+    component_id = entry.get("component_id")
+    if component_id is not None and component_id != raw_component_ids[0]:
+        raise ValidationError(
+            f"compile matrix include[{index}].component_id must match the first component_ids item"
+        )
+    return list(raw_component_ids)
+
+
 def authorize_runner_matrix(
     matrix: dict[str, Any],
     vulcan_spec: dict[str, Any],
@@ -115,7 +138,7 @@ def authorize_runner_matrix(
     repository: str,
     environment: str,
     now: datetime | None = None,
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Authorize a compile matrix against the Terraform-published Vulcan spec."""
 
     if _REPOSITORY.fullmatch(repository) is None:
@@ -129,54 +152,62 @@ def authorize_runner_matrix(
     if not isinstance(include, list):
         raise ValidationError("compile matrix include must be an array")
 
-    authorized: list[dict[str, str]] = []
+    authorized: list[dict[str, Any]] = []
     for index, raw_entry in enumerate(include):
         if not isinstance(raw_entry, dict):
             raise ValidationError(f"compile matrix include[{index}] must be an object")
         entry = copy.deepcopy(raw_entry)
         model_id = str(entry.get("model_id") or "")
-        component_id = str(entry.get("component_id") or "")
+        component_ids = _matrix_component_ids(entry, index)
         build_profile_id = str(entry.get("build_profile_id") or "")
         requested = str(entry.get("requested_runner_class") or "default")
+        invocation_id = str(entry.get("compile_invocation_id") or component_ids[0])
         if requested not in RUNNER_CLASS_RANK:
             raise ValidationError(
-                f"{model_id}/{build_profile_id}/{component_id} requests unknown runner class {requested!r}"
+                f"{model_id}/{build_profile_id}/{invocation_id} requests unknown runner class {requested!r}"
             )
 
-        approval_id = ""
+        approval_ids: list[str] = []
         if requested in ELEVATED_RUNNER_CLASSES:
-            matches = [
-                record
-                for record in approvals
-                if record["repository"] == repository
-                and record["model_id"] == model_id
-                and record["component_id"] == component_id
-                and record["build_profile_id"] == build_profile_id
-                and record["environment"] == environment
-            ]
-            if len(matches) != 1:
-                raise ValidationError(
-                    f"{model_id}/{build_profile_id}/{component_id} requests {requested} but has no unique "
-                    f"Vulcan approval for {repository} in {environment}"
+            for component_id in component_ids:
+                matches = [
+                    record
+                    for record in approvals
+                    if record["repository"] == repository
+                    and record["model_id"] == model_id
+                    and record["component_id"] == component_id
+                    and record["build_profile_id"] == build_profile_id
+                    and record["environment"] == environment
+                ]
+                if len(matches) != 1:
+                    raise ValidationError(
+                        f"{model_id}/{build_profile_id}/{component_id} requests {requested} but has no unique "
+                        f"Vulcan approval for {repository} in {environment}"
+                    )
+                approval = matches[0]
+                expires_at = approval.get("_expires_at")
+                if expires_at is not None and expires_at <= current:
+                    raise ValidationError(
+                        f"Vulcan runner approval for {model_id}/{build_profile_id}/{component_id} expired at "
+                        f"{approval['expires_at']}"
+                    )
+                maximum = str(approval["maximum_runner_class"])
+                if RUNNER_CLASS_RANK[requested] > RUNNER_CLASS_RANK[maximum]:
+                    raise ValidationError(
+                        f"{model_id}/{build_profile_id}/{component_id} requests {requested}, "
+                        f"above approved maximum {maximum}"
+                    )
+                approval_ids.append(
+                    f"{repository}:{model_id}:{build_profile_id}:{component_id}:{environment}"
                 )
-            approval = matches[0]
-            expires_at = approval.get("_expires_at")
-            if expires_at is not None and expires_at <= current:
-                raise ValidationError(
-                    f"Vulcan runner approval for {model_id}/{build_profile_id}/{component_id} expired at "
-                    f"{approval['expires_at']}"
-                )
-            maximum = str(approval["maximum_runner_class"])
-            if RUNNER_CLASS_RANK[requested] > RUNNER_CLASS_RANK[maximum]:
-                raise ValidationError(
-                    f"{model_id}/{build_profile_id}/{component_id} requests {requested}, "
-                    f"above approved maximum {maximum}"
-                )
-            approval_id = f"{repository}:{model_id}:{build_profile_id}:{component_id}:{environment}"
 
         entry["requested_runner_class"] = requested
         entry["runner_class"] = requested
-        entry["runner_approval_id"] = approval_id
+        entry["runner_approval_id"] = approval_ids[0] if approval_ids else ""
+        if len(component_ids) == 1:
+            entry.pop("runner_approval_ids", None)
+        else:
+            entry["runner_approval_ids"] = approval_ids
         entry["runner_approval_spec_revision"] = revision
-        authorized.append({str(key): str(value) for key, value in entry.items()})
+        authorized.append(entry)
     return {"include": authorized}

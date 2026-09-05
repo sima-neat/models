@@ -12,6 +12,7 @@ from model_registry.benchmark_publication import (
     benchmark_identity_document,
     load_benchmark_result,
     publish_benchmark_result,
+    validate_benchmark_set,
 )
 from model_registry.errors import ValidationError
 from model_registry.registry import S3Object, canonical_sha256
@@ -101,6 +102,72 @@ def valid_result(tmp_path: Path) -> Path:
     path = tmp_path / "performance-result.json"
     path.write_text(json.dumps(result), encoding="utf-8")
     return path
+
+
+def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = True) -> Path:
+    path = valid_result(tmp_path)
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["model"].update(
+        {
+            "id": "rf_detr_small",
+            "build_profile_id": "modalix_int8_bf16",
+            "component_id": component_id,
+        }
+    )
+    result["provenance"]["models_commit"] = "a" * 40
+    if include_power:
+        benchmarker = load_benchmarker()
+        result["metrics"]["avg_power_watts"] = benchmarker._single_measurement(8.5, "W", details={})
+        result["metrics"]["energy_per_inference_joules"] = benchmarker._single_measurement(
+            0.03, "J", details={}
+        )
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    destination = tmp_path.parent / component_id / "performance-result-v4.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(result), encoding="utf-8")
+    return destination
+
+
+def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    for component_id in ("backbone", "transformer"):
+        component_tmp = tmp_path / f"tmp-{component_id}"
+        component_tmp.mkdir()
+        generated = rf_detr_result(component_tmp, component_id)
+        destination = results / component_id / generated.name
+        destination.parent.mkdir(parents=True)
+        generated.replace(destination)
+
+    validated = validate_benchmark_set(
+        repository=ROOT,
+        result_root=results,
+        model_id="rf_detr_small",
+        build_profile_id="modalix_int8_bf16",
+        component_ids=["backbone", "transformer"],
+        git_sha="a" * 40,
+    )
+
+    assert validated["count"] == 2
+
+
+def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> None:
+    component_tmp = tmp_path / "tmp-backbone"
+    component_tmp.mkdir()
+    generated = rf_detr_result(component_tmp, "backbone", include_power=False)
+    results = tmp_path / "results"
+    destination = results / "backbone" / generated.name
+    destination.parent.mkdir(parents=True)
+    generated.replace(destination)
+
+    with pytest.raises(ValidationError, match="avg_power_watts.*was not measured"):
+        validate_benchmark_set(
+            repository=ROOT,
+            result_root=results,
+            model_id="rf_detr_small",
+            build_profile_id="modalix_int8_bf16",
+            component_ids=["backbone"],
+            git_sha="a" * 40,
+        )
 
 
 @pytest.mark.parametrize("version", [2, 3])

@@ -35,10 +35,15 @@ def load_performance_config(
     )
     if errors:
         details = "; ".join(
-            f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
-            for error in errors
+            f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}" for error in errors
         )
         raise ValidationError(f"{config_path}: {details}")
+    metric_names = {metric if isinstance(metric, str) else metric["name"] for metric in value["metrics"]}
+    missing = set(value.get("required_metrics", ())) - metric_names
+    if missing:
+        raise ValidationError(
+            f"{config_path}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}"
+        )
     return value
 
 

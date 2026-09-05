@@ -28,6 +28,7 @@ A typical new-model change contains:
 models/<model-id>/README.md
 models/<model-id>/model.yaml
 models/<model-id>/compile.py
+models/<model-id>/export.py               # only for an upstream checkpoint source
 models/<model-id>/surgery.py              # only when declared
 models/<model-id>/tests/correctness.yaml
 models/<model-id>/tests/performance.yaml
@@ -132,19 +133,23 @@ from stated local evidence or the trusted staging workflow after merge.
 ## After merge: trusted staging automation
 
 When the change is merged to `develop`, the trusted push workflow selects the
-affected component/profile pairs and then:
+affected component/profile pairs or compile invocations and then:
 
 1. authorizes each requested runner class against the protected Vulcan
    environment specification;
 2. verifies the pinned Model Compiler runner and fetches immutable source,
    calibration, and applicable accuracy data;
-3. runs each selected supported recipe in an isolated output directory;
+3. runs each selected supported recipe in an isolated output directory, once
+   for every matrix entry;
 4. evaluates declared dataset-backed accuracy when it applies;
-5. requires and validates exactly one MPK;
-6. publishes the compilation and provenance to the staging registry; and
+5. validates the output manifest and each emitted MPK, then uploads one complete
+   compiler output;
+6. downloads and verifies that output on a GitHub-hosted runner before publishing
+   each component and its provenance to the staging registry;
 7. assembles every complete declared package; and
 8. dispatches each newly compiled Modalix component to the dedicated DevKit
-   benchmark workflow, which publishes the successful result.
+   benchmark workflow, which benchmarks grouped components sequentially on one
+   board and publishes each successful result.
 
 The compile and benchmark are separate GitHub Actions runs. A successful
 compile does not by itself mean the dispatched benchmark succeeded; inspect the

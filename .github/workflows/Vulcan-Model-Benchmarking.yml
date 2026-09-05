@@ -1,5 +1,5 @@
 name: Vulcan Model Benchmarking
-run-name: Benchmarking (${{ inputs.model_id }}/${{ inputs.component_id }}, ${{ inputs.build_profile_id }})
+run-name: Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})
 
 on:
   workflow_dispatch:
@@ -26,8 +26,12 @@ on:
         description: Build profile ID to benchmark
         required: true
         type: string
-      component_id:
-        description: Component ID to benchmark
+      compile_invocation_id:
+        description: Compile invocation that produced the components
+        required: true
+        type: string
+      component_ids:
+        description: Comma-separated component IDs to benchmark in order
         required: true
         type: string
 
@@ -38,17 +42,18 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_run_id }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_run_id }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
   cancel-in-progress: false
 
 jobs:
   stage-dispatched-benchmark:
-    name: Stage ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) benchmark input
+    name: Stage ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) benchmark input
     needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.environment == 'staging' &&
       inputs.source_run_id != '' && inputs.source_sha != '' &&
-      inputs.model_id != '' && inputs.build_profile_id != '' && inputs.component_id != ''
+      inputs.model_id != '' && inputs.build_profile_id != '' &&
+      inputs.compile_invocation_id != '' && inputs.component_ids != ''
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
@@ -66,16 +71,25 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_ID: ${{ inputs.component_id }}
+          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
         run: |
           set -euo pipefail
+          [[ "$MODEL_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
+          [[ "$BUILD_PROFILE_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
+          [[ "$COMPILE_INVOCATION_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          (( ${#components[@]} > 0 ))
+          for component in "${components[@]}"; do
+            [[ "$component" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
+          done
           run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
           jq -e --arg sha "$SOURCE_SHA" \
             '.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch")' \
             <<< "$run_json" >/dev/null
           echo "branch=$(jq -er '.head_branch' <<< "$run_json")" >> "$GITHUB_OUTPUT"
           echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
-          artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID"
+          artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"
           artifact_count="$(
             gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
               jq --arg artifact "$artifact_name" \
@@ -86,7 +100,7 @@ jobs:
       - name: Download this compiled model from its source run
         uses: actions/download-artifact@v7
         with:
-          name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+          name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
@@ -96,24 +110,22 @@ jobs:
         env:
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_ID: ${{ inputs.component_id }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
         run: |
-          publication="_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID/registry-publication.json"
-          if [[ -f "$publication" ]]; then
-            echo "required=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "required=true" >> "$GITHUB_OUTPUT"
-          fi
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          for component in "${components[@]}"; do
+            publication="_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$component/registry-publication.json"
+            [[ -f "$publication" ]] || { echo "required=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          done
+          echo "required=false" >> "$GITHUB_OUTPUT"
 
       - name: Check out the trusted source revision for registry tooling
-        if: steps.publication.outputs.required == 'true'
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_sha }}
           path: _registry_source
 
       - name: Set up registry publication tooling
-        if: steps.publication.outputs.required == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -121,8 +133,27 @@ jobs:
           cache-dependency-path: _registry_source/pyproject.toml
 
       - name: Install registry publication tooling
-        if: steps.publication.outputs.required == 'true'
         run: python -m pip install ./_registry_source
+
+      - name: Verify the dispatched component set
+        env:
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
+        run: |
+          python - "$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$COMPONENT_IDS" <<'PY'
+          import pathlib
+          import sys
+
+          from model_registry.benchmark_manifest import validate_benchmark_components
+
+          model_id, profile_id, invocation_id, raw_components = sys.argv[1:]
+          validate_benchmark_components(
+              pathlib.Path("_registry_source"), pathlib.Path("_compiled"),
+              model_id, profile_id, invocation_id, raw_components.split(","),
+          )
+          PY
 
       - name: Configure artifact-registry publisher credentials
         if: steps.publication.outputs.required == 'true'
@@ -145,11 +176,11 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_ID: ${{ inputs.component_id }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
-          result="$(model-registry publish \
+          model-registry publish \
             --repository _registry_source \
             --dist-dir _compiled \
             --api-url "$REGISTRY_API_URL" \
@@ -161,15 +192,12 @@ jobs:
             --git-sha "$SOURCE_SHA" \
             --github-run-id "$SOURCE_RUN_ID" \
             --github-run-attempt "$SOURCE_RUN_ATTEMPT" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
-            --json)"
-          python -c 'import json,sys; result=json.load(sys.stdin); assert result["count"] == 1' <<< "$result"
-          printf '%s\n' "$result" > "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$COMPONENT_ID/registry-publication.json"
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID"
 
       - name: Retain benchmark input independently of compile-run cleanup
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
           if-no-files-found: error
           retention-days: 1
@@ -191,7 +219,7 @@ jobs:
     secrets: inherit
 
   benchmark-dispatched-model:
-    name: Benchmark ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) on DevKit
+    name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner]
     if: inputs.environment == 'staging'
     runs-on:
@@ -204,7 +232,7 @@ jobs:
     env:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-      COMPONENT_ID: ${{ inputs.component_id }}
+      COMPONENT_IDS: ${{ inputs.component_ids }}
       SOURCE_BRANCH: ${{ needs.stage-dispatched-benchmark.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
@@ -217,7 +245,7 @@ jobs:
       - name: Download the staged compiled model output
         uses: actions/download-artifact@v7
         with:
-          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+          name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
 
       - name: Install registry tooling in an isolated environment
@@ -282,36 +310,41 @@ jobs:
       - name: Generate manifest and run benchmark
         run: |
           set -euo pipefail
-          export SIMA_PLATFORM_VERSION="$(jq -er '.devkit.platform_version' <<< "$BENCHMARK_RUNTIME")"
-          mkdir -p _benchmark
-          "$REGISTRY_PYTHON" -m model_registry make-benchmark-manifest \
-            --repository . \
-            --compiled-dir _compiled \
-            --output _benchmark/performance-test.json \
-            --branch "$GITHUB_REF_NAME" \
-            --git-sha "$SOURCE_SHA" \
-            --model "$MODEL_ID" \
-            --build-profile "$BUILD_PROFILE_ID" \
-            --component "$COMPONENT_ID"
-          set -o pipefail
-          "$HOME/pyneat/bin/benchmarker" \
-            --manifest _benchmark/performance-test.json \
-            --output _benchmark/performance-result-v4.json \
-            2>&1 | tee _benchmark/benchmark.log
+          SIMA_PLATFORM_VERSION="$(jq -er '.devkit.platform_version' <<< "$BENCHMARK_RUNTIME")"
+          export SIMA_PLATFORM_VERSION
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          for component in "${components[@]}"; do
+            output="_benchmark/$component"
+            mkdir -p "$output"
+            "$REGISTRY_PYTHON" -m model_registry make-benchmark-manifest \
+              --repository . \
+              --compiled-dir _compiled \
+              --output "$output/performance-test.json" \
+              --branch "$GITHUB_REF_NAME" \
+              --git-sha "$SOURCE_SHA" \
+              --model "$MODEL_ID" \
+              --build-profile "$BUILD_PROFILE_ID" \
+              --component "$component"
+            set -o pipefail
+            "$HOME/pyneat/bin/benchmarker" \
+              --manifest "$output/performance-test.json" \
+              --output "$output/performance-result-v4.json" \
+              2>&1 | tee "$output/benchmark.log"
+          done
 
       - name: Retain benchmark evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: |
-            _benchmark/performance-result-v4.json
-            _benchmark/benchmark.log
+            _benchmark/*/performance-result-v4.json
+            _benchmark/*/benchmark.log
           if-no-files-found: error
           retention-days: 14
 
   publish-dispatched-benchmark:
-    name: Publish ${{ inputs.model_id }}/${{ inputs.component_id }} (${{ inputs.build_profile_id }}) benchmark to Vulcan
+    name: Publish ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) benchmarks to Vulcan
     needs: [benchmark-dispatched-model, resolve-dispatched-benchmark-config]
     if: >-
       always() &&
@@ -336,7 +369,7 @@ jobs:
       - run: python -m pip install .
       - uses: actions/download-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.component_id }}
+          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _benchmarks
       - uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -350,10 +383,29 @@ jobs:
           KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
           AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
         run: |
           set -euo pipefail
-          mapfile -t results < <(find _benchmarks -type f -name performance-result-v4.json -print | sort)
-          (( ${#results[@]} > 0 )) || { echo "No completed benchmark results were downloaded" >&2; exit 1; }
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          model-registry validate-benchmark-set \
+            --repository . \
+            --result-root _benchmarks \
+            --model-id "${{ inputs.model_id }}" \
+            --build-profile-id "${{ inputs.build_profile_id }}" \
+            --components "$COMPONENT_IDS" \
+            --git-sha "$SOURCE_SHA"
+          results=()
+          for component in "${components[@]}"; do
+            result="_benchmarks/$component/performance-result-v4.json"
+            test -f "$result"
+            test -f "_benchmarks/$component/benchmark.log"
+            results+=("$result")
+          done
+          actual_count="$(find _benchmarks -type f -name performance-result-v4.json -print | wc -l | tr -d ' ')"
+          (( actual_count == ${#components[@]} )) || {
+            echo "Expected ${#components[@]} benchmark results, found $actual_count" >&2
+            exit 1
+          }
           for result in "${results[@]}"; do
             log="$(dirname "$result")/benchmark.log"
             model-registry publish-benchmark \
@@ -384,11 +436,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_ID: ${{ inputs.component_id }}
+          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
         run: |
           set -euo pipefail
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPONENT_ID\") | .id" |
+            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
           while read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"

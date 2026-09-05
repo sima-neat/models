@@ -66,6 +66,34 @@ def test_github_release_assets_are_immutable_sources(uri: str) -> None:
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
 
 
+def test_google_cloud_storage_object_is_an_approved_checksum_verified_source() -> None:
+    uri = "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth"
+    assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+def test_python_package_artifact_is_an_approved_checksum_verified_source() -> None:
+    uri = (
+        "https://files.pythonhosted.org/packages/57/d4/"
+        "082da42f39a29acadd47f487b4186c0d6203eb8ce4d145baa72a12103b52/"
+        "rfdetr-1.9.4-py3-none-any.whl"
+    )
+    assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://storage.googleapis.com/unrelated/model.pth",
+        "https://storage.googleapis.com/rfdetr/checkpoint.pth",
+        "https://files.pythonhosted.org/packages/rfdetr-1.9.4-py3-none-any.whl",
+        "https://files.pythonhosted.org/unrelated/package.whl",
+    ],
+)
+def test_approved_hosts_reject_sources_outside_bounded_paths(uri: str) -> None:
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()
+
+
 @pytest.mark.parametrize(
     "uri",
     [

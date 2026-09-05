@@ -1,0 +1,25 @@
+schema_version: 1
+components:
+- id: backbone
+  component: backbone
+  entrypoint: default
+- id: transformer
+  component: transformer
+  entrypoint: default
+connections:
+- from: {component: backbone, output: backbone_features}
+  to: {component: transformer, input: backbone_features}
+inputs:
+- name: input
+  to: {component: backbone, input: input}
+- name: proposals
+  to: {component: transformer, input: proposals}
+outputs:
+- name: proposal_scores
+  from: {component: backbone, output: proposal_scores}
+- name: proposal_boxes
+  from: {component: backbone, output: proposal_boxes}
+- name: dets
+  from: {component: transformer, output: dets}
+- name: labels
+  from: {component: transformer, output: labels}

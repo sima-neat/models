@@ -1,6 +1,6 @@
 # Model categorization taxonomy
 
-`taxonomies/model-taxonomy-v2.yaml` is the current canonical source of searchable model
+`taxonomies/model-taxonomy-v3.yaml` is the current canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
 references; the Model Registry semantic validator resolves those references
@@ -10,7 +10,7 @@ Do not copy sanctioned lists into model definitions, browser code, API code, or
 database migrations. Individual schema-version 2 models declare references:
 
 ```yaml
-taxonomy_version: 2
+taxonomy_version: 3
 model_type: vision
 tasks: [image_classification]
 modalities:

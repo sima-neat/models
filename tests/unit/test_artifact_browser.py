@@ -384,7 +384,11 @@ def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
     assert "MPK package integrity verified: archive structure, checksum, and build provenance match." in script
     assert '<h3>Validation</h3>' not in script
     assert ".detail-title-actions" in styles
-    assert ".model-source-link, .huggingface-source-link, .benchmark-shortcut, .artifact-download-shortcut, .mpk-validation-mark { width: 38px; height: 38px" in styles
+    compact_controls = (
+        ".model-source-link, .huggingface-source-link, .benchmark-shortcut, "
+        ".artifact-download-shortcut, .mpk-validation-mark { width: 38px; height: 38px"
+    )
+    assert compact_controls in styles
     assert ".detail-title-actions > [data-tooltip]:hover::after" in styles
 
 
@@ -393,7 +397,10 @@ def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert "const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup)" in script
-    assert 'data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results"' in script
+    assert (
+        'data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results"'
+        in script
+    )
     assert 'id="benchmark-section" class="benchmark-section" tabindex="-1"' in script
     assert 'querySelector("#benchmark-section")' in script
     assert 'benchmark.scrollIntoView({' in script
@@ -508,6 +515,20 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert 'parts[3:] == ["accuracy", "latest"]' in preview
 
 
+def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert 'item.name === "numerical-fidelity"' in script
+    assert "fidelityPanel(tests, run.id)" in script
+    assert 'data-download="numerical-fidelity"' in script
+    assert 'class="fidelity-summary"' in script
+    assert "Mean absolute error" in script
+    assert ".fidelity-output" in styles
+    assert '"name": "numerical-fidelity"' in preview
+
+
 def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
@@ -542,8 +563,12 @@ def test_focused_model_layout_collapses_list_metadata_without_overflow() -> None
     assert '.workspace[data-detail-layout="focused"] .results-pane { overflow: hidden; padding-right: 0; }' in styles
     assert '.workspace[data-detail-layout="focused"] .section-heading { gap: 8px; padding-right: 16px; }' in styles
     assert '.workspace[data-detail-layout="focused"] .compare-button #compare-label { display: none; }' in styles
-    assert '.workspace[data-detail-layout="focused"] .run-entry { grid-template-columns: 34px minmax(0, 1fr); }' in styles
-    assert '.workspace[data-detail-layout="focused"] .run-row { grid-template-columns: minmax(0, 1fr); gap: 0; }' in styles
+    assert (
+        '.workspace[data-detail-layout="focused"] .run-entry { grid-template-columns: 34px minmax(0, 1fr); }' in styles
+    )
+    assert (
+        '.workspace[data-detail-layout="focused"] .run-row { grid-template-columns: minmax(0, 1fr); gap: 0; }' in styles
+    )
     assert '.run-row { width: 100%; min-width: 0;' in styles
     assert 'width: calc(100% + 30px)' not in styles
     assert '.workspace[data-detail-layout="focused"] .run-date,' in styles
