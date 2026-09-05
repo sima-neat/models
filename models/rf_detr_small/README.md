@@ -42,9 +42,9 @@ The fidelity report compares the quantized AFE backbone, CPU bridge, and
 quantized AFE transformer with the original exported ONNX model. These metrics
 are diagnostic, not detection accuracy: query reordering can reduce numerical
 similarity even for equivalent detections. They do not gate publication.
-Each MPK is
-benchmarked separately; the CI benchmark job runs them sequentially on one
-Modalix board and publishes each result.
+The shared benchmark script calls `model.benchmark(...)` separately for each
+MPK, using three trials of 1,000 samples. CI runs the backbone and transformer
+sequentially on one Modalix board and publishes each result.
 
 The recipe sorts the COCO 2017 mini image names and shuffles them with the
 declared seed. It uses the first 50 images for calibration and the next 50 for

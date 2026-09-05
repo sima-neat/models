@@ -1,11 +1,6 @@
 schema_version: 1
 status: provisional
 target: modalix
-benchmark:
-  mode: bounded_runner
-  warmup_samples: 10
-  samples: 100
-  trials: 3
 metrics:
 - latency_avg_ms
 - latency_p50_ms

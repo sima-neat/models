@@ -61,17 +61,18 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
 
 
 @pytest.mark.parametrize(
-    ("model_id", "build_profile_id"),
+    ("model_id", "build_profile_id", "component_id"),
     [
-        ("resnet_50", "modalix_bf16"),
-        ("ssd_mobilenet_v1", "modalix_int8_tess_mla"),
-        ("yolo26_tiny_drone", "modalix_int8_tessellation_mla"),
+        ("resnet_50", "modalix_bf16", "model"),
+        ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "model"),
+        ("yolo26_tiny_drone", "modalix_int8_tessellation_mla", "model"),
+        ("rf_detr_small", "modalix_int8_bf16", "backbone"),
+        ("rf_detr_small", "modalix_int8_bf16", "transformer"),
     ],
 )
 def test_generates_direct_devkit_manifest_for_compiled_model(
-    tmp_path: Path, model_id: str, build_profile_id: str
+    tmp_path: Path, model_id: str, build_profile_id: str, component_id: str
 ) -> None:
-    component_id = "model"
     component = tmp_path / "compiled" / model_id / build_profile_id / component_id
     component.mkdir(parents=True)
     (component / "compile-result.json").write_text(
