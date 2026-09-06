@@ -524,13 +524,12 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert "fidelityPanel(tests, run.id)" in script
     assert 'data-download="numerical-fidelity"' in script
     panel = script.split("function fidelityPanel(", 1)[1].split("function licensePanel(", 1)[0]
-    assert 'class="benchmark-measurements"' in panel
-    assert 'class="benchmark-measurements-wrap"' in panel
-    assert '<caption class="sr-only">Numerical fidelity by output</caption>' in panel
-    assert '<th scope="col">Output</th>' in panel
-    assert '<th scope="col">Cosine similarity</th>' in panel
-    assert '<th scope="col">Normalized RMSE</th>' in panel
-    assert '<th scope="row">${escapeHtml(metric.name)}</th>' in panel
+    assert '<div class="benchmark-summary">${metrics}</div>' in panel
+    assert panel.count('class="benchmark-metric"') == 2
+    assert '<span>${escapeHtml(metric.name)} · Cosine similarity</span>' in panel
+    assert '<span>${escapeHtml(metric.name)} · Normalized RMSE</span>' in panel
+    assert '<table>' not in panel
+    assert panel.index('class="benchmark-summary"') < panel.index('class="muted-message"')
     assert "<details><summary>Evaluation details</summary>" in panel
     assert '<details open' not in panel
     assert 'Number(metric.cosine_similarity).toFixed(4)' in panel
