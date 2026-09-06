@@ -93,7 +93,7 @@ def catalog_repository(tmp_path: Path) -> Path:
     )
     (tmp_path / "tools" / "model_registry").mkdir(parents=True)
     (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
-        "COMPILE_FINGERPRINT_SCHEMA = 4\n"
+        "COMPILE_FINGERPRINT_SCHEMA = 3\n"
         "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
         "BENCHMARK_FINGERPRINT_SCHEMA = 1\n",
         encoding="utf-8",
@@ -407,6 +407,14 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
 ) -> None:
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    uncalibrated = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    model["components"][0]["preprocessing"]["pipeline"].append({
+        "op": "resize",
+        "parameters": {"height": 128, "width": 128},
+    })
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == uncalibrated
+
     model["calibrations"] = [{
         "id": "default",
         "status": "ready",
@@ -803,7 +811,7 @@ def test_compile_fingerprint_schema_bump_forces_all_invocations(
     marker = catalog_repository / "schema-bump.txt"
     marker.write_text("changed\n", encoding="utf-8")
     head = _commit(catalog_repository, "schema bump")
-    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 5)
+    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
 
