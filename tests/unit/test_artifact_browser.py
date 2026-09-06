@@ -523,15 +523,26 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert 'item.name === "numerical-fidelity"' in script
     assert "fidelityPanel(tests, run.id)" in script
     assert 'data-download="numerical-fidelity"' in script
-    assert 'class="fidelity-summary"' in script
     panel = script.split("function fidelityPanel(", 1)[1].split("function licensePanel(", 1)[0]
+    assert 'class="benchmark-measurements"' in panel
+    assert 'class="benchmark-measurements-wrap"' in panel
+    assert '<caption class="sr-only">Numerical fidelity by output</caption>' in panel
+    assert '<th scope="col">Output</th>' in panel
+    assert '<th scope="col">Cosine similarity</th>' in panel
+    assert '<th scope="col">Normalized RMSE</th>' in panel
+    assert '<th scope="row">${escapeHtml(metric.name)}</th>' in panel
+    assert "<details><summary>Evaluation details</summary>" in panel
+    assert '<details open' not in panel
+    assert 'Number(metric.cosine_similarity).toFixed(4)' in panel
+    assert 'Number(metric.normalized_rmse).toFixed(4)' in panel
     assert "Mean absolute error" not in panel
     assert "Maximum absolute error" not in panel
     assert "Output similarity, not task accuracy" in panel
     assert 'keyValue("Reference", report.reference)' in panel
     assert 'keyValue("Candidate", report.candidate)' in panel
     assert "report.dataset?.id" in panel
-    assert ".fidelity-output" in styles
+    assert ".fidelity-output" not in styles
+    assert ".fidelity-summary" not in styles
     assert '"name": "numerical-fidelity"' in preview
 
 

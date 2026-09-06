@@ -943,20 +943,22 @@ function fidelityPanel(tests, runId) {
   );
   const report = result?.summary;
   if (!report) return "";
-  const metrics = (report.metrics || []).map((metric) => `<div class="fidelity-output">
-    <strong>${escapeHtml(metric.name)}</strong>
-    <dl>
-      ${keyValue("Cosine similarity", Number(metric.cosine_similarity).toFixed(6))}
-      ${keyValue("Normalized RMSE", Number(metric.normalized_rmse).toExponential(3))}
-    </dl>
-  </div>`).join("");
+  const rows = (report.metrics || []).map((metric) => `<tr>
+    <th scope="row">${escapeHtml(metric.name)}</th>
+    <td>${Number(metric.cosine_similarity).toFixed(4)}</td>
+    <td>${Number(metric.normalized_rmse).toFixed(4)}</td>
+  </tr>`).join("");
   const scope = report.scope === "full_pipeline" ? "Full pipeline" : "Component";
   return `<section class="fidelity-section">
     <div class="detail-section-title"><h3>Numerical fidelity</h3><button class="text-button" type="button" data-download="numerical-fidelity" data-run-id="${escapeHtml(runId)}">Download JSON</button></div>
     <p class="fidelity-scope"><strong>${escapeHtml(scope)}</strong> · ${escapeHtml(report.status)} · ${Number(report.samples).toLocaleString()} samples · ${escapeHtml(report.dataset?.id || "Dataset unavailable")} ${escapeHtml(report.dataset?.variant || "")}</p>
-    <p>Output similarity, not task accuracy. Output reordering can affect these metrics.</p>
-    <dl>${keyValue("Reference", report.reference)}${keyValue("Candidate", report.candidate)}</dl>
-    <div class="fidelity-summary">${metrics}</div>
+    <p class="muted-message">Output similarity, not task accuracy. Output reordering can affect these metrics.</p>
+    <div class="benchmark-measurements"><div class="benchmark-measurements-wrap"><table>
+      <caption class="sr-only">Numerical fidelity by output</caption>
+      <thead><tr><th scope="col">Output</th><th scope="col">Cosine similarity</th><th scope="col">Normalized RMSE</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>
+    <details><summary>Evaluation details</summary><dl>${keyValue("Reference", report.reference)}${keyValue("Candidate", report.candidate)}</dl></details>
   </section>`;
 }
 
