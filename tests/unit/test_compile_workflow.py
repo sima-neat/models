@@ -92,6 +92,24 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
 
+def test_sima_cli_install_retries_only_transient_package_manager_lock_failures() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    install = next(
+        step
+        for step in workflow["jobs"]["compile"]["steps"]
+        if step.get("name") == "Install dataset-registry from the main branch artifact"
+    )
+    script = install["run"]
+
+    assert "for attempt in 1 2 3" in script
+    assert "sima-cli-installer.log" in script
+    assert "Unable to acquire the dpkg frontend lock" in script
+    assert "Could not get lock .*(apt|dpkg)" in script
+    assert "attempt == 3" in script
+    assert "non-retryable error" in script
+    assert 'sleep "$delay"' in script
+
+
 def test_runner_classes_are_authorized_before_compile_matrix_is_queued() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     admission = workflow["jobs"]["authorize-runner-classes"]
