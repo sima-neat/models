@@ -31,10 +31,17 @@ MODEL_COMPILE_INPUT_PATHS = {
     ),
 }
 
+CALIBRATION_COMPILE_INPUT_PATHS = (
+    "schemas/accuracy.schema.json",
+    "tools/model_registry/accuracy.py",
+    "tools/model_registry/accuracy_config.py",
+    "tools/model_registry/model.py",
+)
+
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md"}
-COMPILE_FINGERPRINT_SCHEMA = 3
+COMPILE_FINGERPRINT_SCHEMA = 4
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 1
 
@@ -220,6 +227,23 @@ def _component_build_input_files(
         and item.suffix in {".py", ".sh"}
         and "tests" not in item.relative_to(model_dir).parts
     )
+    profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
+    binding = next(item for item in profile["components"] if item["id"] == component["id"])
+    if binding.get("calibration") is not None:
+        candidates.extend(root / relative for relative in CALIBRATION_COMPILE_INPUT_PATHS)
+        for case in model["tests"]["correctness"]:
+            if profile_id not in case["build_profiles"]:
+                continue
+            scope = case["scope"]
+            if scope != {"type": "component", "component": component["id"]}:
+                continue
+            config_path = root / "models" / model_id / case["config"]
+            try:
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+                raise ValidationError(f"could not read calibration config {config_path}: {exc}") from exc
+            if isinstance(config, dict) and config.get("engine") == "model_registry":
+                candidates.append(config_path)
     missing = sorted(path for path in candidates if not path.is_file())
     if missing:
         raise ValidationError(f"model compile input not found: {missing[0]}")
@@ -256,7 +280,9 @@ def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _binding_compile_projection(model: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
+def _binding_compile_projection(
+    model: dict[str, Any], component: dict[str, Any], binding: dict[str, Any]
+) -> dict[str, Any]:
     return {
         **{
             key: binding[key]
@@ -264,7 +290,10 @@ def _binding_compile_projection(model: dict[str, Any], binding: dict[str, Any]) 
             if key in binding
         },
         **(
-            {"calibration": _calibration_projection(model, binding)}
+            {
+                "calibration": _calibration_projection(model, binding),
+                "preprocessing": component.get("preprocessing", {}),
+            }
             if binding.get("calibration") is not None
             else {}
         ),
@@ -298,7 +327,7 @@ def component_build_fingerprint(
             "id": profile_id,
             "target": profile["target"],
             "compatibility": profile.get("compatibility", {}),
-            "component": _binding_compile_projection(model, binding),
+            "component": _binding_compile_projection(model, component, binding),
         },
         "compiler_version": compiler,
     }
@@ -341,7 +370,9 @@ def compile_invocation_fingerprint(
             "components": [
                 {
                     "component": _component_compile_projection(components[component_id]),
-                    "binding": _binding_compile_projection(model, bindings[component_id]),
+                    "binding": _binding_compile_projection(
+                        model, components[component_id], bindings[component_id]
+                    ),
                 }
                 for component_id in component_ids
             ],

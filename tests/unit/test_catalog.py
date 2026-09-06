@@ -93,7 +93,7 @@ def catalog_repository(tmp_path: Path) -> Path:
     )
     (tmp_path / "tools" / "model_registry").mkdir(parents=True)
     (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
-        "COMPILE_FINGERPRINT_SCHEMA = 3\n"
+        "COMPILE_FINGERPRINT_SCHEMA = 4\n"
         "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
         "BENCHMARK_FINGERPRINT_SCHEMA = 1\n",
         encoding="utf-8",
@@ -400,6 +400,48 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(cat
     dependency_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert dependency_changed == model_changed
     assert _fingerprint(catalog_repository, "alpha", "2.1.4") != dependency_changed
+
+
+def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
+    catalog_repository: Path,
+) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["calibrations"] = [{
+        "id": "default",
+        "status": "ready",
+        "dataset": {
+            "id": "imagenet-2012",
+            "variant": "mini",
+            "sha256": "d" * 64,
+            "size_bytes": 1,
+        },
+    }]
+    model["build_profiles"][0]["components"][0]["calibration"] = "default"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    for relative in (
+        "schemas/accuracy.schema.json",
+        "tools/model_registry/accuracy.py",
+        "tools/model_registry/accuracy_config.py",
+        "tools/model_registry/model.py",
+    ):
+        destination = catalog_repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
+
+    first = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    model["components"][0]["preprocessing"]["pipeline"].append({
+        "op": "normalize",
+        "parameters": {"mean": [0.5], "std": [0.25]},
+    })
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    preprocessing_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    assert preprocessing_changed != first
+
+    loader = catalog_repository / "tools" / "model_registry" / "accuracy.py"
+    loader.write_text(loader.read_text(encoding="utf-8") + "\n# calibration loader change\n", encoding="utf-8")
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") != preprocessing_changed
 
 
 def test_compile_invocation_fingerprint_includes_every_component_binding(
@@ -761,7 +803,7 @@ def test_compile_fingerprint_schema_bump_forces_all_invocations(
     marker = catalog_repository / "schema-bump.txt"
     marker.write_text("changed\n", encoding="utf-8")
     head = _commit(catalog_repository, "schema bump")
-    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
+    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 5)
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
 

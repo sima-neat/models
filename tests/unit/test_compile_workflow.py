@@ -235,14 +235,35 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     job = workflow["jobs"]["publish-catalog"]
 
-    assert job["needs"] == ["select", "resolve-vulcan-config", "publish-compilations"]
+    assert job["needs"] == ["select", "resolve-vulcan-config", "publish-compilations", "validation-gate"]
     assert "needs.select.outputs.count == '0'" in job["if"]
+    assert "needs.validation-gate.result == 'success'" in job["if"]
     assert job["permissions"]["id-token"] == "write"
     publish = next(
         step for step in job["steps"] if step.get("name") == "Publish and promote the complete catalog snapshot"
     )
     assert "model-registry publish-catalog" in publish["run"]
     assert "--git-sha \"$GITHUB_SHA\"" in publish["run"]
+    assert publish["env"]["REGISTRY_READ_API_URL"] == (
+        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
+    )
+    assert "--read-api-url \"$REGISTRY_READ_API_URL\"" in publish["run"]
+
+
+def test_validation_only_changes_are_reported_and_block_catalog_publication() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    select = workflow["jobs"]["select"]
+    gate = workflow["jobs"]["validation-gate"]
+
+    assert select["outputs"]["validation_count"] == "${{ steps.matrix.outputs.validation_count }}"
+    assert select["outputs"]["validation_matrix"] == "${{ steps.matrix.outputs.validation_matrix }}"
+    assert gate["needs"] == "select"
+    assert gate["env"]["VALIDATION_COUNT"] == "${{ needs.select.outputs.validation_count }}"
+    assert gate["env"]["VALIDATION_MATRIX"] == "${{ needs.select.outputs.validation_matrix }}"
+    script = gate["steps"][0]["run"]
+    assert "Validation-only changes require evaluation against retained MPKs" in script
+    assert 'jq . <<< "$VALIDATION_MATRIX"' in script
+    assert "exit 1" in script
 
 
 def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() -> None:

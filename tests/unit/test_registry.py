@@ -191,7 +191,7 @@ def test_registry_errors_identify_the_failed_endpoint() -> None:
         client.request("POST", "/v1/runs", {}, "create")
 
 
-def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
+def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatch) -> None:
     dist = _packaged_result(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -258,9 +258,31 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path) -> None:
     assert parameters["compile_invocation_id"] == "model"
     assert parameters["target"] == "modalix"
     artifact = calls[3][2]
+    assert result["runs"][0]["artifact_sha256"] == artifact["artifact_sha256"]
     assert artifact["s3_version_id"] == "version-1"
     assert artifact["s3_key"].startswith("models/feature%2Fmodels/aaaaaaaaaaaa/")
     assert store.objects[0][1] == artifact["s3_key"]
+
+    receipt_path = dist / "resnet_50" / "modalix_bf16" / "model" / "registry-publication.json"
+    receipt_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    catalog = discover_catalog(ROOT)
+    compiler_version = resolve_model_compiler(ROOT)["version"]
+    selected = build_matrix(
+        catalog,
+        ["resnet_50"],
+        ["modalix_bf16"],
+        repository=ROOT,
+        compiler_version=compiler_version,
+    )
+    monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: selected)
+    snapshot = build_catalog_snapshot(
+        repository=ROOT,
+        branch="feature/models",
+        git_sha="a" * 40,
+        compiled_dir=dist,
+    )
+    resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
+    assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
 
 
 def test_publish_attaches_accuracy_artifact_test_result_and_measurements(tmp_path: Path) -> None:
@@ -541,6 +563,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
+    read_urls: list[str] = []
 
     previous = {"models": []}
     monkeypatch.setattr(
@@ -558,23 +581,29 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
         calls.append((method, path, body, key))
-        if method == "GET":
-            return {"catalog": {"document": previous}}
         return {"stored": True}
+
+    def read_request(url: str) -> dict:
+        read_urls.append(url)
+        return {"catalog": {"document": previous}}
 
     result = publish_catalog(
         repository=ROOT,
         api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid",
         aws_region="us-west-2",
         branch="develop",
         git_sha="a" * 40,
         request=request,
+        read_request=read_request,
     )
 
     assert result["registry"] == {"stored": True}
-    assert calls[0][0] == "GET"
-    assert "catalogs/current?git_ref=refs%2Fheads%2Fdevelop" in calls[0][1]
-    assert calls[1][0:2] == ("PUT", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40)
+    assert read_urls == [
+        "https://models-registry.example.invalid/v1/repositories/sima-neat/models/"
+        "catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
+    ]
+    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40)
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:

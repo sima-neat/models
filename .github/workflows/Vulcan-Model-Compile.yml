@@ -916,14 +916,43 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  validation-gate:
+    name: Report validation-only changes
+    needs: select
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VALIDATION_COUNT: ${{ needs.select.outputs.validation_count }}
+      VALIDATION_MATRIX: ${{ needs.select.outputs.validation_matrix }}
+    steps:
+      - name: Require an implemented evaluator for validation-only changes
+        run: |
+          set -euo pipefail
+          if [[ "$VALIDATION_COUNT" == "0" ]]; then
+            echo "No validation-only changes require an independent evaluator." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error::Validation-only changes require evaluation against retained MPKs, but that evaluator is not implemented yet."
+          {
+            echo "## Validation is outstanding"
+            echo "Catalog publication was blocked rather than silently accepting correctness changes without evaluation."
+            echo '```json'
+            jq . <<< "$VALIDATION_MATRIX"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
   publish-catalog:
     name: Publish complete model catalog snapshot
-    needs: [select, resolve-vulcan-config, publish-compilations]
+    needs: [select, resolve-vulcan-config, publish-compilations, validation-gate]
     if: >-
       always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&
+      needs.validation-gate.result == 'success' &&
       (needs.select.outputs.count == '0' || needs.publish-compilations.result == 'success')
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
@@ -961,10 +990,12 @@ jobs:
       - name: Publish and promote the complete catalog snapshot
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
           compiled_args=()
           if [[ -d _compiled ]]; then
             compiled_args=(--compiled-dir _compiled)
@@ -973,6 +1004,7 @@ jobs:
             --repository . \
             "${compiled_args[@]}" \
             --api-url "$REGISTRY_API_URL" \
+            --read-api-url "$REGISTRY_READ_API_URL" \
             --aws-region "$AWS_REGION" \
             --branch "$GITHUB_REF_NAME" \
             --git-sha "$GITHUB_SHA"

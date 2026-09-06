@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -376,20 +377,22 @@ def publish_catalog(
     *,
     repository: str | Path,
     api_url: str,
+    read_api_url: str,
     aws_region: str,
     branch: str,
     git_sha: str,
     compiled_dir: str | Path | None = None,
     request: Request | None = None,
+    read_request: ReadRequest | None = None,
 ) -> JsonObject:
     client = SigV4RegistryClient(api_url, aws_region, request=request)
+    read = read_request or _public_registry_json
+    read_base_url = read_api_url.rstrip("/")
     previous: JsonObject | None = None
     try:
-        current = client.request(
-            "GET",
-            f"/v1/repositories/sima-neat/models/catalogs/current?git_ref={quote(f'refs/heads/{branch}', safe='')}",
-            None,
-            "",
+        current = read(
+            f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
+            f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
         )
         candidate = current.get("catalog")
         if isinstance(candidate, dict):
@@ -417,6 +420,20 @@ def _public_registry_json(url: str) -> JsonObject:
     try:
         with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
             value = json.load(response)
+    except HTTPError as exc:
+        code = "unknown_error"
+        message = str(exc)
+        try:
+            payload = json.loads(exc.read())
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                code = str(error.get("code", code))
+                message = str(error.get("message", message))
+        except (OSError, json.JSONDecodeError):
+            pass
+        raise RegistryPublicationError(
+            f"public artifact registry HTTP {exc.code} {code}: {message}"
+        ) from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise RegistryPublicationError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
     if not isinstance(value, dict):
@@ -1280,6 +1297,7 @@ def publish_compilations(
                 "component_id": component_id,
                 "run_id": run_id,
                 "compile_fingerprint": build_fingerprint,
+                "artifact_sha256": artifact_sha,
                 "s3_key": stored.key,
                 "accuracy": accuracy_publication,
                 "fidelity": fidelity_publication,
