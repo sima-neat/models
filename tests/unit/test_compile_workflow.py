@@ -92,6 +92,24 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
 
+def test_sima_cli_install_retries_only_transient_package_manager_lock_failures() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    install = next(
+        step
+        for step in workflow["jobs"]["compile"]["steps"]
+        if step.get("name") == "Install dataset-registry from the main branch artifact"
+    )
+    script = install["run"]
+
+    assert "for attempt in 1 2 3" in script
+    assert "sima-cli-installer.log" in script
+    assert "Unable to acquire the dpkg frontend lock" in script
+    assert "Could not get lock .*(apt|dpkg)" in script
+    assert "attempt == 3" in script
+    assert "non-retryable error" in script
+    assert 'sleep "$delay"' in script
+
+
 def test_runner_classes_are_authorized_before_compile_matrix_is_queued() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     admission = workflow["jobs"]["authorize-runner-classes"]
@@ -157,6 +175,8 @@ def test_dispatch_without_model_filters_is_the_explicit_full_rebuild_path() -> N
     assert 'if [[ "$EVENT_NAME" == "workflow_dispatch" ]]' in matrix_script
     assert 'if [[ -n "${REQUESTED_MODELS:-}" ]]' in matrix_script
     assert "model-registry matrix --repository . --all" in matrix_script
+    assert workflow["on"]["workflow_dispatch"]["inputs"]["force_rebuild_all"]["type"] == "boolean"
+    assert '"${FORCE_REBUILD_ALL:-false}" == "true"' in matrix_script
 
 
 def test_json_catalog_and_package_publication_are_retired() -> None:
@@ -211,16 +231,53 @@ def test_compiler_output_is_published_from_a_hosted_runner() -> None:
     assert published_output["with"]["name"].startswith("compiled-model-")
 
 
-def test_taxonomy_publication_does_not_require_a_model_compile() -> None:
+def test_catalog_publication_does_not_require_a_model_compile() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    job = workflow["jobs"]["publish-taxonomy"]
+    job = workflow["jobs"]["publish-catalog"]
 
-    assert job["needs"] == ["select", "resolve-vulcan-config"]
-    assert "needs.select.outputs.count" not in job["if"]
-    assert "needs.select.outputs.vulcan_environment == 'staging'" in job["if"]
+    assert job["needs"] == ["select", "resolve-vulcan-config", "publish-compilations", "validation-gate"]
+    assert "needs.select.outputs.count == '0'" in job["if"]
+    assert "needs.validation-gate.result == 'success'" in job["if"]
     assert job["permissions"]["id-token"] == "write"
-    publish = next(step for step in job["steps"] if step.get("name") == "Publish canonical taxonomy")
-    assert "model-registry publish-taxonomy" in publish["run"]
+    publish = next(
+        step for step in job["steps"] if step.get("name") == "Publish and promote the complete catalog snapshot"
+    )
+    assert "model-registry publish-catalog" in publish["run"]
+    assert "--git-sha \"$GITHUB_SHA\"" in publish["run"]
+    assert publish["env"]["REGISTRY_READ_API_URL"] == (
+        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
+    )
+    assert "--read-api-url \"$REGISTRY_READ_API_URL\"" in publish["run"]
+
+
+def test_validation_only_changes_are_reported_and_block_catalog_publication() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    select = workflow["jobs"]["select"]
+    gate = workflow["jobs"]["validation-gate"]
+
+    assert select["outputs"]["validation_count"] == "${{ steps.matrix.outputs.validation_count }}"
+    assert select["outputs"]["validation_matrix"] == "${{ steps.matrix.outputs.validation_matrix }}"
+    assert gate["needs"] == "select"
+    assert gate["env"]["VALIDATION_COUNT"] == "${{ needs.select.outputs.validation_count }}"
+    assert gate["env"]["VALIDATION_MATRIX"] == "${{ needs.select.outputs.validation_matrix }}"
+    script = gate["steps"][0]["run"]
+    assert "Validation-only changes require evaluation against retained MPKs" in script
+    assert 'jq . <<< "$VALIDATION_MATRIX"' in script
+    assert "exit 1" in script
+
+
+def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    select = workflow["jobs"]["select"]
+    dispatch = workflow["jobs"]["dispatch-reused-benchmarks"]
+
+    assert select["outputs"]["benchmark_matrix"] == "${{ steps.matrix.outputs.benchmark_matrix }}"
+    assert dispatch["needs"] == ["select", "publish-catalog"]
+    assert "needs.select.outputs.benchmark_count != '0'" in dispatch["if"]
+    assert dispatch["strategy"]["matrix"] == "${{ fromJSON(needs.select.outputs.benchmark_matrix) }}"
+    step = dispatch["steps"][0]
+    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in step["run"]
+    assert "-f source_run_id=" in step["run"]
 
 
 def test_changed_selection_does_not_fetch_or_carry_forward_a_previous_catalog() -> None:

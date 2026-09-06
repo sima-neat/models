@@ -130,9 +130,12 @@ model-registry matrix --repository . --models <model-id> \
   --profiles <profile-id> --components <component-id>
 ```
 
-Changes below `models/<model-id>/` select that model. Repository-wide compile
-inputs such as `deps/` can select the full catalog. Some models also declare
-additional build inputs outside their model directory.
+For revision comparisons, selection is based on semantic stage fingerprints,
+not broad path buckets. Display metadata and taxonomy-label changes still
+validate the complete catalog but select no compilation. Compiler identity and
+shared compile inputs affect every relevant compile fingerprint; model-local
+recipe and surgery inputs affect only their invocation. Correctness and
+performance configuration have independent fingerprints.
 
 ## Compile locally from `model.yaml`
 

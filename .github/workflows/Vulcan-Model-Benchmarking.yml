@@ -12,7 +12,8 @@ on:
         options: [staging]
       source_run_id:
         description: Source workflow run containing the compiled-model artifact
-        required: true
+        required: false
+        default: ""
         type: string
       source_sha:
         description: Source revision used to compile the model
@@ -51,7 +52,7 @@ jobs:
     needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.environment == 'staging' &&
-      inputs.source_run_id != '' && inputs.source_sha != '' &&
+      inputs.source_sha != '' &&
       inputs.model_id != '' && inputs.build_profile_id != '' &&
       inputs.compile_invocation_id != '' && inputs.component_ids != ''
     runs-on: ubuntu-latest
@@ -83,6 +84,11 @@ jobs:
           for component in "${components[@]}"; do
             [[ "$component" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           done
+          if [[ -z "$SOURCE_RUN_ID" ]]; then
+            echo "branch=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "attempt=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
           jq -e --arg sha "$SOURCE_SHA" \
             '.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch")' \
@@ -98,26 +104,13 @@ jobs:
           test "$artifact_count" = "1"
 
       - name: Download this compiled model from its source run
+        if: inputs.source_run_id != ''
         uses: actions/download-artifact@v7
         with:
           name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
-
-      - name: Check whether the compilation is already registered
-        id: publication
-        env:
-          MODEL_ID: ${{ inputs.model_id }}
-          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_IDS: ${{ inputs.component_ids }}
-        run: |
-          IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          for component in "${components[@]}"; do
-            publication="_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$component/registry-publication.json"
-            [[ -f "$publication" ]] || { echo "required=true" >> "$GITHUB_OUTPUT"; exit 0; }
-          done
-          echo "required=false" >> "$GITHUB_OUTPUT"
 
       - name: Check out the trusted source revision for registry tooling
         uses: actions/checkout@v6
@@ -134,6 +127,38 @@ jobs:
 
       - name: Install registry publication tooling
         run: python -m pip install ./_registry_source
+
+      - name: Restore the current immutable compilation from the registry
+        if: inputs.source_run_id == ''
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          model-registry stage-registry-build \
+            --repository _registry_source \
+            --output-dir _compiled \
+            --api-url "$REGISTRY_API_URL" \
+            --branch "$SOURCE_BRANCH" \
+            --catalog-revision "${{ inputs.source_sha }}" \
+            --model-id "${{ inputs.model_id }}" \
+            --build-profile-id "${{ inputs.build_profile_id }}" \
+            --compile-invocation-id "${{ inputs.compile_invocation_id }}"
+
+      - name: Check whether the compilation is already registered
+        id: publication
+        env:
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPONENT_IDS: ${{ inputs.component_ids }}
+        run: |
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          for component in "${components[@]}"; do
+            publication="_compiled/$MODEL_ID/$BUILD_PROFILE_ID/$component/registry-publication.json"
+            [[ -f "$publication" ]] || { echo "required=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          done
+          echo "required=false" >> "$GITHUB_OUTPUT"
 
       - name: Verify the dispatched component set
         env:
@@ -164,7 +189,7 @@ jobs:
           role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Register an unpublished compilation for benchmarking
-        if: steps.publication.outputs.required == 'true'
+        if: inputs.source_run_id != '' && steps.publication.outputs.required == 'true'
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}

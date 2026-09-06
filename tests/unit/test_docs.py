@@ -200,7 +200,7 @@ def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
     for command in (
         "model-registry publish ",
         "model-registry publish-benchmark ",
-        "model-registry publish-taxonomy ",
+        "model-registry publish-catalog ",
         "model-registry package ",
     ):
         assert command not in author_guides

@@ -2,7 +2,6 @@ schema_version: 2
 id: rf_detr_small
 display_name: RF-DETR Small 512x512
 description: RF-DETR Small object detection split into independently deployable backbone and transformer components.
-taxonomy_version: 4
 model_type: vision
 tasks:
 - object_detection

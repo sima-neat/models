@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "id", "display_name", "description", "taxonomy_version", "model_type", "tasks",
+    "schema_version", "id", "display_name", "description", "model_type", "tasks",
     "modalities", "architecture", "owners", "license", "upstream", "components", "resources",
     "calibrations", "build_profiles", "compositions", "packages", "tests", "maturity"
   ],
@@ -14,7 +14,6 @@
     "id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
-    "taxonomy_version": {"type": "integer", "minimum": 1},
     "model_type": {"$ref": "#/$defs/taxonomyId"},
     "tasks": {"$ref": "#/$defs/taxonomyIdSet"},
     "modalities": {"$ref": "#/$defs/modalities"},

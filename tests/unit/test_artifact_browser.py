@@ -221,7 +221,7 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "branchCatalogCacheKey" in script
     assert "readCachedBranches" in script
     assert "writeCachedBranches" in script
-    assert "Promise.allSettled([loadTaxonomy(), loadBranches()])" in script
+    assert "loadTaxonomy(elements[\"branch-filter\"].value || DEFAULT_BRANCH)" in script
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
     assert "knownBranches.delete(branch)" not in script
     assert "...(payload.branches || [])" not in script
@@ -303,7 +303,7 @@ def test_latest_model_build_per_compiler_is_the_default_with_history_opt_in() ->
     assert ".switch-row input:checked + i" in styles
 
 
-def test_browser_loads_the_published_taxonomy_and_exposes_category_facets() -> None:
+def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_facets() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -315,8 +315,8 @@ def test_browser_loads_the_published_taxonomy_and_exposes_category_facets() -> N
         "input-modality-filter",
     ):
         assert f'id="{element_id}"' in html
-    assert "/taxonomies/latest" in script
-    assert "payload.taxonomy?.document" in script
+    assert "/catalogs/current?git_ref=" in script
+    assert "payload.catalog?.document?.taxonomy" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
     assert "setCategoryFiltersDisabled(true)" in script

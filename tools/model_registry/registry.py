@@ -11,16 +11,27 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
-from .artifact import validate_compile_outputs
-from .catalog import discover_catalog
+from .artifact import validate_compile_outputs, verify_mpk
+from .catalog import (
+    benchmark_fingerprint,
+    build_matrix,
+    compile_invocation_fingerprint,
+    component_build_fingerprint,
+    discover_catalog,
+    validation_fingerprint,
+)
+from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
-from .model import compile_invocations_for
+from .model import compile_invocations_for, load_and_validate_model
 from .source import source_identity
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
@@ -32,6 +43,8 @@ from .taxonomy import (
 
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
+ReadRequest = Callable[[str], JsonObject]
+DownloadRequest = Callable[[str], bytes]
 
 
 def canonical_sha256(value: Any) -> str:
@@ -218,39 +231,345 @@ class S3ArtifactStore:
         return value if isinstance(value, dict) else {}
 
 
-def _publish_taxonomy(client: SigV4RegistryClient, root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    taxonomy = load_taxonomy(root / TAXONOMY_RELATIVE_PATH)
-    taxonomy_document = canonical_taxonomy_document(taxonomy)
-    taxonomy_digest = taxonomy_sha256(taxonomy_document)
-    taxonomy_version = taxonomy_document["version"]
-    response_document = client.request(
-        "PUT",
-        f"/v1/repositories/sima-neat/models/taxonomies/{taxonomy_version}",
-        {
-            "schema_version": 1,
-            "canonical_sha256": taxonomy_digest,
-            "taxonomy": taxonomy_document,
-        },
-        f"models-taxonomy-{taxonomy_version}-{taxonomy_digest}",
-    )
-    return taxonomy, {
-        "version": taxonomy_version,
-        "sha256": taxonomy_digest,
-        "registry": response_document,
+def _publication_receipts(compiled_dir: Path | None) -> dict[tuple[str, str, str], JsonObject]:
+    receipts: dict[tuple[str, str, str], JsonObject] = {}
+    if compiled_dir is None or not compiled_dir.exists():
+        return receipts
+    for path in sorted(compiled_dir.glob("*/*/*/registry-publication.json")):
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            runs = document["runs"]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+            raise ValidationError(f"could not read registry publication receipt {path}: {exc}") from exc
+        if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
+            raise ValidationError(f"{path}: registry publication receipt must contain exactly one run")
+        run = runs[0]
+        key = tuple(str(run.get(field, "")) for field in ("model_id", "build_profile_id", "component_id"))
+        if not all(key) or key in receipts:
+            raise ValidationError(f"{path}: registry publication receipt has an invalid or duplicate build unit")
+        receipts[key] = run
+    return receipts
+
+
+def build_catalog_snapshot(
+    *,
+    repository: str | Path,
+    branch: str,
+    git_sha: str,
+    compiled_dir: str | Path | None = None,
+    previous: JsonObject | None = None,
+) -> JsonObject:
+    root = Path(repository).expanduser().resolve()
+    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
+        raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
+    if not branch.strip():
+        raise ValidationError("branch must not be empty")
+    catalog = discover_catalog(root)
+    taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
+    taxonomy_digest = taxonomy_sha256(taxonomy)
+    compiler_version = resolve_model_compiler(root)["version"]
+    matrix = build_matrix(
+        catalog,
+        sorted(catalog),
+        repository=root,
+        compiler_version=compiler_version,
+    )["include"]
+    receipts = _publication_receipts(Path(compiled_dir).expanduser().resolve() if compiled_dir else None)
+    previous_builds: dict[tuple[str, str, str], JsonObject] = {}
+    for model in (previous or {}).get("models", []):
+        if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+            continue
+        for build in model.get("builds", []):
+            if not isinstance(build, dict):
+                continue
+            key = (model["id"], build.get("build_profile_id"), build.get("component_id"))
+            if all(isinstance(value, str) for value in key):
+                previous_builds[key] = build
+    expected_keys: set[tuple[str, str, str]] = set()
+    builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
+    for invocation in matrix:
+        for component_id in invocation["component_ids"]:
+            key = (invocation["model_id"], invocation["build_profile_id"], component_id)
+            expected_keys.add(key)
+            receipt = receipts.get(key)
+            prior = previous_builds.get(key)
+            if receipt is not None and receipt.get("compile_fingerprint") != invocation["build_fingerprint"]:
+                raise ValidationError(
+                    f"publication receipt fingerprint does not match {key[0]}/{key[1]}/{key[2]}"
+                )
+            run_id = receipt.get("run_id") if receipt is not None else None
+            artifact_sha256 = receipt.get("artifact_sha256") if receipt is not None else None
+            if (
+                run_id is None
+                and prior is not None
+                and prior.get("compile_fingerprint") == invocation["build_fingerprint"]
+            ):
+                run_id = prior.get("run_id")
+                artifact_sha256 = prior.get("artifact_sha256")
+            if not isinstance(run_id, str) or not run_id:
+                raise ValidationError(
+                    f"no immutable compile run matches {key[0]}/{key[1]}/{key[2]} "
+                    f"fingerprint {invocation['build_fingerprint']}"
+                )
+            if not isinstance(artifact_sha256, str) or len(artifact_sha256) != 64:
+                raise ValidationError(
+                    f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}"
+                )
+            builds_by_model[key[0]].append(
+                {
+                    "build_profile_id": key[1],
+                    "compile_invocation_id": invocation["compile_invocation_id"],
+                    "component_id": key[2],
+                    "compile_fingerprint": invocation["build_fingerprint"],
+                    "artifact_sha256": artifact_sha256,
+                    "validation_fingerprint": (
+                        validation_fingerprint(
+                            root, key[0], key[2], key[1], compiler_version,
+                            compile_fingerprint=invocation["build_fingerprint"],
+                            artifact_sha256=artifact_sha256,
+                        ) if key[2] in invocation["validation_fingerprints"] else None
+                    ),
+                    "benchmark_fingerprint": (
+                        benchmark_fingerprint(
+                            root, key[0], key[2], key[1], compiler_version,
+                            compile_fingerprint=invocation["build_fingerprint"],
+                            artifact_sha256=artifact_sha256,
+                        ) if key[2] in invocation["benchmark_fingerprints"] else None
+                    ),
+                    "run_id": run_id,
+                }
+            )
+    unexpected = sorted(set(receipts) - expected_keys)
+    if unexpected:
+        model_id, profile_id, component_id = unexpected[0]
+        raise ValidationError(
+            f"publication receipt references removed build unit: {model_id}/{profile_id}/{component_id}"
+        )
+
+    models = []
+    for model_id, model in sorted(catalog.items()):
+        models.append(
+            {
+                "id": model_id,
+                "display_name": model["display_name"],
+                "description": model["description"],
+                "license": model["license"],
+                "maturity": model["maturity"],
+                "categories": validate_model_categorization(model, taxonomy),
+                "builds": sorted(
+                    builds_by_model[model_id],
+                    key=lambda item: (item["build_profile_id"], item["component_id"]),
+                ),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "repository": "sima-neat/models",
+        "git_ref": f"refs/heads/{branch}",
+        "catalog_revision": git_sha.lower(),
+        "taxonomy_sha256": taxonomy_digest,
+        "taxonomy": taxonomy,
+        "models": models,
     }
 
 
-def publish_taxonomy(
+def publish_catalog(
     *,
     repository: str | Path,
     api_url: str,
+    read_api_url: str,
     aws_region: str,
+    branch: str,
+    git_sha: str,
+    compiled_dir: str | Path | None = None,
     request: Request | None = None,
+    read_request: ReadRequest | None = None,
 ) -> JsonObject:
-    root = Path(repository).expanduser().resolve()
     client = SigV4RegistryClient(api_url, aws_region, request=request)
-    _, result = _publish_taxonomy(client, root)
-    return result
+    read = read_request or _public_registry_json
+    read_base_url = read_api_url.rstrip("/")
+    previous: JsonObject | None = None
+    try:
+        current = read(
+            f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
+            f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
+        )
+        candidate = current.get("catalog")
+        if isinstance(candidate, dict):
+            previous = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
+    except RegistryPublicationError as exc:
+        if "HTTP 404 catalog_not_found" not in str(exc):
+            raise
+    document = build_catalog_snapshot(
+        repository=repository,
+        branch=branch,
+        git_sha=git_sha,
+        compiled_dir=compiled_dir,
+        previous=previous,
+    )
+    result = client.request(
+        "PUT",
+        f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}",
+        document,
+        f"models-catalog-{branch}-{git_sha.lower()}",
+    )
+    return {"catalog": document, "registry": result}
+
+
+def _public_registry_json(url: str) -> JsonObject:
+    try:
+        with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
+            value = json.load(response)
+    except HTTPError as exc:
+        code = "unknown_error"
+        message = str(exc)
+        try:
+            payload = json.loads(exc.read())
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                code = str(error.get("code", code))
+                message = str(error.get("message", message))
+        except (OSError, json.JSONDecodeError):
+            pass
+        raise RegistryPublicationError(
+            f"public artifact registry HTTP {exc.code} {code}: {message}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RegistryPublicationError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RegistryPublicationError(f"artifact registry endpoint did not return an object: {url}")
+    return value
+
+
+def _download_registry_bytes(url: str) -> bytes:
+    try:
+        with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=120) as response:
+            return response.read()
+    except OSError as exc:
+        raise RegistryPublicationError(f"could not download registry artifact: {exc}") from exc
+
+
+def stage_catalog_build(
+    *,
+    repository: str | Path,
+    output_dir: str | Path,
+    api_url: str,
+    branch: str,
+    catalog_revision: str,
+    model_id: str,
+    build_profile_id: str,
+    compile_invocation_id: str,
+    read_request: ReadRequest | None = None,
+    download_request: DownloadRequest | None = None,
+) -> JsonObject:
+    """Restore a complete invocation from durable registry MPKs for later stages."""
+    root = Path(repository).expanduser().resolve()
+    output = Path(output_dir).expanduser().resolve()
+    read = read_request or _public_registry_json
+    download = download_request or _download_registry_bytes
+    base_url = api_url.rstrip("/")
+    catalog_payload = read(
+        f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
+        f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
+    )
+    catalog_record = catalog_payload.get("catalog")
+    document = catalog_record.get("document") if isinstance(catalog_record, dict) else None
+    if not isinstance(document, dict) or document.get("catalog_revision") != catalog_revision:
+        raise ValidationError("current catalog does not match the requested catalog revision")
+    catalog_model = next(
+        (item for item in document.get("models", []) if isinstance(item, dict) and item.get("id") == model_id),
+        None,
+    )
+    if catalog_model is None:
+        raise ValidationError(f"model is absent from the current catalog: {model_id}")
+    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+    invocation = next(
+        (
+            item for item in build_matrix({model_id: model}, [model_id], [build_profile_id])["include"]
+            if item["compile_invocation_id"] == compile_invocation_id
+        ),
+        None,
+    )
+    if invocation is None:
+        raise ValidationError(f"compile invocation is absent from the current model: {compile_invocation_id}")
+    builds = {
+        item["component_id"]: item
+        for item in catalog_model.get("builds", [])
+        if isinstance(item, dict)
+        and item.get("build_profile_id") == build_profile_id
+        and item.get("compile_invocation_id") == compile_invocation_id
+    }
+    if set(builds) != set(invocation["component_ids"]):
+        raise ValidationError("current catalog does not link every component in the compile invocation")
+
+    staged_outputs = []
+    for component_id in invocation["component_ids"]:
+        build = builds[component_id]
+        run_id = build.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            raise ValidationError(f"current catalog build has no retained compile run: {component_id}")
+        artifact_payload = read(f"{base_url}/v1/runs/{run_id}/artifacts/mpk")
+        artifact = artifact_payload.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError(f"artifact registry returned no MPK metadata for {run_id}")
+        digest = artifact.get("sha256")
+        download_url = artifact.get("download_url")
+        if not isinstance(digest, str) or len(digest) != 64 or not isinstance(download_url, str):
+            raise ValidationError(f"artifact registry returned incomplete MPK metadata for {run_id}")
+        if digest != build.get("artifact_sha256"):
+            raise ValidationError(f"registry MPK checksum does not match the current catalog for {run_id}")
+        payload = download(download_url)
+        if hashlib.sha256(payload).hexdigest() != digest or len(payload) != artifact.get("size_bytes"):
+            raise ValidationError(f"downloaded MPK failed size or SHA-256 verification for {run_id}")
+        component_dir = output / model_id / build_profile_id / component_id
+        component_dir.mkdir(parents=True, exist_ok=True)
+        archive_name = f"{model_id}_{build_profile_id}_{component_id}_mpk.tar.gz"
+        archive = component_dir / archive_name
+        archive.write_bytes(payload)
+        verify_mpk(component_dir)
+        run_payload = read(f"{base_url}/v1/runs/{run_id}")
+        run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
+        compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
+        compile_result = {
+            "archive": archive_name,
+            "schema_version": 1,
+            "sha256": digest,
+            "size_bytes": len(payload),
+            "status": "success",
+            "provenance": {"compiler_version": compiler_version},
+        }
+        (component_dir / "compile-result.json").write_text(
+            json.dumps(compile_result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (component_dir / "registry-publication.json").write_text(
+            json.dumps({"runs": [{
+                "model_id": model_id,
+                "build_profile_id": build_profile_id,
+                "component_id": component_id,
+                "run_id": run_id,
+            }]}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        staged_outputs.append(
+            {
+                "component_id": component_id,
+                "mpk_path": f"{component_id}/{archive_name}",
+                "mpk_sha256": digest,
+                "run_id": run_id,
+            }
+        )
+    profile_dir = output / model_id / build_profile_id
+    (profile_dir / "registry-staged.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "compile_invocation_id": compile_invocation_id,
+            "outputs": staged_outputs,
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {"count": len(staged_outputs), "outputs": staged_outputs}
 
 
 def _require_text(value: Any, field: str) -> str:
@@ -462,7 +781,6 @@ def _preflight_compilations(
     root: Path,
     dist: Path,
     catalog: dict[str, JsonObject],
-    taxonomy: JsonObject,
     *,
     environment: str,
     git_sha: str,
@@ -559,6 +877,24 @@ def _preflight_compilations(
         if source_sha != source_identity(component["source"]):
             raise ValidationError(f"{result_path}: source_sha256 does not match the component source contract")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
+        if "compile_invocations" in profile:
+            expected_build_fingerprint = compile_invocation_fingerprint(
+                root,
+                model_id,
+                invocation_by_result[result_path],
+                build_profile_id,
+                compiler_version,
+            )
+        else:
+            expected_build_fingerprint = component_build_fingerprint(
+                root,
+                model_id,
+                component_id,
+                build_profile_id,
+                compiler_version,
+            )
+        if build_fingerprint != expected_build_fingerprint:
+            raise ValidationError(f"{result_path}: build_fingerprint does not match semantic compile inputs")
         accuracy_path = result_path.parent / "accuracy.json"
         fidelity_path = result_path.parent / "fidelity.json"
         fidelity_config = find_recipe_fidelity_config(
@@ -622,7 +958,6 @@ def _preflight_compilations(
                 "target": target,
                 "source_sha": source_sha,
                 "build_fingerprint": build_fingerprint,
-                "categorization": validate_model_categorization(model, taxonomy),
                 "accuracy": accuracy_evidence,
                 "fidelity": fidelity_evidence,
             }
@@ -657,18 +992,15 @@ def publish_compilations(
         raise ValidationError("branch, GitHub run ID, and run attempt must not be empty")
 
     catalog = discover_catalog(root)
-    taxonomy = load_taxonomy(root / TAXONOMY_RELATIVE_PATH)
     compilations = _preflight_compilations(
         root,
         dist,
         catalog,
-        taxonomy,
         environment=environment,
         git_sha=git_sha,
     )
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
-    _, taxonomy_result = _publish_taxonomy(client, root)
     branch_key = quote(branch, safe="")
     commit_tag = git_sha[:12]
     published: list[JsonObject] = []
@@ -688,7 +1020,6 @@ def publish_compilations(
         target = compilation["target"]
         source_sha = compilation["source_sha"]
         build_fingerprint = compilation["build_fingerprint"]
-        categorization = compilation["categorization"]
         parameters = {
             "schema_version": 2,
             "model_id": model_id,
@@ -749,7 +1080,6 @@ def publish_compilations(
                     "github_run_id": github_run_id,
                     "license": model["license"],
                 },
-                **({"model_categories": categorization} if categorization is not None else {}),
             },
             f"{stable_key}-create",
         )
@@ -794,6 +1124,7 @@ def publish_compilations(
                 "artifact_type": "model-pack",
                 "s3_bucket": bucket,
                 "s3_key": stored.key,
+                "artifact_sha256": artifact_sha,
                 "s3_version_id": stored.version_id,
                 "sha256": stored.sha256,
                 "size_bytes": stored.size_bytes,
@@ -965,6 +1296,8 @@ def publish_compilations(
                 "build_profile_id": build_profile_id,
                 "component_id": component_id,
                 "run_id": run_id,
+                "compile_fingerprint": build_fingerprint,
+                "artifact_sha256": artifact_sha,
                 "s3_key": stored.key,
                 "accuracy": accuracy_publication,
                 "fidelity": fidelity_publication,
@@ -974,5 +1307,4 @@ def publish_compilations(
     return {
         "count": len(published),
         "runs": published,
-        "taxonomy": {"version": taxonomy_result["version"], "sha256": taxonomy_result["sha256"]},
     }
