@@ -180,6 +180,15 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "state.runs[0]?.id" not in script
 
 
+def test_cached_build_history_preserves_run_mode() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'writeCachedCatalog(modelsMode ? "models" : "runs")' in script
+    assert 'cached.models?.length || !cached.runs?.length ? "models" : "runs"' in script
+    assert 'payload.mode !== "runs" && Object.hasOwn(payload, "models")' in script
+    assert "applyCatalog(cached, { cache: false })" in script
+
+
 def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -193,6 +202,7 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
 
     assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in script
+    assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
 def test_detail_error_can_be_retried_and_closed() -> None:

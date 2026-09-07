@@ -298,16 +298,20 @@ function readCachedCatalog() {
   try {
     const cached = JSON.parse(localStorage.getItem(catalogCacheKey()));
     if (!cached || (!Array.isArray(cached.runs) && !Array.isArray(cached.models))) return null;
-    return cached;
+    const mode = ["models", "runs"].includes(cached.mode)
+      ? cached.mode
+      : (cached.models?.length || !cached.runs?.length ? "models" : "runs");
+    return { ...cached, mode };
   } catch {
     return null;
   }
 }
 
-function writeCachedCatalog() {
+function writeCachedCatalog(mode) {
   try {
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
       savedAt: new Date().toISOString(),
+      mode,
       models: state.models,
       runs: state.runs,
       cursor: state.cursor,
@@ -417,7 +421,9 @@ function updateFilterDisclosure() {
 function applyCatalog(payload, { append = false, cache = true } = {}) {
   const models = Array.isArray(payload.models) ? payload.models : [];
   const runs = Array.isArray(payload.runs) ? payload.runs : [];
-  if (models.length || Object.hasOwn(payload, "models")) {
+  const modelsMode = payload.mode === "models"
+    || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
+  if (modelsMode) {
     state.models = append ? [...state.models, ...models] : models;
     state.runs = state.models.flatMap((model) => (model.builds || []).map((build) => runFromCatalogBuild(model, build)));
   } else {
@@ -433,7 +439,7 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
   populateFilters({ persistBranchFallback: cache });
   renderRuns();
   if (cache) {
-    writeCachedCatalog();
+    writeCachedCatalog(modelsMode ? "models" : "runs");
     writeCachedBranches();
   }
 }
@@ -680,7 +686,9 @@ function updateCompareAction() {
 }
 
 function setComparisonSelection(checkbox) {
-  const run = state.runs.find((item) => item.id === checkbox.dataset.compareRunId);
+  const runId = checkbox.dataset.compareRunId;
+  const run = state.runs.find((item) => item.id === runId)
+    || state.detailCache.get(runId)?.summary?.run;
   if (!run) return null;
   if (checkbox.checked) state.compareSelection.set(run.id, run);
   else state.compareSelection.delete(run.id);
@@ -1357,12 +1365,7 @@ async function initialize() {
     if (!cachedBranches && Array.isArray(cached.branches)) state.availableBranches = cached.branches;
     state.taxonomy = cached.taxonomy || null;
     if (state.taxonomy) populateCategoryFilters();
-    applyCatalog({
-      models: cached.models,
-      runs: cached.runs,
-      next_cursor: cached.cursor,
-      has_more: cached.hasMore,
-    }, { cache: false });
+    applyCatalog(cached, { cache: false });
   }
 
   try {
