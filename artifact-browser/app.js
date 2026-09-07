@@ -651,7 +651,10 @@ function activeModelBuild(model) {
 function populateFilters({ persistBranchFallback = false } = {}) {
   const selectedCompiler = elements["compiler-filter"].value;
   const branches = state.availableBranches;
-  const compilers = [...new Set(state.runs.map((run) => run.toolchain_version).filter(Boolean))].sort().reverse();
+  const compilers = [...new Set([
+    selectedCompiler,
+    ...state.runs.map((run) => run.toolchain_version),
+  ].filter(Boolean))].sort().reverse();
   elements["branch-filter"].innerHTML = `<option value="">All branches</option>${branches.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
   elements["compiler-filter"].innerHTML = `<option value="">Any version</option>${compilers.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
   const preferredBranch = state.preferredBranch ?? DEFAULT_BRANCH;
@@ -1179,9 +1182,12 @@ function detailBuildSwitcher(run) {
     : model;
   const profiles = profileGroups(availableModel);
   if (!profiles.length) return "";
-  const activeProfile = run.metadata?.build_profile_id || run.metadata?.variant_id || profiles[0][0];
-  const [, activeBuilds] = profiles.find(([profile]) => profile === activeProfile) || profiles[0];
-  const activeComponent = run.metadata?.component_id || componentId(activeBuilds[0]);
+  const requestedProfile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  const [activeProfile, activeBuilds] = profiles.find(([profile]) => profile === requestedProfile) || profiles[0];
+  const requestedComponent = run.metadata?.component_id;
+  const activeComponent = componentId(
+    activeBuilds.find((build) => componentId(build) === requestedComponent) || activeBuilds[0],
+  );
   const compared = state.compareSelection.has(run.id);
   const label = `${model.display_name || model.model_id} ${activeProfile} ${activeComponent}`;
   const tabs = profiles.map(([profile]) => {

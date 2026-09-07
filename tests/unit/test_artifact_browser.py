@@ -605,12 +605,15 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "activeComponentByProfile: new Map()" in script
     assert "function selectedCatalogBuild(" in script
     assert 'query.set("toolchain_version", elements["compiler-filter"].value)' in script
+    assert "selectedCompiler,\n    ...state.runs.map((run) => run.toolchain_version)" in script
     assert "payload.models.flatMap" not in script
     assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
     assert ".model-row.selected" in styles
     render_model_row = script.split("function renderModelRow(", 1)[1].split("function renderModels(", 1)[0]
     assert 'role="tablist"' not in render_model_row
     assert "data-compare-run-id" not in render_model_row
+    assert "const [activeProfile, activeBuilds] = profiles.find(" in script
+    assert "componentId(build) === requestedComponent" in script
     assert '("rf_detr_small", "modalix_int8_bf16", "backbone"' in preview
     assert '("rf_detr_small", "modalix_int8_bf16", "transformer"' in preview
 
