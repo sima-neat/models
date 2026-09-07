@@ -137,6 +137,31 @@ shared compile inputs affect every relevant compile fingerprint; model-local
 recipe and surgery inputs affect only their invocation. Correctness and
 performance configuration have independent fingerprints.
 
+## Catalog inheritance for new branches
+
+CI passes the resolved comparison base branch to `publish-catalog --base-branch`.
+If the target branch has no published catalog, publication reads the base
+branch's current catalog and reuses its immutable build references where compile
+fingerprints match. New compilation receipts take precedence. The resulting
+snapshot uses the target branch's models, metadata, taxonomy, and Git revision;
+inherited runs keep their original build provenance.
+
+Once the target has a catalog, subsequent publications reuse that branch's own
+catalog. They do not automatically follow later changes to the base catalog.
+Adding a model normally compiles only its new build invocations; unchanged models
+do not need recompilation just to create a branch catalog.
+
+If neither branch has a catalog, initial publication requires build receipts for
+every target build. A missing or mismatched inherited build blocks publication
+instead of linking incompatible artifacts. This can happen if the base catalog
+has not caught up with the branch point or has advanced to different compile
+inputs. Publish a compatible base catalog or compile the missing target builds.
+Other registry errors are reported and do not trigger inheritance.
+
+The branch's grouped model view becomes available after its first complete
+snapshot is published. Existing branch catalogs remain available while a later
+update is compiling.
+
 ## Compile locally from `model.yaml`
 
 Full compilation is only possible in an environment containing the exact Model

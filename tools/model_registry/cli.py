@@ -258,6 +258,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
     publish_catalog_parser.add_argument("--branch", required=True)
     publish_catalog_parser.add_argument("--git-sha", required=True)
+    publish_catalog_parser.add_argument(
+        "--base-branch", help="inherit matching builds from this branch when the target has no catalog"
+    )
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
 
     stage_registry = subcommands.add_parser(
@@ -735,6 +738,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
         branch=args.branch,
+        base_branch=args.base_branch,
         git_sha=args.git_sha,
     )
     message = (

@@ -521,7 +521,7 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
-def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
+def _matching_catalog() -> dict:
     catalog = discover_catalog(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["version"]
     first = build_catalog_snapshot(
@@ -555,6 +555,11 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
         },
     )
 
+    return first
+
+
+def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
+    first = _matching_catalog()
     assert first["catalog_revision"] == "a" * 40
     assert len(first["taxonomy_sha256"]) == 64
     assert "version" not in first["taxonomy"]
@@ -656,3 +661,136 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
     assert (profile / "registry-staged.json").is_file()
     assert (profile / "model" / "registry-publication.json").is_file()
     build_catalog_snapshot,
+
+
+@pytest.mark.parametrize("with_new_build", [False, True])
+def test_new_branch_inherits_base_catalog_and_prefers_new_receipts(tmp_path: Path, with_new_build: bool) -> None:
+    base = _matching_catalog()
+    expected = json.loads(json.dumps(base["models"]))
+    compiled_dir = None
+    if with_new_build:
+        model = base["models"][0]
+        build = model["builds"][0]
+        # This target invocation changed: the base's build is no longer reusable.
+        target_fingerprint = build["compile_fingerprint"]
+        build["compile_fingerprint"] = "0" * 64
+        compiled_dir = tmp_path / "compiled"
+        receipt_dir = compiled_dir / model["id"] / build["build_profile_id"] / build["component_id"]
+        receipt_dir.mkdir(parents=True)
+        receipt = {
+            **build,
+            "model_id": model["id"],
+            "compile_fingerprint": target_fingerprint,
+            "run_id": "00000000-0000-4000-8000-999999999999",
+            "artifact_sha256": "f" * 64,
+        }
+        (receipt_dir / "registry-publication.json").write_text(json.dumps({"runs": [receipt]}))
+        expected[0]["builds"][0]["run_id"] = receipt["run_id"]
+        expected[0]["builds"][0]["artifact_sha256"] = receipt["artifact_sha256"]
+    reads = []
+    writes = []
+
+    def read(url: str) -> dict:
+        reads.append(url)
+        if url.endswith("refs%2Fheads%2Ffeature%2Fnew-model"):
+            raise RegistryPublicationError("HTTP 404 catalog_not_found: Model catalog was not found")
+        assert url.endswith("refs%2Fheads%2Fdevelop")
+        return {"catalog": {"document": base}}
+
+    result = publish_catalog(
+        repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
+        aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
+        compiled_dir=compiled_dir, read_request=read,
+        request=lambda *args: writes.append(args) or {"stored": True},
+    )
+    assert len(reads) == 2
+    assert result["catalog"]["git_ref"] == "refs/heads/feature/new-model"
+    assert result["catalog"]["catalog_revision"] == "b" * 40
+    assert len(writes) == 1
+    assert writes[0][0] == "PUT"
+    assert writes[0][2] == result["catalog"]
+    for actual_model, expected_model in zip(result["catalog"]["models"], expected, strict=True):
+        assert actual_model["id"] == expected_model["id"]
+        for actual, prior in zip(actual_model["builds"], expected_model["builds"], strict=True):
+            for field in ("run_id", "compile_fingerprint", "artifact_sha256"):
+                assert actual[field] == prior[field]
+
+
+def test_existing_branch_catalog_takes_precedence_over_base() -> None:
+    current = _matching_catalog()
+    reads = []
+
+    def read(url: str) -> dict:
+        reads.append(url)
+        assert url.endswith("refs%2Fheads%2Ffeature%2Fexisting")
+        return {"catalog": {"document": current}}
+
+    result = publish_catalog(
+        repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
+        aws_region="us-west-2", branch="feature/existing", base_branch="develop", git_sha="b" * 40,
+        read_request=read, request=lambda *args: {"stored": True},
+    )
+    assert len(reads) == 1
+    assert result["catalog"]["models"] == current["models"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "fingerprint", "checksum"])
+def test_unusable_base_catalog_blocks_publication(failure: str) -> None:
+    base = _matching_catalog()
+    if failure == "fingerprint":
+        base["models"][0]["builds"][0]["compile_fingerprint"] = "0" * 64
+    elif failure == "checksum":
+        base["models"][0]["builds"][0].pop("artifact_sha256")
+    writes = []
+
+    def read(url: str) -> dict:
+        if failure == "missing" or url.endswith("refs%2Fheads%2Ffeature%2Fnew-model"):
+            raise RegistryPublicationError("HTTP 404 catalog_not_found: missing")
+        return {"catalog": {"document": base}}
+
+    with pytest.raises(ValidationError, match="no immutable"):
+        publish_catalog(
+            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
+            aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
+            read_request=read, request=lambda *args: writes.append(args),
+        )
+    assert writes == []
+
+
+@pytest.mark.parametrize("base_branch", [None, "develop"])
+def test_catalog_inheritance_does_not_retry_same_branch(base_branch: str | None) -> None:
+    reads = []
+
+    def read(url: str) -> dict:
+        reads.append(url)
+        raise RegistryPublicationError("HTTP 404 catalog_not_found: missing")
+
+    with pytest.raises(ValidationError, match="no immutable"):
+        publish_catalog(
+            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
+            aws_region="us-west-2", branch="develop", base_branch=base_branch, git_sha="b" * 40,
+            read_request=read,
+        )
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize("failing_branch", ["feature/new-model", "develop"])
+@pytest.mark.parametrize("error", ["HTTP 503 unavailable", "HTTP 404 repository_not_found"])
+def test_catalog_inheritance_propagates_registry_errors(failing_branch: str, error: str) -> None:
+    reads = []
+    writes = []
+
+    def read(url: str) -> dict:
+        reads.append(url)
+        if url.endswith(failing_branch.replace("/", "%2F")):
+            raise RegistryPublicationError(error)
+        raise RegistryPublicationError("HTTP 404 catalog_not_found: missing")
+
+    with pytest.raises(RegistryPublicationError, match=error):
+        publish_catalog(
+            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
+            aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
+            read_request=read, request=lambda *args: writes.append(args),
+        )
+    assert len(reads) == (1 if failing_branch == "feature/new-model" else 2)
+    assert writes == []

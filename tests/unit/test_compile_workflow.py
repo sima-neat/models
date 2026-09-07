@@ -243,6 +243,8 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
         step for step in job["steps"] if step.get("name") == "Publish and promote the complete catalog snapshot"
     )
     assert "model-registry publish-catalog" in publish["run"]
+    assert publish["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
+    assert '--base-branch "$BASE_BRANCH"' in publish["run"]
     assert "--git-sha \"$GITHUB_SHA\"" in publish["run"]
     assert publish["env"]["REGISTRY_READ_API_URL"] == (
         "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"

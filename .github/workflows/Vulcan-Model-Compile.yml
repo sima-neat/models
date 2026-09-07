@@ -989,6 +989,7 @@ jobs:
 
       - name: Publish and promote the complete catalog snapshot
         env:
+          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -1007,6 +1008,7 @@ jobs:
             --read-api-url "$REGISTRY_READ_API_URL" \
             --aws-region "$AWS_REGION" \
             --branch "$GITHUB_REF_NAME" \
+            --base-branch "$BASE_BRANCH" \
             --git-sha "$GITHUB_SHA"
 
   dispatch-reused-benchmarks:

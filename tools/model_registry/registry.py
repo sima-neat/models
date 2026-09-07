@@ -382,6 +382,7 @@ def publish_catalog(
     branch: str,
     git_sha: str,
     compiled_dir: str | Path | None = None,
+    base_branch: str | None = None,
     request: Request | None = None,
     read_request: ReadRequest | None = None,
 ) -> JsonObject:
@@ -389,17 +390,26 @@ def publish_catalog(
     read = read_request or _public_registry_json
     read_base_url = read_api_url.rstrip("/")
     previous: JsonObject | None = None
-    try:
-        current = read(
-            f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
-            f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
-        )
+    # Existing branch catalogs remain authoritative. Only bootstrap a branch
+    # from its resolved base; build_catalog_snapshot checks every fingerprint.
+    candidate_branches = [branch]
+    if base_branch and base_branch != branch:
+        candidate_branches.append(base_branch)
+    for candidate_branch in candidate_branches:
+        try:
+            current = read(
+                f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
+                f"git_ref={quote(f'refs/heads/{candidate_branch}', safe='')}"
+            )
+        except RegistryPublicationError as exc:
+            if "HTTP 404 catalog_not_found" not in str(exc):
+                raise
+            continue
         candidate = current.get("catalog")
-        if isinstance(candidate, dict):
-            previous = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
-    except RegistryPublicationError as exc:
-        if "HTTP 404 catalog_not_found" not in str(exc):
-            raise
+        if not isinstance(candidate, dict):
+            raise RegistryPublicationError(f"registry returned no catalog for branch {candidate_branch}")
+        previous = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
+        break
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
