@@ -75,9 +75,9 @@
             <span>Build history</span>
             <label class="switch-row">
               <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
-              <i aria-hidden="true"></i><b>Include earlier builds</b>
+              <i aria-hidden="true"></i><b>Show build history</b>
             </label>
-            <small id="history-filter-help">Latest per compiler is shown by default.</small>
+            <small id="history-filter-help">Switches from models to chronological build runs.</small>
           </div>
           <button id="clear-filters" class="text-button" type="button">Clear</button>
           </div>
@@ -87,23 +87,23 @@
       <section id="workspace" class="workspace">
         <div class="results-pane">
           <div class="section-heading">
-            <h2 id="result-title">Builds</h2>
+            <h2 id="result-title">Models</h2>
             <div class="result-heading-actions">
               <span id="result-count" aria-live="polite">—</span>
               <button id="compare-button" class="compare-button" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M16 4v16M4 8h8m0 8H4m8-5h8m-8 6h8" /></svg>
-                <span id="compare-label">Compare visible</span>
+                <span id="compare-label">Compare selected</span>
                 <span id="compare-count" class="compare-count" hidden>0</span>
               </button>
             </div>
           </div>
           <div id="result-list" class="result-list" aria-busy="true"></div>
-          <button id="load-more" class="load-more" type="button" hidden>Load more builds</button>
+          <button id="load-more" class="load-more" type="button" hidden>Load more models</button>
         </div>
         <aside id="detail-pane" class="detail-pane" aria-label="Selected artifact details">
           <div class="detail-empty">
-            <h2>No build selected</h2>
-            <p>Select a build to inspect provenance, validation results, checksums, and downloads.</p>
+            <h2>No model selected</h2>
+            <p>Select a model to choose a variant, inspect provenance, and download a verified build.</p>
           </div>
         </aside>
       </section>
