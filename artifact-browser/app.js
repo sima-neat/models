@@ -45,6 +45,7 @@ const state = {
   repository: configuredRepository,
   models: [],
   runs: [],
+  catalogMode: "runs",
   cursor: null,
   hasMore: false,
   availableBranches: [],
@@ -307,11 +308,11 @@ function readCachedCatalog() {
   }
 }
 
-function writeCachedCatalog(mode) {
+function writeCachedCatalog() {
   try {
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
       savedAt: new Date().toISOString(),
-      mode,
+      mode: state.catalogMode,
       models: state.models,
       runs: state.runs,
       cursor: state.cursor,
@@ -423,6 +424,7 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
   const runs = Array.isArray(payload.runs) ? payload.runs : [];
   const modelsMode = payload.mode === "models"
     || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
+  state.catalogMode = modelsMode ? "models" : "runs";
   if (modelsMode) {
     state.models = append ? [...state.models, ...models] : models;
     state.runs = state.models.flatMap((model) => (model.builds || []).map((build) => runFromCatalogBuild(model, build)));
@@ -439,7 +441,7 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
   populateFilters({ persistBranchFallback: cache });
   renderRuns();
   if (cache) {
-    writeCachedCatalog(modelsMode ? "models" : "runs");
+    writeCachedCatalog();
     writeCachedBranches();
   }
 }
@@ -504,7 +506,7 @@ function buildIdentity(run) {
 }
 
 function catalogMode() {
-  return Boolean(elements["branch-filter"].value && !elements["history-filter"].checked);
+  return state.catalogMode === "models";
 }
 
 function buildProfileId(build) {
@@ -1158,10 +1160,17 @@ function catalogModelForRun(run) {
   return state.models.find((model) => model.model_id === modelId) || null;
 }
 
+function compilerFilteredBuilds(model) {
+  const compiler = elements["compiler-filter"].value;
+  return compiler
+    ? model.builds.filter((build) => build.toolchain_version === compiler)
+    : model.builds;
+}
+
 function selectedCatalogBuild(modelId, profileId, requestedComponent = null) {
   const model = state.models.find((item) => item.model_id === modelId);
   if (!model) return null;
-  const builds = model.builds.filter((build) => buildProfileId(build) === profileId);
+  const builds = compilerFilteredBuilds(model).filter((build) => buildProfileId(build) === profileId);
   const componentKey = `${modelId}:${profileId}`;
   const component = requestedComponent || state.activeComponentByProfile.get(componentKey);
   const build = builds.find((item) => componentId(item) === component)
@@ -1176,10 +1185,7 @@ function selectedCatalogBuild(modelId, profileId, requestedComponent = null) {
 function detailBuildSwitcher(run) {
   const model = catalogModelForRun(run);
   if (!model) return "";
-  const compiler = elements["compiler-filter"].value;
-  const availableModel = compiler
-    ? { ...model, builds: model.builds.filter((build) => build.toolchain_version === compiler) }
-    : model;
+  const availableModel = { ...model, builds: compilerFilteredBuilds(model) };
   const profiles = profileGroups(availableModel);
   if (!profiles.length) return "";
   const requestedProfile = run.metadata?.build_profile_id || run.metadata?.variant_id;

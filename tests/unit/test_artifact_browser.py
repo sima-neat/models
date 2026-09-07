@@ -183,10 +183,14 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
 def test_cached_build_history_preserves_run_mode() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
-    assert 'writeCachedCatalog(modelsMode ? "models" : "runs")' in script
+    assert 'catalogMode: "runs"' in script
+    assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
+    assert 'mode: state.catalogMode' in script
     assert 'cached.models?.length || !cached.runs?.length ? "models" : "runs"' in script
     assert 'payload.mode !== "runs" && Object.hasOwn(payload, "models")' in script
     assert "applyCatalog(cached, { cache: false })" in script
+    assert 'return state.catalogMode === "models"' in script
+    assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in script
 
 
 def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
@@ -604,6 +608,9 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "activeProfileByModel: new Map()" in script
     assert "activeComponentByProfile: new Map()" in script
     assert "function selectedCatalogBuild(" in script
+    assert "function compilerFilteredBuilds(model)" in script
+    assert "compilerFilteredBuilds(model).filter" in script
+    assert "build.toolchain_version === compiler" in script
     assert 'query.set("toolchain_version", elements["compiler-filter"].value)' in script
     assert "selectedCompiler,\n    ...state.runs.map((run) => run.toolchain_version)" in script
     assert "payload.models.flatMap" not in script
