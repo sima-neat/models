@@ -9,33 +9,36 @@ import json
 import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
 RUN_ID = "74b48a12-6088-42a0-b881-5925a5272fae"
 COMMIT = "244c03323cefc96a6baaa097f0a4bb008e9c39ae"
 PREVIEW_RUNS = (
-    ("resnet_50", "modalix_int8", "develop", "2.1.3", 165_482_104),
-    ("resnet_50", "modalix_bf16", "feat/resnet50-post-compile-benchmark", "2.1.3", 284_103_221),
-    ("ssd_mobilenet_v1", "modalix_bf16_tess_mla", "develop", "2.1.3", 132_714_990),
-    ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "feat/ssd-mobilenet-qualification", "2.1.3", 78_204_118),
-    ("ssd_mobilenet_v2", "modalix_bf16_tess_mla", "develop", "2.1.3", 148_821_633),
-    ("ssd_mobilenet_v2", "modalix_int8_tess_off_mla", "feat/tessellation-placement-study", "2.1.3", 86_902_412),
-    ("ssd_mobilenet_v3", "modalix_bf16_tess_mla", "develop", "2.1.3", 119_443_210),
-    ("yolo_v8n", "modalix_int8", "main", "2.1.3", 41_883_092),
-    ("yolo_v8s", "modalix_int8", "main", "2.1.3", 96_771_405),
-    ("depth_anything_v2_vits", "modalix_bf16", "feat/depth-runtime-validation", "2.1.3", 207_614_992),
-    ("fcn_hrnet48", "modalix_bf16", "develop", "2.1.3", 312_045_118),
-    ("midas_v21_small_256", "modalix_bf16", "main", "2.1.2", 91_352_776),
-    ("detr_resnet50", "modalix_bf16", "feat/detection-benchmark-matrix", "2.1.3", 251_770_364),
+    ("resnet_50", "modalix_int8", "model", "main", "2.1.3", 165_482_104),
+    ("resnet_50", "modalix_bf16", "model", "main", "2.1.3", 284_103_221),
+    ("ssd_mobilenet_v1", "modalix_bf16_tess_mla", "model", "develop", "2.1.3", 132_714_990),
+    ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "model", "develop", "2.1.3", 78_204_118),
+    ("ssd_mobilenet_v2", "modalix_bf16_tess_mla", "model", "develop", "2.1.3", 148_821_633),
+    ("ssd_mobilenet_v2", "modalix_int8_tess_off_mla", "model", "develop", "2.1.3", 86_902_412),
+    ("ssd_mobilenet_v3", "modalix_bf16_tess_mla", "model", "develop", "2.1.3", 119_443_210),
+    ("yolo_v8n", "modalix_int8", "model", "main", "2.1.3", 41_883_092),
+    ("yolo_v8s", "modalix_int8", "model", "main", "2.1.3", 96_771_405),
+    ("depth_anything_v2_vits", "modalix_bf16", "model", "develop", "2.1.3", 207_614_992),
+    ("fcn_hrnet48", "modalix_bf16", "model", "develop", "2.1.3", 312_045_118),
+    ("midas_v21_small_256", "modalix_bf16", "model", "main", "2.1.2", 91_352_776),
+    ("detr_resnet50", "modalix_bf16", "model", "develop", "2.1.3", 251_770_364),
     (
         "resnet_50",
         "modalix_bf16_batch4",
-        "experiment/long-running-batch-size-throughput-comparison",
+        "model",
+        "main",
         "2.1.3",
         296_411_087,
     ),
+    ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.3", 104_312_000),
+    ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.3", 168_774_000),
 )
 
 
@@ -44,7 +47,7 @@ def _read_result() -> dict:
 
 
 def _run(index: int = 0) -> dict:
-    model_id, variant_id, branch, compiler, _ = PREVIEW_RUNS[index]
+    model_id, variant_id, component_id, branch, compiler, _ = PREVIEW_RUNS[index]
     run_id = RUN_ID if index == 0 else f"74b48a12-6088-42a0-b881-5925a5272f{index:02x}"
     commit = COMMIT if index == 0 else hashlib.sha256(f"preview-commit-{index}".encode()).hexdigest()
     architecture = "resnet_50" if "resnet" in model_id else model_id
@@ -66,7 +69,7 @@ def _run(index: int = 0) -> dict:
         "metadata": {
             "model_id": model_id,
             "build_profile_id": variant_id,
-            "component_id": "model",
+            "component_id": component_id,
             "model_name": model_id,
             "license": {
                 "spdx": "Apache-2.0",
@@ -98,7 +101,7 @@ def _run_index(run_id: str) -> int | None:
 
 
 def _artifact(index: int) -> dict:
-    model_id, variant_id, _, _, size_bytes = PREVIEW_RUNS[index]
+    model_id, variant_id, _, _, _, size_bytes = PREVIEW_RUNS[index]
     name = f"{model_id}_{variant_id}_mpk.tar.gz"
     return {
         "name": name,
@@ -111,10 +114,10 @@ def _artifact(index: int) -> dict:
 
 def _benchmark_result(index: int) -> dict:
     result = _read_result()
-    model_id, variant_id, _, compiler, _ = PREVIEW_RUNS[index]
+    model_id, variant_id, component_id, _, compiler, _ = PREVIEW_RUNS[index]
     result["model"]["id"] = model_id
     result["model"]["build_profile_id"] = variant_id
-    result["model"]["component_id"] = "model"
+    result["model"]["component_id"] = component_id
     result["compatibility"]["actual_platform_version"] = compiler
     latency = round(3.15 + index * 0.37, 3)
     throughput = round(510.0 - index * 21.5, 1)
@@ -143,7 +146,7 @@ def _benchmark_result(index: int) -> dict:
 
 
 def _accuracy_result(index: int) -> dict | None:
-    model_id, variant_id, _, _, _ = PREVIEW_RUNS[index]
+    model_id, variant_id, _, _, _, _ = PREVIEW_RUNS[index]
     if (model_id, variant_id) != ("resnet_50", "modalix_int8"):
         return None
     return {
@@ -184,7 +187,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
         runs = _runs()
         if path == "/config.js":
             body = (
@@ -203,22 +208,43 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({"runs": runs, "has_more": False})
             return
         if path == "/v1/repositories/sima-neat/models/models":
-            self._json({"models": [
-                {
-                    "model_id": run["metadata"]["model_id"],
-                    "display_name": run["metadata"].get("display_name", run["metadata"]["model_id"]),
+            git_ref = query.get("git_ref", ["refs/heads/main"])[0]
+            compiler = query.get("toolchain_version", [""])[0]
+            grouped: dict[str, dict] = {}
+            for run in (item for item in runs if item["git_ref"] == git_ref):
+                model_id = run["metadata"]["model_id"]
+                model = grouped.setdefault(model_id, {
+                    "model_id": model_id,
+                    "display_name": model_id.replace("_", " ").title(),
+                    "description": f"Verified {model_id.replace('_', ' ')} builds for Modalix deployment.",
                     "catalog_revision": run["commit_sha"],
+                    "model_type": run["model_type"],
+                    "architecture_id": run["architecture_id"],
+                    "architecture_paradigm": run["architecture_paradigm"],
+                    "tasks": run["tasks"],
+                    "input_modalities": run["input_modalities"],
+                    "output_modalities": run["output_modalities"],
+                    "model_tags": run["model_tags"],
                     "categories": run.get("model_categories", {}),
-                    "builds": [{
-                        "run_id": run["id"],
-                        "build_profile_id": run["metadata"]["build_profile_id"],
-                        "component_id": run["metadata"]["component_id"],
-                        "compile_invocation_id": run["metadata"].get("compile_invocation_id", run["metadata"]["component_id"]),
-                        "toolchain_version": run.get("toolchain_version"),
-                    }],
-                }
-                for run in runs
-            ], "count": len(runs)})
+                    "builds": [],
+                })
+                model["builds"].append({
+                    "run_id": run["id"],
+                    "build_profile_id": run["metadata"]["build_profile_id"],
+                    "component_id": run["metadata"]["component_id"],
+                    "compile_invocation_id": run["metadata"].get("compile_invocation_id", run["metadata"]["component_id"]),
+                    "status": run["status"],
+                    "commit_sha": run["commit_sha"],
+                    "created_at": run["created_at"],
+                    "finished_at": run["finished_at"],
+                    "toolchain_name": run["toolchain_name"],
+                    "toolchain_version": run["toolchain_version"],
+                    "target_platform": run["target_platform"],
+                })
+            models = [model for model in grouped.values() if not compiler or any(
+                build["toolchain_version"] == compiler for build in model["builds"]
+            )]
+            self._json({"models": models, "count": len(models), "has_more": False, "next_cursor": None})
             return
         if path == "/v1/repositories/sima-neat/models/branches":
             branches = sorted({item["git_ref"] for item in runs})
@@ -306,7 +332,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                         "schema_version": 1,
                         "model_id": PREVIEW_RUNS[index][0],
                         "build_profile_id": "modalix_bf16",
-                        "component_id": PREVIEW_RUNS[index][1],
+                        "component_id": PREVIEW_RUNS[index][2],
                         "scope": "full_pipeline",
                         "status": "diagnostic",
                         "reference": "Original ONNX (ONNX Runtime)",

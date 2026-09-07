@@ -180,6 +180,19 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "state.runs[0]?.id" not in script
 
 
+def test_cached_build_history_preserves_run_mode() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'catalogMode: "runs"' in script
+    assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
+    assert 'mode: state.catalogMode' in script
+    assert 'cached.models?.length || !cached.runs?.length ? "models" : "runs"' in script
+    assert 'payload.mode !== "runs" && Object.hasOwn(payload, "models")' in script
+    assert "applyCatalog(cached, { cache: false })" in script
+    assert 'return state.catalogMode === "models"' in script
+    assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in script
+
+
 def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -193,6 +206,7 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
 
     assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in script
+    assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
 def test_detail_error_can_be_retried_and_closed() -> None:
@@ -288,13 +302,15 @@ def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     assert 'run.status === "completed"' in script
 
 
-def test_latest_model_build_per_compiler_is_the_default_with_history_opt_in() -> None:
+def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="history-filter" type="checkbox" role="switch"' in html
-    assert "Latest per compiler is shown by default." in html
+    assert "Switches from models to chronological build runs." in html
+    assert "Show build history" in html
+    assert 'historical ? "runs" : "models"' in script
     assert 'query.set("run_type", "model_compile")' in script
     assert 'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
     assert 'initialQuery.get("history") === "1"' in script
@@ -555,7 +571,8 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert 'aria-labelledby="compare-title" aria-describedby="compare-description"' in html
     assert "compareSelection: new Map()" in script
     assert 'data-compare-run-id="${run.id}"' in script
-    assert "state.compareSelection.size ? [...state.compareSelection.values()] : filteredRuns()" in script
+    assert "return [...state.compareSelection.values()]" in script
+    assert 'elements["compare-button"].disabled = selectedCount < 2' in script
     assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
     assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
     assert "adaptBenchmarkResult(detail.benchmark.result)" in script
@@ -571,6 +588,41 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert "height: min(820px, calc(100vh - 50px))" in styles
     assert "position: sticky; left: 0" in styles
     assert ".compare-select input:focus-visible + span" in styles
+
+
+def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert "models: []" in script
+    assert "function profileGroups(model)" in script
+    assert 'class="model-row' in script
+    assert 'class="detail-variant-tabs" role="tablist"' in script
+    assert 'class="detail-variant-tab" type="button" role="tab"' in script
+    assert '<strong>Variants</strong>' in script
+    assert '<span>Components</span>' in script
+    assert '"<b>Current</b>"' in script
+    assert 'class="detail-component-tabs" role="group"' in script
+    assert 'class="detail-compare-select compare-select"' in script
+    assert "activeProfileByModel: new Map()" in script
+    assert "activeComponentByProfile: new Map()" in script
+    assert "function selectedCatalogBuild(" in script
+    assert "function compilerFilteredBuilds(model)" in script
+    assert "compilerFilteredBuilds(model).filter" in script
+    assert "build.toolchain_version === compiler" in script
+    assert 'query.set("toolchain_version", elements["compiler-filter"].value)' in script
+    assert "selectedCompiler,\n    ...state.runs.map((run) => run.toolchain_version)" in script
+    assert "payload.models.flatMap" not in script
+    assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
+    assert ".model-row.selected" in styles
+    render_model_row = script.split("function renderModelRow(", 1)[1].split("function renderModels(", 1)[0]
+    assert 'role="tablist"' not in render_model_row
+    assert "data-compare-run-id" not in render_model_row
+    assert "const [activeProfile, activeBuilds] = profiles.find(" in script
+    assert "componentId(build) === requestedComponent" in script
+    assert '("rf_detr_small", "modalix_int8_bf16", "backbone"' in preview
+    assert '("rf_detr_small", "modalix_int8_bf16", "transformer"' in preview
 
 
 def test_focused_model_layout_collapses_list_metadata_without_overflow() -> None:
