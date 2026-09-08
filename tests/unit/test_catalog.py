@@ -432,6 +432,7 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
     for relative in (
         "schemas/accuracy.schema.json",
         "tools/model_registry/accuracy.py",
+        "tools/model_registry/artifact_metadata.py",
         "tools/model_registry/accuracy_config.py",
         "tools/model_registry/model.py",
     ):
@@ -447,6 +448,10 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     preprocessing_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert preprocessing_changed != first
+
+    metadata = catalog_repository / "tools" / "model_registry" / "artifact_metadata.py"
+    metadata.write_text(metadata.read_text(encoding="utf-8") + "\n# metadata validation change\n", encoding="utf-8")
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == preprocessing_changed
 
     loader = catalog_repository / "tools" / "model_registry" / "accuracy.py"
     loader.write_text(loader.read_text(encoding="utf-8") + "\n# calibration loader change\n", encoding="utf-8")

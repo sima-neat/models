@@ -9,6 +9,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import load_accuracy_config, validate_accuracy_model_contract
+from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
 from .fidelity_config import load_recipe_fidelity_config
 from .performance_config import load_performance_config
@@ -283,6 +284,8 @@ def validate_model(
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
 
+    validate_artifact_metadata(model)
+
     taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path))
     try:
         validate_model_categorization(model, taxonomy)
@@ -394,11 +397,6 @@ def validate_model(
                 f"{', '.join(sorted(unknown_components))}"
             )
         for component_id, binding in bindings.items():
-            if "artifact_suffix" in binding and len(f"{model['id']}_{binding['artifact_suffix']}_mpk.tar.gz") > 255:
-                raise ValidationError(
-                    f"{directory}: artifact_suffix for {profile_id}/{component_id} "
-                    "exceeds the 255-character filename limit"
-                )
             calibration_id = binding.get("calibration")
             if calibration_id is not None and calibration_id not in calibrations:
                 raise ValidationError(
