@@ -20,6 +20,7 @@ from model_registry.catalog import (
     validation_fingerprint,
 )
 from model_registry.errors import ValidationError
+from model_registry.registry import build_catalog_snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -876,3 +877,61 @@ def test_resolve_base_preserves_explicit_base_with_same_branch_name(tmp_path: Pa
     )
 
     assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: Path, grouped: bool) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    if grouped:
+        _declare_grouped_invocation(model)
+        manifest.write_text(yaml.safe_dump(model))
+    base = _initialize_repository(catalog_repository)
+    catalog = discover_catalog(catalog_repository)
+    matrix = build_matrix(catalog, sorted(catalog), repository=catalog_repository, compiler_version="2.1.3")
+    prior = {"models": [
+        {"id": model_id, "builds": [
+            {
+                "build_profile_id": entry["build_profile_id"], "component_id": component_id,
+                "compile_fingerprint": entry["build_fingerprint"], "artifact_sha256": "a" * 64,
+                "run_id": f"run-{model_id}-{component_id}",
+            }
+            for entry in matrix["include"] if entry["model_id"] == model_id
+            for component_id in entry["component_ids"]
+        ]} for model_id in catalog
+    ]}
+    previous = build_catalog_snapshot(repository=catalog_repository, branch="develop", git_sha=base, previous=prior)
+    for suffix in ("model_int8", "model_preview", None):
+        binding = model["build_profiles"][0]["components"][0]
+        if suffix is None:
+            binding.pop("artifact_suffix")
+        else:
+            binding["artifact_suffix"] = suffix
+        manifest.write_text(yaml.safe_dump(model))
+        head = _commit(catalog_repository, "rename download")
+        plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+        assert plan["include"] == []
+        assert plan["validation_include"] == []
+        assert plan["benchmark_include"] == []
+        assert plan["metadata_changed"] is True
+        current = build_catalog_snapshot(
+            repository=catalog_repository, branch="develop", git_sha=head, previous=previous,
+        )
+        alpha = next(item for item in current["models"] if item["id"] == "alpha")
+        build = next(item for item in alpha["builds"] if item["component_id"] == "model")
+        assert build.get("artifact_suffix") == suffix
+        if suffix is None:
+            assert "artifact_suffix" not in build
+        normalized = [copy.deepcopy(previous["models"]), copy.deepcopy(current["models"])]
+        for models in normalized:
+            for item in models:
+                for entry in item["builds"]:
+                    entry.pop("artifact_suffix", None)
+        # All identities, hashes and stage fingerprints are retained, including siblings.
+        assert normalized[0] == normalized[1]
+        previous, base = current, head
+
+    binding["artifact_suffix"] = "a" * 256
+    manifest.write_text(yaml.safe_dump(model))
+    with pytest.raises(ValidationError, match="filename limit"):
+        build_catalog_snapshot(repository=catalog_repository, branch="develop", git_sha=head, previous=previous)

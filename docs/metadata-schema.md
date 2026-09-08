@@ -190,6 +190,19 @@ invalid reports, and incomplete component sets still fail validation.
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
 
+A component binding may also declare `artifact_suffix` outside `parameters`.
+It uses the identifier syntax and controls the browser download filename:
+`<model_id>_<artifact_suffix>_mpk.tar.gz`. Include the component name in the suffix
+when useful. For example, RF-DETR uses `backbone_int8` and `transformer_bf16` under
+one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
+precision. The complete download basename must fit within 255 characters.
+Omitting or removing the suffix preserves the original download filename.
+
+Suffix changes update catalog metadata while retaining existing compiled artifacts.
+They do not change build identities, trigger compilation or benchmarking, or rename
+stored objects and MPK contents. Registry support must deploy before catalogs
+publish this optional field.
+
 ## Compositions and packages
 
 A composition explains how the compiled pieces are used together. A

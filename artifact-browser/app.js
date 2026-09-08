@@ -1294,6 +1294,7 @@ let downloadRequest = 0;
 
 async function downloadVariant(runId) {
   const request = ++downloadRequest;
+  const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
   pendingDownloads = null;
   elements["download-description"].textContent = "Checking the selected variant’s components…";
@@ -1305,7 +1306,8 @@ async function downloadVariant(runId) {
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
-    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
+    const model = catalogModels.find((model) => model.model_id === summary.run.metadata?.model_id);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api, model), api);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id || "Selected variant";

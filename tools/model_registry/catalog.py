@@ -796,7 +796,14 @@ def semantic_change_plan(
     def publication_metadata(catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
         fields = ("display_name", "description", "license", "maturity", "categories")
         return {
-            model_id: {field: model.get(field) for field in fields}
+            model_id: {
+                **{field: model.get(field) for field in fields},
+                "artifact_suffixes": sorted(
+                    (profile["id"], binding["id"], binding["artifact_suffix"])
+                    for profile in model["build_profiles"]
+                    for binding in profile["components"] if "artifact_suffix" in binding
+                ),
+            }
             for model_id, model in sorted(catalog.items())
         }
 

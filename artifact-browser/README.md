@@ -124,7 +124,11 @@ and click the model download icon to review the RF-DETR component dialog.
 
 Run download behavior checks with `node --test tests/browser/downloads.test.mjs`
 and the existing UI checks with `python -m pytest tests/unit/test_artifact_browser.py`.
-This change affects only the browser; public registry and C++ APIs are unchanged.
+When a catalog build declares `artifact_suffix`, the dialog and download use
+`<model_id>_<artifact_suffix>_mpk.tar.gz`. The browser sends `download_filename` to
+the registry artifact endpoint; deploy registry support before this consumer.
+Existing objects, checksums, and run metadata stay unchanged. Builds without a
+suffix and history downloads retain their existing filenames.
 
 Changing the trial comparison metric updates the chart in place, preserving
 scroll position, keyboard focus, and expanded detail sections.

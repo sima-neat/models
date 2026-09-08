@@ -171,11 +171,13 @@ build_profiles:
   target: modalix
   components:
   - id: backbone
+    artifact_suffix: backbone_int8
     calibration: coco_images
     parameters:
       precision: int8
       calibration_samples: 50
   - id: transformer
+    artifact_suffix: transformer_bf16
     parameters:
       precision: bf16
       calibration_samples: 50

@@ -32,7 +32,7 @@ from .dependencies import resolve_model_compiler
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
-from .model import compile_invocations_for, load_and_validate_model
+from .model import compile_invocations_for, load_and_validate_model, profile_component_for
 from .source import source_identity
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
@@ -316,11 +316,15 @@ def build_catalog_snapshot(
                 raise ValidationError(
                     f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}"
                 )
+            _, binding = profile_component_for(catalog[key[0]], key[1], key[2])
+            if "artifact_suffix" in binding and len(f"{key[0]}_{binding['artifact_suffix']}_mpk.tar.gz") > 255:
+                raise ValidationError(f"artifact_suffix for {key[0]}/{key[1]}/{key[2]} exceeds the filename limit")
             builds_by_model[key[0]].append(
                 {
                     "build_profile_id": key[1],
                     "compile_invocation_id": invocation["compile_invocation_id"],
                     "component_id": key[2],
+                    **({"artifact_suffix": binding["artifact_suffix"]} if "artifact_suffix" in binding else {}),
                     "compile_fingerprint": invocation["build_fingerprint"],
                     "artifact_sha256": artifact_sha256,
                     "validation_fingerprint": (

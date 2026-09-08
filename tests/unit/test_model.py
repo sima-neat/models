@@ -339,3 +339,18 @@ def test_duplicate_component_roles_fail() -> None:
     ]
     with pytest.raises(ValidationError, match=r"architecture.components\[1\].role duplicates"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+@pytest.mark.parametrize("suffix", ["backbone_int8", "transformer_bf16", "model_preview"])
+def test_component_binding_accepts_artifact_suffix(suffix: str) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize("suffix", [None, "", "../model", "Backbone", "backbone-int8", "model.tar.gz", "model\n"])
+def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
+    with pytest.raises(ValidationError):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)

@@ -1,5 +1,5 @@
 // Keep component discovery independent of the visible search and compiler filters.
-export async function variantDownloads(run, api) {
+export async function variantDownloads(run, api, catalogModel = null) {
   const modelId = run.metadata?.model_id;
   const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
   const packs = (summary) => (summary.artifacts || []).filter((item) => item.artifact_type === "model-pack");
@@ -35,7 +35,12 @@ export async function variantDownloads(run, api) {
     const artifacts = packs(summary);
     const component = item.metadata?.component_id || "model";
     if (!artifacts.length) throw new Error(`No model file is available for ${component}. No downloads were started.`);
-    return artifacts.map((artifact) => ({ runId: item.id, component, name: artifact.name, size: artifact.size_bytes }));
+    const build = catalogModel?.model_id === modelId ? catalogModel.builds.find((build) =>
+      build.run_id === item.id && build.component_id === component && build.build_profile_id === profile) : null;
+    const downloadFilename = build?.artifact_suffix ? `${modelId}_${build.artifact_suffix}_mpk.tar.gz` : null;
+    return artifacts.map((artifact) => ({
+      runId: item.id, component, name: artifact.name, size: artifact.size_bytes, downloadFilename,
+    }));
   }));
   return downloads.flat().sort((a, b) => a.component.localeCompare(b.component));
 }
@@ -43,14 +48,15 @@ export async function variantDownloads(run, api) {
 export async function prepareDownloads(downloads, api) {
   // Resolve every link before starting any transfer, so preparation can be retried safely.
   return Promise.all(downloads.map(async (item) => {
-    const payload = await api(`/v1/runs/${encodeURIComponent(item.runId)}/artifacts/${encodeURIComponent(item.name)}`);
+    const query = item.downloadFilename ? `?${new URLSearchParams({download_filename: item.downloadFilename})}` : "";
+    const payload = await api(`/v1/runs/${encodeURIComponent(item.runId)}/artifacts/${encodeURIComponent(item.name)}${query}`);
     if (!payload.artifact?.download_url) throw new Error(`No download URL for ${item.component}. No downloads were started.`);
     const artifact = payload.artifact;
     // The logical registry name (e.g. "mpk") is not the archive filename.
     const filename = artifact.s3_key
       ? artifact.s3_key.split("/").pop()
       : decodeURIComponent(new URL(artifact.download_url, "https://registry.invalid").pathname.split("/").pop());
-    return { ...item, filename: filename || "Filename unavailable", url: artifact.download_url };
+    return { ...item, filename: item.downloadFilename || filename || "Filename unavailable", url: artifact.download_url };
   }));
 }
 
