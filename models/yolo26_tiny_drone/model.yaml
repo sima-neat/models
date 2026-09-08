@@ -164,6 +164,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: int8_qat_tmio
     parameters:
       precision: int8
       tessellation_owner: mla

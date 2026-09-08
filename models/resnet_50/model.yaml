@@ -119,6 +119,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: bf16_tmio
     parameters:
       precision: bf16
       input_name: pixel_values
@@ -134,6 +135,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: int8_mse_tmio
     parameters:
       precision: int8
       input_name: pixel_values

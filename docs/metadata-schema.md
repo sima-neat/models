@@ -193,7 +193,7 @@ The repository compiler version remains pinned centrally in
 A component binding may also declare `artifact_suffix` outside `parameters`.
 It uses the identifier syntax and controls the browser download filename:
 `<model_id>_<artifact_suffix>_mpk.tar.gz`. Include the component name in the suffix
-when useful. For example, RF-DETR uses `backbone_int8` and `transformer_bf16` under
+when useful. For example, RF-DETR uses `backbone_int8_mse` and `transformer_bf16` under
 one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
 precision. The complete download basename must fit within 255 characters.
 Omitting or removing the suffix preserves the original download filename.
@@ -202,6 +202,18 @@ Suffix changes update catalog metadata while retaining existing compiled artifac
 They do not change build identities, trigger compilation or benchmarking, or rename
 stored objects and MPK contents. Registry support must deploy before catalogs
 publish this optional field.
+
+Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
+from the shared vocabulary, for example `int8_mse_tmio` or
+`int8_mse_h1024_bci_l2e`. Prefix the component ID for multi-component models.
+The model ID and `_mpk.tar.gz` are added by the download path. Keep the target,
+versions, calibration sample counts, dataset identities, and seeds out of the
+suffix. Add a token to the vocabulary when a new option needs a name.
+
+This vocabulary is an author reference, with no token parser or automatic name
+generation. Write `artifact_suffix` explicitly and check its meaning against the
+recipe. It does not select compiler settings or replace existing parameters;
+`compile.py` continues to own the AFE calls.
 
 ## Compositions and packages
 

@@ -229,6 +229,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: int8_qat_tmio
     parameters:
       precision: int8
       quantization_method: qat
@@ -243,6 +244,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: int8_qat
     parameters:
       precision: int8
       quantization_method: qat
@@ -257,6 +259,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: bf16_tmio
     parameters:
       precision: bf16
       quantization_method: ptq
@@ -271,6 +274,7 @@ build_profiles:
   target: modalix
   components:
   - id: model
+    artifact_suffix: bf16
     parameters:
       precision: bf16
       quantization_method: ptq
