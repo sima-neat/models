@@ -102,7 +102,7 @@ registry reports another page for the currently selected branch.
 
 The model download button includes every model-pack component from the selected
 variant's workflow build, commit, branch, target, and compiler. All
-variants show a confirmation dialog listing component names and file sizes.
+variants show a confirmation dialog listing component names, actual archive filenames, and file sizes.
 Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
 links are being prepared. Single-file variants require confirmation with **Download 1 file**.

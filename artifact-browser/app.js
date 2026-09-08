@@ -1298,22 +1298,23 @@ async function downloadVariant(runId) {
   pendingDownloads = null;
   elements["download-description"].textContent = "Checking the selected variant’s components…";
   elements["download-list"].innerHTML = "";
+  elements["download-dialog"].querySelector(".download-note").hidden = true;
   elements["download-status"].textContent = "";
   elements["download-confirm"].disabled = true;
   elements["download-confirm"].textContent = "Download all files";
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
-    const downloads = await variantDownloads(summary.run, api);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id || "Selected variant";
     const fileLabel = downloads.length === 1 ? "file" : "files";
     elements["download-description"].textContent = `${profile} contains ${downloads.length} model ${fileLabel}. ${downloads.length === 1 ? "Confirm to download this variant." : "Download all components to use this variant."}`;
-    elements["download-dialog"].querySelector(".download-note").textContent = downloads.length === 1
-      ? "The file will download after you confirm."
-      : "Files download separately and in parallel. Your browser may ask you to allow multiple downloads.";
-    elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>${escapeHtml(item.component)}</strong><span>${escapeHtml(item.name)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
+    const note = elements["download-dialog"].querySelector(".download-note");
+    note.hidden = downloads.length === 1;
+    note.textContent = "Files download separately and in parallel. Your browser may ask you to allow multiple downloads.";
+    elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>${escapeHtml(item.component)}</strong><span>${escapeHtml(item.filename)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
     elements["download-confirm"].textContent = `Download ${downloads.length} ${fileLabel}`;
     elements["download-confirm"].disabled = false;
   } catch (error) {

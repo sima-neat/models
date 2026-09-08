@@ -45,7 +45,12 @@ export async function prepareDownloads(downloads, api) {
   return Promise.all(downloads.map(async (item) => {
     const payload = await api(`/v1/runs/${encodeURIComponent(item.runId)}/artifacts/${encodeURIComponent(item.name)}`);
     if (!payload.artifact?.download_url) throw new Error(`No download URL for ${item.component}. No downloads were started.`);
-    return { ...item, url: payload.artifact.download_url };
+    const artifact = payload.artifact;
+    // The logical registry name (e.g. "mpk") is not the archive filename.
+    const filename = artifact.s3_key
+      ? artifact.s3_key.split("/").pop()
+      : decodeURIComponent(new URL(artifact.download_url, "https://registry.invalid").pathname.split("/").pop());
+    return { ...item, filename: filename || "Filename unavailable", url: artifact.download_url };
   }));
 }
 

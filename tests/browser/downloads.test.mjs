@@ -83,3 +83,18 @@ test('each file gets an independent download context without navigating the page
   assert.deepEqual(frames.map(frame => frame.src), ['/one', '/two']);
   assert.ok(frames.every(frame => frame.hidden));
 });
+
+
+test('shows the actual archive filename instead of the logical artifact name', async () => {
+  const items = [{runId: 'one', name: 'mpk', component: 'backbone'}];
+  const [archive] = await prepareDownloads(items, async () => ({artifact: {
+    s3_key: 'models/develop/backbone/rf_detr_small_backbone_mpk.tar.gz',
+    download_url: 'https://example.com/download?signature=private',
+  }}));
+  assert.equal(archive.filename, 'rf_detr_small_backbone_mpk.tar.gz');
+  assert.equal(archive.name, 'mpk');
+  const [fromUrl] = await prepareDownloads(items, async () => ({artifact: {
+    download_url: 'https://example.com/models/model%20pack.tar.gz?signature=private',
+  }}));
+  assert.equal(fromUrl.filename, 'model pack.tar.gz');
+});
