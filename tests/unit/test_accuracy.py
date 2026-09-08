@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -181,3 +182,89 @@ def test_evaluate_cli_writes_generic_report(monkeypatch: pytest.MonkeyPatch, tmp
     assert result == 0
     assert json.loads(output.read_text(encoding="utf-8")) == report
     assert "samples=500/5000" in capsys.readouterr().out
+
+
+@pytest.fixture
+def bundled_accuracy(tmp_path, monkeypatch):
+    from model_registry import _vulcan_onnx_artifacts as artifacts
+    from model_registry import accuracy, fetch
+
+    export = tmp_path / "export"
+    export.mkdir()
+    (export / "model.onnx").write_bytes(b"onnx graph fixture")
+    (export / "weights.bin").write_bytes(b"verified external tensor data")
+    (export / "validation.json").write_text('{"status":"passed"}')
+    archive, manifest = artifacts.package(export, {"model_id": "resnet_50"})
+    prefix = "models-onnx/resnet_50/" + "a" * 64 + "/run-1/"
+    manifest["objects"] = [
+        {
+            "key": prefix + archive.name,
+            "version_id": "version-1",
+            "sha256": artifacts.digest(archive),
+            "size_bytes": archive.stat().st_size,
+        }
+    ]
+    raw = artifacts.canonical(manifest)
+    uri = "https://artifacts.stg.neat.sima.ai/" + prefix + "manifest.json"
+    source = {"type": "onnx_bundle", "uri": uri, "sha256": hashlib.sha256(raw).hexdigest(), "size_bytes": len(raw)}
+    payloads = {uri: raw, "https://artifacts.stg.neat.sima.ai/" + prefix + archive.name: archive.read_bytes()}
+    reader = fetch.Fetcher(tmp_path / "cache", opener=lambda request, timeout: io.BytesIO(payloads[request.full_url]))
+    model = load_and_validate_model(MODEL_DIR)
+    model["components"][0]["source"] = source
+    monkeypatch.setattr(accuracy, "load_and_validate_model", lambda *args: model)
+    monkeypatch.setattr(accuracy, "resolve_dataset", lambda *args: tmp_path / "dataset.tar")
+    monkeypatch.setattr(accuracy, "index_split", lambda *args: [accuracy.SampleRecord("val/class/image.webp", 0)])
+    monkeypatch.setattr(fetch, "Fetcher", lambda *args, **kwargs: reader)
+    tasks = []
+
+    def worker(task):
+        tasks.append(task)
+        assert task.reference_model.with_name("weights.bin").read_bytes() == b"verified external tensor data"
+        return {"reference_top1": 1, "reference_top5": 1, "candidate_top1": 1, "candidate_top5": 1, "top1_agreement": 1}
+
+    monkeypatch.setattr(accuracy, "_run_worker", worker)
+    candidate = tmp_path / "candidate.sima"
+    candidate.write_bytes(b"candidate")
+    return accuracy, reader, source, candidate, tasks
+
+
+def test_accuracy_uses_verified_bundle_and_records_both_identities(bundled_accuracy, tmp_path):
+    accuracy, reader, source, candidate, tasks = bundled_accuracy
+    reference = reader.fetch_source(source)[0]
+    # A matching explicit ONNX must not select unverified adjacent weight files.
+    alternate = tmp_path / "alternate"
+    alternate.mkdir()
+    graph_copy = alternate / "model.onnx"
+    graph_copy.write_bytes(reference.read_bytes())
+    (alternate / "weights.bin").write_bytes(b"tampered weights")
+    report = accuracy.evaluate_accuracy(
+        MODEL_DIR, "modalix_int8", "model", candidate, reference_model=graph_copy, sample_count=1, workers=1
+    )
+    assert tasks[0].reference_model == reference
+    assert report["model"]["source_sha256"] == source["sha256"]
+    assert report["artifacts"]["reference"]["sha256"] == accuracy.sha256_file(reference)
+    assert report["artifacts"]["reference"]["sha256"] != source["sha256"]
+
+
+def test_accuracy_rejects_modified_bundle_sidecar_before_worker(bundled_accuracy):
+    from model_registry.errors import FetchError
+
+    accuracy, reader, source, candidate, tasks = bundled_accuracy
+    reference = reader.fetch_source(source)[0]
+    reference.with_name("weights.bin").write_bytes(b"tampered weights")
+    with pytest.raises(FetchError, match="checksum/size mismatch"):
+        accuracy.evaluate_accuracy(
+            MODEL_DIR, "modalix_int8", "model", candidate, reference_model=reference, sample_count=1, workers=1
+        )
+    assert not tasks
+
+
+def test_accuracy_rejects_wrong_explicit_bundle_graph(bundled_accuracy, tmp_path):
+    accuracy, _, _, candidate, tasks = bundled_accuracy
+    wrong = tmp_path / "wrong.onnx"
+    wrong.write_bytes(b"wrong model")
+    with pytest.raises(AccuracyError, match="reference model .*mismatch"):
+        accuracy.evaluate_accuracy(
+            MODEL_DIR, "modalix_int8", "model", candidate, reference_model=wrong, sample_count=1, workers=1
+        )
+    assert not tasks

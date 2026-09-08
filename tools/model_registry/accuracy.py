@@ -463,13 +463,23 @@ def evaluate_accuracy(
         raise AccuracyError("accuracy dataset identity does not match model calibration dataset metadata")
     dataset = resolve_dataset(dataset_config, dataset_path, dataset_cache_dir)
 
-    if component["source"]["type"] != "file":
-        raise AccuracyError("the image-classification evaluator requires a single-file component source")
-    source_spec = SourceSpec.from_mapping(component["source"])
-    if reference_model is None:
-        reference, _ = Fetcher(model_cache_dir).fetch(source_spec)
+    source = component["source"]
+    if source["type"] == "file":
+        source_spec = SourceSpec.from_mapping(source)
+        source_sha256 = reference_sha256 = source_spec.sha256
+        if reference_model is None:
+            reference, _ = Fetcher(model_cache_dir).fetch(source_spec)
+        else:
+            reference = _validate_file(reference_model, source_spec.sha256, source_spec.size_bytes, "reference model")
+    elif source["type"] == "onnx_bundle":
+        reference, _, source_sha256, _ = Fetcher(model_cache_dir).fetch_source(source)
+        reference_sha256 = sha256_file(reference)
+        if reference_model is not None:
+            _validate_file(reference_model, reference_sha256, reference.stat().st_size, "reference model")
+        # Execute the verified bundle so external tensor data stays checksum-verified,
+        # even when the caller supplies an identical graph from another directory.
     else:
-        reference = _validate_file(reference_model, source_spec.sha256, source_spec.size_bytes, "reference model")
+        raise AccuracyError("the image-classification evaluator requires a file or ONNX bundle component source")
     candidate = candidate_model.expanduser().resolve()
     if not candidate.is_file():
         raise AccuracyError(f"candidate model does not exist: {candidate}")
@@ -565,11 +575,11 @@ def evaluate_accuracy(
         "model": {
             "id": model["id"],
             "component_id": component_id,
-            "source_sha256": source_spec.sha256,
+            "source_sha256": source_sha256,
             "build_profile_id": build_profile_id,
         },
         "artifacts": {
-            "reference": {"type": "onnx", "sha256": source_spec.sha256, "size_bytes": reference.stat().st_size},
+            "reference": {"type": "onnx", "sha256": reference_sha256, "size_bytes": reference.stat().st_size},
             "candidate": {
                 "type": "sima",
                 "sha256": sha256_file(candidate),

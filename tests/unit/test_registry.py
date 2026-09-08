@@ -176,6 +176,7 @@ def test_canonical_sha256_is_stable() -> None:
     [
         ({"type": "file"}, "application/onnx"),
         ({"type": "file_set"}, "application/vnd.sima.source-file-set+json"),
+        ({"type": "onnx_bundle"}, "application/vnd.sima.onnx-bundle+json"),
         ({"type": "file", "media_type": "application/custom"}, "application/custom"),
     ],
 )

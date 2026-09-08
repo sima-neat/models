@@ -290,33 +290,10 @@ def test_explicit_singleton_uses_invocation_recipe_contract(catalog_repository: 
     assert entry["component_ids"] == ["model"]
 
 
-def test_rf_detr_matrix_carries_declared_python_packages() -> None:
+def test_rf_detr_compile_matrix_needs_no_exporter_packages() -> None:
     catalog = discover_catalog(ROOT)
-
     matrix = build_matrix(catalog, ["rf_detr_small"])
-
-    assert matrix["include"][0]["python_packages"] == [
-        {
-            "path": "rfdetr-1.9.4-py3-none-any.whl",
-            "imports": [
-                "numpy",
-                "onnx",
-                "onnxruntime",
-                "PIL",
-                "rfdetr",
-                "torch",
-                "yaml",
-            ],
-        },
-        {"path": "pydeprecate-0.9.0-py3-none-any.whl", "imports": ["deprecate"]},
-        {"path": "annotated_types-0.8.0-py3-none-any.whl", "imports": ["annotated_types"]},
-        {
-            "path": "pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
-            "imports": ["pydantic_core"],
-        },
-        {"path": "typing_inspection-0.4.4-py3-none-any.whl", "imports": ["typing_inspection"]},
-        {"path": "pydantic-2.12.5-py3-none-any.whl", "imports": ["pydantic"]},
-    ]
+    assert matrix["include"][0]["python_packages"] == []
 
 
 @pytest.mark.parametrize("component_id", ["model", "second_model"])

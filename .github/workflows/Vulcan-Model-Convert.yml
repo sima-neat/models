@@ -2,14 +2,6 @@ name: Vulcan Model Convert
 run-name: Convert ${{ inputs.model }} (${{ inputs.config }})
 
 on:
-  workflow_call:
-    inputs:
-      model:
-        required: true
-        type: string
-      config:
-        default: convert.yaml
-        type: string
   workflow_dispatch:
     inputs:
       model:
