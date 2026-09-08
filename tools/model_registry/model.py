@@ -394,6 +394,11 @@ def validate_model(
                 f"{', '.join(sorted(unknown_components))}"
             )
         for component_id, binding in bindings.items():
+            if "artifact_suffix" in binding and len(f"{model['id']}_{binding['artifact_suffix']}_mpk.tar.gz") > 255:
+                raise ValidationError(
+                    f"{directory}: artifact_suffix for {profile_id}/{component_id} "
+                    "exceeds the 255-character filename limit"
+                )
             calibration_id = binding.get("calibration")
             if calibration_id is not None and calibration_id not in calibrations:
                 raise ValidationError(
