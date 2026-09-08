@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
       label: 'Contracts and reference',
       items: [
         'metadata-schema',
+        'model-conversion',
         'runner-class-requests',
         'model-taxonomy',
       ],

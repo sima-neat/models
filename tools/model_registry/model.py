@@ -75,8 +75,13 @@ def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
-    if source["type"] == "file":
+    if source["type"] in {"file", "onnx_bundle"}:
         spec = SourceSpec.from_mapping(source)
+        if source["type"] == "onnx_bundle" and (
+            not spec.uri.startswith("https://artifacts.stg.neat.sima.ai/models-onnx/")
+            or spec.filename != "manifest.json"
+        ):
+            raise SourcePolicyError("ONNX bundles must pin a Vulcan completion manifest")
         return [(spec.filename, spec)]
     return [(member["path"], SourceSpec.from_mapping(member)) for member in source["files"]]
 

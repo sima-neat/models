@@ -29,12 +29,13 @@ DEFAULT_HTTPS_HOSTS = {
     "github.com",
     "huggingface.co",
     "storage.googleapis.com",
+    "artifacts.stg.neat.sima.ai",
 }
 
 
 def source_identity(source: dict[str, Any]) -> str:
     """Return the canonical content identity of a single file or file set."""
-    if source["type"] == "file":
+    if source["type"] in {"file", "onnx_bundle"}:
         return str(source["sha256"])
     members = [
         {
@@ -117,6 +118,11 @@ class SourceSpec:
         hostname = (parts.hostname or "").lower()
         if hostname not in hosts:
             raise SourcePolicyError(f"HTTPS source host is not approved: {hostname or '<missing>'}")
+        if hostname == "artifacts.stg.neat.sima.ai" and not re.fullmatch(
+            r"/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+",
+            parts.path,
+        ):
+            raise SourcePolicyError("Vulcan sources must identify a versioned models-onnx artifact")
         if hostname == "huggingface.co" and not HF_RESOLVE_RE.fullmatch(parts.path):
             raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
         if hostname == "github.com" and not GITHUB_RELEASE_RE.fullmatch(parts.path):

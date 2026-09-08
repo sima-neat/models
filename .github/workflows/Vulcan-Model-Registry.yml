@@ -16,6 +16,8 @@ on:
       - ".github/workflows/Vulcan-Model-Registry.yml"
       - "packaging/model-registry/**"
       - "scripts/build_model_registry_vulcan_package.sh"
+      - "scripts/publish_onnx_conversion.py"
+      - ".github/workflows/Vulcan-Model-Convert.yml"
       - "tools/model_registry/**"
       - "pyproject.toml"
   push:
@@ -33,6 +35,8 @@ on:
       - ".github/workflows/Vulcan-Model-Registry.yml"
       - "packaging/model-registry/**"
       - "scripts/build_model_registry_vulcan_package.sh"
+      - "scripts/publish_onnx_conversion.py"
+      - ".github/workflows/Vulcan-Model-Convert.yml"
       - "tools/model_registry/**"
       - "pyproject.toml"
   workflow_dispatch:
@@ -95,6 +99,10 @@ jobs:
         run: |
           python -m pytest \
             tests/unit/test_cli.py \
+            tests/unit/test_conversion.py \
+            tests/unit/test_conversion_publication.py \
+            tests/unit/test_onnx_bundle.py \
+            tests/unit/test_rf_detr_conversion.py \
             tests/unit/test_model_registry_package.py \
             tests/unit/test_model_registry_workflow.py \
             tests/unit/test_model.py \

@@ -1,6 +1,7 @@
 self-hosted-runner:
   labels:
     - default
+    - ubuntu
     - model-compiler
     - model-compiler-2.1.3
     - model-compiler-2.1.3-develop

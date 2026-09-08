@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import ssl
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable
@@ -16,8 +17,9 @@ from urllib.request import Request, urlopen
 
 import certifi
 
+from ._vulcan_onnx_artifacts import assemble_download, verify_extract
 from .errors import FetchError
-from .source import SourceSpec, redact_url, source_identity
+from .source import SHA256_RE, SourceSpec, redact_url, source_identity
 
 OpenUrl = Callable[..., BinaryIO]
 Sleeper = Callable[[float], None]
@@ -169,8 +171,84 @@ class Fetcher:
 
         raise AssertionError("unreachable")
 
+    def _fetch_onnx_bundle(self, source: dict[str, object]) -> tuple[Path, bool, str, int]:
+        """Materialize a pinned Vulcan completion manifest using the ordinary file cache."""
+        from urllib.parse import urlsplit
+
+        spec = SourceSpec.from_mapping(source)
+        location = urlsplit(spec.uri)
+        if location.hostname != "artifacts.stg.neat.sima.ai" or not location.path.endswith("/manifest.json"):
+            raise FetchError("ONNX bundles require a versioned Vulcan completion manifest")
+        manifest_path, manifest_hit = self.fetch(spec)
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            if manifest["schema_version"] != 1 or manifest["status"] != "completed":
+                raise ValueError("ONNX bundle manifest must be completed schema version 1")
+            files = manifest["files"]
+            objects = manifest["objects"]
+            bundle = manifest["bundle"]
+            if not isinstance(files, dict) or not {"model.onnx", "validation.json"} <= files.keys():
+                raise ValueError("ONNX bundle must contain model.onnx and validation.json")
+            if not isinstance(objects, list) or not objects:
+                raise ValueError("ONNX bundle has no payload objects")
+            names: set[str] = set()
+            for name, metadata in files.items():
+                _bundle_path(name)
+                if name.casefold() in names:
+                    raise ValueError("Case-colliding ONNX bundle members")
+                names.add(name.casefold())
+                _bundle_metadata(metadata)
+            _bundle_path(bundle["name"])
+            if "/" in bundle["name"]:
+                raise ValueError("Bundle archive name must be a filename")
+            _bundle_metadata(bundle)
+            prefix = location.path.removeprefix("/").rsplit("/", 1)[0] + "/"
+            object_names = set()
+            for obj in objects:
+                _bundle_path(obj["key"])
+                if not obj["key"].startswith(prefix) or "/" in obj["key"][len(prefix):]:
+                    raise ValueError("Payload objects must be adjacent to the completion manifest")
+                if obj["key"] in object_names:
+                    raise ValueError("Duplicate payload object")
+                object_names.add(obj["key"])
+                if not isinstance(obj["version_id"], str) or obj["version_id"] in {"", "null"}:
+                    raise ValueError("Payload objects must pin S3 versions")
+                _bundle_metadata(obj)
+            if sum(obj["size_bytes"] for obj in objects) != bundle["size_bytes"]:
+                raise ValueError("Payload sizes do not match bundle size")
+            destination = self.cache_dir / "onnx-bundles" / spec.sha256
+            if destination.is_symlink():
+                raise ValueError("ONNX bundle cache must not be a symlink")
+            if destination.is_dir():
+                _verify_bundle_directory(destination, files)
+                return destination / "model.onnx", manifest_hit, spec.sha256, sum(
+                    item["size_bytes"] for item in files.values()
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=f".{spec.sha256}.", dir=destination.parent) as temporary:
+                temporary_root = Path(temporary)
+                for obj in objects:
+                    uri = f"https://{location.hostname}/{obj['key']}"
+                    part, _ = self.fetch(SourceSpec.from_mapping({**obj, "uri": uri}))
+                    local = temporary_root / obj["key"].rsplit("/", 1)[-1]
+                    try:
+                        os.link(part, local)
+                    except OSError:
+                        shutil.copyfile(part, local)
+                archive_path = assemble_download(temporary_root, manifest)
+                extracted = verify_extract(archive_path, manifest, temporary_root / "extracted")
+                _verify_bundle_directory(extracted, files)
+                os.replace(extracted, destination)
+            return destination / "model.onnx", False, spec.sha256, sum(
+                item["size_bytes"] for item in files.values()
+            )
+        except (KeyError, TypeError, ValueError, OSError, tarfile.TarError) as exc:
+            raise FetchError(f"Invalid ONNX bundle: {exc}") from exc
+
     def fetch_source(self, source: dict[str, object]) -> tuple[Path, bool, str, int]:
         """Fetch one source contract and return its compiler entrypoint."""
+        if source["type"] == "onnx_bundle":
+            return self._fetch_onnx_bundle(source)
         identity = source_identity(source)
         if source["type"] == "file":
             spec = SourceSpec.from_mapping(source)
@@ -232,3 +310,36 @@ def urlsplit_hostname(url: str) -> str:
     from urllib.parse import urlsplit
 
     return (urlsplit(url).hostname or "").lower()
+
+def _bundle_path(name: str) -> None:
+    if not isinstance(name, str) or not name or "\\" in name or any(
+        part in {"", ".", ".."} for part in name.split("/")
+    ) or any(ord(char) < 32 for char in name):
+        raise ValueError(f"Unsafe ONNX bundle path: {name!r}")
+
+
+def _bundle_metadata(metadata: dict[str, object]) -> None:
+    if not isinstance(metadata, dict) or not SHA256_RE.fullmatch(str(metadata["sha256"])):
+        raise ValueError("Invalid ONNX bundle checksum")
+    if type(metadata["size_bytes"]) is not int or metadata["size_bytes"] < 0:
+        raise ValueError("Invalid ONNX bundle size")
+
+
+def _verify_bundle_directory(directory: Path, files: dict[str, dict[str, object]]) -> None:
+    present = set()
+    for path in directory.rglob("*"):
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise ValueError("ONNX bundle cache contains a non-regular file")
+        if path.is_file():
+            present.add(path.relative_to(directory).as_posix())
+    if present != set(files):
+        raise ValueError("ONNX bundle cache has missing or unexpected files")
+    for name, metadata in files.items():
+        digest, size = sha256_file(directory / name)
+        if digest != metadata["sha256"] or size != metadata["size_bytes"]:
+            raise ValueError(f"ONNX bundle member checksum/size mismatch: {name}")
+    if not (directory / "model.onnx").stat().st_size:
+        raise ValueError("Empty ONNX model")
+    validation = json.loads((directory / "validation.json").read_text())
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
+        raise ValueError("ONNX bundle validation did not pass")

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.neat.sima.ai/model-registry/convert.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "environment"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "source": {
+      "allOf": [
+        {
+          "$ref": "model.schema.json#/$defs/source"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "file",
+                "file_set"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python",
+        "requirements"
+      ],
+      "properties": {
+        "python": {
+          "type": "string",
+          "pattern": "^3\\.(?:1[0-9])$"
+        },
+        "requirements": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        }
+      }
+    }
+  }
+}

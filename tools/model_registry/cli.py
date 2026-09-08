@@ -28,6 +28,8 @@ from .runner_approval import authorize_runner_matrix
 AUTHOR_COMMANDS = frozenset(
     {
         "fetch",
+        "convert",
+        "validate-conversion",
         "fetch-calibration",
         "fetch-accuracy-dataset",
         "evaluate",
@@ -65,6 +67,16 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     validate_catalog.add_argument("--repository", type=Path, default=Path.cwd())
     validate_catalog.add_argument("--json", action="store_true", dest="json_output")
+
+    for command in ("validate-conversion", "convert"):
+        conversion = subcommands.add_parser(command, help="validate or run an isolated model conversion")
+        conversion.add_argument("model_dir", type=Path)
+        conversion.add_argument("--config", default="convert.yaml")
+        conversion.add_argument("--json", action="store_true", dest="json_output")
+        if command == "convert":
+            conversion.add_argument("--work-dir", type=Path, required=True)
+            conversion.add_argument("--cache-dir", type=Path, required=True)
+            conversion.add_argument("--python", default="python3.12")
 
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
@@ -771,6 +783,21 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
     parser = _parser(author_safe=author_safe)
     args = parser.parse_args(argv)
     try:
+        if args.command in {"convert", "validate-conversion"}:
+            from .conversion import convert_model, validate_conversion
+
+            if args.command == "convert":
+                result = convert_model(
+                    args.model_dir, config=args.config, work_dir=args.work_dir,
+                    cache_dir=args.cache_dir, python=args.python,
+                )
+            else:
+                result = validate_conversion(args.model_dir, args.config)
+            print(
+                json.dumps(result, sort_keys=True) if args.json_output
+                else f"{args.command}: {result['model_id']} ({result['fingerprint']})"
+            )
+            return 0
         if args.command == "validate":
             return _validate(args)
         if args.command == "validate-catalog":

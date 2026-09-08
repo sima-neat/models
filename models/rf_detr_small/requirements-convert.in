@@ -1,0 +1,9 @@
+# Direct dependencies; requirements-convert.lock pins the complete runner environment.
+rfdetr==1.9.4
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.16.1
+numpy==1.26.4
+onnx==1.17.0
+onnxruntime==1.21.1
+Pillow==12.3.0

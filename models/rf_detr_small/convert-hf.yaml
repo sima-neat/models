@@ -1,0 +1,25 @@
+# Experimental Transformers route; requires independent surgery qualification.
+schema_version: 1
+source:
+  type: file_set
+  entrypoint: model.safetensors
+  files:
+  - path: model.safetensors
+    uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/model.safetensors
+    sha256: 2bfab2fa5f5fcc4870e756c8dc8d2d5acca3a68ffcc0f7e84972661873eb5a1d
+    size_bytes: 128504496
+  - path: config.json
+    uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/config.json
+    sha256: cbc9ccde8860c7587c0672cd4df1e9ae2ee93112fef853283435e95dd7e0a595
+    size_bytes: 5771
+  - path: preprocessor_config.json
+    uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/preprocessor_config.json
+    sha256: dba1fb5bb4d70d94b3495b7bcb1f881bc61d42c73433fcec13be34c523550a0b
+    size_bytes: 442
+  - path: validation.png
+    uri: hf://datasets/huggingface/documentation-images@a915176f392f6f94f65244c26b53346e7ec24c54/coco_sample.png
+    sha256: cf6f3c4befa148732c7453e0de5afab00f682427435fead2d88b07a9615cdac2
+    size_bytes: 694498
+environment:
+  python: "3.12"
+  requirements: requirements-convert.lock
