@@ -1301,19 +1301,15 @@ async function downloadVariant(runId) {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
     const downloads = await variantDownloads(summary.run, api);
     if (request !== downloadRequest || !dialog.open) return;
-    if (downloads.length === 1) {
-      const ready = await prepareDownloads(downloads, api);
-      if (request !== downloadRequest || !dialog.open) return;
-      startDownloads(ready, document);
-      dialog.close();
-      showToast("Model download requested.");
-      return;
-    }
     pendingDownloads = downloads;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id || "Selected variant";
-    elements["download-description"].textContent = `${profile} contains ${downloads.length} model files. Download all components to use this variant.`;
+    const fileLabel = downloads.length === 1 ? "file" : "files";
+    elements["download-description"].textContent = `${profile} contains ${downloads.length} model ${fileLabel}. ${downloads.length === 1 ? "Confirm to download this variant." : "Download all components to use this variant."}`;
+    elements["download-dialog"].querySelector(".download-note").textContent = downloads.length === 1
+      ? "The file will download after you confirm."
+      : "Files download separately and in parallel. Your browser may ask you to allow multiple downloads.";
     elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>${escapeHtml(item.component)}</strong><span>${escapeHtml(item.name)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
-    elements["download-confirm"].textContent = `Download ${downloads.length} files`;
+    elements["download-confirm"].textContent = `Download ${downloads.length} ${fileLabel}`;
     elements["download-confirm"].disabled = false;
   } catch (error) {
     if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
@@ -1335,7 +1331,7 @@ elements["download-confirm"].addEventListener("click", async () => {
     if (request !== downloadRequest || !elements["download-dialog"].open) return;
     startDownloads(ready, document);
     elements["download-dialog"].close();
-    showToast(`${ready.length} downloads requested. If prompted, allow multiple downloads in your browser.`);
+    showToast(ready.length === 1 ? "Download requested." : `${ready.length} downloads requested. If prompted, allow multiple downloads in your browser.`);
   } catch (error) {
     if (request === downloadRequest && elements["download-dialog"].open) {
       elements["download-status"].textContent = error.message;

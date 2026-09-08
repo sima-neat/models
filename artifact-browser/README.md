@@ -101,11 +101,11 @@ registry reports another page for the currently selected branch.
 ## Downloading model variants
 
 The model download button includes every model-pack component from the selected
-variant's workflow build, commit, branch, target, and compiler. Multi-file
+variant's workflow build, commit, branch, target, and compiler. All
 variants show a confirmation dialog listing component names and file sizes.
 Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
-links are being prepared. Single-file variants start without confirmation.
+links are being prepared. Single-file variants require confirmation with **Download 1 file**.
 Numerical-fidelity **Download JSON** remains a separate report download.
 
 All temporary URLs are prepared before any transfer starts. If preparation
