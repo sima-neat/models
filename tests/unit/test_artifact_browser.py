@@ -21,6 +21,7 @@ def test_artifact_browser_assets_exist() -> None:
         "index.html",
         "app.js",
         "benchmark-adapters.js",
+        "downloads.js",
         "styles.css",
         "config.js",
         "favicon.svg",
@@ -98,7 +99,7 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
     assert "process.env.GITHUB_SHA" in assemble
-    for asset in ("app", "benchmark-adapters", "styles", "config"):
+    for asset in ("app", "benchmark-adapters", "downloads", "styles", "config"):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble

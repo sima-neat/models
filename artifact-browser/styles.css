@@ -434,3 +434,22 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.download-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: clamp(20px, 4vw, 32px); border: 1px solid var(--line); background: var(--surface-raised); color: var(--ink); box-shadow: 0 28px 90px rgba(20, 28, 34, .28); }
+.download-dialog::backdrop { background: rgba(16, 22, 27, .58); }
+.download-dialog h2 { margin: 8px 0 14px; font-size: 26px; font-weight: 500; }
+.download-dialog p { overflow-wrap: anywhere; }
+#download-description, .download-note { color: var(--ink-soft); line-height: 1.6; }
+.download-note { font-size: 13px; }
+.download-list { list-style: none; margin: 24px 0; padding: 0; }
+.download-list li { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }
+.download-list li:last-child { border-bottom: 1px solid var(--line); }
+.download-list li div { min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; }
+.download-list li span { color: var(--ink-soft); font-size: 13px; }
+.download-list li > span { flex-shrink: 0; }
+.download-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 20px; margin-top: 24px; }
+#download-status { font-size: 14px; }
+.download-actions .download-button { min-height: 40px; padding: 9px 16px; border: 1px solid var(--blue); color: var(--surface-raised); background: var(--blue); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.download-actions .download-button:hover:not(:disabled) { filter: brightness(1.1); }
+.download-actions .download-button:disabled { opacity: .5; cursor: wait; }
+.download-actions button:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }

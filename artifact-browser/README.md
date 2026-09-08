@@ -97,3 +97,34 @@ limited runs page, determines whether the portal falls back to `main` (or all
 branches when `main` is unavailable).
 Pagination is branch-aware, so **Load earlier builds** is shown only when the
 registry reports another page for the currently selected branch.
+
+## Downloading model variants
+
+The model download button includes every model-pack component from the selected
+variant's workflow build, commit, branch, target, and compiler. Multi-file
+variants show a confirmation dialog listing component names and file sizes.
+Choose **Download N files** to start the transfers in parallel, or **Cancel**
+(or Escape) to leave without starting any downloads. Cancel also works while
+links are being prepared. Single-file variants start without confirmation.
+Numerical-fidelity **Download JSON** remains a separate report download.
+
+All temporary URLs are prepared before any transfer starts. If preparation
+fails, the dialog reports the error and allows retrying. Files stream directly
+to the browser's download manager, which may request permission for multiple
+downloads; use that manager to monitor or cancel transfers once started.
+
+For a local preview using live staging data:
+
+```bash
+python3 -m http.server 4174 --bind 127.0.0.1 --directory artifact-browser
+```
+
+Open <http://127.0.0.1:4174/?run=53bfaa91-8b75-4bdb-afc2-83019a61f514>
+and click the model download icon to review the RF-DETR component dialog.
+
+Run download behavior checks with `node --test tests/browser/downloads.test.mjs`
+and the existing UI checks with `python -m pytest tests/unit/test_artifact_browser.py`.
+This change affects only the browser; public registry and C++ APIs are unchanged.
+
+Changing the trial comparison metric updates the chart in place, preserving
+scroll position, keyboard focus, and expanded detail sections.
