@@ -137,30 +137,39 @@ shared compile inputs affect every relevant compile fingerprint; model-local
 recipe and surgery inputs affect only their invocation. Correctness and
 performance configuration have independent fingerprints.
 
-## Catalog inheritance for new branches
+## Incremental catalogs and branch inheritance
 
-CI passes the resolved comparison base branch to `publish-catalog --base-branch`.
-If the target branch has no published catalog, publication reads the base
-branch's current catalog and reuses its immutable build references where compile
-fingerprints match. New compilation receipts take precedence. The resulting
-snapshot uses the target branch's models, metadata, taxonomy, and Git revision;
-inherited runs keep their original build provenance.
+Before scheduling compiler jobs, CI initializes a catalog with the complete model
+metadata and taxonomy using `publish-catalog --incremental --initialize`. A new
+branch seeds its available builds from the resolved base branch's catalog;
+subsequent revisions use the target branch's existing catalog. Missing catalogs
+are allowed at initialization: their declared builds start pending.
 
-Once the target has a catalog, subsequent publications reuse that branch's own
-catalog. They do not automatically follow later changes to the base catalog.
-Adding a model normally compiles only its new build invocations; unchanged models
-do not need recompilation just to create a branch catalog.
+Each matrix entry calls `model-compile-invocation.yml`, which has its own compiler
+job followed by a hosted publication job. As soon as that invocation succeeds,
+its complete component set is published and `publish-catalog --incremental`
+updates the catalog. It does not wait for other matrix entries. Grouped compiler
+outputs remain atomic: every component in an invocation must be present together.
 
-If neither branch has a catalog, initial publication requires build receipts for
-every target build. A missing or mismatched inherited build blocks publication
-instead of linking incompatible artifacts. This can happen if the base catalog
-has not caught up with the branch point or has advanced to different compile
-inputs. Publish a compatible base catalog or compile the missing target builds.
-Other registry errors are reported and do not trigger inheritance.
+Unchanged builds are reused without compilation. Previously available builds
+remain visible while their replacements are pending, with their original run
+IDs, fingerprints, checksums, and provenance. New models without any ready builds
+appear as awaiting builds. The browser refreshes progress every 15 seconds while
+visible in catalog mode (for lists of up to 200 loaded models). A compiler failure
+leaves that invocation pending and does not remove other completed groups; the
+workflow logs retain the failure reason. Benchmark and package assembly remain
+separate from catalog availability.
 
-The branch's grouped model view becomes available after its first complete
-snapshot is published. Existing branch catalogs remain available while a later
-update is compiling.
+`catalog_revision` is the source Git SHA. Each progress update creates a separate
+immutable snapshot identified by its canonical SHA-256. Publishers compare the
+previous snapshot digest and retry conflicts against fresh state, so simultaneous
+updates preserve one another. An update from a revision that is no longer current
+is rejected. Model metadata and taxonomy cannot change within a revision.
+
+The original non-incremental command still requires a complete set of matching
+builds and retains its immutable-per-revision behavior. Deploy registry migration
+`014_incremental_catalog_snapshots` and the snapshot API before enabling this
+workflow. The registry deployment schema gate enforces that order.
 
 ## Compile locally from `model.yaml`
 

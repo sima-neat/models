@@ -258,6 +258,7 @@ def build_catalog_snapshot(
     git_sha: str,
     compiled_dir: str | Path | None = None,
     previous: JsonObject | None = None,
+    incremental: bool = False,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
@@ -287,35 +288,43 @@ def build_catalog_snapshot(
                 previous_builds[key] = build
     expected_keys: set[tuple[str, str, str]] = set()
     builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
+    pending_builds = []
     for invocation in matrix:
+        invocation_builds = []
+        pending = False
         for component_id in invocation["component_ids"]:
             key = (invocation["model_id"], invocation["build_profile_id"], component_id)
             expected_keys.add(key)
             receipt = receipts.get(key)
             prior = previous_builds.get(key)
             if receipt is not None and receipt.get("compile_fingerprint") != invocation["build_fingerprint"]:
-                raise ValidationError(
-                    f"publication receipt fingerprint does not match {key[0]}/{key[1]}/{key[2]}"
-                )
+                raise ValidationError(f"publication receipt fingerprint does not match {key[0]}/{key[1]}/{key[2]}")
             run_id = receipt.get("run_id") if receipt is not None else None
             artifact_sha256 = receipt.get("artifact_sha256") if receipt is not None else None
             if (
                 run_id is None
                 and prior is not None
-                and prior.get("compile_fingerprint") == invocation["build_fingerprint"]
+                and (incremental or prior.get("compile_fingerprint") == invocation["build_fingerprint"])
             ):
                 run_id = prior.get("run_id")
                 artifact_sha256 = prior.get("artifact_sha256")
+            if incremental and (
+                not run_id or (receipt is None and prior["compile_fingerprint"] != invocation["build_fingerprint"])
+            ):
+                pending = True
             if not isinstance(run_id, str) or not run_id:
+                if incremental:
+                    continue
                 raise ValidationError(
                     f"no immutable compile run matches {key[0]}/{key[1]}/{key[2]} "
                     f"fingerprint {invocation['build_fingerprint']}"
                 )
             if not isinstance(artifact_sha256, str) or len(artifact_sha256) != 64:
-                raise ValidationError(
-                    f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}"
-                )
-            builds_by_model[key[0]].append(
+                raise ValidationError(f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}")
+            if incremental and receipt is None and prior["compile_fingerprint"] != invocation["build_fingerprint"]:
+                invocation_builds.append(dict(prior))
+                continue
+            invocation_builds.append(
                 {
                     "build_profile_id": key[1],
                     "compile_invocation_id": invocation["compile_invocation_id"],
@@ -324,21 +333,52 @@ def build_catalog_snapshot(
                     "artifact_sha256": artifact_sha256,
                     "validation_fingerprint": (
                         validation_fingerprint(
-                            root, key[0], key[2], key[1], compiler_version,
+                            root,
+                            key[0],
+                            key[2],
+                            key[1],
+                            compiler_version,
                             compile_fingerprint=invocation["build_fingerprint"],
                             artifact_sha256=artifact_sha256,
-                        ) if key[2] in invocation["validation_fingerprints"] else None
+                        )
+                        if key[2] in invocation["validation_fingerprints"]
+                        else None
                     ),
                     "benchmark_fingerprint": (
                         benchmark_fingerprint(
-                            root, key[0], key[2], key[1], compiler_version,
+                            root,
+                            key[0],
+                            key[2],
+                            key[1],
+                            compiler_version,
                             compile_fingerprint=invocation["build_fingerprint"],
                             artifact_sha256=artifact_sha256,
-                        ) if key[2] in invocation["benchmark_fingerprints"] else None
+                        )
+                        if key[2] in invocation["benchmark_fingerprints"]
+                        else None
                     ),
                     "run_id": run_id,
                 }
             )
+        if incremental:
+            received = [
+                component
+                for component in invocation["component_ids"]
+                if (invocation["model_id"], invocation["build_profile_id"], component) in receipts
+            ]
+            if received and len(received) != len(invocation["component_ids"]):
+                raise ValidationError("incremental publication requires the complete compile invocation")
+            if pending:
+                pending_builds.append(
+                    {
+                        "model_id": invocation["model_id"],
+                        "build_profile_id": invocation["build_profile_id"],
+                        "compile_invocation_id": invocation["compile_invocation_id"],
+                        "component_ids": invocation["component_ids"],
+                        "compile_fingerprint": invocation["build_fingerprint"],
+                    }
+                )
+        builds_by_model[invocation["model_id"]].extend(invocation_builds)
     unexpected = sorted(set(receipts) - expected_keys)
     if unexpected:
         model_id, profile_id, component_id = unexpected[0]
@@ -363,7 +403,8 @@ def build_catalog_snapshot(
             }
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2 if incremental else 1,
+        **({"pending_builds": pending_builds} if incremental else {}),
         "repository": "sima-neat/models",
         "git_ref": f"refs/heads/{branch}",
         "catalog_revision": git_sha.lower(),
@@ -383,12 +424,16 @@ def publish_catalog(
     git_sha: str,
     compiled_dir: str | Path | None = None,
     base_branch: str | None = None,
+    incremental: bool = False,
+    initialize: bool = False,
+    _retry: int = 0,
     request: Request | None = None,
     read_request: ReadRequest | None = None,
 ) -> JsonObject:
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     read = read_request or _public_registry_json
     read_base_url = read_api_url.rstrip("/")
+    previous_snapshot = None
     previous: JsonObject | None = None
     # Existing branch catalogs remain authoritative. Only bootstrap a branch
     # from its resolved base; build_catalog_snapshot checks every fingerprint.
@@ -408,21 +453,63 @@ def publish_catalog(
         candidate = current.get("catalog")
         if not isinstance(candidate, dict):
             raise RegistryPublicationError(f"registry returned no catalog for branch {candidate_branch}")
+        if candidate_branch == branch:
+            previous_snapshot = candidate.get("canonical_sha256")
+            if incremental and not previous_snapshot:
+                raise RegistryPublicationError("registry did not return the current snapshot digest")
         previous = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
         break
+    if (
+        incremental
+        and not initialize
+        and (previous_snapshot is None or previous.get("catalog_revision") != git_sha.lower())
+    ):
+        raise RegistryPublicationError(
+            "catalog revision is not current; initialize this revision before publishing builds"
+        )
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         previous=previous,
+        **({"incremental": True} if incremental else {}),
     )
-    result = client.request(
-        "PUT",
-        f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}",
-        document,
-        f"models-catalog-{branch}-{git_sha.lower()}",
-    )
+    try:
+        if incremental:
+            body = {"catalog": document, "previous_snapshot": previous_snapshot, "initialize": initialize}
+            result = client.request(
+                "POST",
+                f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
+                body,
+                "models-snapshot-" + canonical_sha256(body),
+            )
+        else:
+            result = client.request(
+                "PUT",
+                f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}",
+                document,
+                f"models-catalog-{branch}-{git_sha.lower()}",
+            )
+    except RegistryPublicationError as exc:
+        if not incremental or "catalog_snapshot_conflict" not in str(exc) or _retry >= 15:
+            raise
+        time.sleep(min(0.1 * 2**_retry, 2))
+        return publish_catalog(
+            repository=repository,
+            api_url=api_url,
+            read_api_url=read_api_url,
+            aws_region=aws_region,
+            branch=branch,
+            git_sha=git_sha,
+            compiled_dir=compiled_dir,
+            base_branch=base_branch,
+            incremental=True,
+            initialize=initialize,
+            request=request,
+            read_request=read_request,
+            _retry=_retry + 1,
+        )
     return {"catalog": document, "registry": result}
 
 
@@ -441,9 +528,7 @@ def _public_registry_json(url: str) -> JsonObject:
                 message = str(error.get("message", message))
         except (OSError, json.JSONDecodeError):
             pass
-        raise RegistryPublicationError(
-            f"public artifact registry HTTP {exc.code} {code}: {message}"
-        ) from exc
+        raise RegistryPublicationError(f"public artifact registry HTTP {exc.code} {code}: {message}") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise RegistryPublicationError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
     if not isinstance(value, dict):
@@ -479,8 +564,7 @@ def stage_catalog_build(
     download = download_request or _download_registry_bytes
     base_url = api_url.rstrip("/")
     catalog_payload = read(
-        f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
-        f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
+        f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?git_ref={quote(f'refs/heads/{branch}', safe='')}"
     )
     catalog_record = catalog_payload.get("catalog")
     document = catalog_record.get("document") if isinstance(catalog_record, dict) else None
@@ -495,7 +579,8 @@ def stage_catalog_build(
     model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
     invocation = next(
         (
-            item for item in build_matrix({model_id: model}, [model_id], [build_profile_id])["include"]
+            item
+            for item in build_matrix({model_id: model}, [model_id], [build_profile_id])["include"]
             if item["compile_invocation_id"] == compile_invocation_id
         ),
         None,
@@ -552,12 +637,21 @@ def stage_catalog_build(
             json.dumps(compile_result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         (component_dir / "registry-publication.json").write_text(
-            json.dumps({"runs": [{
-                "model_id": model_id,
-                "build_profile_id": build_profile_id,
-                "component_id": component_id,
-                "run_id": run_id,
-            }]}, indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                {
+                    "runs": [
+                        {
+                            "model_id": model_id,
+                            "build_profile_id": build_profile_id,
+                            "component_id": component_id,
+                            "run_id": run_id,
+                        }
+                    ]
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         staged_outputs.append(
@@ -570,13 +664,18 @@ def stage_catalog_build(
         )
     profile_dir = output / model_id / build_profile_id
     (profile_dir / "registry-staged.json").write_text(
-        json.dumps({
-            "schema_version": 1,
-            "model_id": model_id,
-            "build_profile_id": build_profile_id,
-            "compile_invocation_id": compile_invocation_id,
-            "outputs": staged_outputs,
-        }, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "model_id": model_id,
+                "build_profile_id": build_profile_id,
+                "compile_invocation_id": compile_invocation_id,
+                "outputs": staged_outputs,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return {"count": len(staged_outputs), "outputs": staged_outputs}

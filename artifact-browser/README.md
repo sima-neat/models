@@ -97,3 +97,12 @@ limited runs page, determines whether the portal falls back to `main` (or all
 branches when `main` is unavailable).
 Pagination is branch-aware, so **Load earlier builds** is shown only when the
 registry reports another page for the currently selected branch.
+
+## Incremental build availability
+
+Catalog mode shows new models as awaiting builds and marks models with pending
+replacement groups. Each completed variant/component group becomes available
+independently. Visible catalog pages refresh progress every 15 seconds for lists
+with up to 200 loaded models; larger lists and build-history mode stay unchanged
+until the user refreshes. Existing downloads remain usable while replacements
+are pending. Catalog pagination stays pinned to an immutable snapshot.

@@ -334,3 +334,12 @@ def test_publish_catalog_cli_passes_optional_base_branch(monkeypatch, base_branc
     assert main(args) == 0
     assert calls[0]["base_branch"] == base_branch
     assert calls[0]["branch"] == "feature/new-model"
+
+
+def test_catalog_initialization_requires_incremental_mode(capsys) -> None:
+    result = main([
+        "publish-catalog", "--api-url", "https://write.invalid", "--read-api-url", "https://read.invalid",
+        "--branch", "develop", "--git-sha", "a" * 40, "--initialize",
+    ])
+    assert result != 0
+    assert "--initialize requires --incremental" in capsys.readouterr().err

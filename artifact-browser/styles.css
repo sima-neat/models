@@ -434,3 +434,6 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.model-row:disabled { cursor: default; color: var(--ink-faint); }
+.model-row:disabled:hover { background: transparent; }

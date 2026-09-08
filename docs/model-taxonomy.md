@@ -34,7 +34,8 @@ The facets are intentionally independent:
 The taxonomy does not have an independently managed release version. Each
 complete catalog publication records its full Git commit as
 `catalog_revision` and the canonical taxonomy SHA-256 as an integrity checksum.
-Historical catalog snapshots remain immutable and therefore retain the exact
+Several progress snapshots may share a Git revision; each has its own canonical
+SHA-256 identity. Historical catalog snapshots remain immutable and therefore retain the exact
 taxonomy used to interpret their model metadata.
 
 Model schema v2 and all authoritative category facets are mandatory. Catalog

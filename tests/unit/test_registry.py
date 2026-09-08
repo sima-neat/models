@@ -70,9 +70,7 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": component_build_fingerprint(
-                ROOT, "resnet_50", "model", "modalix_bf16", "2.1.3"
-            ),
+            "build_fingerprint": component_build_fingerprint(ROOT, "resnet_50", "model", "modalix_bf16", "2.1.3"),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -618,27 +616,33 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
     run_id = "00000000-0000-4000-8000-000000000001"
     catalog = {
         "catalog_revision": "a" * 40,
-        "models": [{
-            "id": "resnet_50",
-            "builds": [{
-                "build_profile_id": "modalix_bf16",
-                "compile_invocation_id": "model",
-                "component_id": "model",
-                "run_id": run_id,
-                "artifact_sha256": hashlib.sha256(payload).hexdigest(),
-            }],
-        }],
+        "models": [
+            {
+                "id": "resnet_50",
+                "builds": [
+                    {
+                        "build_profile_id": "modalix_bf16",
+                        "compile_invocation_id": "model",
+                        "component_id": "model",
+                        "run_id": run_id,
+                        "artifact_sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ],
+            }
+        ],
     }
 
     def read(url: str) -> dict:
         if "/catalogs/current?" in url:
             return {"catalog": {"document": catalog}}
         if url.endswith("/artifacts/mpk"):
-            return {"artifact": {
-                "sha256": hashlib.sha256(payload).hexdigest(),
-                "size_bytes": len(payload),
-                "download_url": "https://download.example.invalid/mpk",
-            }}
+            return {
+                "artifact": {
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "size_bytes": len(payload),
+                    "download_url": "https://download.example.invalid/mpk",
+                }
+            }
         if url.endswith(run_id):
             return {"run": {"toolchain_version": "2.1.3"}}
         raise AssertionError(url)
@@ -660,7 +664,7 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
     profile = tmp_path / "staged" / "resnet_50" / "modalix_bf16"
     assert (profile / "registry-staged.json").is_file()
     assert (profile / "model" / "registry-publication.json").is_file()
-    build_catalog_snapshot,
+    (build_catalog_snapshot,)
 
 
 @pytest.mark.parametrize("with_new_build", [False, True])
@@ -698,9 +702,15 @@ def test_new_branch_inherits_base_catalog_and_prefers_new_receipts(tmp_path: Pat
         return {"catalog": {"document": base}}
 
     result = publish_catalog(
-        repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
-        aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
-        compiled_dir=compiled_dir, read_request=read,
+        repository=ROOT,
+        api_url="https://write.invalid",
+        read_api_url="https://read.invalid",
+        aws_region="us-west-2",
+        branch="feature/new-model",
+        base_branch="develop",
+        git_sha="b" * 40,
+        compiled_dir=compiled_dir,
+        read_request=read,
         request=lambda *args: writes.append(args) or {"stored": True},
     )
     assert len(reads) == 2
@@ -726,9 +736,15 @@ def test_existing_branch_catalog_takes_precedence_over_base() -> None:
         return {"catalog": {"document": current}}
 
     result = publish_catalog(
-        repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
-        aws_region="us-west-2", branch="feature/existing", base_branch="develop", git_sha="b" * 40,
-        read_request=read, request=lambda *args: {"stored": True},
+        repository=ROOT,
+        api_url="https://write.invalid",
+        read_api_url="https://read.invalid",
+        aws_region="us-west-2",
+        branch="feature/existing",
+        base_branch="develop",
+        git_sha="b" * 40,
+        read_request=read,
+        request=lambda *args: {"stored": True},
     )
     assert len(reads) == 1
     assert result["catalog"]["models"] == current["models"]
@@ -750,9 +766,15 @@ def test_unusable_base_catalog_blocks_publication(failure: str) -> None:
 
     with pytest.raises(ValidationError, match="no immutable"):
         publish_catalog(
-            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
-            aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
-            read_request=read, request=lambda *args: writes.append(args),
+            repository=ROOT,
+            api_url="https://write.invalid",
+            read_api_url="https://read.invalid",
+            aws_region="us-west-2",
+            branch="feature/new-model",
+            base_branch="develop",
+            git_sha="b" * 40,
+            read_request=read,
+            request=lambda *args: writes.append(args),
         )
     assert writes == []
 
@@ -767,8 +789,13 @@ def test_catalog_inheritance_does_not_retry_same_branch(base_branch: str | None)
 
     with pytest.raises(ValidationError, match="no immutable"):
         publish_catalog(
-            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
-            aws_region="us-west-2", branch="develop", base_branch=base_branch, git_sha="b" * 40,
+            repository=ROOT,
+            api_url="https://write.invalid",
+            read_api_url="https://read.invalid",
+            aws_region="us-west-2",
+            branch="develop",
+            base_branch=base_branch,
+            git_sha="b" * 40,
             read_request=read,
         )
     assert len(reads) == 1
@@ -788,9 +815,122 @@ def test_catalog_inheritance_propagates_registry_errors(failing_branch: str, err
 
     with pytest.raises(RegistryPublicationError, match=error):
         publish_catalog(
-            repository=ROOT, api_url="https://write.invalid", read_api_url="https://read.invalid",
-            aws_region="us-west-2", branch="feature/new-model", base_branch="develop", git_sha="b" * 40,
-            read_request=read, request=lambda *args: writes.append(args),
+            repository=ROOT,
+            api_url="https://write.invalid",
+            read_api_url="https://read.invalid",
+            aws_region="us-west-2",
+            branch="feature/new-model",
+            base_branch="develop",
+            git_sha="b" * 40,
+            read_request=read,
+            request=lambda *args: writes.append(args),
         )
     assert len(reads) == (1 if failing_branch == "feature/new-model" else 2)
     assert writes == []
+
+
+def test_incremental_catalog_initializes_without_compilation_receipts() -> None:
+    snapshot = build_catalog_snapshot(repository=ROOT, branch="feature/progress", git_sha="a" * 40, incremental=True)
+    assert snapshot["schema_version"] == 2
+    assert snapshot["pending_builds"]
+    assert all(not model["builds"] for model in snapshot["models"])
+
+
+def _write_catalog_receipt(directory: Path, model: dict, build: dict) -> None:
+    component_dir = directory / model["id"] / build["build_profile_id"] / build["component_id"]
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "registry-publication.json").write_text(
+        json.dumps(
+            {
+                "runs": [{**build, "model_id": model["id"]}],
+            }
+        )
+    )
+
+
+def test_incremental_publication_retries_without_losing_another_group(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("model_registry.registry.time.sleep", lambda _: None)
+    ready = _matching_catalog()
+    first_model = ready["models"][0]
+    first_build = first_model["builds"][0]
+    second_model = ready["models"][1]
+    second_build = second_model["builds"][0]
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    _write_catalog_receipt(first_dir, first_model, first_build)
+    for component_build in second_model["builds"]:
+        if (component_build["build_profile_id"], component_build["compile_invocation_id"]) == (
+            second_build["build_profile_id"],
+            second_build["compile_invocation_id"],
+        ):
+            _write_catalog_receipt(second_dir, second_model, component_build)
+    current = build_catalog_snapshot(repository=ROOT, branch="feature/progress", git_sha="a" * 40, incremental=True)
+    attempts = []
+
+    def read(url):
+        return {"catalog": {"document": current, "canonical_sha256": canonical_sha256(current)}}
+
+    def write(method, path, body, key):
+        nonlocal current
+        attempts.append(body)
+        assert method == "POST" and path.endswith("/snapshots")
+        if len(attempts) == 1:
+            current = build_catalog_snapshot(
+                repository=ROOT,
+                branch="feature/progress",
+                git_sha="a" * 40,
+                incremental=True,
+                previous=current,
+                compiled_dir=second_dir,
+            )
+            raise RegistryPublicationError("HTTP 409 catalog_snapshot_conflict")
+        assert body["previous_snapshot"] == canonical_sha256(current)
+        current = body["catalog"]
+        return {"stored": True}
+
+    result = publish_catalog(
+        repository=ROOT,
+        api_url="https://write.invalid",
+        read_api_url="https://read.invalid",
+        aws_region="us-west-2",
+        branch="feature/progress",
+        git_sha="a" * 40,
+        incremental=True,
+        compiled_dir=first_dir,
+        request=write,
+        read_request=read,
+    )
+    assert len(attempts) == 2
+    runs = {b["run_id"] for m in result["catalog"]["models"] for b in m["builds"]}
+    assert {first_build["run_id"], second_build["run_id"]} <= runs
+    assert result["catalog"]["pending_builds"]
+
+
+def test_late_incremental_publication_cannot_replace_new_revision() -> None:
+    current = _matching_catalog()
+    with pytest.raises(RegistryPublicationError, match="revision is not current"):
+        publish_catalog(
+            repository=ROOT,
+            api_url="https://write.invalid",
+            read_api_url="https://read.invalid",
+            aws_region="us-west-2",
+            branch="develop",
+            git_sha="b" * 40,
+            incremental=True,
+            read_request=lambda _: {"catalog": {"document": current, "canonical_sha256": canonical_sha256(current)}},
+            request=lambda *args: pytest.fail("must not publish stale revision"),
+        )
+
+
+def test_incremental_catalog_keeps_previous_build_while_replacement_is_pending() -> None:
+    previous = _matching_catalog()
+    old = previous["models"][0]["builds"][0]
+    old["compile_fingerprint"] = "0" * 64
+    snapshot = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="b" * 40,
+        incremental=True,
+        previous=previous,
+    )
+    assert snapshot["models"][0]["builds"][0] == old
+    assert any(item["model_id"] == previous["models"][0]["id"] for item in snapshot["pending_builds"])

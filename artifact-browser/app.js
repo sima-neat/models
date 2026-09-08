@@ -360,6 +360,7 @@ async function loadTaxonomy(branch = elements["branch-filter"].value || DEFAULT_
   const payload = await api(
     `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
   );
+  state.catalogSnapshotDigest = payload.catalog?.canonical_sha256;
   state.taxonomy = payload.catalog?.document?.taxonomy || null;
   if (!state.taxonomy) throw new Error("The registry did not return a model taxonomy.");
   populateCategoryFilters();
@@ -621,7 +622,8 @@ function filteredModels() {
       && (!current.architecture_id || model.architecture_id === current.architecture_id)
       && (!current.architecture_paradigm || model.architecture_paradigm === current.architecture_paradigm)
       && (!current.input_modality || (model.input_modalities || []).includes(current.input_modality));
-    return matches && builds.length ? [{ ...model, builds }] : [];
+    const pending = !current.compiler && model.pending_builds?.length;
+    return matches && (builds.length || pending) ? [{ ...model, builds }] : [];
   });
 }
 
@@ -738,13 +740,18 @@ function renderHistory() {
 function renderModelRow(model) {
   const profiles = profileGroups(model);
   const active = activeModelBuild(model);
+  if (!active?.build) {
+    return `<button class="model-row" type="button" disabled>
+      <span class="model-row-identity"><strong>${escapeHtml(model.display_name || model.model_id)}</strong>
+      <small>Awaiting compiled builds</small></span><span></span><span></span></button>`;
+  }
   const run = runFromCatalogBuild(model, active.build);
   const selected = model.builds.some((build) => build.run_id === state.selectedId);
   const displayName = model.display_name || model.model_id;
   const profileCount = profiles.length;
   return `<button class="model-row${selected ? " selected" : ""}" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${run.id}" aria-current="${selected ? "true" : "false"}">
     <span class="model-row-identity"><strong>${escapeHtml(displayName)}</strong>${displayName !== model.model_id ? `<code>${escapeHtml(model.model_id)}</code>` : ""}</span>
-    <span class="model-row-count">${profileCount}<small>variant${profileCount === 1 ? "" : "s"}</small></span>
+    <span class="model-row-count">${profileCount}<small>variant${profileCount === 1 ? "" : "s"}</small>${model.pending_builds?.length ? "<small>Update pending</small>" : ""}</span>
     <span class="row-arrow">${icons.arrow}</span>
   </button>`;
 }
@@ -1609,3 +1616,31 @@ document.addEventListener("keydown", (event) => {
 
 applyDetailLayout();
 initialize();
+
+// Refresh progress without interrupting history browsing or long paginated lists.
+let refreshingCatalog = false;
+setInterval(async () => {
+  if (refreshingCatalog || document.hidden || elements["history-filter"].checked
+      || !elements["branch-filter"].value || state.models.length > 200) return;
+  refreshingCatalog = true;
+  const branch = elements["branch-filter"].value;
+  const requestId = state.runsRequestId;
+  try {
+    const repo = state.repository;
+    const payload = await api(
+      `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
+    );
+    if (branch !== elements["branch-filter"].value || requestId !== state.runsRequestId) return;
+    if (payload.catalog?.canonical_sha256 !== state.catalogSnapshotDigest) {
+      state.taxonomy = payload.catalog?.document?.taxonomy || null;
+      populateCategoryFilters();
+      setCategoryFiltersDisabled(!state.taxonomy);
+      await loadRuns({ branch, limit: Math.max(50, state.models.length) });
+      state.catalogSnapshotDigest = payload.catalog?.canonical_sha256;
+    }
+  } catch {
+    // Keep the visible snapshot on temporary failures; the next poll retries.
+  } finally {
+    refreshingCatalog = false;
+  }
+}, 15000);

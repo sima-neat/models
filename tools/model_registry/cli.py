@@ -18,7 +18,7 @@ from .catalog import (
     semantic_change_plan,
 )
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
-from .errors import ModelRegistryError
+from .errors import ModelRegistryError, ValidationError
 from .fetch import Fetcher
 from .fidelity_config import find_recipe_fidelity_config
 from .model import component_for, load_and_validate_model, profile_component_for
@@ -260,6 +260,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--git-sha", required=True)
     publish_catalog_parser.add_argument(
         "--base-branch", help="inherit matching builds from this branch when the target has no catalog"
+    )
+    publish_catalog_parser.add_argument(
+        "--incremental", action="store_true", help="publish an immutable progress snapshot"
+    )
+    publish_catalog_parser.add_argument(
+        "--initialize", action="store_true", help="start a new incremental catalog revision"
     )
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
 
@@ -627,9 +633,7 @@ def _assemble_package(args: argparse.Namespace) -> int:
 
     explicit = (args.model, args.build_profile, args.package)
     if args.all_packages == any(value is not None for value in explicit):
-        raise ModelRegistryError(
-            "select --all or provide --model, --build-profile, and --package"
-        )
+        raise ModelRegistryError("select --all or provide --model, --build-profile, and --package")
     if args.all_packages:
         results = assemble_available_packages(
             repository=args.repository,
@@ -731,6 +735,9 @@ def _validate_benchmark_set(args: argparse.Namespace) -> int:
 def _publish_catalog(args: argparse.Namespace) -> int:
     from .registry import publish_catalog
 
+    if args.initialize and not args.incremental:
+        raise ValidationError("--initialize requires --incremental")
+
     result = publish_catalog(
         repository=args.repository,
         compiled_dir=args.compiled_dir,
@@ -739,6 +746,8 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         aws_region=args.aws_region,
         branch=args.branch,
         base_branch=args.base_branch,
+        incremental=args.incremental,
+        initialize=args.initialize,
         git_sha=args.git_sha,
     )
     message = (

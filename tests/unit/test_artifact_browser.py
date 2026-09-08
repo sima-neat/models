@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -61,7 +62,7 @@ def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     assert '<span aria-current="page">Models</span>' in html
     assert '<a href="./docs">Developer docs</a>' in html
     assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
-    assert '>GitHub</a>' not in html
+    assert ">GitHub</a>" not in html
 
 
 def test_browser_redirects_the_extensionless_models_route_before_loading_assets() -> None:
@@ -129,7 +130,7 @@ def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
     assert 'href="${baseUrl}">Models</a>' in config
     assert "label: 'YAML reference'" not in config
     assert "label: 'GitHub'" not in config
-    assert 'Staging registry' in config
+    assert "Staging registry" in config
     assert "showLastUpdateAuthor" not in config
     assert "showLastUpdateTime" not in config
 
@@ -185,7 +186,7 @@ def test_cached_build_history_preserves_run_mode() -> None:
 
     assert 'catalogMode: "runs"' in script
     assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
-    assert 'mode: state.catalogMode' in script
+    assert "mode: state.catalogMode" in script
     assert 'cached.models?.length || !cached.runs?.length ? "models" : "runs"' in script
     assert 'payload.mode !== "runs" && Object.hasOwn(payload, "models")' in script
     assert "applyCatalog(cached, { cache: false })" in script
@@ -235,7 +236,7 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "branchCatalogCacheKey" in script
     assert "readCachedBranches" in script
     assert "writeCachedBranches" in script
-    assert "loadTaxonomy(elements[\"branch-filter\"].value || DEFAULT_BRANCH)" in script
+    assert 'loadTaxonomy(elements["branch-filter"].value || DEFAULT_BRANCH)' in script
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
     assert "knownBranches.delete(branch)" not in script
     assert "...(payload.branches || [])" not in script
@@ -367,7 +368,7 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     assert "function buildIdentity(run)" in script
     assert "metadata.build_profile_id || metadata.variant_id" in script
     assert 'component !== "model"' in script
-    assert '`${profile} · ${component}`' in script
+    assert "`${profile} · ${component}`" in script
     assert '"Build identity unavailable"' in script
     assert '"default artifact"' not in script
     assert "const build = buildIdentity(run);" in script
@@ -398,7 +399,7 @@ def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
     assert 'test.name === "mpk-validation" && test.status === "passed"' in script
     assert 'class="mpk-validation-mark" tabindex="0" role="img"' in script
     assert "MPK package integrity verified: archive structure, checksum, and build provenance match." in script
-    assert '<h3>Validation</h3>' not in script
+    assert "<h3>Validation</h3>" not in script
     assert ".detail-title-actions" in styles
     compact_controls = (
         ".model-source-link, .huggingface-source-link, .benchmark-shortcut, "
@@ -419,7 +420,7 @@ def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
     )
     assert 'id="benchmark-section" class="benchmark-section" tabindex="-1"' in script
     assert 'querySelector("#benchmark-section")' in script
-    assert 'benchmark.scrollIntoView({' in script
+    assert "benchmark.scrollIntoView({" in script
     assert 'matchMedia("(prefers-reduced-motion: reduce)").matches' in script
     assert ".benchmark-shortcut:focus-visible" in styles
 
@@ -432,8 +433,8 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert 'aria-label="Download model artifact"' in script
     assert 'data-tooltip="Download model artifact"' in script
     assert '<dl class="artifact-metadata">' in script
-    assert '<dt>File size</dt>' in script
-    assert '<dt>SHA-256</dt>' in script
+    assert "<dt>File size</dt>" in script
+    assert "<dt>SHA-256</dt>" in script
     assert 'class="download-button"' not in script
     assert 'class="artifact-main"' not in script
     assert ".artifact-download-shortcut:focus-visible" in styles
@@ -446,7 +447,7 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
     assert "artifacts: modelPackArtifacts(summary?.artifacts)" in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
     assert "const primaryArtifact = artifacts[0]" in script
-    assert '|| artifacts[0]' not in script
+    assert "|| artifacts[0]" not in script
 
 
 def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
@@ -505,8 +506,8 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
 
-    assert 'api(`/v1/runs/${runId}/accuracy/latest`)' in script
-    assert 'payload?.result || fallback?.summary' in script
+    assert "api(`/v1/runs/${runId}/accuracy/latest`)" in script
+    assert "payload?.result || fallback?.summary" in script
     assert 'item.suite === "accuracy"' in script
     assert 'id="accuracy-section"' in script
     assert "Candidate top-1" in script
@@ -514,7 +515,7 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert "dataset.evaluated_samples.toLocaleString()" in script
     assert 'class="accuracy-explainer"' in script
     assert 'summary class="accuracy-status ${statusClass}"' in script
-    assert '>?</summary>' not in script
+    assert ">?</summary>" not in script
     assert "run the qualification profile for final accuracy reporting" in script
     assert 'const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage"' in script
     assert 'const status = fullCoverage ? "Qualification" : "Provisional"' in script
@@ -542,14 +543,14 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     panel = script.split("function fidelityPanel(", 1)[1].split("function licensePanel(", 1)[0]
     assert '<div class="benchmark-summary">${metrics}</div>' in panel
     assert panel.count('class="benchmark-metric"') == 2
-    assert '<span>${escapeHtml(metric.name)} · Cosine similarity</span>' in panel
-    assert '<span>${escapeHtml(metric.name)} · Normalized RMSE</span>' in panel
-    assert '<table>' not in panel
+    assert "<span>${escapeHtml(metric.name)} · Cosine similarity</span>" in panel
+    assert "<span>${escapeHtml(metric.name)} · Normalized RMSE</span>" in panel
+    assert "<table>" not in panel
     assert panel.index('class="benchmark-summary"') < panel.index('class="muted-message"')
     assert "<details><summary>Evaluation details</summary>" in panel
-    assert '<details open' not in panel
-    assert 'Number(metric.cosine_similarity).toFixed(4)' in panel
-    assert 'Number(metric.normalized_rmse).toFixed(4)' in panel
+    assert "<details open" not in panel
+    assert "Number(metric.cosine_similarity).toFixed(4)" in panel
+    assert "Number(metric.normalized_rmse).toFixed(4)" in panel
     assert "Mean absolute error" not in panel
     assert "Maximum absolute error" not in panel
     assert "Output similarity, not task accuracy" in panel
@@ -574,7 +575,7 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert "return [...state.compareSelection.values()]" in script
     assert 'elements["compare-button"].disabled = selectedCount < 2' in script
     assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
-    assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
+    assert "api(`/v1/runs/${run.id}/benchmarks/latest`)" in script
     assert "adaptBenchmarkResult(detail.benchmark.result)" in script
     assert '<th scope="col">Artifact size</th>' in script
     assert "data-comparison-metric" in script
@@ -600,8 +601,8 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert 'class="model-row' in script
     assert 'class="detail-variant-tabs" role="tablist"' in script
     assert 'class="detail-variant-tab" type="button" role="tab"' in script
-    assert '<strong>Variants</strong>' in script
-    assert '<span>Components</span>' in script
+    assert "<strong>Variants</strong>" in script
+    assert "<span>Components</span>" in script
     assert '"<b>Current</b>"' in script
     assert 'class="detail-component-tabs" role="group"' in script
     assert 'class="detail-compare-select compare-select"' in script
@@ -614,7 +615,7 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert 'query.set("toolchain_version", elements["compiler-filter"].value)' in script
     assert "selectedCompiler,\n    ...state.runs.map((run) => run.toolchain_version)" in script
     assert "payload.models.flatMap" not in script
-    assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
+    assert '.detail-variant-tab[aria-selected="true"]::before' in styles
     assert ".model-row.selected" in styles
     render_model_row = script.split("function renderModelRow(", 1)[1].split("function renderModels(", 1)[0]
     assert 'role="tablist"' not in render_model_row
@@ -637,8 +638,8 @@ def test_focused_model_layout_collapses_list_metadata_without_overflow() -> None
     assert (
         '.workspace[data-detail-layout="focused"] .run-row { grid-template-columns: minmax(0, 1fr); gap: 0; }' in styles
     )
-    assert '.run-row { width: 100%; min-width: 0;' in styles
-    assert 'width: calc(100% + 30px)' not in styles
+    assert ".run-row { width: 100%; min-width: 0;" in styles
+    assert "width: calc(100% + 30px)" not in styles
     assert '.workspace[data-detail-layout="focused"] .run-date,' in styles
     assert '.workspace[data-detail-layout="focused"] .row-arrow { display: none; }' in styles
 
@@ -664,7 +665,7 @@ def test_model_metadata_tags_use_semantic_icons() -> None:
 
     for icon in ("branch", "precision", "compiler", "license", "modelType", "architecture", "task"):
         assert f"{icon}: `<svg" in script
-    assert "detailTag(icons.branch, branchName(run.git_ref), \"branch\")" in script
+    assert 'detailTag(icons.branch, branchName(run.git_ref), "branch")' in script
     assert 'class="detail-tag detail-tag-${kind}"' in script
     assert ".detail-tag svg" in styles
     assert ".detail-tag-branch svg { stroke: var(--blue); }" in styles
@@ -706,8 +707,12 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
     assert fixture["metrics"]["preview_only_extension_metric"]["unit"] == "mock-units"
     assert fixture["metrics"]["preview_only_extension_metric"]["details"]["synthetic"] is True
     assert len(fixture["trials"]) == 3
-    assert 'apiBase: location.origin' in server
+    assert "apiBase: location.origin" in server
     assert 'parts[3:] == ["benchmarks", "latest"]' in server
     assert "PREVIEW_RUNS = (" in server
     assert "range(len(PREVIEW_RUNS))" in server
     assert "127\\.0\\.0\\.1|localhost" in script
+
+
+def test_pending_catalog_model_behavior() -> None:
+    subprocess.run(["node", "--test", str(ROOT / "tests/browser/pending-catalog.test.cjs")], check=True)
