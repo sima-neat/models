@@ -9,7 +9,6 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import load_accuracy_config, validate_accuracy_model_contract
-from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
 from .fidelity_config import load_recipe_fidelity_config
 from .performance_config import load_performance_config
@@ -283,8 +282,6 @@ def validate_model(
     if errors:
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
-
-    validate_artifact_metadata(model)
 
     taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path))
     try:

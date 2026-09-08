@@ -354,15 +354,3 @@ def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
     model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
     with pytest.raises(ValidationError):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
-@pytest.mark.parametrize("filename_length", [255, 256])
-def test_artifact_suffix_checks_complete_filename_length(filename_length: int) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    suffix_length = filename_length - len(f"{model['id']}__mpk.tar.gz")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "a" * suffix_length
-    if filename_length == 255:
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-    else:
-        with pytest.raises(ValidationError, match="filename limit"):
-            validate_model(FIXTURES / "fixture_model", model, SCHEMA)

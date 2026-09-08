@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_metadata import validate_artifact_metadata
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import compile_invocations_for, effective_runner_class, load_and_validate_model
@@ -86,6 +87,7 @@ def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
 
     for definition in sorted(model_root.glob("*/model.yaml")):
         model = load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
+        validate_artifact_metadata(model)
         model_id = str(model["id"])
         if model_id in discovered:
             raise ValidationError(f"duplicate model id {model_id!r}: {definition}")
