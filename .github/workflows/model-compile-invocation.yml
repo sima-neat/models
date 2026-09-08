@@ -284,6 +284,7 @@ jobs:
               correctness_args=(--correctness-dataset "$CORRECTNESS_DATASET_PATH")
             fi
           fi
+          export MODEL_COMPILE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           "$MODEL_COMPILER_PYTHON" "$MODEL_DIR/$RECIPE" \
             --model "$SOURCE_PATH" \
             --output-dir "$OUTPUT_DIR" \
@@ -291,6 +292,21 @@ jobs:
             "${identity_args[@]}" \
             "${dataset_args[@]}" \
             "${correctness_args[@]}"
+
+          "$MODEL_COMPILER_PYTHON" - "$PROFILE_OUTPUT_DIR" <<'PYTIMING'
+          import datetime
+          import json
+          import os
+          import pathlib
+          import sys
+
+          timing = {
+              "scope": "compile_recipe",
+              "started_at": os.environ["MODEL_COMPILE_STARTED_AT"],
+              "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+          }
+          pathlib.Path(sys.argv[1], "compile-timing.json").write_text(json.dumps(timing) + "\n")
+          PYTIMING
 
           if [[ "$EXPLICIT_INVOCATION" != "true" ]]; then
             shopt -s nullglob

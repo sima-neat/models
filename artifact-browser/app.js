@@ -1,3 +1,5 @@
+import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
+
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
@@ -75,6 +77,7 @@ const elements = Object.fromEntries(
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
     "compare-button", "compare-label", "compare-count", "compare-dialog", "compare-close", "compare-content",
     "compare-title", "compare-description",
+    "download-dialog", "download-description", "download-list", "download-confirm", "download-cancel", "download-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -202,7 +205,9 @@ function formatDate(value, includeTime = true) {
 
 function formatDuration(start, end) {
   if (!start || !end) return "—";
-  const seconds = Math.max(0, Math.round((new Date(end) - new Date(start)) / 1000));
+  const seconds = Math.round((new Date(end) - new Date(start)) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${seconds % 60}s`;
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
@@ -1246,7 +1251,7 @@ function renderDetail(detail) {
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download="${escapeHtml(primaryArtifact.name)}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
+    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download-variant="${run.id}" data-run-id="${run.id}" aria-label="Download model artifact" data-tooltip="Download model artifact">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
     ${detailBuildSwitcher(run)}
     <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
 
@@ -1261,7 +1266,10 @@ function renderDetail(detail) {
       ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
       ${keyValue("Branch", branchName(run.git_ref))}
       ${keyValue("Built", formatDate(run.finished_at || run.created_at))}
-      ${keyValue("Duration", formatDuration(run.started_at, run.finished_at))}
+      ${keyValue("Compile recipe duration", run.metadata?.compile_timing?.scope === "compile_recipe"
+        ? formatDuration(run.metadata.compile_timing.started_at, run.metadata.compile_timing.finished_at)
+        : "Not recorded")}
+      ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
       ${keyValue("Target", run.target_platform)}
       ${keyValue("Compiler", run.toolchain_version)}
       ${keyValue("Run ID", run.id, { copy: true, mono: true })}
@@ -1287,6 +1295,63 @@ function renderDetail(detail) {
 function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {
   return `<div class="error-state">${closable ? `<button class="close-detail" type="button" aria-label="Close details">×</button>` : ""}<span>!</span><p class="kicker">Connection error</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><button type="button" data-action="retry">Try again</button></div>`;
 }
+
+let pendingDownloads = null;
+let downloadRequest = 0;
+
+async function downloadVariant(runId) {
+  const request = ++downloadRequest;
+  const dialog = elements["download-dialog"];
+  pendingDownloads = null;
+  elements["download-description"].textContent = "Checking the selected variant’s components…";
+  elements["download-list"].innerHTML = "";
+  elements["download-dialog"].querySelector(".download-note").hidden = true;
+  elements["download-status"].textContent = "";
+  elements["download-confirm"].disabled = true;
+  elements["download-confirm"].textContent = "Download all files";
+  dialog.showModal();
+  try {
+    const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
+    if (request !== downloadRequest || !dialog.open) return;
+    pendingDownloads = downloads;
+    const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id || "Selected variant";
+    const fileLabel = downloads.length === 1 ? "file" : "files";
+    elements["download-description"].textContent = `${profile} contains ${downloads.length} model ${fileLabel}. ${downloads.length === 1 ? "Confirm to download this variant." : "Download all components to use this variant."}`;
+    const note = elements["download-dialog"].querySelector(".download-note");
+    note.hidden = downloads.length === 1;
+    note.textContent = "Files download separately and in parallel. Your browser may ask you to allow multiple downloads.";
+    elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>${escapeHtml(item.component)}</strong><span>${escapeHtml(item.filename)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
+    elements["download-confirm"].textContent = `Download ${downloads.length} ${fileLabel}`;
+    elements["download-confirm"].disabled = false;
+  } catch (error) {
+    if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
+  }
+}
+
+elements["download-cancel"].addEventListener("click", () => elements["download-dialog"].close());
+elements["download-dialog"].addEventListener("close", () => {
+  downloadRequest += 1;
+  pendingDownloads = null;
+});
+elements["download-confirm"].addEventListener("click", async () => {
+  if (!pendingDownloads) return;
+  const request = downloadRequest;
+  elements["download-confirm"].disabled = true;
+  elements["download-status"].textContent = "Preparing all downloads…";
+  try {
+    const ready = await prepareDownloads(pendingDownloads, api);
+    if (request !== downloadRequest || !elements["download-dialog"].open) return;
+    startDownloads(ready, document);
+    elements["download-dialog"].close();
+    showToast(ready.length === 1 ? "Download requested." : `${ready.length} downloads requested. If prompted, allow multiple downloads in your browser.`);
+  } catch (error) {
+    if (request === downloadRequest && elements["download-dialog"].open) {
+      elements["download-status"].textContent = error.message;
+      elements["download-confirm"].disabled = false;
+    }
+  }
+});
 
 async function downloadArtifact(runId, name, button) {
   const prior = button.innerHTML;
@@ -1538,6 +1603,8 @@ elements["detail-pane"].addEventListener("click", (event) => {
   }
   const copy = event.target.closest("[data-copy]");
   if (copy) copyText(copy.dataset.copy);
+  const variantDownload = event.target.closest("[data-download-variant]");
+  if (variantDownload) downloadVariant(variantDownload.dataset.downloadVariant);
   const download = event.target.closest("[data-download]");
   if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
   if (event.target.closest("[data-scroll-benchmark]")) {
@@ -1576,8 +1643,18 @@ elements["detail-pane"].addEventListener("change", (event) => {
   }
   const trialMetric = event.target.closest("[data-trial-metric]");
   if (trialMetric && trialMetric.value) {
+    const detail = state.detailCache.get(state.selectedId);
+    const benchmark = adaptBenchmarkResult(detail?.benchmark?.result);
+    const chart = trialMetric.closest(".trial-chart");
+    if (!chart || benchmark.kind !== "supported") return;
     state.trialMetric = trialMetric.value;
-    if (state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
+    const template = document.createElement("template");
+    template.innerHTML = trialChart(benchmark.value.trials, benchmark.value.measurements);
+    // Preserve the focused selector and surrounding detail DOM. Re-rendering the
+    // detail pane scrolls its selected variant into view, away from this chart.
+    for (const selector of [".chart-note", "svg", "table"]) {
+      chart.querySelector(selector).replaceWith(template.content.querySelector(selector));
+    }
     return;
   }
 });

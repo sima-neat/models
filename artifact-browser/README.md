@@ -106,3 +106,50 @@ independently. Visible catalog pages refresh progress every 15 seconds for lists
 with up to 200 loaded models; larger lists and build-history mode stay unchanged
 until the user refreshes. Existing downloads remain usable while replacements
 are pending. Catalog pagination stays pinned to an immutable snapshot.
+
+## Downloading model variants
+
+The model download button includes every model-pack component from the selected
+variant's workflow build, commit, branch, target, and compiler. All
+variants show a confirmation dialog listing component names, actual archive filenames, and file sizes.
+Choose **Download N files** to start the transfers in parallel, or **Cancel**
+(or Escape) to leave without starting any downloads. Cancel also works while
+links are being prepared. Single-file variants require confirmation with **Download 1 file**.
+Numerical-fidelity **Download JSON** remains a separate report download.
+
+All temporary URLs are prepared before any transfer starts. If preparation
+fails, the dialog reports the error and allows retrying. Files stream directly
+to the browser's download manager, which may request permission for multiple
+downloads; use that manager to monitor or cancel transfers once started.
+
+For a local preview using live staging data:
+
+```bash
+python3 -m http.server 4174 --bind 127.0.0.1 --directory artifact-browser
+```
+
+Open <http://127.0.0.1:4174/?run=53bfaa91-8b75-4bdb-afc2-83019a61f514>
+and click the model download icon to review the RF-DETR component dialog.
+
+Run download behavior checks with `node --test tests/browser/downloads.test.mjs`
+and the existing UI checks with `python -m pytest tests/unit/test_artifact_browser.py`.
+This change affects only the browser; public registry and C++ APIs are unchanged.
+
+Changing the trial comparison metric updates the chart in place, preserving
+scroll position, keyboard focus, and expanded detail sections.
+
+## Duration reporting
+
+Registry run timestamps cover artifact publication, which happens after compilation.
+The UI labels this interval **Registry publication duration**. **Compile recipe
+duration** comes from `metadata.compile_timing`, captured around the compilation
+recipe by the compile workflow. It includes surgery and any validation performed
+inside that recipe; it excludes runner queue/setup, separate accuracy jobs,
+publication, and subsequent benchmarks. Components compiled together share this
+invocation timing. Older builds display **Not recorded** instead of presenting
+publication time as compile time; the workflow link provides historical job timing.
+
+The publisher accepts optional `compile-timing.json` alongside `compile-outputs.json`,
+validates its timezone-aware start/end timestamps before any registry writes,
+and publishes it as additive run metadata. Existing outputs remain publishable.
+No registry API or database schema changes are required.

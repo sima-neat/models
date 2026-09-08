@@ -13,6 +13,7 @@ from model_registry.registry import (
     RegistryPublicationError,
     S3Object,
     SigV4RegistryClient,
+    _compile_timing,
     _component_source_media_type,
     build_catalog_snapshot,
     canonical_sha256,
@@ -189,8 +190,16 @@ def test_registry_errors_identify_the_failed_endpoint() -> None:
         client.request("POST", "/v1/runs", {}, "create")
 
 
-def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("with_timing", [False, True])
+def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatch, with_timing: bool) -> None:
     dist = _packaged_result(tmp_path)
+    timing = {
+        "scope": "compile_recipe",
+        "started_at": "2026-08-13T00:00:00+00:00",
+        "finished_at": "2026-08-13T01:29:52+00:00",
+    }
+    if with_timing:
+        (dist / "resnet_50/modalix_bf16/compile-timing.json").write_text(json.dumps(timing))
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -227,6 +236,8 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     create = calls[0][2]
     assert create is not None
     assert create["run_type"] == "model_compile"
+    if with_timing:
+        assert create["metadata"].pop("compile_timing") == timing
     assert create["metadata"] == {
         "model_id": "resnet_50",
         "build_profile_id": "modalix_bf16",
@@ -664,7 +675,6 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
     profile = tmp_path / "staged" / "resnet_50" / "modalix_bf16"
     assert (profile / "registry-staged.json").is_file()
     assert (profile / "model" / "registry-publication.json").is_file()
-    (build_catalog_snapshot,)
 
 
 @pytest.mark.parametrize("with_new_build", [False, True])
@@ -934,3 +944,31 @@ def test_incremental_catalog_keeps_previous_build_while_replacement_is_pending()
     )
     assert snapshot["models"][0]["builds"][0] == old
     assert any(item["model_id"] == previous["models"][0]["id"] for item in snapshot["pending_builds"])
+
+
+
+@pytest.mark.parametrize("timing", [
+    {"scope": "workflow", "started_at": "2026-08-13T00:00:00Z", "finished_at": "2026-08-13T01:00:00Z"},
+    {"scope": "compile_recipe", "started_at": "2026-08-13T02:00:00Z", "finished_at": "2026-08-13T01:00:00Z"},
+    {"scope": "compile_recipe", "started_at": "2026-08-13T00:00:00", "finished_at": "2026-08-13T01:00:00"},
+    {"scope": "compile_recipe", "started_at": "invalid", "finished_at": "2026-08-13T01:00:00Z"},
+    {},
+    None,
+])
+def test_compile_timing_rejects_invalid_intervals(tmp_path: Path, timing) -> None:
+    path = tmp_path / "compile-timing.json"
+    path.write_text(json.dumps(timing))
+    with pytest.raises(ValidationError, match="invalid compile timing"):
+        _compile_timing(path)
+
+
+def test_compile_timing_supports_legacy_outputs_and_utc_timestamps(tmp_path: Path) -> None:
+    path = tmp_path / "compile-timing.json"
+    assert _compile_timing(path) is None
+    path.write_text(json.dumps({
+        "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00Z", "finished_at": "2026-08-13T01:29:52Z",
+    }))
+    assert _compile_timing(path) == {
+        "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00+00:00",
+        "finished_at": "2026-08-13T01:29:52+00:00",
+    }

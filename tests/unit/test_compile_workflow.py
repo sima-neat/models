@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,25 @@ def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
     assert '--dataset "$CALIBRATION_PATH"' in compile_script
     assert 'if [[ "$CALIBRATION_KIND" == "dataset" ]]' in compile_script
     assert "python -m model_registry evaluate" not in compile_script
+
+
+def test_reusable_compile_job_records_publishable_recipe_timing(tmp_path: Path, monkeypatch) -> None:
+    from model_registry.registry import _compile_timing
+
+    steps = _workflow()["jobs"]["compile"]["steps"]
+    script = next(step["run"] for step in steps if step.get("name") ==
+                  "Run model-specific surgery and compilation recipe")
+    start = script.index("export MODEL_COMPILE_STARTED_AT=")
+    recipe = script.index('"$MODEL_COMPILER_PYTHON" "$MODEL_DIR/$RECIPE"')
+    timing = script.index("<<'PYTIMING'")
+    assert start < recipe < timing
+    timing_script = script[timing:].split("\n", 1)[1].split("\nPYTIMING", 1)[0]
+    monkeypatch.setenv("MODEL_COMPILE_STARTED_AT", "2026-09-07T00:00:00Z")
+    monkeypatch.setattr(sys, "argv", ["-", str(tmp_path)])
+    exec(compile(timing_script, "workflow-compile-timing", "exec"), {})
+    recorded = _compile_timing(tmp_path / "compile-timing.json")
+    assert recorded["scope"] == "compile_recipe"
+    assert recorded["started_at"] == "2026-09-07T00:00:00+00:00"
 
 
 def test_verified_exporter_is_layered_on_the_model_compiler_interpreter() -> None:
