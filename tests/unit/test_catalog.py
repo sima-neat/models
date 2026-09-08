@@ -20,7 +20,7 @@ from model_registry.catalog import (
     validation_fingerprint,
 )
 from model_registry.errors import ValidationError
-from model_registry.registry import build_catalog_snapshot
+from model_registry.registry import RegistryPublicationError, build_catalog_snapshot, publish_catalog
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -935,3 +935,73 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
     manifest.write_text(yaml.safe_dump(model))
     with pytest.raises(ValidationError, match="filename limit"):
         build_catalog_snapshot(repository=catalog_repository, branch="develop", git_sha=head, previous=previous)
+
+
+@pytest.mark.parametrize("source", ["base", "target", "stale", "missing", "forbidden"])
+def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_repository: Path, source: str) -> None:
+    catalog = discover_catalog(catalog_repository)
+    matrix = build_matrix(catalog, sorted(catalog), repository=catalog_repository, compiler_version="2.1.3")
+    prior = {"models": [
+        {"id": model_id, "builds": [
+            {
+                "build_profile_id": entry["build_profile_id"], "component_id": component_id,
+                "compile_fingerprint": entry["build_fingerprint"], "artifact_sha256": "a" * 64,
+                "run_id": f"run-{model_id}-{component_id}",
+            }
+            for entry in matrix["include"] if entry["model_id"] == model_id
+            for component_id in entry["component_ids"]
+        ]} for model_id in catalog
+    ]}
+    if source == "stale":
+        prior["models"][0]["builds"][0]["compile_fingerprint"] = "0" * 64
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "model_int8"
+    manifest.write_text(yaml.safe_dump(model))
+    reads, writes = [], []
+
+    def read(url):
+        reads.append(url)
+        if source == "forbidden":
+            raise RegistryPublicationError("public artifact registry HTTP 403 forbidden")
+        if source != "target" and (len(reads) == 1 or source == "missing"):
+            raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+        return {"catalog": {"document": prior}}
+
+    def write(method, path, body, key):
+        writes.append(body)
+        return {"stored": True}
+
+    def publish():
+        return publish_catalog(
+            repository=catalog_repository, api_url="https://writer.example.invalid",
+            read_api_url="https://reader.example.invalid", aws_region="us-west-2",
+            branch="feat/names", base_branch="develop", git_sha="b" * 40,
+            request=write, read_request=read,
+        )
+
+    if source in {"stale", "missing"}:
+        with pytest.raises(ValidationError, match="no immutable compile run matches"):
+            publish()
+        assert writes == []
+    elif source == "forbidden":
+        with pytest.raises(RegistryPublicationError, match="403 forbidden"):
+            publish()
+        assert writes == []
+    else:
+        result = publish()
+        assert result["catalog"]["git_ref"] == "refs/heads/feat/names"
+        assert result["catalog"]["catalog_revision"] == "b" * 40
+        for current, previous in zip(result["catalog"]["models"], prior["models"], strict=True):
+            for build, old_build in zip(current["builds"], previous["builds"], strict=True):
+                assert build["run_id"] == old_build["run_id"]
+                assert build["artifact_sha256"] == old_build["artifact_sha256"]
+                assert build["compile_fingerprint"] == old_build["compile_fingerprint"]
+        assert result["catalog"]["models"][0]["builds"][0]["artifact_suffix"] == "model_int8"
+        assert writes == [result["catalog"]]
+    assert reads[0].endswith("git_ref=refs%2Fheads%2Ffeat%2Fnames")
+    if source in {"target", "forbidden"}:
+        assert len(reads) == 1
+    else:
+        assert len(reads) == 2
+        assert reads[1].endswith("git_ref=refs%2Fheads%2Fdevelop")

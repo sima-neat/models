@@ -314,3 +314,24 @@ def test_tooling_supports_python_module_entrypoint() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "Model Registry lifecycle tooling" in result.stdout
+
+
+@pytest.mark.parametrize("base_branch", [None, "develop"])
+def test_publish_catalog_passes_optional_base_branch(monkeypatch, base_branch) -> None:
+    calls = []
+
+    def publish(**kwargs):
+        calls.append(kwargs)
+        return {"catalog": {"catalog_revision": "a" * 40}}
+
+    monkeypatch.setattr("model_registry.registry.publish_catalog", publish)
+    args = [
+        "publish-catalog", "--api-url", "https://writer.example.invalid",
+        "--read-api-url", "https://reader.example.invalid", "--branch", "feat/names",
+        "--git-sha", "a" * 40,
+    ]
+    if base_branch:
+        args.extend(["--base-branch", base_branch])
+    assert main(args) == 0
+    assert calls[0]["base_branch"] == base_branch
+    assert calls[0]["branch"] == "feat/names"
