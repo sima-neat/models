@@ -9,6 +9,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -777,6 +778,23 @@ def _fidelity_measurements(report: JsonObject, fingerprint: str) -> list[JsonObj
     ]
 
 
+def _compile_timing(path: Path) -> JsonObject | None:
+    """Read optional recipe timing; registry run timestamps measure publication."""
+    if not path.exists():
+        return None
+    try:
+        timing = json.loads(path.read_text(encoding="utf-8"))
+        if timing["scope"] != "compile_recipe":
+            raise ValueError("unsupported timing scope")
+        start = datetime.fromisoformat(timing["started_at"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(timing["finished_at"].replace("Z", "+00:00"))
+        if start.tzinfo is None or end.tzinfo is None or end < start:
+            raise ValueError("invalid timing interval")
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ValidationError(f"{path}: invalid compile timing") from exc
+    return {"scope": "compile_recipe", "started_at": start.isoformat(), "finished_at": end.isoformat()}
+
+
 def _preflight_compilations(
     root: Path,
     dist: Path,
@@ -943,6 +961,7 @@ def _preflight_compilations(
         prepared.append(
             {
                 "result_path": result_path,
+                "compile_timing": _compile_timing(result_path.parent.parent / "compile-timing.json"),
                 "model_id": model_id,
                 "build_profile_id": build_profile_id,
                 "compile_invocation_id": invocation_by_result[result_path],
@@ -1078,6 +1097,7 @@ def publish_compilations(
                     "component_id": component_id,
                     "artifact_kind": "mpk",
                     "github_run_id": github_run_id,
+                    **({"compile_timing": compilation["compile_timing"]} if compilation["compile_timing"] else {}),
                     "license": model["license"],
                 },
             },

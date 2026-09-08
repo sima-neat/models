@@ -205,7 +205,9 @@ function formatDate(value, includeTime = true) {
 
 function formatDuration(start, end) {
   if (!start || !end) return "—";
-  const seconds = Math.max(0, Math.round((new Date(end) - new Date(start)) / 1000));
+  const seconds = Math.round((new Date(end) - new Date(start)) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${seconds % 60}s`;
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
@@ -1257,7 +1259,10 @@ function renderDetail(detail) {
       ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
       ${keyValue("Branch", branchName(run.git_ref))}
       ${keyValue("Built", formatDate(run.finished_at || run.created_at))}
-      ${keyValue("Duration", formatDuration(run.started_at, run.finished_at))}
+      ${keyValue("Compile recipe duration", run.metadata?.compile_timing?.scope === "compile_recipe"
+        ? formatDuration(run.metadata.compile_timing.started_at, run.metadata.compile_timing.finished_at)
+        : "Not recorded")}
+      ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
       ${keyValue("Target", run.target_platform)}
       ${keyValue("Compiler", run.toolchain_version)}
       ${keyValue("Run ID", run.id, { copy: true, mono: true })}
