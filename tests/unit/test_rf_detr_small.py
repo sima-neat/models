@@ -6,7 +6,7 @@ import io
 import sys
 import tarfile
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import numpy as np
 import onnx
@@ -107,17 +107,6 @@ def test_coco_archive_selection_and_webp_decoding(tmp_path: Path) -> None:
     assert selections[0] == selections[1]
 
 
-def test_export_validation_image_is_deterministic() -> None:
-    exporter = load_module("export")
-
-    first = exporter._validation_image()
-    second = exporter._validation_image()
-
-    assert first.shape == (512, 512, 3)
-    assert first.dtype == np.uint8
-    np.testing.assert_array_equal(first, second)
-
-
 def test_topk_gather_uses_stable_score_order() -> None:
     calibration = load_module("calibration")
     scores = np.asarray([[0.5, 0.9, 0.9, 0.1]], dtype=np.float32)
@@ -171,74 +160,13 @@ def test_surgery_moves_box_decode_before_topk() -> None:
     assert names.index("/transformer/GatherElements_1") < names.index("/transformer/Concat_6")
 
 
-def test_export_uses_the_verified_local_checkpoint(tmp_path: Path, monkeypatch) -> None:
-    exporter = load_module("export")
-    checkpoint = tmp_path / "rf-detr-small.pth"
-    checkpoint.write_bytes(b"checkpoint")
-    output = tmp_path / "export" / "model.onnx"
-    calls = {}
-
-    class RFDETRSmall:
-        def __init__(self, **kwargs):
-            calls["init"] = kwargs
-
-        def export(self, **kwargs):
-            calls["export"] = kwargs
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_bytes(b"onnx")
-            return output
-
-    monkeypatch.setitem(sys.modules, "rfdetr", SimpleNamespace(RFDETRSmall=RFDETRSmall))
-    monkeypatch.setattr(exporter, "version", lambda name: "1.9.4")
-    monkeypatch.setattr(exporter, "validate_export", lambda path: None)
-    monkeypatch.setattr(
-        exporter,
-        "validate_numerical_export",
-        lambda detector, path, validation_image: calls.update(validated=(path, validation_image)),
-    )
-
-    assert exporter.export_model(checkpoint, output.parent) == output
-    assert calls["init"] == {"pretrain_weights": str(checkpoint), "resolution": 512}
-    assert calls["export"]["opset_version"] == 17
-    assert calls["export"]["dynamic_batch"] is False
-    assert Path(calls["export"]["infer_dir"]).name == "validation.png"
-    assert calls["validated"] == (output, Path(calls["export"]["infer_dir"]))
-
-
-def test_export_interface_is_static_opset_17(tmp_path: Path) -> None:
-    exporter = load_module("export")
-    helper = onnx.helper
-    path = tmp_path / "model.onnx"
-    graph = helper.make_graph(
-        [
-            helper.make_node("ConstantOfShape", ["dets_shape"], ["dets"], name="boxes"),
-            helper.make_node("ConstantOfShape", ["labels_shape"], ["labels"], name="classes"),
-        ],
-        "fixture",
-        [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1, 3, 512, 512])],
-        [
-            helper.make_tensor_value_info("dets", onnx.TensorProto.FLOAT, [1, 300, 4]),
-            helper.make_tensor_value_info("labels", onnx.TensorProto.FLOAT, [1, 300, 91]),
-        ],
-        initializer=[
-            helper.make_tensor("dets_shape", onnx.TensorProto.INT64, [3], [1, 300, 4]),
-            helper.make_tensor("labels_shape", onnx.TensorProto.INT64, [3], [1, 300, 91]),
-        ],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-    model.ir_version = 8
-    onnx.save(model, path)
-
-    exporter.validate_export(path)
-
-
 def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
     source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--compile-invocation", required=True)' in source
     assert 'parser.add_argument("--correctness-dataset", type=Path, required=True)' in source
-    assert "export_model(checkpoint" in source
-    assert "prepare_model(original" in source
+    assert "export_model" not in source
+    assert "prepare_model(source" in source
     assert "transformer_inputs(" in source
     assert "loaded.quantize(" in source
     assert "any_shape_on_mla=True" in source
@@ -267,14 +195,16 @@ def test_surgery_simplifies_only_the_transformer_partition() -> None:
     assert "full, valid = simplify(" not in source
 
 
-def test_model_declares_exporter_and_full_pipeline_correctness() -> None:
+def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     invocation = model["build_profiles"][0]["compile_invocations"][0]
     correctness = model["tests"]["correctness"][0]
     performance = yaml.safe_load((MODEL_DIR / "tests" / "performance.yaml").read_text(encoding="utf-8"))
 
     assert invocation["components"] == ["backbone", "transformer"]
-    assert invocation["python_packages"][0]["path"] == "rfdetr-1.9.4-py3-none-any.whl"
+    assert "python_packages" not in invocation
+    assert model["components"][0]["source"]["type"] == "file"
+    assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_samples"] == 50

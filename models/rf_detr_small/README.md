@@ -1,9 +1,9 @@
 # RF-DETR Small
 
-This recipe builds the 512×512 RF-DETR Small detector from the official Small
-checkpoint with the 1.9.4 exporter. Model Registry verifies both files before invoking
-`compile.py`. The recipe creates the full ONNX model and both partitions in a
-temporary directory.
+This recipe compiles the 512×512 RF-DETR Small detector from a pinned ONNX
+file on Vulcan. A separate manual conversion uses the official Small checkpoint
+and the 1.9.4 exporter. Normal compilation downloads the ONNX without installing
+exporter dependencies.
 
 ## Components
 
@@ -23,10 +23,27 @@ only the two MPKs. The application must run TopK/Gather on the backbone outputs
 before invoking the transformer. `calibration.py` contains the deterministic
 reference operation used during compilation and fidelity validation.
 
+## Manual conversion
+
+`convert.yaml` pins the checkpoint; `requirements-convert.txt` pins export
+dependencies. With Python 3.12 on Linux ARM64, run locally:
+
+```bash
+python3.12 -E -s -m venv /tmp/rfdetr-export-venv
+/tmp/rfdetr-export-venv/bin/python -E -s -m pip --isolated install . -r models/rf_detr_small/requirements-convert.txt
+/tmp/rfdetr-export-venv/bin/python -E -s models/rf_detr_small/convert.py --output-dir /tmp/rfdetr-export
+```
+
+To publish, manually run **Vulcan Model Convert** with model `rf_detr_small`.
+The workflow creates its export venv under `/mnt/nvme`, validates ONNX and checks
+one synthetic input against PyTorch, then uploads one `model.onnx`. Copy the
+printed source pin into `model.yaml` after surgery and compiler validation.
+This smoke check does not measure model accuracy.
+
 ## Build and validation
 
-`compile.py` is the single orchestration entry point. It exports and partitions
-the model, calibrates the INT8 backbone with COCO images, executes that
+`compile.py` partitions the downloaded ONNX, calibrates the INT8 backbone with
+COCO images, executes that
 quantized backbone and TopK/Gather to create correlated transformer inputs,
 calibrates the BF16 transformer, and writes:
 
@@ -57,7 +74,7 @@ dataset-registry resolve --repository <dataset-repository> \
   --variant mini coco-2017
 
 python models/rf_detr_small/compile.py \
-  --model <verified-checkpoint> \
+  --model <verified-model.onnx> \
   --dataset <resolved-coco-archive> \
   --correctness-dataset <resolved-coco-archive> \
   --output-dir <new-output-directory> \
@@ -65,8 +82,8 @@ python models/rf_detr_small/compile.py \
   --compile-invocation rf_detr
 ```
 
-Generated ONNX files and intermediate tensors remain temporary. MPKs and
-reports are build output and must remain outside Git.
+The published ONNX is retained for reuse. Partition graphs and intermediate
+tensors remain temporary. Generated models and reports must remain outside Git.
 
 ## Upstream
 

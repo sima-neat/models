@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export, partition, validate, and compile RF-DETR Small."""
+"""Partition, validate, and compile the verified RF-DETR Small ONNX."""
 
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ from calibration import (
     to_afe_layout,
     transformer_inputs,
 )
-from export import export_model
 from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BOXES, FEATURES, INPUT, OUTPUTS, PROPOSALS, SCORES, prepare_model, validate_float_split
@@ -286,22 +285,21 @@ def _write_fidelity(
 
 
 def _prepare_graphs_and_reference(
-    checkpoint: Path,
+    source: Path,
     dataset: Path,
     evaluation_names: tuple[str, ...],
     temporary_dir: Path,
 ) -> None:
-    original = export_model(checkpoint, temporary_dir / "export")
-    _, backbone_graph, transformer_graph = prepare_model(original, temporary_dir / "graphs")
+    _, backbone_graph, transformer_graph = prepare_model(source, temporary_dir / "graphs")
     validation_image = load_images(dataset, evaluation_names[:1])[0]
     validate_float_split(
-        original,
+        source,
         backbone_graph,
         transformer_graph,
         validation_image,
     )
 
-    session = ort.InferenceSession(str(original), providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
     outputs = {name: [] for name in OUTPUTS}
     for image in load_images(dataset, evaluation_names):
         values = session.run(None, {INPUT: image[None]})
@@ -408,7 +406,7 @@ def _component_archive(temporary_dir: Path, component_id: str) -> Path:
 
 
 def compile_model(
-    checkpoint: Path,
+    source: Path,
     calibration_dataset: Path,
     correctness_dataset: Path,
     output_dir: Path,
@@ -440,9 +438,9 @@ def compile_model(
         backbone_graph = graphs_dir / "rf_detr_small_backbone.onnx"
         transformer_graph = graphs_dir / "rf_detr_small_transformer.onnx"
         _run_phase(
-            "RF-DETR export and graph preparation",
+            "RF-DETR graph preparation",
             _prepare_graphs_and_reference,
-            checkpoint,
+            source,
             correctness_dataset,
             evaluation_names,
             temporary_dir,
@@ -530,18 +528,20 @@ def main() -> int:
         parser.error(f"unsupported build profile: {args.build_profile}")
     if args.compile_invocation != INVOCATION_ID:
         parser.error(f"unsupported compile invocation: {args.compile_invocation}")
-    checkpoint = args.model.expanduser().resolve()
+    source = args.model.expanduser().resolve()
     dataset = args.dataset.expanduser().resolve()
     correctness_dataset = args.correctness_dataset.expanduser().resolve()
-    if not checkpoint.is_file():
-        parser.error(f"checkpoint does not exist: {checkpoint}")
+    if source.suffix != ".onnx":
+        parser.error("--model must be the verified ONNX from the manual conversion workflow")
+    if not source.is_file():
+        parser.error(f"source does not exist: {source}")
     if not dataset.exists():
         parser.error(f"dataset does not exist: {dataset}")
     if not correctness_dataset.exists():
         parser.error(f"correctness dataset does not exist: {correctness_dataset}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     outputs = compile_model(
-        checkpoint,
+        source,
         dataset,
         correctness_dataset,
         args.output_dir.expanduser().resolve(),

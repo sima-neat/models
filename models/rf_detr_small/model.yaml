@@ -28,44 +28,10 @@ components:
 - id: backbone
   role: feature_extractor
   source: &source
-    type: file_set
-    entrypoint: checkpoint_best_regular.pth
-    files:
-    - path: checkpoint_best_regular.pth
-      uri: https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth
-      sha256: d81979a9213a2109345158ce9232668df4c1ae52e9b8db3f2ec0a8cbad959b33
-      size_bytes: 386045550
-      media_type: application/vnd.pytorch.checkpoint
-    - path: rfdetr-1.9.4-py3-none-any.whl
-      uri: https://files.pythonhosted.org/packages/57/d4/082da42f39a29acadd47f487b4186c0d6203eb8ce4d145baa72a12103b52/rfdetr-1.9.4-py3-none-any.whl
-      sha256: 944c1d27a9d45b85ee4ce2234bf27e7edf501450f3c6d28254d70c80b4f133e5
-      size_bytes: 534667
-      media_type: application/zip
-    - path: pydeprecate-0.9.0-py3-none-any.whl
-      uri: https://files.pythonhosted.org/packages/47/87/a155f16c1c17adccaa2ed2256484fe1c6ad37b925e8e39695ed8860bc0b5/pydeprecate-0.9.0-py3-none-any.whl
-      sha256: c9501dae1a2567a3c7f7b04221ad5a97d1ad972a02ddb729a04299b435fedd7c
-      size_bytes: 102725
-      media_type: application/zip
-    - path: annotated_types-0.8.0-py3-none-any.whl
-      uri: https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl
-      sha256: f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
-      size_bytes: 13427
-      media_type: application/zip
-    - path: pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
-      uri: https://files.pythonhosted.org/packages/68/b8/a01b53cb0e59139fbc9e4fda3e9724ede8de279097179be4ff31f1abb65a/pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
-      sha256: e96cea19e34778f8d59fe40775a7a574d95816eb150850a85a7a4c8f4b94ac69
-      size_bytes: 1919200
-      media_type: application/zip
-    - path: typing_inspection-0.4.4-py3-none-any.whl
-      uri: https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl
-      sha256: 65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
-      size_bytes: 14750
-      media_type: application/zip
-    - path: pydantic-2.12.5-py3-none-any.whl
-      uri: https://files.pythonhosted.org/packages/5a/87/b70ad306ebb6f9b585f114d0ac2137d792b48be34d732d60e597c2f8465a/pydantic-2.12.5-py3-none-any.whl
-      sha256: e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d
-      size_bytes: 463580
-      media_type: application/zip
+    type: file
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/4b0e07b760f09c885075da6bd07e188f57ca3582fe7c62c84034617e8bfb9f1b/34293839302-1/model.onnx
+    sha256: 4b0e07b760f09c885075da6bd07e188f57ca3582fe7c62c84034617e8bfb9f1b
+    size_bytes: 114437682
   interface:
     format: onnx
     opset: 17
@@ -184,19 +150,6 @@ build_profiles:
   compile_invocations:
   - id: rf_detr
     components: [backbone, transformer]
-    python_packages:
-    - path: rfdetr-1.9.4-py3-none-any.whl
-      imports: [numpy, onnx, onnxruntime, PIL, rfdetr, torch, yaml]
-    - path: pydeprecate-0.9.0-py3-none-any.whl
-      imports: [deprecate]
-    - path: annotated_types-0.8.0-py3-none-any.whl
-      imports: [annotated_types]
-    - path: pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
-      imports: [pydantic_core]
-    - path: typing_inspection-0.4.4-py3-none-any.whl
-      imports: [typing_inspection]
-    - path: pydantic-2.12.5-py3-none-any.whl
-      imports: [pydantic]
 compositions:
 - id: default
   type: declarative
