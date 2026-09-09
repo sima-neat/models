@@ -97,14 +97,6 @@
     "source": {
       "oneOf": [
         {
-          "type": "object", "additionalProperties": false,
-          "required": ["type", "uri", "sha256", "size_bytes"],
-          "properties": {
-            "type": {"const": "onnx_bundle"}, "uri": {"$ref": "#/$defs/sourceUri"},
-            "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1}
-          }
-        },
-        {
           "type": "object", "additionalProperties": false, "required": ["type", "uri", "sha256", "size_bytes"],
           "properties": {
             "type": {"const": "file"}, "uri": {"$ref": "#/$defs/sourceUri"},

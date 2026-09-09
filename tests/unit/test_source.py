@@ -87,6 +87,8 @@ def test_python_package_artifact_is_an_approved_checksum_verified_source() -> No
         "https://storage.googleapis.com/rfdetr/checkpoint.pth",
         "https://files.pythonhosted.org/packages/rfdetr-1.9.4-py3-none-any.whl",
         "https://files.pythonhosted.org/unrelated/package.whl",
+        "https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/latest/model.onnx",
+        f"https://artifacts.stg.neat.sima.ai/other/{DIGEST}/123-1/model.onnx",
     ],
 )
 def test_approved_hosts_reject_sources_outside_bounded_paths(uri: str) -> None:
@@ -107,3 +109,8 @@ def test_approved_hosts_reject_sources_outside_bounded_paths(uri: str) -> None:
 def test_non_asset_github_urls_fail(uri: str) -> None:
     with pytest.raises(SourcePolicyError):
         SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()
+
+
+def test_vulcan_onnx_source() -> None:
+    uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/{DIGEST}/123-1/model.onnx"
+    assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri

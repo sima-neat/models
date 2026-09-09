@@ -1,5 +1,3 @@
-# Experimental Transformers route; requires independent surgery qualification.
-schema_version: 1
 source:
   type: file_set
   entrypoint: model.safetensors
@@ -16,10 +14,3 @@ source:
     uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/preprocessor_config.json
     sha256: dba1fb5bb4d70d94b3495b7bcb1f881bc61d42c73433fcec13be34c523550a0b
     size_bytes: 442
-  - path: validation.png
-    uri: hf://datasets/huggingface/documentation-images@a915176f392f6f94f65244c26b53346e7ec24c54/coco_sample.png
-    sha256: cf6f3c4befa148732c7453e0de5afab00f682427435fead2d88b07a9615cdac2
-    size_bytes: 694498
-environment:
-  python: "3.12"
-  requirements: requirements-convert.lock

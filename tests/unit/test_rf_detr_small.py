@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import builtins
 import importlib.util
 import io
@@ -108,29 +107,15 @@ def test_coco_archive_selection_and_webp_decoding(tmp_path: Path) -> None:
     assert selections[0] == selections[1]
 
 
-def test_conversion_validation_images_are_deterministic(tmp_path: Path) -> None:
-    converter = load_module("convert")
-    source = tmp_path / "source"
-    source.mkdir()
-    real_image = source / "validation.png"
-    Image.new("RGB", (16, 16), color=(100, 150, 200)).save(real_image)
-    runs = []
-    for name in ("first", "second"):
-        output = tmp_path / name
-        output.mkdir()
-        paths = converter._images(source, output)
-        assert paths[-1][1] == real_image
-        arrays = []
-        for _, path in paths:
-            with Image.open(path) as image:
-                arrays.append(np.asarray(image).copy())
-        runs.append(arrays)
+def test_export_validation_image_is_deterministic() -> None:
+    exporter = load_module("export")
 
-    assert runs[0][0].shape == (512, 512, 3)
-    assert runs[0][1].shape == (375, 640, 3)
-    for first, second in zip(*runs, strict=True):
-        assert first.dtype == np.uint8
-        np.testing.assert_array_equal(first, second)
+    first = exporter._validation_image()
+    second = exporter._validation_image()
+
+    assert first.shape == (512, 512, 3)
+    assert first.dtype == np.uint8
+    np.testing.assert_array_equal(first, second)
 
 
 def test_topk_gather_uses_stable_score_order() -> None:
@@ -186,8 +171,42 @@ def test_surgery_moves_box_decode_before_topk() -> None:
     assert names.index("/transformer/GatherElements_1") < names.index("/transformer/Concat_6")
 
 
+def test_export_uses_the_verified_local_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    exporter = load_module("export")
+    checkpoint = tmp_path / "rf-detr-small.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    output = tmp_path / "export" / "model.onnx"
+    calls = {}
+
+    class RFDETRSmall:
+        def __init__(self, **kwargs):
+            calls["init"] = kwargs
+
+        def export(self, **kwargs):
+            calls["export"] = kwargs
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"onnx")
+            return output
+
+    monkeypatch.setitem(sys.modules, "rfdetr", SimpleNamespace(RFDETRSmall=RFDETRSmall))
+    monkeypatch.setattr(exporter, "version", lambda name: "1.9.4")
+    monkeypatch.setattr(exporter, "validate_export", lambda path: None)
+    monkeypatch.setattr(
+        exporter,
+        "validate_numerical_export",
+        lambda detector, path, validation_image: calls.update(validated=(path, validation_image)),
+    )
+
+    assert exporter.export_model(checkpoint, output.parent) == output
+    assert calls["init"] == {"pretrain_weights": str(checkpoint), "resolution": 512}
+    assert calls["export"]["opset_version"] == 17
+    assert calls["export"]["dynamic_batch"] is False
+    assert Path(calls["export"]["infer_dir"]).name == "validation.png"
+    assert calls["validated"] == (output, Path(calls["export"]["infer_dir"]))
+
+
 def test_export_interface_is_static_opset_17(tmp_path: Path) -> None:
-    exporter = load_module("convert")
+    exporter = load_module("export")
     helper = onnx.helper
     path = tmp_path / "model.onnx"
     graph = helper.make_graph(
@@ -218,7 +237,8 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
 
     assert 'parser.add_argument("--compile-invocation", required=True)' in source
     assert 'parser.add_argument("--correctness-dataset", type=Path, required=True)' in source
-    assert "prepare_model(source" in source
+    assert "export_model(checkpoint" in source
+    assert "prepare_model(original" in source
     assert "transformer_inputs(" in source
     assert "loaded.quantize(" in source
     assert "any_shape_on_mla=True" in source
@@ -247,79 +267,16 @@ def test_surgery_simplifies_only_the_transformer_partition() -> None:
     assert "full, valid = simplify(" not in source
 
 
-def test_model_declares_grouped_components_and_full_pipeline_correctness() -> None:
+def test_model_declares_exporter_and_full_pipeline_correctness() -> None:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     invocation = model["build_profiles"][0]["compile_invocations"][0]
     correctness = model["tests"]["correctness"][0]
     performance = yaml.safe_load((MODEL_DIR / "tests" / "performance.yaml").read_text(encoding="utf-8"))
 
     assert invocation["components"] == ["backbone", "transformer"]
-    assert "python_packages" not in invocation
-    assert model["components"][0]["source"]["type"] == "onnx_bundle"
-    assert model["components"][0]["source"] == model["components"][1]["source"]
+    assert invocation["python_packages"][0]["path"] == "rfdetr-1.9.4-py3-none-any.whl"
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_samples"] == 50
     assert correctness["scope"] == {"type": "package", "package": "default"}
     assert performance["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"]
-
-
-def test_graph_preparation_consumes_supplied_onnx_without_exporter(tmp_path: Path) -> None:
-    source_text = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
-    tree = ast.parse(source_text)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            assert all(
-                alias.name.split(".")[0] not in {"export", "convert", "rfdetr", "torch", "transformers"}
-                for alias in node.names
-            )
-        elif isinstance(node, ast.ImportFrom):
-            assert (node.module or "").split(".")[0] not in {"export", "convert", "rfdetr", "torch", "transformers"}
-    preparation = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_prepare_graphs_and_reference"
-    )
-    source = tmp_path / "downloaded.onnx"
-    source.write_bytes(b"verified ONNX")
-    backbone, transformer = tmp_path / "backbone.onnx", tmp_path / "transformer.onnx"
-    calls = []
-    images = [np.full((3, 2, 2), index, dtype=np.float32) for index in range(2)]
-
-    def prepare(graph, directory):
-        assert graph == source
-        calls.append("surgery")
-        return source, backbone, transformer
-
-    def validate_split(original, actual_backbone, actual_transformer, image):
-        assert (original, actual_backbone, actual_transformer) == (source, backbone, transformer)
-        np.testing.assert_array_equal(image, images[0])
-        calls.append("split_equivalence")
-
-    class Session:
-        def __init__(self, path, providers):
-            assert path == str(source)
-            assert providers == ["CPUExecutionProvider"]
-
-        def run(self, names, inputs):
-            assert names is None
-            value = float(inputs["input"][0, 0, 0, 0])
-            return [np.full((1, 300, 4), value), np.full((1, 300, 91), value + 1)]
-
-    namespace = {
-        "Path": Path,
-        "np": np,
-        "prepare_model": prepare,
-        "validate_float_split": validate_split,
-        "load_images": lambda dataset, names: images[: len(names)],
-        "ort": SimpleNamespace(InferenceSession=Session),
-        "INPUT": "input",
-        "OUTPUTS": ["dets", "labels"],
-    }
-    exec(compile(ast.Module(body=[preparation], type_ignores=[]), str(MODEL_DIR / "compile.py"), "exec"), namespace)
-    namespace["_prepare_graphs_and_reference"](source, tmp_path, ("first", "second"), tmp_path)
-
-    assert calls == ["surgery", "split_equivalence"]
-    with np.load(tmp_path / "reference_outputs.npz") as reference:
-        assert reference["dets"].shape == (2, 300, 4)
-        assert reference["labels"].shape == (2, 300, 91)
-        np.testing.assert_array_equal(reference["dets"][:, 0, 0], [0, 1])
-        np.testing.assert_array_equal(reference["labels"][:, 0, 0], [1, 2])

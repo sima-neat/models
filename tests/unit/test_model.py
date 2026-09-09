@@ -354,22 +354,3 @@ def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
     model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
     with pytest.raises(ValidationError):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
-@pytest.mark.parametrize("role", ["resources", "calibrations"])
-def test_onnx_bundle_is_only_a_component_source(role: str) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    source = {
-        "type": "onnx_bundle",
-        "uri": "https://artifacts.stg.neat.sima.ai/models-onnx/fixture_model/" + "a" * 64 + "/run-1/manifest.json",
-        "sha256": "b" * 64,
-        "size_bytes": 100,
-    }
-    entry = {"id": "bundle", "source": source}
-    if role == "resources":
-        entry["install_path"] = "bundle"
-    else:
-        entry["status"] = "ready"
-    model[role] = [entry]
-    with pytest.raises(ValidationError, match="ONNX bundles are component sources"):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)

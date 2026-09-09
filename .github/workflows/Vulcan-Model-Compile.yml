@@ -25,6 +25,13 @@ on:
       - "pyproject.toml"
   workflow_dispatch:
     inputs:
+      conversion_model:
+        description: Temporary branch conversion test
+        type: string
+      conversion_config:
+        description: Temporary conversion configuration
+        default: convert.yaml
+        type: string
       environment:
         description: Vulcan environment whose Model Compiler runner and artifact bucket are used
         required: true
@@ -70,7 +77,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  conversion-test:
+    if: github.event_name == 'workflow_dispatch' && inputs.conversion_model != ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/Vulcan-Model-Convert.yml
+    with:
+      model: ${{ inputs.conversion_model }}
+      config: ${{ inputs.conversion_config }}
+
   select:
+    if: inputs.conversion_model == ''
     name: Select model component builds
     runs-on: ubuntu-latest
     outputs:

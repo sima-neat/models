@@ -39,8 +39,6 @@ valid MPK, completed each applicable accuracy evaluation, and benchmarked that
 exact MPK on the DevKit. Trusted automation verifies the committed revision; it
 does not replace the developer's local qualification responsibility.
 
-For checkpoint sources, see [Manual ONNX conversion](model-conversion.md) before compilation.
-
 ## Workflow
 
 A successful contribution moves through six traceable stages, with each stage

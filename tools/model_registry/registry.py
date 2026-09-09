@@ -600,11 +600,7 @@ def _component_source_media_type(source: JsonObject) -> str:
     declared = source.get("media_type")
     if isinstance(declared, str) and declared:
         return declared
-    return {
-        "file": "application/onnx",
-        "file_set": "application/vnd.sima.source-file-set+json",
-        "onnx_bundle": "application/vnd.sima.onnx-bundle+json",
-    }[source["type"]]
+    return "application/onnx" if source.get("type") == "file" else "application/vnd.sima.source-file-set+json"
 
 
 def _accuracy_result(
@@ -1130,9 +1126,7 @@ def publish_compilations(
             "PUT",
             f"/v1/runs/{run_id}/inputs/source-component",
             {
-                "input_type": {
-                    "file": "onnx", "file_set": "model-source-file-set", "onnx_bundle": "onnx-bundle"
-                }[source["type"]],
+                "input_type": "onnx" if source["type"] == "file" else "model-source-file-set",
                 "source_reference": source_reference,
                 "sha256": source_sha,
                 "size_bytes": source.get(

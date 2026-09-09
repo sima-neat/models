@@ -75,13 +75,8 @@ def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
-    if source["type"] in {"file", "onnx_bundle"}:
+    if source["type"] == "file":
         spec = SourceSpec.from_mapping(source)
-        if source["type"] == "onnx_bundle" and (
-            not spec.uri.startswith("https://artifacts.stg.neat.sima.ai/models-onnx/")
-            or spec.filename != "manifest.json"
-        ):
-            raise SourcePolicyError("ONNX bundles must pin a Vulcan completion manifest")
         return [(spec.filename, spec)]
     return [(member["path"], SourceSpec.from_mapping(member)) for member in source["files"]]
 
@@ -302,13 +297,9 @@ def validate_model(
         for component in model["components"]:
             source_members(component["source"])
         for resource in model["resources"]:
-            if resource["source"]["type"] == "onnx_bundle":
-                raise ValueError("ONNX bundles are component sources, not package resources")
             source_members(resource["source"])
         for calibration in model["calibrations"]:
             if calibration["status"] == "ready" and "source" in calibration:
-                if calibration["source"]["type"] == "onnx_bundle":
-                    raise ValueError("ONNX bundles are component sources, not calibration data")
                 source_members(calibration["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
         raise ValidationError(f"{directory}: source policy: {exc}") from exc

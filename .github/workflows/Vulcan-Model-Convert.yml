@@ -1,7 +1,14 @@
 name: Vulcan Model Convert
 run-name: Convert ${{ inputs.model }} (${{ inputs.config }})
-
 on:
+  workflow_call:
+    inputs:
+      model:
+        required: true
+        type: string
+      config:
+        default: convert.yaml
+        type: string
   workflow_dispatch:
     inputs:
       model:
@@ -9,121 +16,75 @@ on:
         required: true
         type: string
       config:
-        description: Model-local conversion declaration (convert-hf.yaml tests RF-DETR Hugging Face)
-        required: true
+        description: Model-local configuration
         default: convert.yaml
         type: string
-
 permissions:
   contents: read
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      model: ${{ steps.plan.outputs.model }}
-      sha: ${{ steps.plan.outputs.sha }}
-      python: ${{ steps.plan.outputs.python }}
-      lock: ${{ steps.plan.outputs.lock }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: python -m pip install .
-      - id: plan
-        env:
-          MODEL_ID: ${{ inputs.model }}
-          CONVERT_CONFIG: ${{ inputs.config }}
-        run: |
-          set -euo pipefail
-          [[ "$MODEL_ID" =~ ^[a-z][a-z0-9_]*$ ]]
-          model-registry validate-conversion "models/$MODEL_ID" --config "$CONVERT_CONFIG" --json > "$RUNNER_TEMP/conversion-plan.json"
-          {
-            echo "model=$(jq -r .model_id "$RUNNER_TEMP/conversion-plan.json")"
-            echo "sha=$GITHUB_SHA"
-            echo "python=$(jq -r .environment.python "$RUNNER_TEMP/conversion-plan.json")"
-            echo "lock=$(jq -r .environment.requirements_sha256 "$RUNNER_TEMP/conversion-plan.json")"
-          } >> "$GITHUB_OUTPUT"
-
   convert:
-    needs: plan
     environment: staging
+    runs-on: [self-hosted, linux, arm64, vulcan-stg, ubuntu, default]
     timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
-    runs-on: [self-hosted, linux, arm64, vulcan-stg, ubuntu, default, "model-id-${{ needs.plan.outputs.model }}"]
     env:
-      MODEL_ID: ${{ needs.plan.outputs.model }}
+      MODEL_ID: ${{ inputs.model }}
       CONVERT_CONFIG: ${{ inputs.config }}
+      EXPORT_VENV: /mnt/nvme/model-export-${{ github.run_id }}-${{ github.run_attempt }}-venv
+      EXPORT_DIR: /mnt/nvme/model-export-${{ github.run_id }}-${{ github.run_attempt }}
+      PIP_CACHE_DIR: /mnt/nvme/pip-cache
+      MODEL_REGISTRY_CACHE: /mnt/nvme/model-sources
+      HF_HOME: /mnt/nvme/huggingface
+      TORCH_HOME: /mnt/nvme/torch
+      TMPDIR: /mnt/nvme/tmp
+      PYTHONPATH: ""
+      PYTHONHOME: ""
+      PYTHONNOUSERSITE: "1"
+      PIP_CONFIG_FILE: /dev/null
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.sha }}
-      - name: Prepare NVMe work directories
+          ref: ${{ github.sha }}
+      - name: Validate model selection
         run: |
-          set -euo pipefail
-          device="$(stat -c '%d' /mnt/nvme)"
-          test "$device" != "$(stat -c '%d' /)"
-          test "$device" = "$(stat -c '%d' "$GITHUB_WORKSPACE")"
-          test "$device" = "$(stat -c '%d' "$RUNNER_TEMP")"
-          test "$(df -B1 --output=avail /mnt/nvme | tail -1)" -gt 10737418240
-          root="/mnt/nvme/model-convert-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "$root/tmp" /mnt/nvme/model-conversion-cache
-          {
-            echo "CONVERSION_ROOT=$root"
-            echo "TMPDIR=$root/tmp"
-          } >> "$GITHUB_ENV"
-          python3 -m venv "$root/tools"
-          "$root/tools/bin/python" -m pip install . 'boto3>=1.34,<2'
-          echo "$root/tools/bin" >> "$GITHUB_PATH"
-      - name: Restore conversion dependency cache
-        uses: actions/cache@v4
+          [[ "$MODEL_ID" =~ ^[a-z][a-z0-9_]*$ ]]
+          [[ "$CONVERT_CONFIG" =~ ^convert(-[a-z0-9]+)?\.yaml$ ]]
+          test -f "models/$MODEL_ID/$CONVERT_CONFIG"
+      - uses: actions/cache@v4
         with:
-          path: /mnt/nvme/model-conversion-cache
-          key: onnx-convert-${{ runner.os }}-${{ runner.arch }}-ubuntu24-py${{ needs.plan.outputs.python }}-${{ needs.plan.outputs.lock }}
-      - name: Convert and validate in an isolated environment
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/requirements-convert.txt', inputs.model)) }}
+      - name: Create export environment and install dependencies
         run: |
-          model-registry convert "models/$MODEL_ID" --config "$CONVERT_CONFIG" \
-            --python "python${{ needs.plan.outputs.python }}" \
-            --work-dir "$CONVERSION_ROOT/work" --cache-dir /mnt/nvme/model-conversion-cache \
-            --json > "$CONVERSION_ROOT/result.json"
-      - name: Configure immutable artifact publication
-        uses: aws-actions/configure-aws-credentials@v6
+          mkdir -p "$TMPDIR"
+          python3.12 -E -s -m venv "$EXPORT_VENV"
+          "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" .
+          "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" \
+            --only-binary=:all: -r "models/$MODEL_ID/requirements-convert.txt"
+      - name: Convert and smoke-test
+        run: |
+          "$EXPORT_VENV/bin/python" -E -s "models/$MODEL_ID/convert.py" \
+            --config "models/$MODEL_ID/$CONVERT_CONFIG" --output-dir "$EXPORT_DIR"
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-west-2
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-          role-session-name: onnx-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Publish and verify download
+      - name: Publish ONNX and print source pin
         run: |
-          python scripts/publish_onnx_conversion.py --result "$CONVERSION_ROOT/result.json" \
-            --kms-key "$(aws kms describe-key --key-id alias/sima-neat-artifacts-staging --query KeyMetadata.Arn --output text)" \
-            --output-dir "$CONVERSION_ROOT/publication"
-          {
-            echo '## Pinned ONNX source'
-            echo 'Use this source in model.yaml after surgery and compiler qualification.'
-            echo '```yaml'
-            cat "$CONVERSION_ROOT/publication/source.yaml"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Preserve conversion diagnostics and source pin
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conversion-${{ needs.plan.outputs.model }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.CONVERSION_ROOT }}/result.json
-            ${{ env.CONVERSION_ROOT }}/work/conversion.log
-            ${{ env.CONVERSION_ROOT }}/work/failure.json
-            ${{ env.CONVERSION_ROOT }}/work/export/validation.json
-            ${{ env.CONVERSION_ROOT }}/work/export/provenance.json
-            ${{ env.CONVERSION_ROOT }}/publication/*.json
-            ${{ env.CONVERSION_ROOT }}/publication/source.yaml
-          retention-days: 14
-          if-no-files-found: warn
+          model="$EXPORT_DIR/model.onnx"
+          sha="$(sha256sum "$model" | cut -d ' ' -f 1)"
+          size="$(stat -c %s "$model")"
+          key="models-onnx/$MODEL_ID/$sha/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/model.onnx"
+          aws s3api put-object --bucket sima-neat-artifacts-staging --key "$key" --body "$model" \
+            --if-none-match '*' --server-side-encryption aws:kms --ssekms-key-id alias/sima-neat-artifacts-staging \
+            --checksum-sha256 "$(openssl dgst -sha256 -binary "$model" | base64 -w0)" \
+            --metadata "git-sha=$GITHUB_SHA,config=$CONVERT_CONFIG"
+          uri="https://artifacts.stg.neat.sima.ai/$key"
+          curl --fail --silent --show-error "$uri" -o "$RUNNER_TEMP/downloaded.onnx"
+          echo "$sha  $RUNNER_TEMP/downloaded.onnx" | sha256sum --check
+          printf 'source:\n  type: file\n  uri: %s\n  sha256: %s\n  size_bytes: %s\n' "$uri" "$sha" "$size" > "$EXPORT_DIR/source.yaml"
+          cat "$EXPORT_DIR/source.yaml"
+          # shellcheck disable=SC2016
+          printf '```yaml\n%s\n```\n' "$(cat "$EXPORT_DIR/source.yaml")" >> "$GITHUB_STEP_SUMMARY"
