@@ -1,6 +1,14 @@
 name: Vulcan Model Convert
 run-name: Convert ${{ inputs.model }} (${{ inputs.config }})
 on:
+  workflow_call:
+    inputs:
+      model:
+        required: true
+        type: string
+      config:
+        default: convert.yaml
+        type: string
   workflow_dispatch:
     inputs:
       model:
@@ -56,6 +64,9 @@ jobs:
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" \
             --only-binary=:all: -r "models/$MODEL_ID/requirements-convert.txt"
       - name: Convert and smoke-test
+        env:
+          OPENBLAS_CORETYPE: NEOVERSEN1
+          OPENBLAS_VERBOSE: "2"
         run: |
           "$EXPORT_VENV/bin/python" -E -s "models/$MODEL_ID/convert.py" \
             --config "models/$MODEL_ID/$CONVERT_CONFIG" --output-dir "$EXPORT_DIR"
