@@ -9,6 +9,7 @@ import pytest
 from model_registry.catalog import build_matrix, component_build_fingerprint, discover_catalog
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
+from model_registry.package import assemble_package
 from model_registry.registry import (
     RegistryPublicationError,
     S3Object,
@@ -19,6 +20,7 @@ from model_registry.registry import (
     canonical_sha256,
     publish_catalog,
     publish_compilations,
+    publish_packages,
     stage_catalog_build,
 )
 
@@ -171,6 +173,48 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
+def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path: Path) -> None:
+    compiled = _packaged_result(tmp_path)
+    component_dir = compiled / "resnet_50/modalix_bf16/model"
+    (component_dir / "registry-publication.json").write_text(
+        json.dumps({"runs": [{
+            "run_id": "component-run", "model_id": "resnet_50",
+            "build_profile_id": "modalix_bf16", "component_id": "model",
+        }]}),
+        encoding="utf-8",
+    )
+    packages = tmp_path / "packages"
+    assembled = assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=packages,
+        model_id="resnet_50", build_profile_id="modalix_bf16", package_id="default",
+    )
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    store = FakeStore()
+    result = publish_packages(
+        repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
+        bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+        github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
+        request=request, artifact_store=store,
+    )
+
+    assert result["count"] == 1
+    assert result["packages"][0]["run_id"] == "package-run"
+    assert result["packages"][0]["artifact_sha256"] == assembled["sha256"]
+    assert [path for _, path, _, _ in calls] == [
+        "/v1/runs", "/v1/runs/package-run/inputs/component-model", "/v1/runs/package-run/parameters",
+        "/v1/runs/package-run/artifacts/package", "/v1/runs/package-run/finalize",
+    ]
+    assert calls[0][2]["run_type"] == "model_package"
+    assert calls[3][2]["artifact_type"] == "model-package"
+    assert store.objects[0][0].suffix == ".zip"
+    assert store.objects[0][3] == "application/zip"
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
@@ -294,6 +338,24 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
+    package_dir = tmp_path / "packages" / "resnet_50/modalix_bf16/packages/default"
+    package_dir.mkdir(parents=True)
+    package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
+        "model_id": "resnet_50", "build_profile_id": "modalix_bf16", "package_id": "default",
+        "run_id": "package-run", "artifact_sha256": "b" * 64, "size_bytes": 123,
+        "manifest_sha256": "c" * 64, "package_fingerprint": "c" * 64,
+        "component_run_ids": {"model": result["runs"][0]["run_id"]},
+    }]}), encoding="utf-8")
+    snapshot = build_catalog_snapshot(
+        repository=ROOT, branch="feature/models", git_sha="a" * 40,
+        compiled_dir=dist, package_dir=tmp_path / "packages",
+    )
+    resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
+    assert resnet["packages"] == [{
+        "package_id": "default", "build_profile_id": "modalix_bf16", "run_id": "package-run",
+        "artifact_sha256": "b" * 64, "size_bytes": 123, "package_fingerprint": "c" * 64,
+        "component_run_ids": {"model": result["runs"][0]["run_id"]},
+    }]
 
 
 def test_publish_attaches_accuracy_artifact_test_result_and_measurements(tmp_path: Path) -> None:

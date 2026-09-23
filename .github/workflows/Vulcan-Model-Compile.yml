@@ -932,6 +932,71 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  publish-packages:
+    name: Publish complete model packages
+    needs: [select, resolve-vulcan-config, assemble-packages]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.assemble-packages.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the trusted revision
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install registry tooling
+        run: python -m pip install .
+
+      - name: Download assembled package bundles
+        uses: actions/download-artifact@v7
+        with:
+          name: model-packages-${{ github.sha }}
+          path: _packages
+
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-package-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish finalized full packages
+        env:
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          model-registry publish-package \
+            --repository . --package-dir _packages --api-url "$REGISTRY_API_URL" \
+            --aws-region "$AWS_REGION" --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
+            --environment "${{ needs.select.outputs.vulcan_environment }}" --branch "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA" --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --json > "$RUNNER_TEMP/package-publication.json"
+
+      - name: Retain durable package publication receipts
+        uses: actions/upload-artifact@v7
+        with:
+          name: published-model-packages-${{ github.sha }}
+          path: _packages
+          if-no-files-found: error
+          retention-days: 14
+
   validation-gate:
     name: Report validation-only changes
     needs: select
@@ -962,14 +1027,14 @@ jobs:
 
   publish-catalog:
     name: Publish complete model catalog snapshot
-    needs: [select, resolve-vulcan-config, publish-compilations, validation-gate]
+    needs: [select, resolve-vulcan-config, publish-compilations, publish-packages, validation-gate]
     if: >-
       always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&
       needs.validation-gate.result == 'success' &&
-      (needs.select.outputs.count == '0' || needs.publish-compilations.result == 'success')
+      (needs.select.outputs.count == '0' || (needs.publish-compilations.result == 'success' && needs.publish-packages.result == 'success'))
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -996,6 +1061,13 @@ jobs:
           path: _compiled
           merge-multiple: true
 
+      - name: Download finalized package receipts
+        if: needs.select.outputs.count != '0'
+        uses: actions/download-artifact@v7
+        with:
+          name: published-model-packages-${{ github.sha }}
+          path: _packages
+
       - name: Configure artifact-registry publisher credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -1017,9 +1089,14 @@ jobs:
           if [[ -d _compiled ]]; then
             compiled_args=(--compiled-dir _compiled)
           fi
+          package_args=()
+          if [[ -d _packages ]]; then
+            package_args=(--package-dir _packages)
+          fi
           model-registry publish-catalog \
             --repository . \
             "${compiled_args[@]}" \
+            "${package_args[@]}" \
             --api-url "$REGISTRY_API_URL" \
             --read-api-url "$REGISTRY_READ_API_URL" \
             --aws-region "$AWS_REGION" \

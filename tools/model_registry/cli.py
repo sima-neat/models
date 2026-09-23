@@ -221,6 +221,23 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish.add_argument("--github-run-url", required=True)
     publish.add_argument("--json", action="store_true", dest="json_output")
 
+    publish_package = subcommands.add_parser(
+        "publish-package", help="publish assembled full-model packages to the Vulcan registry"
+    )
+    publish_package.add_argument("--repository", type=Path, default=Path.cwd())
+    publish_package.add_argument("--package-dir", type=Path, required=True)
+    publish_package.add_argument("--api-url", required=True)
+    publish_package.add_argument("--aws-region", default="us-west-2")
+    publish_package.add_argument("--bucket", required=True)
+    publish_package.add_argument("--kms-key-id")
+    publish_package.add_argument("--environment", choices=("staging", "production"), required=True)
+    publish_package.add_argument("--branch", required=True)
+    publish_package.add_argument("--git-sha", required=True)
+    publish_package.add_argument("--github-run-id", required=True)
+    publish_package.add_argument("--github-run-attempt", required=True)
+    publish_package.add_argument("--github-run-url", required=True)
+    publish_package.add_argument("--json", action="store_true", dest="json_output")
+
     publish_benchmark = subcommands.add_parser(
         "publish-benchmark", help="publish a benchmark run linked to its Vulcan model compilation run"
     )
@@ -254,6 +271,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     publish_catalog_parser.add_argument("--repository", type=Path, default=Path.cwd())
     publish_catalog_parser.add_argument("--compiled-dir", type=Path)
+    publish_catalog_parser.add_argument("--package-dir", type=Path)
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
@@ -685,6 +703,34 @@ def _publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_package(args: argparse.Namespace) -> int:
+    from .registry import publish_packages
+
+    result = publish_packages(
+        repository=args.repository,
+        package_dir=args.package_dir,
+        api_url=args.api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_id=args.github_run_id,
+        github_run_attempt=args.github_run_attempt,
+        github_run_url=args.github_run_url,
+    )
+    for package in result["packages"]:
+        path = (
+            args.package_dir / package["model_id"] / package["build_profile_id"]
+            / "packages" / package["package_id"] / "registry-publication.json"
+        )
+        path.write_text(json.dumps({"packages": [package]}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    message = json.dumps(result, sort_keys=True) if args.json_output else f"Published {result['count']} package(s)"
+    print(message)
+    return 0
+
+
 def _publish_benchmark(args: argparse.Namespace) -> int:
     from .benchmark_publication import publish_benchmark_result
 
@@ -734,6 +780,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
     result = publish_catalog(
         repository=args.repository,
         compiled_dir=args.compiled_dir,
+        package_dir=args.package_dir,
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
@@ -803,6 +850,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _assemble_package(args)
         if args.command == "publish":
             return _publish(args)
+        if args.command == "publish-package":
+            return _publish_package(args)
         if args.command == "publish-benchmark":
             return _publish_benchmark(args)
         if args.command == "validate-benchmark-set":

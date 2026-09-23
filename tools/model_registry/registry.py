@@ -252,12 +252,34 @@ def _publication_receipts(compiled_dir: Path | None) -> dict[tuple[str, str, str
     return receipts
 
 
+def _package_publication_receipts(package_dir: Path | None) -> dict[tuple[str, str, str], JsonObject]:
+    """Read durable package receipts written after a package run is finalized."""
+    receipts: dict[tuple[str, str, str], JsonObject] = {}
+    if package_dir is None or not package_dir.exists():
+        return receipts
+    for path in sorted(package_dir.glob("*/*/packages/*/registry-publication.json")):
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            packages = document["packages"]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+            raise ValidationError(f"could not read package publication receipt {path}: {exc}") from exc
+        if not isinstance(packages, list) or len(packages) != 1 or not isinstance(packages[0], dict):
+            raise ValidationError(f"{path}: package publication receipt must contain exactly one package")
+        package = packages[0]
+        key = tuple(str(package.get(field, "")) for field in ("model_id", "build_profile_id", "package_id"))
+        if not all(key) or key in receipts:
+            raise ValidationError(f"{path}: package publication receipt has an invalid or duplicate package")
+        receipts[key] = package
+    return receipts
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
     branch: str,
     git_sha: str,
     compiled_dir: str | Path | None = None,
+    package_dir: str | Path | None = None,
     previous: JsonObject | None = None,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
@@ -276,7 +298,11 @@ def build_catalog_snapshot(
         compiler_version=compiler_version,
     )["include"]
     receipts = _publication_receipts(Path(compiled_dir).expanduser().resolve() if compiled_dir else None)
+    package_receipts = _package_publication_receipts(
+        Path(package_dir).expanduser().resolve() if package_dir else None
+    )
     previous_builds: dict[tuple[str, str, str], JsonObject] = {}
+    previous_packages: dict[tuple[str, str, str], JsonObject] = {}
     for model in (previous or {}).get("models", []):
         if not isinstance(model, dict) or not isinstance(model.get("id"), str):
             continue
@@ -286,8 +312,15 @@ def build_catalog_snapshot(
             key = (model["id"], build.get("build_profile_id"), build.get("component_id"))
             if all(isinstance(value, str) for value in key):
                 previous_builds[key] = build
+        for package in model.get("packages", []):
+            if not isinstance(package, dict):
+                continue
+            key = (model["id"], package.get("build_profile_id"), package.get("package_id"))
+            if all(isinstance(value, str) for value in key):
+                previous_packages[key] = package
     expected_keys: set[tuple[str, str, str]] = set()
     builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
+    packages_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
     for invocation in matrix:
         for component_id in invocation["component_ids"]:
             key = (invocation["model_id"], invocation["build_profile_id"], component_id)
@@ -351,6 +384,38 @@ def build_catalog_snapshot(
             f"publication receipt references removed build unit: {model_id}/{profile_id}/{component_id}"
         )
 
+    for model_id, model in sorted(catalog.items()):
+        for declaration in model["packages"]:
+            for profile_id in declaration["build_profiles"]:
+                key = (model_id, profile_id, declaration["id"])
+                receipt = package_receipts.get(key)
+                prior = previous_packages.get(key)
+                package = receipt or prior
+                if package is None:
+                    # This model/profile was not rebuilt in the current invocation.
+                    # Component publication can still be catalogued; a full-package
+                    # action is intentionally absent until a package is finalized.
+                    continue
+                if receipt is not None and receipt.get("package_fingerprint") != receipt.get("manifest_sha256"):
+                    raise ValidationError(
+                        f"package receipt fingerprint is invalid for {model_id}/{profile_id}/{declaration['id']}"
+                    )
+                required = {component_id for component_id in declaration["components"]}
+                component_runs = package.get("component_run_ids")
+                if not isinstance(component_runs, dict) or set(component_runs) != required:
+                    raise ValidationError(
+                        f"package receipt does not link every component for {model_id}/{profile_id}/{declaration['id']}"
+                    )
+                packages_by_model[model_id].append({
+                    "package_id": declaration["id"],
+                    "build_profile_id": profile_id,
+                    "run_id": package["run_id"],
+                    "artifact_sha256": package["artifact_sha256"],
+                    "size_bytes": package["size_bytes"],
+                    "package_fingerprint": package["package_fingerprint"],
+                    "component_run_ids": component_runs,
+                })
+
     models = []
     for model_id, model in sorted(catalog.items()):
         models.append(
@@ -364,6 +429,9 @@ def build_catalog_snapshot(
                 "builds": sorted(
                     builds_by_model[model_id],
                     key=lambda item: (item["build_profile_id"], item["component_id"]),
+                ),
+                "packages": sorted(
+                    packages_by_model[model_id], key=lambda item: (item["build_profile_id"], item["package_id"])
                 ),
             }
         )
@@ -387,6 +455,7 @@ def publish_catalog(
     branch: str,
     git_sha: str,
     compiled_dir: str | Path | None = None,
+    package_dir: str | Path | None = None,
     base_branch: str | None = None,
     request: Request | None = None,
     read_request: ReadRequest | None = None,
@@ -416,6 +485,7 @@ def publish_catalog(
         branch=branch,
         git_sha=git_sha,
         compiled_dir=compiled_dir,
+        package_dir=package_dir,
         previous=previous,
     )
     result = client.request(
@@ -1338,3 +1408,157 @@ def publish_compilations(
         "count": len(published),
         "runs": published,
     }
+
+
+def publish_packages(
+    *,
+    repository: str | Path,
+    package_dir: str | Path,
+    api_url: str,
+    aws_region: str,
+    bucket: str,
+    kms_key_id: str | None,
+    environment: str,
+    branch: str,
+    git_sha: str,
+    github_run_id: str,
+    github_run_attempt: str,
+    github_run_url: str,
+    request: Request | None = None,
+    artifact_store: S3ArtifactStore | None = None,
+) -> JsonObject:
+    """Publish already-assembled full packages; GitHub artifacts remain transport only."""
+    root = Path(repository).expanduser().resolve()
+    packages_root = Path(package_dir).expanduser().resolve()
+    if not packages_root.is_dir():
+        raise ValidationError(f"assembled package directory not found: {packages_root}")
+    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
+        raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
+    if not branch.strip() or not github_run_id.strip() or not github_run_attempt.strip():
+        raise ValidationError("branch, GitHub run ID, and run attempt must not be empty")
+
+    catalog = discover_catalog(root)
+    client = SigV4RegistryClient(api_url, aws_region, request=request)
+    store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
+    branch_key, commit_tag = quote(branch, safe=""), git_sha[:12]
+    published: list[JsonObject] = []
+
+    for result_path in sorted(packages_root.glob("*/*/packages/*/package-result.json")):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValidationError(f"could not read package result {result_path}: {exc}") from exc
+        if not isinstance(result, dict):
+            raise ValidationError(f"{result_path}: package result must be an object")
+        manifest = result.get("manifest")
+        if not isinstance(manifest, dict):
+            raise ValidationError(f"{result_path}: package result manifest must be an object")
+        model_id = _require_text(result.get("model_id"), "package model_id")
+        profile_id = _require_text(result.get("build_profile_id"), "package build_profile_id")
+        package_id = _require_text(result.get("package_id"), "package package_id")
+        if model_id not in catalog:
+            raise ValidationError(f"{result_path}: package references unknown model {model_id}")
+        model = catalog[model_id]
+        declaration = next((item for item in model["packages"] if item["id"] == package_id), None)
+        if declaration is None or profile_id not in declaration["build_profiles"]:
+            raise ValidationError(f"{result_path}: package is not declared for {model_id}/{profile_id}/{package_id}")
+        archive_name = _require_text(result.get("archive"), "package archive")
+        archive = result_path.parent / archive_name
+        if archive.parent != result_path.parent or archive.suffix != ".zip" or not archive.is_file():
+            raise ValidationError(f"{result_path}: expected one local ZIP package archive")
+        artifact_sha, artifact_size = sha256_file(archive)
+        if result.get("sha256") != artifact_sha or result.get("size_bytes") != artifact_size:
+            raise ValidationError(f"{result_path}: package archive does not match package-result.json")
+        if (
+            manifest.get("model_id") != model_id
+            or manifest.get("build_profile_id") != profile_id
+            or manifest.get("package_id") != package_id
+        ):
+            raise ValidationError(f"{result_path}: package identity does not match its manifest")
+        if manifest.get("license", {}).get("redistribution") in {"prohibited", "unknown"}:
+            raise ValidationError(f"{result_path}: package redistribution policy forbids publication")
+        components = manifest.get("components")
+        component_ids = (
+            {item.get("id") for item in components if isinstance(item, dict)}
+            if isinstance(components, list)
+            else set()
+        )
+        if component_ids != set(declaration["components"]):
+            raise ValidationError(f"{result_path}: package manifest does not include exactly the declared components")
+        component_runs: dict[str, str] = {}
+        for component in components:
+            if not isinstance(component, dict):
+                raise ValidationError(f"{result_path}: package component must be an object")
+            component_id = _require_text(component.get("id"), "package component id")
+            run_id = component.get("compile_run_id")
+            if not isinstance(run_id, str) or not run_id:
+                raise ValidationError(f"{result_path}: package component {component_id} has no finalized compile run")
+            component_runs[component_id] = run_id
+
+        manifest_sha = canonical_sha256(manifest)
+        parameters = {
+            "schema_version": 1,
+            "model_id": model_id,
+            "build_profile_id": profile_id,
+            "package_id": package_id,
+            "package_manifest_sha256": manifest_sha,
+            "component_run_ids": component_runs,
+        }
+        run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
+        environment_document = {
+            "schema_version": 1, "vulcan_environment": environment,
+            "target_platform": manifest.get("target"), "packager": "model-registry",
+        }
+        stable_key = "model-package-" + hashlib.sha256(
+            f"{github_run_id}:{environment}:{branch}:{git_sha}:{model_id}:{profile_id}:{package_id}:{run_fingerprint}".encode()
+        ).hexdigest()
+        create = client.request("POST", "/v1/runs", {
+            "schema_version": 1, "run_type": "model_package", "commit_sha": git_sha,
+            "git_ref": f"refs/heads/{branch}", "ci_provider": "github-actions", "ci_run_url": github_run_url,
+            "run_fingerprint": run_fingerprint,
+            "environment": {
+                "fingerprint": canonical_sha256(environment_document), "fingerprint_version": 1,
+                "toolchain_name": "sima-model-registry", "toolchain_version": "1",
+                "target_platform": manifest.get("target"),
+                "properties": {"vulcan_environment": environment},
+            },
+            "metadata": {
+                "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id,
+                "artifact_kind": "full-package", "github_run_id": github_run_id,
+                "license": manifest["license"], "component_run_ids": component_runs,
+            },
+        }, f"{stable_key}-create")
+        run_id = _require_text(create.get("run_id"), "run_id")
+        for component_id, component_run_id in sorted(component_runs.items()):
+            client.request("PUT", f"/v1/runs/{run_id}/inputs/component-{component_id}", {
+                "input_type": "model-pack", "source_reference": f"registry-run:{component_run_id}",
+                "sha256": next(item["sha256"] for item in components if item["id"] == component_id),
+                "size_bytes": next(item["size_bytes"] for item in components if item["id"] == component_id),
+                "media_type": "application/gzip",
+                "metadata": {"component_id": component_id, "compile_run_id": component_run_id},
+            }, f"{stable_key}-component-{component_id}")
+        client.request("PUT", f"/v1/runs/{run_id}/parameters", {
+            "parameters": parameters, "canonical_sha256": canonical_sha256(parameters), "canonicalization_version": 1,
+        }, f"{stable_key}-parameters")
+        stored = store.ensure_native_sha256(
+            archive,
+            f"models/{branch_key}/{commit_tag}/{archive.relative_to(packages_root).as_posix()}",
+            artifact_sha,
+            media_type="application/zip",
+        )
+        client.request("PUT", f"/v1/runs/{run_id}/artifacts/package", {
+            "artifact_type": "model-package", "s3_bucket": bucket, "s3_key": stored.key,
+            "s3_version_id": stored.version_id, "sha256": stored.sha256, "size_bytes": stored.size_bytes,
+            "media_type": "application/zip", "retention_class": "branch",
+            "metadata": {"model_id": model_id, "build_profile_id": profile_id, "package_id": package_id,
+                         "manifest_sha256": manifest_sha, "component_run_ids": component_runs},
+        }, f"{stable_key}-artifact")
+        client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
+        published.append({
+            "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id, "run_id": run_id,
+            "artifact_sha256": artifact_sha, "size_bytes": artifact_size, "manifest_sha256": manifest_sha,
+            "package_fingerprint": manifest_sha, "component_run_ids": component_runs, "s3_key": stored.key,
+        })
+    if not published:
+        raise ValidationError("no assembled package results were found")
+    return {"count": len(published), "packages": published}

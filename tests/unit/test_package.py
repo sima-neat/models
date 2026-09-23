@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -111,12 +112,12 @@ def test_assembles_deterministic_retrieval_bundle_with_intact_component_mpk(tmp_
     )
     assert first["sha256"] == second["sha256"]
     bundle = tmp_path / "packages-a" / "resnet_50" / "modalix_bf16" / "packages" / "default" / first["archive"]
-    with tarfile.open(bundle) as stream:
-        assert stream.getnames() == [
+    with zipfile.ZipFile(bundle) as stream:
+        assert stream.namelist() == [
             "resnet_50/manifest.json",
             "resnet_50/components/model/resnet_50_mpk.tar.gz",
         ]
-        manifest = json.load(stream.extractfile("resnet_50/manifest.json"))
+        manifest = json.loads(stream.read("resnet_50/manifest.json"))
     assert manifest["components"][0]["id"] == "model"
     assert manifest["composition"] == {
         "id": "default",
@@ -124,6 +125,13 @@ def test_assembles_deterministic_retrieval_bundle_with_intact_component_mpk(tmp_
         "component": "model",
         "entrypoint": "default",
     }
+    assert manifest["files"] == [{
+        "path": "components/model/resnet_50_mpk.tar.gz",
+        "sha256": hashlib.sha256(
+            (compiled / "resnet_50/modalix_bf16/model/resnet_50_mpk.tar.gz").read_bytes()
+        ).hexdigest(),
+        "size_bytes": (compiled / "resnet_50/modalix_bf16/model/resnet_50_mpk.tar.gz").stat().st_size,
+    }]
 
 
 def test_assemble_available_packages_skips_incomplete_builds(tmp_path: Path) -> None:

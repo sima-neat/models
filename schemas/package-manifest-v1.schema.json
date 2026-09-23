@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "model_id", "display_name", "package_id", "build_profile_id",
-    "composition", "target", "provenance", "components", "resources", "license"
+    "composition", "target", "provenance", "components", "resources", "files", "license"
   ],
   "properties": {
     "schema_version": {"const": 1},
@@ -72,6 +72,20 @@
           "source_sha256": {"$ref": "#/$defs/sha256"},
           "size_bytes": {"type": "integer", "minimum": 1},
           "license": {"$ref": "#/$defs/license"}
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": {"$ref": "#/$defs/path"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "size_bytes": {"type": "integer", "minimum": 1}
         }
       }
     },

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import io
 import json
-import tarfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -25,25 +24,22 @@ def _load_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def _tar_info(name: str, size: int) -> tarfile.TarInfo:
-    info = tarfile.TarInfo(name)
-    info.size = size
-    info.mtime = 0
-    info.mode = 0o644
-    info.uid = 0
-    info.gid = 0
-    info.uname = ""
-    info.gname = ""
+def _zip_info(name: str) -> zipfile.ZipInfo:
+    """Return a platform-independent, non-executable ZIP member descriptor."""
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.create_system = 3
+    info.external_attr = 0o100644 << 16
+    info.compress_type = zipfile.ZIP_STORED
     return info
 
 
-def _add_bytes(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
-    archive.addfile(_tar_info(name, len(payload)), io.BytesIO(payload))
+def _add_bytes(archive: zipfile.ZipFile, name: str, payload: bytes) -> None:
+    archive.writestr(_zip_info(name), payload)
 
 
-def _add_file(archive: tarfile.TarFile, name: str, path: Path) -> None:
+def _add_file(archive: zipfile.ZipFile, name: str, path: Path) -> None:
     with path.open("rb") as stream:
-        archive.addfile(_tar_info(name, path.stat().st_size), stream)
+        archive.writestr(_zip_info(name), stream.read())
 
 
 def assemble_package(
@@ -183,6 +179,10 @@ def assemble_package(
             resource_entry["license"] = resource["license"]
         resource_entries.append(resource_entry)
 
+    installed_files = [
+        {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
+        for name, path in sorted((*component_files, *resource_files, *composition_files))
+    ]
     manifest = {
         "schema_version": 1,
         "model_id": model_id,
@@ -194,6 +194,7 @@ def assemble_package(
         "provenance": provenance_identity or {},
         "components": component_entries,
         "resources": resource_entries,
+        "files": installed_files,
         "license": model["license"],
     }
     package_schema = _load_json(root / "schemas" / "package-manifest-v1.schema.json", "package schema")
@@ -208,12 +209,12 @@ def assemble_package(
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
     package_dir = output_root / model_id / build_profile_id / "packages" / package_id
     package_dir.mkdir(parents=True, exist_ok=True)
-    bundle_name = f"{model_id}_{build_profile_id}_{package_id}_bundle.tar"
+    bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
     bundle_path = package_dir / bundle_name
     temporary = package_dir / f".{bundle_name}.partial"
     prefix = f"{model_id}/"
     try:
-        with tarfile.open(temporary, "w", format=tarfile.PAX_FORMAT) as archive:
+        with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
             _add_bytes(archive, f"{prefix}manifest.json", manifest_bytes)
             for name, path in sorted((*component_files, *resource_files, *composition_files)):
                 _add_file(archive, f"{prefix}{name}", path)

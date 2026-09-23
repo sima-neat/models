@@ -235,9 +235,12 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     job = workflow["jobs"]["publish-catalog"]
 
-    assert job["needs"] == ["select", "resolve-vulcan-config", "publish-compilations", "validation-gate"]
+    assert job["needs"] == [
+        "select", "resolve-vulcan-config", "publish-compilations", "publish-packages", "validation-gate"
+    ]
     assert "needs.select.outputs.count == '0'" in job["if"]
     assert "needs.validation-gate.result == 'success'" in job["if"]
+    assert "needs.publish-packages.result == 'success'" in job["if"]
     assert job["permissions"]["id-token"] == "write"
     publish = next(
         step for step in job["steps"] if step.get("name") == "Publish and promote the complete catalog snapshot"
@@ -246,10 +249,22 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
     assert publish["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
     assert '--base-branch "$BASE_BRANCH"' in publish["run"]
     assert "--git-sha \"$GITHUB_SHA\"" in publish["run"]
+    assert "--package-dir _packages" in publish["run"]
     assert publish["env"]["REGISTRY_READ_API_URL"] == (
         "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
     )
     assert "--read-api-url \"$REGISTRY_READ_API_URL\"" in publish["run"]
+
+
+def test_complete_packages_are_published_before_the_catalog() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = workflow["jobs"]["publish-packages"]
+
+    assert job["needs"] == ["select", "resolve-vulcan-config", "assemble-packages"]
+    publish = next(step for step in job["steps"] if step.get("name") == "Publish finalized full packages")
+    assert "model-registry publish-package" in publish["run"]
+    assert "--package-dir _packages" in publish["run"]
+    assert workflow["jobs"]["publish-catalog"]["needs"].index("publish-packages") >= 0
 
 
 def test_validation_only_changes_are_reported_and_block_catalog_publication() -> None:
