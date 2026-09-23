@@ -679,6 +679,7 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     ]
     assert calls[0][0:2] == ("POST", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40 + "/snapshots")
     assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "document": result["catalog"]}
+    assert calls[0][3] == "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:

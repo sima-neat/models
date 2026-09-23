@@ -507,7 +507,11 @@ def publish_catalog(
         "POST",
         f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
         snapshot,
-        f"models-catalog-{branch}-{git_sha.lower()}",
+        # The prior snapshot is part of the compare-and-swap request.  Include
+        # it in the idempotency key so a retry that appends newly published
+        # packages does not collide with an earlier request for the same Git
+        # revision but a different catalog body.
+        f"models-catalog-{branch}-{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}",
     )
     return {"catalog": document, "registry": result}
 
