@@ -501,7 +501,7 @@ def publish_catalog(
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
         "previous_snapshot": previous_snapshot,
-        "document": document,
+        "catalog": document,
     }
     result = client.request(
         "POST",

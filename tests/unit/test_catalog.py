@@ -1006,7 +1006,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_reposi
         assert writes == [{
             "initialize": True,
             "previous_snapshot": None,
-            "document": result["catalog"],
+            "catalog": result["catalog"],
         }]
     assert reads[0].endswith("git_ref=refs%2Fheads%2Ffeat%2Fnames")
     if source in {"target", "forbidden"}:

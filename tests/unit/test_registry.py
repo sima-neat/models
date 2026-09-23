@@ -678,7 +678,7 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
         "catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
     ]
     assert calls[0][0:2] == ("POST", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40 + "/snapshots")
-    assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "document": result["catalog"]}
+    assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "catalog": result["catalog"]}
     assert calls[0][3] == "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16
 
 
