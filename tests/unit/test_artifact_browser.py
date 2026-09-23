@@ -218,10 +218,10 @@ def test_detail_error_can_be_retried_and_closed() -> None:
     assert "selectRun(state.selectedId, { updateUrl: false });" in script
 
 
-def test_branch_filter_defaults_to_main_and_persists_user_selection() -> None:
+def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
-    assert 'const DEFAULT_BRANCH = "main"' in script
+    assert 'const DEFAULT_BRANCH = "develop"' in script
     assert "sima-neat-model-branch:" in script
     assert "readBranchPreference" in script
     assert "writeBranchPreference(state.preferredBranch)" in script

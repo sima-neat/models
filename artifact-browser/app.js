@@ -5,7 +5,7 @@ import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
 const configuredRepository = config.repository || {};
-const DEFAULT_BRANCH = "main";
+const DEFAULT_BRANCH = "develop";
 const CATEGORY_QUERY_FIELDS = {
   "model-type-filter": "model_type",
   "task-filter": "task",

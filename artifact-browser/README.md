@@ -91,10 +91,10 @@ Public discovery requests completed builds only. The primary search matches
 model, build-profile, and component names together with category names; secondary branch,
 compiler, type, task, architecture, paradigm, and input facets are collapsed by
 default and display an active-filter count when used.
-The branch filter defaults to `main`. A branch selected by the user is saved per
+The branch filter defaults to `develop`. A branch selected by the user is saved per
 registry and repository in browser storage. The dedicated branch catalog, not a
-limited runs page, determines whether the portal falls back to `main` (or all
-branches when `main` is unavailable).
+limited runs page, determines whether the portal falls back to `develop` (or all
+branches when `develop` is unavailable).
 Pagination is branch-aware, so **Load earlier builds** is shown only when the
 registry reports another page for the currently selected branch.
 
