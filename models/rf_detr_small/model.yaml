@@ -135,6 +135,7 @@ calibrations:
 build_profiles:
 - id: modalix_int8_bf16
   target: modalix
+  runner_class: expensive
   components:
   - id: backbone
     artifact_suffix: backbone_int8_mse
