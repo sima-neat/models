@@ -430,8 +430,10 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'class="artifact-download-shortcut"' in script
-    assert 'aria-label="Download model artifact"' in script
-    assert 'data-tooltip="Download model artifact"' in script
+    assert 'aria-label="Download full package"' in script
+    assert 'data-tooltip="Download full package"' in script
+    assert 'aria-label="Download individual components"' in script
+    assert 'data-tooltip="Download individual components"' in script
     assert '<dl class="artifact-metadata">' in script
     assert '<dt>File size</dt>' in script
     assert '<dt>SHA-256</dt>' in script
