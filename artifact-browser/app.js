@@ -77,7 +77,8 @@ const elements = Object.fromEntries(
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
     "compare-button", "compare-label", "compare-count", "compare-dialog", "compare-close", "compare-content",
     "compare-title", "compare-description",
-    "download-dialog", "download-description", "download-list", "download-confirm", "download-cancel", "download-status",
+    "download-dialog", "download-kicker", "download-title", "download-description", "download-package-info",
+    "download-list", "download-confirm", "download-cancel", "download-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
