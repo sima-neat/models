@@ -1303,17 +1303,30 @@ function errorPanel(message, title = "Registry unavailable", { closable = false 
 let pendingDownloads = null;
 let downloadRequest = 0;
 
+function resetDownloadDialog({ kicker, title, description, confirmLabel }) {
+  pendingDownloads = null;
+  elements["download-kicker"].textContent = kicker;
+  elements["download-title"].textContent = title;
+  elements["download-description"].textContent = description;
+  elements["download-list"].innerHTML = "";
+  elements["download-package-info"].hidden = true;
+  elements["download-package-info"].innerHTML = "";
+  elements["download-dialog"].querySelector(".download-note").hidden = true;
+  elements["download-status"].textContent = "";
+  elements["download-confirm"].disabled = true;
+  elements["download-confirm"].textContent = confirmLabel;
+}
+
 async function downloadVariant(runId) {
   const request = ++downloadRequest;
   const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
-  pendingDownloads = null;
-  elements["download-description"].textContent = "Checking the selected variant’s components…";
-  elements["download-list"].innerHTML = "";
-  elements["download-dialog"].querySelector(".download-note").hidden = true;
-  elements["download-status"].textContent = "";
-  elements["download-confirm"].disabled = true;
-  elements["download-confirm"].textContent = "Download all files";
+  resetDownloadDialog({
+    kicker: "Model variant",
+    title: "Download components",
+    description: "Checking the selected variant’s components…",
+    confirmLabel: "Download all files",
+  });
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
@@ -1329,6 +1342,58 @@ async function downloadVariant(runId) {
     note.textContent = "Files download separately and in parallel. Your browser may ask you to allow multiple downloads.";
     elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>${escapeHtml(item.component)}</strong><span>${escapeHtml(item.filename)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
     elements["download-confirm"].textContent = `Download ${downloads.length} ${fileLabel}`;
+    elements["download-confirm"].disabled = false;
+  } catch (error) {
+    if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
+  }
+}
+
+async function downloadPackage(runId) {
+  const request = ++downloadRequest;
+  const dialog = elements["download-dialog"];
+  resetDownloadDialog({
+    kicker: "Full package",
+    title: "Download ZIP package",
+    description: "Checking the package manifest and download metadata…",
+    confirmLabel: "Download ZIP",
+  });
+  dialog.showModal();
+  try {
+    const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
+    const run = summary.run;
+    const artifact = (summary.artifacts || []).find((item) => item.artifact_type === "model-package");
+    if (!run || !artifact) throw new Error("No complete ZIP package is available for this build.");
+    const metadata = run.metadata || {};
+    const packageId = metadata.package_id || artifact.metadata?.package_id || "default";
+    const modelId = metadata.model_id || "model";
+    const profile = metadata.build_profile_id || "build";
+    const components = Object.keys(metadata.component_run_ids || artifact.metadata?.component_run_ids || {});
+    const filename = `${modelId}_${profile}_${packageId}.zip`;
+    const downloads = await prepareDownloads([{
+      runId: run.id,
+      component: "Full package",
+      name: artifact.name,
+      size: artifact.size_bytes,
+      downloadFilename: filename,
+    }], api);
+    if (request !== downloadRequest || !dialog.open) return;
+    pendingDownloads = downloads;
+    const license = metadata.license || {};
+    const redistribution = license.redistribution
+      ? `${license.spdx || "License"} · redistribution ${license.redistribution}`
+      : license.spdx || "Not recorded";
+    const componentLabel = `${components.length} ${components.length === 1 ? "component" : "components"}`;
+    elements["download-description"].textContent = `${profile} is packaged as one verified ZIP. Confirm to start the download.`;
+    elements["download-package-info"].hidden = false;
+    elements["download-package-info"].innerHTML = `
+      <dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)}</dd>
+      <dt>ZIP size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
+      <dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd>
+      <dt>License</dt><dd>${escapeHtml(redistribution)}</dd>`;
+    const note = elements["download-dialog"].querySelector(".download-note");
+    note.hidden = !license.attribution;
+    note.textContent = license.attribution ? `Attribution: ${license.attribution}` : "";
+    elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>Full package</strong><span>${escapeHtml(item.filename)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
     elements["download-confirm"].disabled = false;
   } catch (error) {
     if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
@@ -1612,7 +1677,8 @@ elements["detail-pane"].addEventListener("click", (event) => {
   const variantDownload = event.target.closest("[data-download-variant]");
   if (variantDownload) downloadVariant(variantDownload.dataset.downloadVariant);
   const download = event.target.closest("[data-download]");
-  if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
+  if (download?.dataset.download === "package") downloadPackage(download.dataset.runId);
+  else if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
   if (event.target.closest("[data-scroll-benchmark]")) {
     const benchmark = elements["detail-pane"].querySelector("#benchmark-section");
     if (benchmark) {
