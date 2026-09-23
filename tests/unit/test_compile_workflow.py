@@ -177,6 +177,8 @@ def test_dispatch_without_model_filters_is_the_explicit_full_rebuild_path() -> N
     assert "model-registry matrix --repository . --all" in matrix_script
     assert workflow["on"]["workflow_dispatch"]["inputs"]["force_rebuild_all"]["type"] == "boolean"
     assert '"${FORCE_REBUILD_ALL:-false}" == "true"' in matrix_script
+    assert "force_args=(--force-rebuild-all)" in matrix_script
+    assert 'model-registry matrix --repository . --models "$REQUESTED_MODELS"' in matrix_script
 
 
 def test_json_catalog_and_package_publication_are_retired() -> None:

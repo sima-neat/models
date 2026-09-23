@@ -191,15 +191,16 @@ jobs:
             if [[ -n "${REQUESTED_COMPONENTS:-}" ]]; then
               component_args=(--components "$REQUESTED_COMPONENTS")
             fi
+            force_args=()
             if [[ "${FORCE_REBUILD_ALL:-false}" == "true" ]]; then
-              matrix="$(model-registry matrix --repository . --all \
-                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
-            elif [[ -n "${REQUESTED_MODELS:-}" ]]; then
+              force_args=(--force-rebuild-all)
+            fi
+            if [[ -n "${REQUESTED_MODELS:-}" ]]; then
               matrix="$(model-registry matrix --repository . --models "$REQUESTED_MODELS" \
-                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
+                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}" "${force_args[@]}")"
             else
               matrix="$(model-registry matrix --repository . --all \
-                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}")"
+                --compiler-version "$COMPILER_VERSION" "${profile_args[@]}" "${component_args[@]}" "${force_args[@]}")"
             fi
           else
             matrix="$(model-registry matrix --repository . \
