@@ -639,16 +639,17 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     read_urls: list[str] = []
 
     previous = {"models": []}
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": previous}
     monkeypatch.setattr(
         "model_registry.registry.build_catalog_snapshot",
         lambda **kwargs: {
-            "schema_version": 1,
+            "schema_version": 2,
             "repository": "sima-neat/models",
             "git_ref": "refs/heads/develop",
             "catalog_revision": "a" * 40,
             "taxonomy_sha256": "b" * 64,
             "taxonomy": {},
-            "models": [],
+            "models": [], "pending_builds": [],
         },
     )
 
@@ -658,7 +659,7 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
 
     def read_request(url: str) -> dict:
         read_urls.append(url)
-        return {"catalog": {"document": previous}}
+        return {"catalog": target_catalog}
 
     result = publish_catalog(
         repository=ROOT,
@@ -676,7 +677,8 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
         "https://models-registry.example.invalid/v1/repositories/sima-neat/models/"
         "catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
     ]
-    assert calls[0][0:2] == ("PUT", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40)
+    assert calls[0][0:2] == ("POST", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40 + "/snapshots")
+    assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "document": result["catalog"]}
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:

@@ -1003,7 +1003,11 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_reposi
                 assert build["artifact_sha256"] == old_build["artifact_sha256"]
                 assert build["compile_fingerprint"] == old_build["compile_fingerprint"]
         assert result["catalog"]["models"][0]["builds"][0]["artifact_suffix"] == "model_int8"
-        assert writes == [result["catalog"]]
+        assert writes == [{
+            "initialize": True,
+            "previous_snapshot": None,
+            "document": result["catalog"],
+        }]
     assert reads[0].endswith("git_ref=refs%2Fheads%2Ffeat%2Fnames")
     if source in {"target", "forbidden"}:
         assert len(reads) == 1

@@ -281,6 +281,7 @@ def build_catalog_snapshot(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     previous: JsonObject | None = None,
+    incremental: bool = False,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
@@ -435,8 +436,8 @@ def build_catalog_snapshot(
                 ),
             }
         )
-    return {
-        "schema_version": 1,
+    document: JsonObject = {
+        "schema_version": 2 if incremental else 1,
         "repository": "sima-neat/models",
         "git_ref": f"refs/heads/{branch}",
         "catalog_revision": git_sha.lower(),
@@ -444,6 +445,9 @@ def build_catalog_snapshot(
         "taxonomy": taxonomy,
         "models": models,
     }
+    if incremental:
+        document["pending_builds"] = []
+    return document
 
 
 def publish_catalog(
@@ -464,10 +468,8 @@ def publish_catalog(
     read = read_request or _public_registry_json
     read_base_url = read_api_url.rstrip("/")
     previous: JsonObject | None = None
-    source_branches = [branch]
-    if base_branch and base_branch != branch:
-        source_branches.append(base_branch)
-    for source_branch in source_branches:
+    target_catalog: JsonObject | None = None
+    for source_branch in [branch, *( [base_branch] if base_branch and base_branch != branch else [])]:
         try:
             current = read(
                 f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
@@ -475,8 +477,13 @@ def publish_catalog(
             )
             candidate = current.get("catalog")
             if isinstance(candidate, dict):
-                previous = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
-            break
+                document = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
+                if isinstance(document, dict):
+                    previous = document
+                if source_branch == branch:
+                    target_catalog = candidate
+                if previous is not None:
+                    break
         except RegistryPublicationError as exc:
             if "HTTP 404 catalog_not_found" not in str(exc):
                 raise
@@ -487,11 +494,19 @@ def publish_catalog(
         compiled_dir=compiled_dir,
         package_dir=package_dir,
         previous=previous,
+        incremental=True,
     )
+    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+    previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
+    snapshot = {
+        "initialize": target_revision != git_sha.lower(),
+        "previous_snapshot": previous_snapshot,
+        "document": document,
+    }
     result = client.request(
-        "PUT",
-        f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}",
-        document,
+        "POST",
+        f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
+        snapshot,
         f"models-catalog-{branch}-{git_sha.lower()}",
     )
     return {"catalog": document, "registry": result}
