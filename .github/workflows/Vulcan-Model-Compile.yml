@@ -301,6 +301,10 @@ jobs:
     permissions:
       actions: write
       contents: read
+    # Let each matrix entry finish independently. A failed or timed-out model
+    # must not prevent durable publication of the other verified outputs.
+    # report-partial-publication records the overall failure after publication.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}
@@ -705,7 +709,7 @@ jobs:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
     if: >-
-      !cancelled() &&
+      always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.count != '0' &&
       needs.resolve-vulcan-config.result == 'success' &&
@@ -717,6 +721,9 @@ jobs:
       actions: write
       contents: read
       id-token: write
+    # A publisher whose compiler artifact is absent fails only that matrix
+    # entry; the remaining verified component sets remain publishable.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}
@@ -870,9 +877,10 @@ jobs:
     name: Assemble complete model packages
     needs: [select, publish-compilations]
     if: >-
+      always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
-      needs.publish-compilations.result == 'success'
+      (needs.publish-compilations.result == 'success' || needs.publish-compilations.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -1035,7 +1043,7 @@ jobs:
       needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&
       needs.validation-gate.result == 'success' &&
-      (needs.select.outputs.count == '0' || (needs.publish-compilations.result == 'success' && needs.publish-packages.result == 'success'))
+      (needs.select.outputs.count == '0' || ((needs.publish-compilations.result == 'success' || needs.publish-compilations.result == 'failure') && needs.publish-packages.result == 'success'))
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -1138,3 +1146,41 @@ jobs:
             -f component_ids="$COMPONENT_IDS"
           echo "Dispatched registry-backed benchmark for ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} ($COMPONENT_IDS)." \
             >> "$GITHUB_STEP_SUMMARY"
+
+  report-partial-publication:
+    name: Report failed model builds after publication
+    needs: [select, compile, publish-compilations, publish-catalog]
+    if: >-
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Fail after publishing every available verified artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          failed="$RUNNER_TEMP/failed-model-jobs.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            | jq '[.[].jobs[] | select(
+                (.name | startswith("Compile ") or startswith("Publish ")) and
+                .conclusion != "success"
+              ) | {name, conclusion, html_url}]' > "$failed"
+          count="$(jq 'length' "$failed")"
+          if (( count == 0 )); then
+            echo "All selected model builds and publications completed successfully." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## Partial model publication"
+            echo
+            echo "Published every complete, verified package that was available. The following jobs failed or were cancelled:"
+            jq -r '.[] | "- [\(.name)](\(.html_url)) — \(.conclusion)"' "$failed"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::$count model build or publication job(s) did not complete; available artifacts were still published."
+          exit 1
