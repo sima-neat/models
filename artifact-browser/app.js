@@ -1310,6 +1310,7 @@ function resetDownloadDialog({ kicker, title, description, confirmLabel }) {
   elements["download-title"].textContent = title;
   elements["download-description"].textContent = description;
   elements["download-list"].innerHTML = "";
+  elements["download-list"].hidden = false;
   elements["download-package-info"].hidden = true;
   elements["download-package-info"].innerHTML = "";
   elements["download-dialog"].querySelector(".download-note").hidden = true;
@@ -1354,7 +1355,7 @@ async function downloadPackage(runId) {
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
     kicker: "Full package",
-    title: "Download ZIP package",
+    title: "Download model package",
     description: "Checking the package manifest and download metadata…",
     confirmLabel: "Download ZIP",
   });
@@ -1387,6 +1388,7 @@ async function downloadPackage(runId) {
     elements["download-description"].textContent = `${profile} is packaged as one verified ZIP. Confirm to start the download.`;
     elements["download-package-info"].hidden = false;
     elements["download-package-info"].innerHTML = `
+      <dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd>
       <dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)}</dd>
       <dt>ZIP size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
       <dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd>
@@ -1394,7 +1396,7 @@ async function downloadPackage(runId) {
     const note = elements["download-dialog"].querySelector(".download-note");
     note.hidden = !license.attribution;
     note.textContent = license.attribution ? `Attribution: ${license.attribution}` : "";
-    elements["download-list"].innerHTML = downloads.map((item) => `<li><div><strong>Full package</strong><span>${escapeHtml(item.filename)}</span></div><span>${formatBytes(item.size)}</span></li>`).join("");
+    elements["download-list"].hidden = true;
     elements["download-confirm"].disabled = false;
   } catch (error) {
     if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;

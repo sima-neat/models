@@ -441,7 +441,7 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 .download-dialog p { overflow-wrap: anywhere; }
 #download-description, .download-note { color: var(--ink-soft); line-height: 1.6; }
 .download-note { font-size: 13px; }
-.download-package-info { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); gap: 8px 16px; margin: 20px 0; padding: 16px 0; border-block: 1px solid var(--line); font-size: 14px; }
+.download-package-info { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); gap: 8px 16px; margin: 20px 0; padding: 16px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 92%, var(--blue) 8%); font-size: 14px; }
 .download-package-info dt { color: var(--ink-soft); }
 .download-package-info dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .download-package-info code { font: inherit; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
