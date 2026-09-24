@@ -84,8 +84,10 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         raise ValidationError("devkit.board must be a non-empty string")
     if not isinstance(os_type, str) or not os_type:
         raise ValidationError("devkit.os_type must be a non-empty string")
-    if install_target != f"core@v{core_version}":
-        raise ValidationError("neat-core.install_target must match neat-core.version")
+    if not isinstance(install_target, str) or re.fullmatch(
+        r"core@[A-Za-z0-9][A-Za-z0-9._/-]*(?::[a-f0-9]{12,40})?", install_target
+    ) is None:
+        raise ValidationError("neat-core.install_target must name a Core release or branch package")
 
     vulcan = benchmarker.get("vulcan")
     if not isinstance(vulcan, dict):

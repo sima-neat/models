@@ -23,7 +23,7 @@ PY
 )"
 
 IFS=$'\t' read -r NEAT_VERSION CORE_TARGET PLATFORM_VERSION <<< "${dependency}"
-if [[ -z "${NEAT_VERSION}" || "${CORE_TARGET}" != "core@v${NEAT_VERSION}" || -z "${PLATFORM_VERSION}" ]]; then
+if [[ -z "${NEAT_VERSION}" || ! "${CORE_TARGET}" =~ ^core@[A-Za-z0-9][A-Za-z0-9._/-]*(:[a-f0-9]{12,40})?$ || -z "${PLATFORM_VERSION}" ]]; then
   echo "Invalid benchmarker dependency declaration" >&2
   exit 1
 fi
@@ -74,7 +74,7 @@ PY
 
 PYNEAT_PYTHON="$(detect_pyneat_python || true)"
 if [[ "${BENCHMARKER_SKIP_CORE_INSTALL:-0}" != "1" ]] && \
-   { [[ -z "${PYNEAT_PYTHON}" ]] || ! pyneat_matches "${PYNEAT_PYTHON}"; }; then
+   { [[ "${CORE_TARGET}" != "core@v${NEAT_VERSION}" ]] || [[ -z "${PYNEAT_PYTHON}" ]] || ! pyneat_matches "${PYNEAT_PYTHON}"; }; then
   command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1 || {
     echo "sima-cli is required to install ${CORE_TARGET}" >&2
     exit 1

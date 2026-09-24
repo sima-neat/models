@@ -65,8 +65,8 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     dependencies = json.loads((output / "dependencies.json").read_text(encoding="utf-8"))
     assert dependencies == {
         "schema_version": 1,
-        "platform_version": "2.1.3",
-        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@v0.4.0"}},
+        "platform_version": "3.0.0",
+        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@release-3.0.0-prep:96d8805fe3c1"}},
     }
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata == {"name": "gh:sima-neat/models/benchmarker", "version": "0.2.0+unit"}
@@ -76,8 +76,8 @@ def test_package_installer_uses_declared_core_dependency() -> None:
     dependencies = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))
     assert dependencies == {
         "schema_version": 1,
-        "platform_version": "2.1.3",
-        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@v0.4.0"}},
+        "platform_version": "3.0.0",
+        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@release-3.0.0-prep:96d8805fe3c1"}},
     }
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert '"${SIMA_CLI_BIN}" neat install -t minimal "${CORE_TARGET}"' in script

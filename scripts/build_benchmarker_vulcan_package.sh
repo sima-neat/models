@@ -62,7 +62,7 @@ SIMA_CLI_CHECK_FOR_UPDATE=0 "${SIMA_CLI_BIN}" packages build "${OUT_DIR}" \
   --description "Generic Python model benchmarker for Modalix DevKits" \
   --install-script "install_benchmarker_package.sh" \
   --download-compatible-files-only \
-  --board-platform "modalix@==2.1.3"
+  --board-platform "modalix@==3.0.0"
 
 test -f "${OUT_DIR}/metadata.json"
 "${PYTHON_BIN}" -m json.tool "${OUT_DIR}/metadata.json" >/dev/null

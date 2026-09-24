@@ -303,7 +303,11 @@ jobs:
             echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
             exit 1
           fi
-          echo "Verified DevKit platform $actual_platform."
+          if ! grep -Eq '(^|[^[:alnum:]])B?1493([^[:alnum:]]|$)' /etc/buildinfo; then
+            echo "DevKit build mismatch: expected B1493." >&2
+            exit 1
+          fi
+          echo "Verified DevKit platform $actual_platform, build B1493."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
           echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
 
