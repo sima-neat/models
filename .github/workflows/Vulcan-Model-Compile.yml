@@ -1162,6 +1162,7 @@ jobs:
       - name: Fail after publishing every available verified artifact
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISHABLE: ${{ needs.select.outputs.publishable }}
         run: |
           set -euo pipefail
           failed="$RUNNER_TEMP/failed-model-jobs.json"
@@ -1169,7 +1170,8 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             | jq '[.[].jobs[] | select(
                 (.name | startswith("Compile ") or startswith("Publish ")) and
-                .conclusion != "success"
+                .conclusion != "success" and
+                (env.PUBLISHABLE == "true" or .conclusion != "skipped")
               ) | {name, conclusion, html_url}]' > "$failed"
           count="$(jq 'length' "$failed")"
           if (( count == 0 )); then
