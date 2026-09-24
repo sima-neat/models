@@ -19,6 +19,7 @@ from model_registry.catalog import (
     semantic_change_plan,
     validation_fingerprint,
 )
+from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot, publish_catalog
 
@@ -27,6 +28,7 @@ FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
+COMPILER_VERSION = resolve_model_compiler(ROOT)["version"]
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -675,7 +677,7 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     head = _commit(catalog_repository, "metadata")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert plan["include"] == []
     assert plan["validation_include"] == []
@@ -691,7 +693,7 @@ def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) 
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     head = _commit(catalog_repository, "use expensive runner")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
     assert plan["include"][0]["requested_runner_class"] == "expensive"
@@ -702,7 +704,7 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
     (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
     head = _commit(catalog_repository, "recipe")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
     assert plan["metadata_changed"] is False
@@ -734,7 +736,7 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
     )
     head = _commit(catalog_repository, "benchmark")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert plan["include"] == []
     assert [(item["model_id"], item["component_ids"]) for item in plan["benchmark_include"]] == [
@@ -760,7 +762,7 @@ def test_semantic_plan_selects_validation_without_compile(catalog_repository: Pa
     correctness.write_text("schema_version: 1\nstatus: provisional\n", encoding="utf-8")
     head = _commit(catalog_repository, "validation")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert plan["include"] == []
     assert [(item["model_id"], item["component_id"]) for item in plan["validation_include"]] == [
@@ -775,7 +777,7 @@ def test_semantic_plan_reports_removed_invocation_without_rebuild(catalog_reposi
     (catalog_repository / "models" / "bravo").rmdir()
     head = _commit(catalog_repository, "remove model")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert plan["include"] == []
     assert plan["deleted_invocations"] == [{
@@ -794,7 +796,7 @@ def test_semantic_plan_taxonomy_label_change_validates_without_rebuild(catalog_r
     taxonomy_path.write_text(yaml.safe_dump(taxonomy, sort_keys=False), encoding="utf-8")
     head = _commit(catalog_repository, "taxonomy label")
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert plan["include"] == []
     assert plan["taxonomy_changed"] is True
@@ -810,7 +812,7 @@ def test_compile_fingerprint_schema_bump_forces_all_invocations(
     head = _commit(catalog_repository, "schema bump")
     monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
 
@@ -884,7 +886,12 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
         manifest.write_text(yaml.safe_dump(model))
     base = _initialize_repository(catalog_repository)
     catalog = discover_catalog(catalog_repository)
-    matrix = build_matrix(catalog, sorted(catalog), repository=catalog_repository, compiler_version="2.1.3")
+    matrix = build_matrix(
+        catalog,
+        sorted(catalog),
+        repository=catalog_repository,
+        compiler_version=COMPILER_VERSION,
+    )
     prior = {"models": [
         {"id": model_id, "builds": [
             {
@@ -905,7 +912,7 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
             binding["artifact_suffix"] = suffix
         manifest.write_text(yaml.safe_dump(model))
         head = _commit(catalog_repository, "rename download")
-        plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+        plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
         assert plan["include"] == []
         assert plan["validation_include"] == []
         assert plan["benchmark_include"] == []
@@ -936,7 +943,12 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
 @pytest.mark.parametrize("source", ["base", "target", "stale", "missing", "forbidden"])
 def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_repository: Path, source: str) -> None:
     catalog = discover_catalog(catalog_repository)
-    matrix = build_matrix(catalog, sorted(catalog), repository=catalog_repository, compiler_version="2.1.3")
+    matrix = build_matrix(
+        catalog,
+        sorted(catalog),
+        repository=catalog_repository,
+        compiler_version=COMPILER_VERSION,
+    )
     prior = {"models": [
         {"id": model_id, "builds": [
             {

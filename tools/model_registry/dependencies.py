@@ -7,7 +7,8 @@ from typing import Any
 
 from .errors import ValidationError
 
-MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -32,7 +33,10 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
         raise ValidationError("dependency manifest must define model-compiler as an object")
     version = dependency.get("version")
     if not isinstance(version, str) or MODEL_COMPILER_VERSION.fullmatch(version) is None:
-        raise ValidationError("model-compiler.version must use MAJOR.MINOR.PATCH format")
+        raise ValidationError(
+            "model-compiler.version must use MAJOR.MINOR.PATCH or "
+            "MAJOR.MINOR.PATCH.SERVICE format"
+        )
     return {"label": f"model-compiler-{version}", "version": version}
 
 
@@ -56,7 +60,7 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         ("neat-core.version", core_version),
         ("benchmarker.version", benchmarker_version),
     ):
-        if not isinstance(value, str) or MODEL_COMPILER_VERSION.fullmatch(value) is None:
+        if not isinstance(value, str) or SEMANTIC_VERSION.fullmatch(value) is None:
             raise ValidationError(f"{field} must use MAJOR.MINOR.PATCH format")
 
     board = devkit.get("board")

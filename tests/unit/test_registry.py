@@ -25,6 +25,7 @@ from model_registry.registry import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+COMPILER_VERSION = resolve_model_compiler(ROOT)["version"]
 
 
 class FakeStore:
@@ -68,13 +69,13 @@ def _packaged_result(tmp_path: Path) -> Path:
             "build_profile_id": "modalix_bf16",
             "component_id": "model",
             "target": "modalix",
-            "compiler_version": "2.1.3",
-            "compiler_label": "model-compiler-2.1.3-sha-fixture",
+            "compiler_version": COMPILER_VERSION,
+            "compiler_label": f"model-compiler-{COMPILER_VERSION}-sha-fixture",
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
             "build_fingerprint": component_build_fingerprint(
-                ROOT, "resnet_50", "model", "modalix_bf16", "2.1.3"
+                ROOT, "resnet_50", "model", "modalix_bf16", COMPILER_VERSION
             ),
         },
     }
@@ -309,7 +310,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         "model_card": "https://huggingface.co/onnx-community/resnet-50-ONNX",
     }
     parameters = calls[2][2]["parameters"]
-    assert parameters["compiler_version"] == "2.1.3"
+    assert parameters["compiler_version"] == COMPILER_VERSION
     assert parameters["compile_invocation_id"] == "model"
     assert parameters["target"] == "modalix"
     artifact = calls[3][2]
