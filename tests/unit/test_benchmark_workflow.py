@@ -41,7 +41,7 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert ".head_sha == $sha" in verify["run"]
     download = next(step for step in stage["steps"] if step.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == (
-        "compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
+        "compiler-output-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
     checkout = next(
