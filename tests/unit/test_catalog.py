@@ -812,7 +812,7 @@ def test_compile_fingerprint_schema_bump_forces_all_invocations(
     head = _commit(catalog_repository, "schema bump")
     monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
 
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
 
     assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
 
