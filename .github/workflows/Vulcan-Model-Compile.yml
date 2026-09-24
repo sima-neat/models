@@ -293,10 +293,53 @@ jobs:
           echo "Authorized $count compile invocation(s), including $elevated elevated runner request(s)." \
             >> "$GITHUB_STEP_SUMMARY"
 
+  initialize-catalog:
+    name: Initialize catalog progress
+    needs: [select, resolve-vulcan-config]
+    if: >-
+      !cancelled() &&
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.count != '0' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.resolve-vulcan-config.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-catalog-initialize-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish the pending invocation plan
+        env:
+          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          model-registry publish-catalog --repository . \
+            --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
+            --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
+            --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA"
+
   compile:
     name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, resolve-vulcan-config, authorize-runner-classes]
-    if: github.event_name != 'pull_request' && needs.select.outputs.count != '0'
+    needs: [select, resolve-vulcan-config, authorize-runner-classes, initialize-catalog]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.count != '0' &&
+      (needs.select.outputs.publishable != 'true' || needs.initialize-catalog.result == 'success')
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
       actions: write
@@ -798,6 +841,30 @@ jobs:
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           echo "Published $MODEL_ID/$BUILD_PROFILE_ID components: $COMPONENT_IDS." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish this invocation in the catalog
+        if: needs.select.outputs.publishable == 'true'
+        env:
+          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          failure="$RUNNER_TEMP/catalog-publication-error"
+          for attempt in 1 2 3 4 5; do
+            if model-registry publish-catalog --repository . --compiled-dir _compiled \
+              --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
+              --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
+              --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA" 2>"$failure"; then
+              exit 0
+            fi
+            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 5 )); then
+              cat "$failure" >&2
+              exit 1
+            fi
+            sleep "$(( attempt * 2 ))"
+          done
 
       - name: Retain the published model output for benchmark handoff
         uses: actions/upload-artifact@v7
