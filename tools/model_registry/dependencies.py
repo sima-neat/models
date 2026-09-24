@@ -8,7 +8,7 @@ from typing import Any
 from .errors import ValidationError
 
 SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
+MODEL_COMPILER_VERSION = re.compile(r"^(?:develop|[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -34,7 +34,7 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
     version = dependency.get("version")
     if not isinstance(version, str) or MODEL_COMPILER_VERSION.fullmatch(version) is None:
         raise ValidationError(
-            "model-compiler.version must use MAJOR.MINOR.PATCH or "
+            "model-compiler.version must be develop or use MAJOR.MINOR.PATCH or "
             "MAJOR.MINOR.PATCH.SERVICE format"
         )
     return {"label": f"model-compiler-{version}", "version": version}
