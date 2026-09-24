@@ -25,7 +25,9 @@ from model_registry.registry import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPILER_VERSION = resolve_model_compiler(ROOT)["version"]
+COMPILER = resolve_model_compiler(ROOT)
+COMPILER_VERSION = COMPILER["version"]
+COMPILER_IDENTITY = COMPILER["identity"]
 
 
 class FakeStore:
@@ -70,12 +72,12 @@ def _packaged_result(tmp_path: Path) -> Path:
             "component_id": "model",
             "target": "modalix",
             "compiler_version": COMPILER_VERSION,
-            "compiler_label": f"model-compiler-{COMPILER_VERSION}-sha-fixture",
+            "compiler_label": COMPILER["label"],
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
             "build_fingerprint": component_build_fingerprint(
-                ROOT, "resnet_50", "model", "modalix_bf16", COMPILER_VERSION
+                ROOT, "resnet_50", "model", "modalix_bf16", COMPILER_IDENTITY
             ),
         },
     }
@@ -322,7 +324,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     receipt_path = dist / "resnet_50" / "modalix_bf16" / "model" / "registry-publication.json"
     receipt_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     catalog = discover_catalog(ROOT)
-    compiler_version = resolve_model_compiler(ROOT)["version"]
+    compiler_version = resolve_model_compiler(ROOT)["identity"]
     selected = build_matrix(
         catalog,
         ["resnet_50"],
@@ -597,7 +599,7 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
 
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     catalog = discover_catalog(ROOT)
-    compiler_version = resolve_model_compiler(ROOT)["version"]
+    compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
         branch="develop",
@@ -637,7 +639,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
     catalog = discover_catalog(ROOT)
-    compiler_version = resolve_model_compiler(ROOT)["version"]
+    compiler_version = resolve_model_compiler(ROOT)["identity"]
     invocation = build_matrix(
         catalog, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]

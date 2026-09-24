@@ -12,7 +12,9 @@
     "os_type": "elxr"
   },
   "model-compiler": {
-    "version": "develop"
+    "channel": "develop",
+    "revision": "e94f03a8f59c",
+    "version": "3.0.0"
   },
   "neat-core": {
     "install_target": "core@v0.4.0",

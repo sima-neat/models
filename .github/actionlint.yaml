@@ -6,6 +6,7 @@ self-hosted-runner:
     - model-compiler-2.1.3
     - model-compiler-2.1.3.1
     - model-compiler-develop
+    - model-compiler-develop-e94f03a8f59c
     - model-compiler-2.1.3-develop
     - model-compiler-latest
     - modalix

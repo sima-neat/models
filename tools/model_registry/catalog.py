@@ -717,7 +717,7 @@ def semantic_change_plan(
             base_benchmark_schema = _integer_constant(
                 base_root / "tools" / "model_registry" / "catalog.py", "BENCHMARK_FINGERPRINT_SCHEMA"
             )
-            base_compiler_version = resolve_model_compiler(base_root)["version"]
+            base_compiler_version = resolve_model_compiler(base_root)["identity"]
             base_entries = build_matrix(
                 base_catalog,
                 sorted(base_catalog),

@@ -128,9 +128,13 @@ jobs:
           resolution="$(model-registry resolve-compiler --repository .)"
           version="$(jq -er '.version' <<< "$resolution")"
           label="$(jq -er '.label' <<< "$resolution")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "label=$label" >> "$GITHUB_OUTPUT"
-          echo "Model Compiler dependency: \`$version\` (\`$label\`)" >> "$GITHUB_STEP_SUMMARY"
+          identity="$(jq -er '.identity' <<< "$resolution")"
+          {
+            echo "version=$version"
+            echo "label=$label"
+            echo "identity=$identity"
+          } >> "$GITHUB_OUTPUT"
+          echo "Model Compiler dependency: \`$identity\` (\`$label\`)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve branch comparison base
         id: base
@@ -178,7 +182,7 @@ jobs:
           REQUESTED_COMPONENTS: ${{ inputs.components }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           COMPARISON_BASE: ${{ steps.base.outputs.comparison_base }}
-          COMPILER_VERSION: ${{ steps.compiler.outputs.version }}
+          COMPILER_VERSION: ${{ steps.compiler.outputs.identity }}
           FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
         run: |
           set -euo pipefail

@@ -12,8 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_repository_model_compiler_dependency_is_pinned() -> None:
     assert resolve_model_compiler(ROOT) == {
-        "label": "model-compiler-develop",
-        "version": "develop",
+        "identity": "3.0.0+develop.e94f03a8f59c",
+        "label": "model-compiler-develop-e94f03a8f59c",
+        "version": "3.0.0",
     }
 
 
@@ -48,18 +49,30 @@ def test_model_compiler_dependency_requires_supported_version(tmp_path: Path, ve
     manifest.parent.mkdir()
     manifest.write_text(json.dumps({"model-compiler": {"version": version}}), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="develop or use MAJOR.MINOR.PATCH"):
+    with pytest.raises(ValidationError, match="MAJOR.MINOR.PATCH"):
         resolve_model_compiler(tmp_path)
 
 
-def test_model_compiler_dependency_accepts_develop_alias(tmp_path: Path) -> None:
+def test_model_compiler_dependency_accepts_commit_qualified_develop_build(tmp_path: Path) -> None:
     manifest = tmp_path / "deps" / "manifest.json"
     manifest.parent.mkdir()
-    manifest.write_text(json.dumps({"model-compiler": {"version": "develop"}}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "model-compiler": {
+                    "channel": "develop",
+                    "revision": "e94f03a8f59c",
+                    "version": "3.0.0",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert resolve_model_compiler(tmp_path) == {
-        "label": "model-compiler-develop",
-        "version": "develop",
+        "identity": "3.0.0+develop.e94f03a8f59c",
+        "label": "model-compiler-develop-e94f03a8f59c",
+        "version": "3.0.0",
     }
 
 
@@ -72,9 +85,29 @@ def test_model_compiler_dependency_accepts_service_release(tmp_path: Path) -> No
     )
 
     assert resolve_model_compiler(tmp_path) == {
+        "identity": "2.1.3.1",
         "label": "model-compiler-2.1.3.1",
         "version": "2.1.3.1",
     }
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        {"channel": "develop", "revision": "e94f03a8f59", "version": "3.0.0"},
+        {"channel": "Develop", "revision": "e94f03a8f59c", "version": "3.0.0"},
+        {"channel": "develop", "version": "3.0.0"},
+    ],
+)
+def test_model_compiler_dependency_rejects_incomplete_develop_identity(
+    tmp_path: Path, dependency: dict[str, str]
+) -> None:
+    manifest = tmp_path / "deps" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"model-compiler": dependency}), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        resolve_model_compiler(tmp_path)
 
 
 def test_missing_model_compiler_dependency_fails(tmp_path: Path) -> None:

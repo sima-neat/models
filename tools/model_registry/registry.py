@@ -291,7 +291,7 @@ def build_catalog_snapshot(
     catalog = discover_catalog(root)
     taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
     taxonomy_digest = taxonomy_sha256(taxonomy)
-    compiler_version = resolve_model_compiler(root)["version"]
+    compiler_version = resolve_model_compiler(root)["identity"]
     matrix = build_matrix(
         catalog,
         sorted(catalog),
@@ -944,6 +944,7 @@ def _preflight_compilations(
     environment: str,
     git_sha: str,
 ) -> list[JsonObject]:
+    compiler_dependency = resolve_model_compiler(root)
     expected_results: set[Path] = set()
     invocation_by_result: dict[Path, str] = {}
     output_by_result: dict[Path, JsonObject] = {}
@@ -1031,6 +1032,11 @@ def _preflight_compilations(
 
         compiler_version = _require_text(provenance.get("compiler_version"), "compiler_version")
         compiler_label = _require_text(provenance.get("compiler_label"), "compiler_label")
+        if compiler_version != compiler_dependency["version"]:
+            raise ValidationError(f"{result_path}: compiler_version does not match the dependency manifest")
+        if compiler_label != compiler_dependency["label"]:
+            raise ValidationError(f"{result_path}: compiler_label does not match the dependency manifest")
+        compiler_identity = compiler_dependency["identity"]
         target = _require_text(provenance.get("target"), "target")
         source_sha = _require_sha256(provenance.get("source_sha256"), "source_sha256")
         if source_sha != source_identity(component["source"]):
@@ -1042,7 +1048,7 @@ def _preflight_compilations(
                 model_id,
                 invocation_by_result[result_path],
                 build_profile_id,
-                compiler_version,
+                compiler_identity,
             )
         else:
             expected_build_fingerprint = component_build_fingerprint(
@@ -1050,7 +1056,7 @@ def _preflight_compilations(
                 model_id,
                 component_id,
                 build_profile_id,
-                compiler_version,
+                compiler_identity,
             )
         if build_fingerprint != expected_build_fingerprint:
             raise ValidationError(f"{result_path}: build_fingerprint does not match semantic compile inputs")

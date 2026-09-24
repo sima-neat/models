@@ -28,7 +28,7 @@ FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
-COMPILER_VERSION = resolve_model_compiler(ROOT)["version"]
+COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -683,6 +683,21 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     assert plan["validation_include"] == []
     assert plan["benchmark_include"] == []
     assert plan["metadata_changed"] is True
+
+
+def test_semantic_plan_rebuilds_every_model_for_a_new_develop_revision(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    manifest_path = catalog_repository / "deps" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["model-compiler"]["revision"] = "f94f03a8f59c"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    head = _commit(catalog_repository, "compiler revision")
+    compiler_identity = resolve_model_compiler(catalog_repository)["identity"]
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=compiler_identity)
+
+    assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
+    assert all(entry["build_fingerprint"] for entry in plan["include"])
 
 
 def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) -> None:

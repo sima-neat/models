@@ -8,7 +8,9 @@ from typing import Any
 from .errors import ValidationError
 
 SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-MODEL_COMPILER_VERSION = re.compile(r"^(?:develop|[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)$")
+MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
+MODEL_COMPILER_CHANNEL = re.compile(r"^[a-z][a-z0-9-]*$")
+MODEL_COMPILER_REVISION = re.compile(r"^[0-9a-f]{12}$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -34,10 +36,22 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
     version = dependency.get("version")
     if not isinstance(version, str) or MODEL_COMPILER_VERSION.fullmatch(version) is None:
         raise ValidationError(
-            "model-compiler.version must be develop or use MAJOR.MINOR.PATCH or "
+            "model-compiler.version must use MAJOR.MINOR.PATCH or "
             "MAJOR.MINOR.PATCH.SERVICE format"
         )
-    return {"label": f"model-compiler-{version}", "version": version}
+    channel = dependency.get("channel")
+    revision = dependency.get("revision")
+    if channel is None and revision is None:
+        return {"identity": version, "label": f"model-compiler-{version}", "version": version}
+    if not isinstance(channel, str) or MODEL_COMPILER_CHANNEL.fullmatch(channel) is None:
+        raise ValidationError("model-compiler.channel must use lowercase letters, digits, and hyphens")
+    if not isinstance(revision, str) or MODEL_COMPILER_REVISION.fullmatch(revision) is None:
+        raise ValidationError("model-compiler.revision must be a 12-character lowercase Git hash")
+    return {
+        "identity": f"{version}+{channel}.{revision}",
+        "label": f"model-compiler-{channel}-{revision}",
+        "version": version,
+    }
 
 
 def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:

@@ -88,6 +88,8 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert "model-registry resolve-compiler --repository ." in compiler_step["run"]
     assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
     assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
+    matrix = next(step for step in select["steps"] if step.get("id") == "matrix")
+    assert matrix["env"]["COMPILER_VERSION"] == "${{ steps.compiler.outputs.identity }}"
     assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == ("${{ needs.select.outputs.model_compiler_version }}")
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
