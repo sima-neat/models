@@ -274,10 +274,15 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
     if _kernel(terminal) != "pass_through" or output_sizes != PUBLIC_OUTPUT_SIZES:
         raise RuntimeError(f"SSD MPK public output ABI mismatch: {output_sizes}")
 
-    unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
-    if len(unpack) != 1:
-        raise RuntimeError(f"expected one SSD output unpack transform, found {len(unpack)}")
-    internal_types = [str(value).lower() for value in _params(unpack[0]).get("tensor_types", [])]
+    mla_outputs = mla_plugins[0].get("output_nodes", [])
+    output_kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
+    conversions = [plugin for plugin in plugins if _kernel(plugin) == output_kernel]
+    if precision == "bf16":
+        conversions = [plugin for plugin in conversions if _params(plugin).get("out_dtype") == "float32"]
+    dtype_key = "input_data_type" if precision == "int8" else "in_dtype"
+    internal_types = [str(_params(plugin).get(dtype_key, "")).lower() for plugin in conversions]
+    if len(mla_outputs) != len(OUTPUTS):
+        raise RuntimeError(f"expected {len(OUTPUTS)} SSD MLA outputs, found {len(mla_outputs)}")
     aliases = {"int8"} if precision == "int8" else {"bf16", "bfloat16"}
     if len(internal_types) != len(OUTPUTS) or any(value not in aliases for value in internal_types):
         raise RuntimeError(f"{precision.upper()} SSD output transport audit failed: {internal_types}")
@@ -374,8 +379,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
         quantized = loaded.quantize(
             calibration_data=calibration_data,
             quantization_config=quantization,
-            any_shape_on_mla=False,
-            automatic_layout_conversion=False,
             model_name=model_name,
             log_level=logging.INFO,
         )

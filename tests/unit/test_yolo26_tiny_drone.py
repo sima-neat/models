@@ -578,9 +578,10 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert '"BatchMatmul": EXPECTED_ATTENTION_MATMULS' in source
     assert "attention_types != {expected_io}" in source
     assert '"compute_scalar_type": "int8"' in source
-    assert "any_shape_on_mla=True" in source
+    assert "any_shape_on_mla=" not in source
+    assert "automatic_layout_conversion=" not in source
     assert "tessellate_parameters" not in source
-    assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
+    assert "len(mla_outputs) != len(contract.outputs)" in source
     assert '"tessellation": "mla"' in source
     assert "role_input_abi != expected_output_abi" in source
     assert 'str(plugin.get("processor", "")).upper() == "A65"' in source
@@ -617,16 +618,8 @@ def _mpk_fixture(contract: DeploymentContract) -> tuple[dict[str, object], list[
             "sequence": 1,
             "processor": "MLA",
             "input_nodes": [{"name": "quantize_0"}],
-            "output_nodes": [{"name": "MLA_0"}],
+            "output_nodes": [{"name": f"MLA_{i}"} for i in range(len(expected_outputs))],
             "config_params": {},
-        },
-        {
-            "sequence": 2,
-            "processor": "EV74",
-            "config_params": {
-                "kernel": "unpack_transform",
-                "params": {"tensor_types": ["int8"] * len(expected_outputs)},
-            },
         },
         *[
             {

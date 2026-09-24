@@ -106,8 +106,6 @@ def _quantize_component(
     quantized = loaded.quantize(
         calibration_data=data,
         quantization_config=_quantization(precision),
-        any_shape_on_mla=True,
-        automatic_layout_conversion=True,
         model_name=name,
         log_level=logging.INFO,
     )

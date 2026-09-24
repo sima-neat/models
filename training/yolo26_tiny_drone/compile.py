@@ -335,10 +335,9 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
             "MPK public output ABI mismatch: "
             f"expected {expected_output_abi}, got roles={role_input_abi}, output_sizes={output_sizes}"
         )
-    unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
-    tensor_types = (
-        unpack[0].get("config_params", {}).get("params", {}).get("tensor_types", []) if len(unpack) == 1 else []
-    )
+    mla_outputs = mla[0].get("output_nodes", [])
+    if len(mla_outputs) != len(contract.outputs):
+        raise RuntimeError(f"expected {len(contract.outputs)} MLA outputs, found {len(mla_outputs)}")
     quantize = [plugin for plugin in plugins if _kernel(plugin) == "quantization_transform"]
     dequantize = [plugin for plugin in plugins if _kernel(plugin) == "dequantization_transform"]
     external_tessellate = [plugin for plugin in plugins if _kernel(plugin) == "tessellation_transform"]
@@ -348,13 +347,12 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
         plugin.get("config_params", {}).get("params", {}).get("input_data_type") for plugin in dequantize
     ]
     if (
-        tensor_types != ["int8"] * len(contract.outputs)
-        or quantized_types != ["int8"]
+        quantized_types != ["int8"]
         or dequantized_types != ["int8"] * len(contract.outputs)
     ):
         raise RuntimeError(
             "MPK INT8 transport mismatch: "
-            f"unpack={tensor_types}, quantize={quantized_types}, dequantize={dequantized_types}"
+            f"quantize={quantized_types}, dequantize={dequantized_types}"
         )
     if external_tessellate or external_detessellate:
         raise RuntimeError(
@@ -390,7 +388,7 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
         "public_output_names": [name for name, _size in role_input_abi],
         "public_output_sizes": output_sizes,
         "public_output_abi": role_input_abi,
-        "output_transport_types": tensor_types,
+        "output_transport_types": dequantized_types,
         "quant_to_mla_direct": True,
         "external_tessellation_plugin_count": len(external_tessellate),
         "external_detessellation_plugin_count": len(external_detessellate),
@@ -444,10 +442,6 @@ def compile_model(
     quantized = loaded.quantize(
         calibration_data=calibration_data,
         quantization_config=config,
-        # Attention uses static rank-4 tensors and ModelSDK's documented
-        # two-input Einsum representation for batch matrix multiplication.
-        any_shape_on_mla=True,
-        automatic_layout_conversion=False,
         model_name=model_name,
         log_level=logging.INFO,
     )

@@ -169,8 +169,8 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert "prepare_model(source" in source
     assert "transformer_inputs(" in source
     assert "loaded.quantize(" in source
-    assert "any_shape_on_mla=True" in source
-    assert "automatic_layout_conversion=True" in source
+    assert "any_shape_on_mla=" not in source
+    assert "automatic_layout_conversion=" not in source
     assert "with_per_token_quant(False)" in source
     assert "flexible_batch_size=True" in source
     assert 'layer_norm_use_fp32_intermediates=precision == "bf16"' in source

@@ -396,24 +396,15 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     if precision == "int8":
         plugins.append(plugin("EV74", sequence, kernel="quantization_transform", params={"output_data_type": "int8"}))
         sequence += 1
-    plugins.append(plugin("MLA", sequence))
+    plugins.append(plugin("MLA", sequence, output_nodes=[{"name": f"MLA_{i}"} for i in range(12)]))
     sequence += 1
-    internal_type = "int8" if precision == "int8" or not tessellation_mla else "bfloat16"
-    plugins.append(
-        plugin(
-            "EV74",
-            sequence,
-            kernel="unpack_transform",
-            params={"tensor_types": [internal_type] * 12},
-        )
-    )
-    sequence += 1
-    if precision == "int8":
-        for _ in range(12):
-            plugins.append(
-                plugin("EV74", sequence, kernel="dequantization_transform", params={"input_data_type": "int8"})
-            )
-            sequence += 1
+    for _ in range(12):
+        kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
+        params = {"input_data_type": "int8"} if precision == "int8" else {
+            "in_dtype": "bfloat16", "out_dtype": "float32"
+        }
+        plugins.append(plugin("EV74", sequence, kernel=kernel, params=params))
+        sequence += 1
     plugins.append(
         plugin(
             "EV74",
