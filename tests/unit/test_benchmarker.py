@@ -40,7 +40,7 @@ def make_mpk(
     *,
     mla_stages: int = 1,
     extra_elfs: int = 0,
-    sdk_version: str = "2.1.3",
+    sdk_version: str = "3.0.0",
     batches: list[int] | None = None,
 ) -> str:
     plugins = []
@@ -81,7 +81,7 @@ def make_manifest(path: Path, sha256: str, *, trials: int = 2) -> dict[str, Any]
         "compatibility": {"platform_version": "2.1.3", "neat_version": "0.4.0"},
         "benchmark": {"samples": 25, "trials": trials, "include_plugin_latency": True},
         "model_options": {"decode_type": "pyneat:BoxDecodeType.YoloV26", "top_k": 100},
-        "provenance": {"models_commit": "abc123"},
+        "provenance": {"models_commit": "abc123", "compiler_version": "3.0.0"},
     }
 
 
@@ -425,7 +425,7 @@ def test_benchmarks_complete_multi_elf_graph_and_emits_valid_result(tmp_path: Pa
     assert result["tool"] == {"name": "benchmarker", "version": "source"}
     assert result["model"]["contract"] == {
         "name": "fixture-model",
-        "model_sdk_version": "2.1.3",
+        "model_sdk_version": "3.0.0",
         "elf_count": 3,
         "mla_stage_count": 2,
         "compiled_batch_size": 1,

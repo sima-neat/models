@@ -1407,9 +1407,10 @@ def run_benchmark(
     if actual_sha != manifest["model"]["sha256"]:
         raise ModelError(f"MPK checksum mismatch: expected {manifest['model']['sha256']}, found {actual_sha}")
     expected_platform = manifest["compatibility"]["platform_version"]
-    if contract["model_sdk_version"] and contract["model_sdk_version"] != expected_platform:
+    expected_compiler = manifest.get("provenance", {}).get("compiler_version")
+    if expected_compiler and contract["model_sdk_version"] != expected_compiler:
         raise CompatibilityError(
-            f"MPK Model SDK version mismatch: expected {expected_platform}, found {contract['model_sdk_version']}"
+            f"MPK Model SDK version mismatch: expected {expected_compiler}, found {contract['model_sdk_version']}"
         )
 
     runtime = pyneat or import_pyneat()
