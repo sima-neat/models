@@ -317,10 +317,12 @@ jobs:
       - ${{ needs.select.outputs.model_compiler_label }}
       - ${{ matrix.runner_class }}
       - model-id-${{ matrix.model_id }}
-      # Vulcan currently registers model/build identity with the legacy
-      # variant-id label. In contract v2, the build profile is that identity;
-      # component identity remains in the matrix and authorization record.
-      - variant-id-${{ matrix.build_profile_id }}
+      # The scaler authorizes elevated model runners by the contract-v2
+      # build-profile and primary-component identity. Grouped invocations use
+      # their first declared component here; matrix authorization verifies the
+      # complete component group before this job is queued.
+      - build-profile-id-${{ matrix.build_profile_id }}
+      - component-id-${{ matrix.component_id }}
     timeout-minutes: 90
     env:
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python

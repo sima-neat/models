@@ -62,9 +62,9 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
     assert "${{ matrix.runner_class }}" in compile_job["runs-on"]
     assert "model-id-${{ matrix.model_id }}" in compile_job["runs-on"]
-    assert "variant-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
-    assert all(not label.startswith("build-profile-id-") for label in compile_job["runs-on"])
-    assert all(not label.startswith("component-id-") for label in compile_job["runs-on"])
+    assert "build-profile-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
+    assert "component-id-${{ matrix.component_id }}" in compile_job["runs-on"]
+    assert all(not label.startswith("variant-id-") for label in compile_job["runs-on"])
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
