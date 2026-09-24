@@ -238,10 +238,12 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
     job = workflow["jobs"]["publish-catalog"]
 
     assert job["needs"] == [
-        "select", "resolve-vulcan-config", "publish-compilations", "publish-packages", "validation-gate"
+        "select", "resolve-vulcan-config", "publish-compilations", "assemble-packages", "publish-packages",
+        "validation-gate"
     ]
     assert "needs.select.outputs.count == '0'" in job["if"]
     assert "needs.validation-gate.result == 'success'" in job["if"]
+    assert "needs.assemble-packages.outputs.package_count == '0'" in job["if"]
     assert "needs.publish-packages.result == 'success'" in job["if"]
     assert job["permissions"]["id-token"] == "write"
     publish = next(
@@ -256,6 +258,25 @@ def test_catalog_publication_does_not_require_a_model_compile() -> None:
         "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
     )
     assert "--read-api-url \"$REGISTRY_READ_API_URL\"" in publish["run"]
+
+
+def test_pending_only_catalogs_do_not_require_a_package_bundle() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assemble = workflow["jobs"]["assemble-packages"]
+    packages = next(step for step in assemble["steps"] if step.get("id") == "packages")
+    upload = next(step for step in assemble["steps"] if step.get("name") == "Retain deterministic package bundles")
+    publish_packages = workflow["jobs"]["publish-packages"]
+    catalog = workflow["jobs"]["publish-catalog"]
+    package_receipts = next(
+        step for step in catalog["steps"] if step.get("name") == "Download finalized package receipts"
+    )
+
+    assert assemble["outputs"]["package_count"] == "${{ steps.packages.outputs.count }}"
+    assert 'echo "count=$count" >> "$GITHUB_OUTPUT"' in packages["run"]
+    assert "pending builds only" in packages["run"]
+    assert upload["if"] == "steps.packages.outputs.count != '0'"
+    assert "needs.assemble-packages.outputs.package_count != '0'" in publish_packages["if"]
+    assert package_receipts["if"] == "needs.publish-packages.result == 'success'"
 
 
 def test_complete_packages_are_published_before_the_catalog() -> None:

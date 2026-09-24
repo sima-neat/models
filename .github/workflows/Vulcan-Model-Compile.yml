@@ -885,6 +885,8 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      package_count: ${{ steps.packages.outputs.count }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
@@ -906,6 +908,7 @@ jobs:
           merge-multiple: true
 
       - name: Assemble every complete package
+        id: packages
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -916,12 +919,17 @@ jobs:
             --output-dir _packages \
             --resource-cache-dir "$RUNNER_TEMP/model-registry-resources" \
             --all \
-            --json > "$RUNNER_TEMP/packages.json"
+          --json > "$RUNNER_TEMP/packages.json"
           count="$(jq -er '.count' "$RUNNER_TEMP/packages.json")"
-          (( count > 0 )) || { echo "No complete packages were assembled" >&2; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if (( count == 0 )); then
+            echo "No complete packages were assembled; the catalog will publish pending builds only." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           echo "Assembled $count complete model package(s)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain deterministic package bundles
+        if: steps.packages.outputs.count != '0'
         uses: actions/upload-artifact@v7
         with:
           name: model-packages-${{ github.sha }}
@@ -947,7 +955,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
-      needs.assemble-packages.result == 'success'
+      needs.assemble-packages.result == 'success' &&
+      needs.assemble-packages.outputs.package_count != '0'
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -1036,14 +1045,14 @@ jobs:
 
   publish-catalog:
     name: Publish complete model catalog snapshot
-    needs: [select, resolve-vulcan-config, publish-compilations, publish-packages, validation-gate]
+    needs: [select, resolve-vulcan-config, publish-compilations, assemble-packages, publish-packages, validation-gate]
     if: >-
       always() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&
       needs.validation-gate.result == 'success' &&
-      (needs.select.outputs.count == '0' || ((needs.publish-compilations.result == 'success' || needs.publish-compilations.result == 'failure') && needs.publish-packages.result == 'success'))
+      (needs.select.outputs.count == '0' || ((needs.publish-compilations.result == 'success' || needs.publish-compilations.result == 'failure') && needs.assemble-packages.result == 'success' && (needs.assemble-packages.outputs.package_count == '0' || needs.publish-packages.result == 'success')))
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -1071,7 +1080,7 @@ jobs:
           merge-multiple: true
 
       - name: Download finalized package receipts
-        if: needs.select.outputs.count != '0'
+        if: needs.publish-packages.result == 'success'
         uses: actions/download-artifact@v7
         with:
           name: published-model-packages-${{ github.sha }}
