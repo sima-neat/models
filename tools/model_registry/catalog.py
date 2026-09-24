@@ -746,6 +746,7 @@ def semantic_change_plan(
             or base_compile_schema != COMPILE_FINGERPRINT_SCHEMA
             or prior is None
             or prior.get("build_fingerprint") != entry["build_fingerprint"]
+            or prior.get("requested_runner_class") != entry["requested_runner_class"]
         )
         if compile_changed:
             compile_include.append(entry)

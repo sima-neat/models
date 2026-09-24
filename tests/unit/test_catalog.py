@@ -683,6 +683,20 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     assert plan["metadata_changed"] is True
 
 
+def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["build_profiles"][0]["runner_class"] = "expensive"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    head = _commit(catalog_repository, "use expensive runner")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version="2.1.3")
+
+    assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
+    assert plan["include"][0]["requested_runner_class"] == "expensive"
+
+
 def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repository: Path) -> None:
     base = _initialize_repository(catalog_repository)
     (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
