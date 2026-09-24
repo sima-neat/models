@@ -877,7 +877,7 @@ jobs:
     name: Assemble complete model packages
     needs: [select, publish-compilations]
     if: >-
-      always() &&
+      !cancelled() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       (needs.publish-compilations.result == 'success' || needs.publish-compilations.result == 'failure')
@@ -953,6 +953,7 @@ jobs:
     name: Publish complete model packages
     needs: [select, resolve-vulcan-config, assemble-packages]
     if: >-
+      !cancelled() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       needs.assemble-packages.result == 'success' &&
@@ -1047,7 +1048,7 @@ jobs:
     name: Publish complete model catalog snapshot
     needs: [select, resolve-vulcan-config, publish-compilations, assemble-packages, publish-packages, validation-gate]
     if: >-
-      always() &&
+      !cancelled() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&

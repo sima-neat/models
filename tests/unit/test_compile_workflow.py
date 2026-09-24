@@ -279,6 +279,13 @@ def test_pending_only_catalogs_do_not_require_a_package_bundle() -> None:
     assert package_receipts["if"] == "needs.publish-packages.result == 'success'"
 
 
+def test_cancellation_stops_all_downstream_publication() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    for name in ("assemble-packages", "publish-packages", "publish-catalog"):
+        assert "!cancelled()" in workflow["jobs"][name]["if"]
+
+
 def test_complete_packages_are_published_before_the_catalog() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     job = workflow["jobs"]["publish-packages"]
