@@ -962,11 +962,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_reposi
             request=write, read_request=read,
         )
 
-    if source in {"stale", "missing"}:
-        with pytest.raises(ValidationError, match="no immutable compile run matches"):
-            publish()
-        assert writes == []
-    elif source == "forbidden":
+    if source == "forbidden":
         with pytest.raises(RegistryPublicationError, match="403 forbidden"):
             publish()
         assert writes == []
@@ -974,12 +970,17 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_reposi
         result = publish()
         assert result["catalog"]["git_ref"] == "refs/heads/feat/names"
         assert result["catalog"]["catalog_revision"] == "b" * 40
-        for current, previous in zip(result["catalog"]["models"], prior["models"], strict=True):
-            for build, old_build in zip(current["builds"], previous["builds"], strict=True):
-                assert build["run_id"] == old_build["run_id"]
-                assert build["artifact_sha256"] == old_build["artifact_sha256"]
-                assert build["compile_fingerprint"] == old_build["compile_fingerprint"]
-        assert result["catalog"]["models"][0]["builds"][0]["artifact_suffix"] == "model_int8"
+        if source in {"stale", "missing"}:
+            expected_pending = {"alpha"} if source == "stale" else set(catalog)
+            assert {pending["model_id"] for pending in result["catalog"]["pending_builds"]} == expected_pending
+        else:
+            assert result["catalog"]["pending_builds"] == []
+            for current, previous in zip(result["catalog"]["models"], prior["models"], strict=True):
+                for build, old_build in zip(current["builds"], previous["builds"], strict=True):
+                    assert build["run_id"] == old_build["run_id"]
+                    assert build["artifact_sha256"] == old_build["artifact_sha256"]
+                    assert build["compile_fingerprint"] == old_build["compile_fingerprint"]
+            assert result["catalog"]["models"][0]["builds"][0]["artifact_suffix"] == "model_int8"
         assert writes == [{
             "initialize": True,
             "previous_snapshot": None,
