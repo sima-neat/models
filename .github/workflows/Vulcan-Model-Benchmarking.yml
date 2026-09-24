@@ -11,7 +11,7 @@ on:
         type: choice
         options: [staging]
       source_run_id:
-        description: Source workflow run containing the compiled-model artifact
+        description: Source workflow run containing the compiler-output artifact
         required: false
         default: ""
         type: string
@@ -95,7 +95,7 @@ jobs:
             <<< "$run_json" >/dev/null
           echo "branch=$(jq -er '.head_branch' <<< "$run_json")" >> "$GITHUB_OUTPUT"
           echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
-          artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"
+          artifact_name="compiler-output-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"
           artifact_count="$(
             gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
               jq --arg artifact "$artifact_name" \
@@ -107,7 +107,7 @@ jobs:
         if: inputs.source_run_id != ''
         uses: actions/download-artifact@v7
         with:
-          name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+          name: compiler-output-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}

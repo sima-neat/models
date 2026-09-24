@@ -707,6 +707,72 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Start the component benchmarks
+        if: >-
+          needs.select.outputs.vulcan_environment == 'staging' &&
+          matrix.target == 'modalix' &&
+          join(matrix.benchmark_component_ids, '') != ''
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
+          BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
+          BENCHMARK_BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
+          BENCHMARK_COMPILE_INVOCATION_ID: ${{ matrix.compile_invocation_id }}
+          BENCHMARK_COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import ssl
+          import urllib.error
+          import urllib.request
+
+          import certifi
+
+          payload = {
+              "ref": os.environ["GITHUB_REF_NAME"],
+              "inputs": {
+                  "environment": os.environ["BENCHMARK_ENVIRONMENT"],
+                  "source_run_id": os.environ["GITHUB_RUN_ID"],
+                  "source_sha": os.environ["GITHUB_SHA"],
+                  "model_id": os.environ["BENCHMARK_MODEL_ID"],
+                  "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
+                  "compile_invocation_id": os.environ["BENCHMARK_COMPILE_INVOCATION_ID"],
+                  "component_ids": os.environ["BENCHMARK_COMPONENT_IDS"],
+              },
+          }
+          endpoint = (
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+              "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches"
+          )
+          request = urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              tls = ssl.create_default_context(cafile=certifi.where())
+              with urllib.request.urlopen(request, context=tls, timeout=30) as response:
+                  if response.status != 204:
+                      raise SystemExit(f"Workflow dispatch returned HTTP {response.status}")
+          except urllib.error.HTTPError as error:
+              detail = error.read().decode(errors="replace")
+              raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
+          print(
+              "Dispatched benchmark for "
+              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_BUILD_PROFILE_ID']}/"
+              f"{os.environ['BENCHMARK_COMPONENT_IDS']}"
+          )
+          PY
+
   publish-compilations:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
@@ -808,72 +874,6 @@ jobs:
           path: _compiled
           if-no-files-found: error
           retention-days: 14
-
-      - name: Start the component benchmarks
-        if: >-
-          needs.select.outputs.vulcan_environment == 'staging' &&
-          matrix.target == 'modalix' &&
-          join(matrix.benchmark_component_ids, '') != ''
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
-          BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
-          BENCHMARK_BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
-          BENCHMARK_COMPILE_INVOCATION_ID: ${{ matrix.compile_invocation_id }}
-          BENCHMARK_COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          import ssl
-          import urllib.error
-          import urllib.request
-
-          import certifi
-
-          payload = {
-              "ref": os.environ["GITHUB_REF_NAME"],
-              "inputs": {
-                  "environment": os.environ["BENCHMARK_ENVIRONMENT"],
-                  "source_run_id": os.environ["GITHUB_RUN_ID"],
-                  "source_sha": os.environ["GITHUB_SHA"],
-                  "model_id": os.environ["BENCHMARK_MODEL_ID"],
-                  "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
-                  "compile_invocation_id": os.environ["BENCHMARK_COMPILE_INVOCATION_ID"],
-                  "component_ids": os.environ["BENCHMARK_COMPONENT_IDS"],
-              },
-          }
-          endpoint = (
-              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
-              "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches"
-          )
-          request = urllib.request.Request(
-              endpoint,
-              data=json.dumps(payload).encode(),
-              method="POST",
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-                  "Content-Type": "application/json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          try:
-              tls = ssl.create_default_context(cafile=certifi.where())
-              with urllib.request.urlopen(request, context=tls, timeout=30) as response:
-                  if response.status != 204:
-                      raise SystemExit(f"Workflow dispatch returned HTTP {response.status}")
-          except urllib.error.HTTPError as error:
-              detail = error.read().decode(errors="replace")
-              raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
-          print(
-              "Dispatched benchmark for "
-              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_BUILD_PROFILE_ID']}/"
-              f"{os.environ['BENCHMARK_COMPONENT_IDS']}"
-          )
-          PY
 
   assemble-packages:
     name: Assemble complete model packages
