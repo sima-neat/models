@@ -722,7 +722,7 @@ jobs:
           BENCHMARK_COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
         run: |
           set -euo pipefail
-          python - <<'PY'
+          "$MODEL_COMPILER_PYTHON" - <<'PY'
           import json
           import os
           import ssl

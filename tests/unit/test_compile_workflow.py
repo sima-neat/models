@@ -565,6 +565,8 @@ def test_completed_compile_dispatches_one_grouped_benchmark_immediately() -> Non
     assert "matrix.target == 'modalix'" in dispatch["if"]
     assert "github.ref_name" not in dispatch["if"]
     assert "gh workflow run" not in dispatch["run"]
+    assert '"$MODEL_COMPILER_PYTHON" - <<\'PY\'' in dispatch["run"]
+    assert "\npython - <<'PY'" not in dispatch["run"]
     assert 'method="POST"' in dispatch["run"]
     assert "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches" in dispatch["run"]
     assert '"operation"' not in dispatch["run"]
