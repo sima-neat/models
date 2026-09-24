@@ -336,7 +336,16 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
             f"expected {expected_output_abi}, got roles={role_input_abi}, output_sizes={output_sizes}"
         )
     mla_outputs = mla[0].get("output_nodes", [])
-    if len(mla_outputs) != len(contract.outputs):
+    unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
+    if unpack:
+        if (
+            len(mla_outputs) != 1
+            or len(unpack) != 1
+            or unpack[0].get("config_params", {}).get("params", {}).get("tensor_types")
+            != ["int8"] * len(contract.outputs)
+        ):
+            raise RuntimeError("MPK packed INT8 output transport mismatch")
+    elif len(mla_outputs) != len(contract.outputs):
         raise RuntimeError(f"expected {len(contract.outputs)} MLA outputs, found {len(mla_outputs)}")
     quantize = [plugin for plugin in plugins if _kernel(plugin) == "quantization_transform"]
     dequantize = [plugin for plugin in plugins if _kernel(plugin) == "dequantization_transform"]
@@ -389,6 +398,8 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
         "public_output_sizes": output_sizes,
         "public_output_abi": role_input_abi,
         "output_transport_types": dequantized_types,
+        "mla_output_buffer_count": len(mla_outputs),
+        "packed_outputs": bool(unpack),
         "quant_to_mla_direct": True,
         "external_tessellation_plugin_count": len(external_tessellate),
         "external_detessellation_plugin_count": len(external_detessellate),
