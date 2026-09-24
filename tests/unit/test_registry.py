@@ -634,6 +634,44 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
 
 
+def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
+    catalog = discover_catalog(ROOT)
+    compiler_version = resolve_model_compiler(ROOT)["version"]
+    invocation = build_matrix(
+        catalog, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+    )["include"][0]
+    changed = dict(invocation, build_fingerprint="f" * 64)
+    monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [changed]})
+    prior_build = {
+        "build_profile_id": "modalix_bf16",
+        "compile_invocation_id": invocation["compile_invocation_id"],
+        "component_id": "model",
+        "compile_fingerprint": "e" * 64,
+        "artifact_sha256": "d" * 64,
+        "validation_fingerprint": None,
+        "benchmark_fingerprint": None,
+        "run_id": "00000000-0000-4000-8000-000000000001",
+    }
+
+    snapshot = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="a" * 40,
+        previous={"models": [{"id": "resnet_50", "builds": [prior_build]}]},
+        incremental=True,
+    )
+
+    resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
+    assert resnet["builds"] == [prior_build]
+    assert snapshot["pending_builds"] == [{
+        "model_id": "resnet_50",
+        "build_profile_id": "modalix_bf16",
+        "compile_invocation_id": invocation["compile_invocation_id"],
+        "component_ids": ["model"],
+        "compile_fingerprint": "f" * 64,
+    }]
+
+
 def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
     read_urls: list[str] = []

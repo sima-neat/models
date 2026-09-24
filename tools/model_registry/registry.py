@@ -322,10 +322,52 @@ def build_catalog_snapshot(
     expected_keys: set[tuple[str, str, str]] = set()
     builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
     packages_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
+    pending_builds: list[JsonObject] = []
     for invocation in matrix:
+        keys = [
+            (invocation["model_id"], invocation["build_profile_id"], component_id)
+            for component_id in invocation["component_ids"]
+        ]
+        expected_keys.update(keys)
+        invocation_receipts = [receipts.get(key) for key in keys]
+        if any(receipt is not None for receipt in invocation_receipts) and not all(
+            receipt is not None for receipt in invocation_receipts
+        ):
+            raise ValidationError(
+                "publication receipts must include every component of "
+                f"{invocation['model_id']}/{invocation['build_profile_id']}/"
+                f"{invocation['compile_invocation_id']}"
+            )
+        requires_pending = not any(invocation_receipts) and any(
+            previous_builds.get(key, {}).get("compile_fingerprint") != invocation["build_fingerprint"]
+            for key in keys
+        )
+        if requires_pending:
+            if not incremental:
+                model_id, profile_id, component_id = keys[0]
+                raise ValidationError(
+                    f"no immutable compile run matches {model_id}/{profile_id}/{component_id} "
+                    f"fingerprint {invocation['build_fingerprint']}"
+                )
+            pending_builds.append(
+                {
+                    "model_id": invocation["model_id"],
+                    "build_profile_id": invocation["build_profile_id"],
+                    "compile_invocation_id": invocation["compile_invocation_id"],
+                    "component_ids": invocation["component_ids"],
+                    "compile_fingerprint": invocation["build_fingerprint"],
+                }
+            )
+            # Preserve prior, verified builds while the replacement invocation
+            # is pending. A model with no prior build remains visible through
+            # its pending invocation alone.
+            for key in keys:
+                prior = previous_builds.get(key)
+                if prior is not None:
+                    builds_by_model[key[0]].append(prior)
+            continue
         for component_id in invocation["component_ids"]:
             key = (invocation["model_id"], invocation["build_profile_id"], component_id)
-            expected_keys.add(key)
             receipt = receipts.get(key)
             prior = previous_builds.get(key)
             if receipt is not None and receipt.get("compile_fingerprint") != invocation["build_fingerprint"]:
@@ -446,7 +488,7 @@ def build_catalog_snapshot(
         "models": models,
     }
     if incremental:
-        document["pending_builds"] = []
+        document["pending_builds"] = pending_builds
     return document
 
 

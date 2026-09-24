@@ -709,7 +709,7 @@ jobs:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
     if: >-
-      always() &&
+      !cancelled() &&
       github.event_name != 'pull_request' &&
       needs.select.outputs.count != '0' &&
       needs.resolve-vulcan-config.result == 'success' &&
