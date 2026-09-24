@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
 import json
 import logging
@@ -29,7 +28,7 @@ MINIMUM_CALIBRATION_IMAGES = 128
 EXPECTED_ATTENTION_MATMULS = 8
 EXPECTED_ATTENTION_SOFTMAXES = 4
 SERIALIZED_INT8_SCALAR_TYPE = 1
-EXPECTED_MODEL_SDK_VERSION = "2.1.3"
+EXPECTED_MODEL_SDK_VERSION = "3.0.0"
 
 
 def serialized_model_sha256(output_dir: Path, model_name: str) -> dict[str, str]:
@@ -305,44 +304,6 @@ def _kernel(plugin: dict[str, Any]) -> str:
     return str(plugin.get("config_params", {}).get("kernel", ""))
 
 
-def build_mla_tessellation_parameters(model: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build direct MLA layout parameters from the quantized graph itself."""
-    from afe.apis.defines import TensorDRAMLayout, TensorTessellateParameters
-    from afe.ir.node import node_is_tuple
-
-    try:
-        mla = model._net.nodes["MLA_0"]
-        input_keys = list(mla.input_names)
-        output_node = mla.ir.nodes[mla.ir.output_node_name]
-    except (AttributeError, KeyError, TypeError) as exc:
-        raise RuntimeError("quantized model has no readable MLA_0 layout contract") from exc
-    logical_outputs = output_node.input_node_names if node_is_tuple(output_node) else [output_node.name]
-    output_keys = [f"{name}_output" for name in logical_outputs]
-    if not input_keys or not output_keys or len(set(input_keys + output_keys)) != len(input_keys) + len(output_keys):
-        raise RuntimeError(f"invalid MLA layout keys: inputs={input_keys}, outputs={output_keys}")
-
-    input_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC,
-    )
-    output_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC16,
-    )
-    parameters = {key: dataclasses.replace(input_layout) for key in input_keys}
-    parameters.update({key: dataclasses.replace(output_layout) for key in output_keys})
-    evidence = {
-        "input_keys": input_keys,
-        "input_dram_layout": "HWC",
-        "output_keys": output_keys,
-        "output_dram_layout": "HWC16",
-        "tessellation": "mla",
-    }
-    return parameters, evidence
-
-
 def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
     names, manifest = _safe_mpk(archive)
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -445,7 +406,7 @@ def compile_model(
     model_name: str,
     contract: DeploymentContract,
     expected_convolutions: int,
-) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+) -> tuple[Path, dict[str, Any]]:
     # Keep SDK imports out of source-validation and unit-test paths.
     from afe.apis.defines import (
         CalibrationMethod,
@@ -498,17 +459,15 @@ def compile_model(
         expected_convolutions,
     )
     quantized_report["serialized_model_sha256"] = serialized_model_sha256(output_dir, model_name)
-    tessellation_parameters, tessellation_report = build_mla_tessellation_parameters(quantized)
     quantized.compile(
         output_path=str(output_dir),
         batch_size=1,
         log_level=logging.INFO,
-        tessellate_parameters=tessellation_parameters,
     )
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one compiled MPK, found {archives}")
-    return archives[0], quantized_report, tessellation_report
+    return archives[0], quantized_report
 
 
 def main() -> int:
@@ -561,7 +520,7 @@ def main() -> int:
             context="calibration",
         )
         output_dir.mkdir(parents=True, exist_ok=False)
-        archive, quantized_report, tessellation_report = compile_model(
+        archive, quantized_report = compile_model(
             source,
             calibration,
             output_dir,
@@ -589,7 +548,6 @@ def main() -> int:
             },
             "calibration": calibration_report,
             "quantized_model": quantized_report,
-            "mla_layout": tessellation_report,
             "mpk": audit_mpk(archive, contract),
         }
     (output_dir / "compile-report.json").write_text(

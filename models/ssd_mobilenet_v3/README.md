@@ -4,25 +4,25 @@ This entry deploys the 12 raw predictor heads of TorchVision's pretrained
 `ssdlite320_mobilenet_v3_large` COCO model. Neat owns anchor decode, scoring,
 and NMS, so postprocessing is deliberately outside the compiled graph.
 
-## Four supported build profiles
+## Compiler-default build profiles
 
-| Variant | Precision source | Tessellation | Public ABI |
-| --- | --- | --- | --- |
-| `modalix_int8_tess_mla` | learned W8A8 QAT QDQ | MLA | FP32 input and 12 FP32 heads |
-| `modalix_int8_tess_off_mla` | learned W8A8 QAT QDQ | EV74 outside MLA | FP32 input and 12 FP32 heads |
-| `modalix_bf16_tess_mla` | FP32 source, BF16 compiler quantization | MLA | FP32 input and 12 FP32 heads |
-| `modalix_bf16_tess_off_mla` | FP32 source, BF16 compiler quantization | EV74 outside MLA | FP32 input and 12 FP32 heads |
+| Profile | Internal precision | Public ABI |
+| --- | --- | --- |
+| `modalix_int8` | W8A8 INT8 | FP32 input and 12 FP32 heads |
+| `modalix_bf16` | BF16 weights/activations | FP32 input and 12 FP32 heads |
+
+AFE 3.0 owns tensor-layout defaults. These two precision profiles replace
+both `_tess_mla` and `_tess_off_mla` profile pairs. Calibration, quantization
+and the public tensor contract are unchanged.
 
 The immutable source bundle contains one FP32 ONNX and one learned INT8 QDQ
 ONNX with the same input, outputs, and 98-convolution topology. `surgery.py`
 only validates the bundle and extracts the appropriate member; it never edits
-weights or adds runtime nodes. Both tessellation placements therefore consume
-the same precision source and can differ only in compiler placement.
+weights or adds runtime nodes. Each precision profile uses its corresponding
+source without a tensor-layout override.
 
-Model Compiler 2.1.3 lacks `quantization_mla` and public BF16/FP32 boundary
-APIs, so this recipe does not use them. The public buffers remain FP32. The
-serialized graph and MPK audits prove internal precision and placement instead
-of inferring them from a profile name.
+The public buffers remain FP32. Serialized graph and MPK audits verify
+internal precision and MLA layout conversion.
 
 ## Why INT8 uses QAT
 

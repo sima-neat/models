@@ -64,7 +64,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     ("model_id", "build_profile_id", "component_id"),
     [
         ("resnet_50", "modalix_bf16", "model"),
-        ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "model"),
+        ("ssd_mobilenet_v1", "modalix_int8", "model"),
         ("yolo26_tiny_drone", "modalix_int8_tessellation_mla", "model"),
         ("rf_detr_small", "modalix_int8_bf16", "backbone"),
         ("rf_detr_small", "modalix_int8_bf16", "transformer"),

@@ -28,7 +28,6 @@ from compile import (  # noqa: E402
     MODEL_NAME,
     audit_mpk,
     audit_quantized_model,
-    build_mla_tessellation_parameters,
     preprocess_rgb_image,
 )
 from contract import DeploymentContract  # noqa: E402
@@ -56,11 +55,7 @@ def calibration_source() -> SourceSpec:
 def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
     variant = variant_config(variant_id)
     parameters = variant["parameters"]
-    if (
-        variant["target"] != "modalix"
-        or parameters.get("precision") != "int8"
-        or parameters.get("tessellation_owner") != "mla"
-    ):
+    if variant["target"] != "modalix" or parameters.get("precision") != "int8":
         raise ValueError("the qualified tiny-drone recipe supports only INT8 with MLA tensor layout")
     contract = DeploymentContract(model_size=int(parameters["model_size"]))
     source_audit = audit_onnx(source, contract)
@@ -107,11 +102,9 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
         if quantized is None:
             raise RuntimeError("ModelSDK returned no model for the qualified quantized snapshot")
         output_label_report = restore_public_output_labels(quantized, contract.output_names())
-        tessellation_parameters, layout_report = build_mla_tessellation_parameters(quantized)
         quantized.compile(
             output_path=str(output_dir),
             batch_size=1,
-            tessellate_parameters=tessellation_parameters,
         )
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
@@ -129,7 +122,6 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
         },
         "quantized_model": quantized_report,
         "public_output_labels": output_label_report,
-        "mla_layout": layout_report,
         "mpk": audit_mpk(archive, contract),
     }
     (output_dir / "yolo26-tiny-drone-audit.json").write_text(

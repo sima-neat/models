@@ -28,7 +28,7 @@ from surgery import EXPECTED_CONVOLUTION_COUNT, INPUT_NAME, INPUT_SHAPE, OUTPUTS
 
 LOG = logging.getLogger("ssd_mobilenet_v2.compile")
 MODEL_DIR = Path(__file__).resolve().parent
-COMPILER_VERSION = "2.1.3"
+COMPILER_VERSION = "3.0.0"
 PUBLIC_INPUT_SIZE = int(np.prod(INPUT_SHAPE)) * np.dtype(np.float32).itemsize
 PUBLIC_OUTPUT_SIZES = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _, shape in OUTPUTS]
 
@@ -44,8 +44,6 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
         raise ValueError("SSD-MobileNet V2 supports only declared Modalix INT8 and BF16 variants")
-    if not isinstance(parameters.get("tessellation_mla"), bool):
-        raise ValueError("tessellation_mla must be a boolean")
     expected_quantization = (
         ("asymmetric_per_tensor_8bit", "symmetric_per_channel_8bit")
         if parameters["precision"] == "int8"
@@ -78,35 +76,6 @@ def resolve_calibration_path() -> Path:
         return path
     path, _cache_hit = Fetcher().fetch(calibration_source())
     return path
-
-
-def _tessellation_parameters(
-    model: Any,
-    *,
-    TensorDRAMLayout: Any,
-    TensorTessellateParameters: Any,
-    node_is_tuple: Any,
-) -> dict[str, Any]:
-    if "MLA_0" not in model._net.nodes:
-        raise RuntimeError("quantized SSD graph does not contain MLA_0")
-    mla = model._net.nodes["MLA_0"]
-    input_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC,
-    )
-    output_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC16,
-    )
-    parameters = {name: input_layout for name in mla.input_names}
-    output_node = mla.ir.nodes[mla.ir.output_node_name]
-    output_names = output_node.input_node_names if node_is_tuple(output_node) else [output_node.name]
-    parameters.update({f"{name}_output": output_layout for name in output_names})
-    if len(output_names) != len(OUTPUTS):
-        raise RuntimeError(f"expected {len(OUTPUTS)} MLA outputs, found {len(output_names)}")
-    return parameters
 
 
 def _safe_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -291,7 +260,6 @@ def enforce_quantization_quality(report: dict[str, Any], precision: str) -> dict
 def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
     variant = variant_config(variant_id)
     precision = str(variant["parameters"]["precision"])
-    tessellation_mla = bool(variant["parameters"]["tessellation_mla"])
     names, manifest = _safe_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
@@ -321,7 +289,7 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
     if len(unpack) != 1:
         raise RuntimeError(f"expected one SSD output unpack transform, found {len(unpack)}")
     internal_types = [str(value).lower() for value in _params(unpack[0]).get("tensor_types", [])]
-    aliases = {"int8"} if precision == "int8" or not tessellation_mla else {"bf16", "bfloat16"}
+    aliases = {"int8"} if precision == "int8" else {"bf16", "bfloat16"}
     if len(internal_types) != len(OUTPUTS) or any(value not in aliases for value in internal_types):
         raise RuntimeError(f"{precision.upper()} SSD output transport audit failed: {internal_types}")
 
@@ -336,16 +304,14 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
                 f"dequantize={dequantized_types}"
             )
 
-    external_tessellation_stages = sorted(
-        PurePosixPath(name).name
-        for name in names
-        if PurePosixPath(name).name in {"0_quanttess.json", "0_tessellate.json"}
-    )
-    if bool(external_tessellation_stages) == tessellation_mla or a65_plugins:
-        placement = "in MLA" if tessellation_mla else "on EV74 outside MLA"
+    external_tessellation_stages = [
+        plugin.get("name")
+        for plugin in plugins
+        if _kernel(plugin) in {"tessellation_transform", "detessellation_transform", "quantize_tessellate_transform"}
+    ]
+    if external_tessellation_stages or a65_plugins:
         raise RuntimeError(
-            f"SSD tessellation placement audit failed for {placement}: "
-            f"external_stages={external_tessellation_stages}, A65={len(a65_plugins)}"
+            f"SSD MLA layout audit failed: external_stages={external_tessellation_stages}, A65={len(a65_plugins)}"
         )
 
     return {
@@ -361,7 +327,7 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
         "public_output_dtype": "float32",
         "public_output_sizes": output_sizes,
         "shared_object_count": len(shared_objects),
-        "tessellation": "mla" if tessellation_mla else "ev74",
+        "tessellation": "mla",
         "tessellation_stages": external_tessellation_stages,
         "validation_tensor_sha256": VALIDATION_ARRAY_SHA256,
     }
@@ -370,7 +336,6 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
 def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     variant = variant_config(variant_id)
     precision = str(variant["parameters"]["precision"])
-    tessellation_mla = bool(variant["parameters"]["tessellation_mla"])
 
     # These imports intentionally stay inside the Vulcan-only path. Registry,
     # surgery, provenance, and MPK-audit tests do not require an SDK install.
@@ -378,8 +343,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
         CalibrationMethod,
         InputName,
         RequantizationMode,
-        TensorDRAMLayout,
-        TensorTessellateParameters,
         bfloat16_scheme,
         default_quantization,
         gen2_target,
@@ -387,7 +350,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     )
     from afe.apis.loaded_net import load_model
     from afe.core.utils import convert_data_generator_to_iterable
-    from afe.ir.node import node_is_tuple
     from afe.ir.tensor_type import ScalarType
     from afe.load.importers.general_importer import ImporterParams, ModelFormat
     from sima_utils.data.data_generator import DataGenerator
@@ -433,19 +395,10 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
         quantized_report["quantization_validation"] = enforce_quantization_quality(
             validate_quantization(loaded, quantized, validation, InputName), precision
         )
-        tessellation = None
-        if tessellation_mla:
-            tessellation = _tessellation_parameters(
-                quantized,
-                TensorDRAMLayout=TensorDRAMLayout,
-                TensorTessellateParameters=TensorTessellateParameters,
-                node_is_tuple=node_is_tuple,
-            )
         quantized.compile(
             output_path=str(output_dir),
             batch_size=1,
             log_level=logging.INFO,
-            tessellate_parameters=tessellation,
         )
 
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))

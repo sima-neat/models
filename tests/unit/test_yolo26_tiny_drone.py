@@ -579,11 +579,7 @@ def test_compile_recipe_requires_representative_data_and_audits_the_mpk() -> Non
     assert "attention_types != {expected_io}" in source
     assert '"compute_scalar_type": "int8"' in source
     assert "any_shape_on_mla=True" in source
-    assert "TensorTessellateParameters" in source
-    assert "TensorDRAMLayout.HWC" in source
-    assert "TensorDRAMLayout.HWC16" in source
-    assert "tessellate_parameters=tessellation_parameters" in source
-    assert "tessellate_parameters=None" not in source
+    assert "tessellate_parameters" not in source
     assert 'tensor_types != ["int8"] * len(contract.outputs)' in source
     assert '"tessellation": "mla"' in source
     assert "role_input_abi != expected_output_abi" in source
@@ -650,7 +646,7 @@ def _mpk_fixture(contract: DeploymentContract) -> tuple[dict[str, object], list[
     ]
     return (
         {
-            "model_sdk_version": "2.1.3",
+            "model_sdk_version": "3.0.0",
             "input_nodes": [
                 {
                     "name": INPUT_NAME,

@@ -71,7 +71,7 @@ def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
     assert "Model.load(MODEL_NAME" in source
     assert "restore_public_output_labels(quantized, contract.output_names())" in source
     assert '"mpk": audit_mpk(archive, contract)' in source
-    assert 'parameters.get("tessellation_owner") != "mla"' in source
+    assert "tessellate_parameters" not in source
 
 
 def test_modelsdk_output_labels_are_restored_and_verified() -> None:
