@@ -279,19 +279,12 @@ jobs:
           "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install .
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
 
-      - name: Install benchmark JSON tooling
-        run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends jq
-          fi
-
       - name: Resolve and verify benchmark runtime
         run: |
           set -euo pipefail
           runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository .)"
-          platform_version="$(jq -er '.devkit.platform_version' <<< "$runtime")"
-          neat_version="$(jq -er '.neat_core.version' <<< "$runtime")"
+          platform_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])' <<< "$runtime")"
+          neat_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["version"])' <<< "$runtime")"
           actual_platform="$(
             awk -F= '
               /^[[:space:]]*DISTRO_VERSION[[:space:]]*=/ {
@@ -321,9 +314,9 @@ jobs:
       - name: Install branch benchmarker and Neat dependency
         run: |
           set -euo pipefail
-          environment="$(jq -er '.benchmarker.vulcan.environment' <<< "$BENCHMARK_RUNTIME")"
-          name="$(jq -er '.benchmarker.vulcan.name' <<< "$BENCHMARK_RUNTIME")"
-          expected_version="$(jq -er '.benchmarker.version' <<< "$BENCHMARK_RUNTIME")"
+          environment="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["benchmarker"]["vulcan"]["environment"])' <<< "$BENCHMARK_RUNTIME")"
+          name="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["benchmarker"]["vulcan"]["name"])' <<< "$BENCHMARK_RUNTIME")"
+          expected_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["benchmarker"]["version"])' <<< "$BENCHMARK_RUNTIME")"
           tooling_tag="${GITHUB_SHA:0:12}"
           target="$name@$GITHUB_REF_NAME:$tooling_tag"
           for attempt in {1..6}; do
@@ -346,7 +339,7 @@ jobs:
       - name: Generate manifest and run benchmark
         run: |
           set -euo pipefail
-          SIMA_PLATFORM_VERSION="$(jq -er '.devkit.platform_version' <<< "$BENCHMARK_RUNTIME")"
+          SIMA_PLATFORM_VERSION="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])' <<< "$BENCHMARK_RUNTIME")"
           export SIMA_PLATFORM_VERSION
           IFS=',' read -ra components <<< "$COMPONENT_IDS"
           for component in "${components[@]}"; do
