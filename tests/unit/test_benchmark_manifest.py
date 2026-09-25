@@ -109,7 +109,11 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     )
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
 
-    assert manifest["compatibility"] == {"platform_version": "2.1.3", "neat_version": "0.4.0"}
+    dependencies = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["compatibility"] == {
+        "platform_version": dependencies["platform-version"],
+        "neat_version": dependencies["neat-core"]["version"],
+    }
     assert manifest["model"]["id"] == model_id
     assert manifest["model"]["build_profile_id"] == build_profile_id
     assert manifest["model"]["component_id"] == component_id
