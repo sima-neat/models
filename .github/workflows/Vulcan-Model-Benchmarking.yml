@@ -279,6 +279,13 @@ jobs:
           "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install .
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
 
+      - name: Install benchmark JSON tooling
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends jq
+          fi
+
       - name: Resolve and verify benchmark runtime
         run: |
           set -euo pipefail
