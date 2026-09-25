@@ -5,6 +5,7 @@ run-name: Benchmarker (${{ inputs.environment || 'staging' }}) - ${{ github.ref_
 on:
   pull_request:
     paths:
+      - "deps/manifest.json"
       - ".github/workflows/Vulcan-Benchmarker.yml"
       - "packaging/benchmarker/**"
       - "schemas/performance-*-v1.schema.json"

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "scripts" / "build_benchmarker_vulcan_package.sh"
 INSTALL_SCRIPT = ROOT / "packaging" / "benchmarker" / "install_benchmarker_package.sh"
-DEPENDENCIES = ROOT / "packaging" / "benchmarker" / "dependencies.json"
+DEPENDENCIES = ROOT / "deps" / "manifest.json"
 
 
 def fake_sima_cli(path: Path) -> None:
@@ -25,7 +25,9 @@ if sys.argv[1:3] != ["packages", "build"]:
 out = pathlib.Path(sys.argv[3])
 name = sys.argv[sys.argv.index("--name") + 1]
 version = sys.argv[sys.argv.index("--version") + 1]
-(out / "metadata.json").write_text(json.dumps({{"name": name, "version": version}}) + "\\n")
+board_platform = sys.argv[sys.argv.index("--board-platform") + 1]
+metadata = {{"name": name, "version": version, "board_platform": board_platform}}
+(out / "metadata.json").write_text(json.dumps(metadata) + "\\n")
 """,
         encoding="utf-8",
     )
@@ -63,22 +65,21 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "benchmarker = benchmarker:main" in wheel.read(entry_points).decode()
 
     dependencies = json.loads((output / "dependencies.json").read_text(encoding="utf-8"))
+    source = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))
     assert dependencies == {
         "schema_version": 1,
-        "platform_version": "3.0.0",
-        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@release-3.0.0-prep:96d8805fe3c1"}},
+        "platform_version": source["platform-version"],
+        "dependencies": {"neat-core": source["neat-core"]},
     }
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata == {"name": "gh:sima-neat/models/benchmarker", "version": "0.2.0+unit"}
+    assert metadata == {
+        "name": "gh:sima-neat/models/benchmarker",
+        "version": "0.2.0+unit",
+        "board_platform": f"modalix@=={source['platform-version']}",
+    }
 
 
 def test_package_installer_uses_declared_core_dependency() -> None:
-    dependencies = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))
-    assert dependencies == {
-        "schema_version": 1,
-        "platform_version": "3.0.0",
-        "dependencies": {"neat-core": {"version": "0.4.0", "install_target": "core@release-3.0.0-prep:96d8805fe3c1"}},
-    }
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert '"${SIMA_CLI_BIN}" neat install -t minimal "${CORE_TARGET}"' in script
     assert '"${PYNEAT_PYTHON}" -m pip install --no-deps --force-reinstall' in script

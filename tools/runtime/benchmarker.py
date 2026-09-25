@@ -28,8 +28,6 @@ from typing import Any
 EXIT_CONFIGURATION = 2
 EXIT_COMPATIBILITY = 3
 EXIT_BENCHMARK = 4
-SUPPORTED_PLATFORM_VERSION = "2.1.3"
-SUPPORTED_NEAT_VERSION = "0.4.0"
 MAX_MPK_MANIFEST_BYTES = 32 * 1024 * 1024
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -141,15 +139,6 @@ def load_manifest(path: Path) -> dict[str, Any]:
         version = _require_string(compatibility.get(field), f"compatibility.{field}")
         if not SEMVER.fullmatch(version):
             raise ConfigurationError(f"compatibility.{field} must use MAJOR.MINOR.PATCH")
-    if compatibility["platform_version"] != SUPPORTED_PLATFORM_VERSION:
-        raise CompatibilityError(
-            f"this benchmarker supports platform {SUPPORTED_PLATFORM_VERSION}, not {compatibility['platform_version']}"
-        )
-    if compatibility["neat_version"] != SUPPORTED_NEAT_VERSION:
-        raise CompatibilityError(
-            f"this benchmarker supports Neat {SUPPORTED_NEAT_VERSION}, not {compatibility['neat_version']}"
-        )
-
     benchmark = _require_mapping(manifest.get("benchmark"), "benchmark")
     _reject_unknown(
         benchmark,

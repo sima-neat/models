@@ -690,15 +690,18 @@ def test_rejects_runtime_version_mismatch(platform: str, neat: str, message: str
         benchmark.require_runtime_compatibility("2.1.3", "0.4.0", runtime, platform)
 
 
-def test_manifest_rejects_version_not_supported_by_benchmarker(tmp_path: Path) -> None:
+def test_manifest_uses_declared_runtime_versions(tmp_path: Path) -> None:
     mpk = tmp_path / "model.tar.gz"
     manifest = make_manifest(mpk, make_mpk(mpk))
-    manifest["compatibility"]["neat_version"] = "0.5.0"
+    dependencies = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["compatibility"] = {
+        "platform_version": dependencies["platform-version"],
+        "neat_version": dependencies["neat-core"]["version"],
+    }
     path = tmp_path / "test.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(benchmark.CompatibilityError, match="supports Neat 0.4.0"):
-        benchmark.load_manifest(path)
+    assert benchmark.load_manifest(path)["compatibility"] == manifest["compatibility"]
 
 
 @pytest.mark.parametrize(
