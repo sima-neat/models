@@ -11,25 +11,35 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_repository_model_compiler_dependency_is_pinned() -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    compiler = manifest["model-compiler"]
+    version, channel, revision = compiler["version"], compiler["channel"], compiler["revision"]
     assert resolve_model_compiler(ROOT) == {
-        "identity": "3.0.0+develop.e94f03a8f59c",
-        "label": "model-compiler-develop-e94f03a8f59c",
-        "version": "3.0.0",
+        "identity": f"{version}+{channel}.{revision}",
+        "label": f"model-compiler-{channel}-{revision}",
+        "version": version,
     }
 
 
 def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["platform-version"] == "3.0.0"
     assert "platform_version" not in manifest["devkit"]
 
     runtime = resolve_benchmark_runtime(ROOT)
-    assert runtime["devkit"] == {"board": "modalix", "os_type": "elxr", "platform_version": "3.0.0"}
-    assert runtime["neat_core"] == {"version": "0.4.0", "install_target": "core@release-3.0.0-prep:96d8805fe3c1"}
-    assert runtime["benchmarker"]["vulcan"] == {
-        "environment": "stg",
-        "name": "models-utils/benchmarker",
-    }
+    assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
+    assert runtime["neat_core"] == manifest["neat-core"]
+    assert runtime["benchmarker"] == manifest["benchmarker"]
+
+
+@pytest.mark.parametrize("build", [None, "", "1493", "B1493.*"])
+def test_benchmark_runtime_requires_a_literal_build_number(tmp_path: Path, build: object) -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["devkit"]["build"] = build
+    path = tmp_path / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValidationError, match="devkit.build"):
+        resolve_benchmark_runtime(tmp_path)
 
 
 def test_benchmark_runtime_requires_a_package_name(tmp_path: Path) -> None:

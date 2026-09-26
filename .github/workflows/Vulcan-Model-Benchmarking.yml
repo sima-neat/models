@@ -284,6 +284,7 @@ jobs:
           set -euo pipefail
           runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository .)"
           platform_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])' <<< "$runtime")"
+          platform_build="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["build"])' <<< "$runtime")"
           neat_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["version"])' <<< "$runtime")"
           actual_platform="$(
             awk -F= '
@@ -303,11 +304,11 @@ jobs:
             echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
             exit 1
           fi
-          if ! grep -Eq '(^|[^[:alnum:]])B?1493([^[:alnum:]]|$)' /etc/buildinfo; then
-            echo "DevKit build mismatch: expected B1493." >&2
+          if ! grep -Eq "(^|[^[:alnum:]])B?${platform_build#B}([^[:alnum:]]|$)" /etc/buildinfo; then
+            echo "DevKit build mismatch: expected $platform_build." >&2
             exit 1
           fi
-          echo "Verified DevKit platform $actual_platform, build B1493."
+          echo "Verified DevKit platform $actual_platform, build $platform_build."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
           echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
 

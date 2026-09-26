@@ -75,7 +75,7 @@ def test_builds_benchmarker_wheel_and_vulcan_payload(tmp_path: Path) -> None:
     assert metadata == {
         "name": "gh:sima-neat/models/benchmarker",
         "version": "0.2.0+unit",
-        "board_platform": f"modalix@=={source['platform-version']}",
+        "board_platform": f"{source['devkit']['board']}@=={source['platform-version']}",
     }
 
 

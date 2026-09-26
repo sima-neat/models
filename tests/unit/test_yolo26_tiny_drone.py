@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -639,7 +640,7 @@ def _mpk_fixture(contract: DeploymentContract) -> tuple[dict[str, object], list[
     ]
     return (
         {
-            "model_sdk_version": "3.0.0",
+            "model_sdk_version": json.loads((ROOT / "deps" / "manifest.json").read_text())["model-compiler"]["version"],
             "input_nodes": [
                 {
                     "name": INPUT_NAME,

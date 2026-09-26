@@ -49,7 +49,7 @@ mkdir -p "${OUT_DIR}"
 
 install -m 0755 "${ROOT_DIR}/packaging/benchmarker/install_benchmarker_package.sh" \
   "${OUT_DIR}/install_benchmarker_package.sh"
-PLATFORM_VERSION="$("${PYTHON_BIN}" - "${ROOT_DIR}/deps/manifest.json" "${OUT_DIR}/dependencies.json" <<'PYTHON'
+BOARD_PLATFORM="$("${PYTHON_BIN}" - "${ROOT_DIR}/deps/manifest.json" "${OUT_DIR}/dependencies.json" <<'PYTHON'
 import json
 import pathlib
 import sys
@@ -61,7 +61,7 @@ dependencies = {
     "dependencies": {"neat-core": manifest["neat-core"]},
 }
 pathlib.Path(sys.argv[2]).write_text(json.dumps(dependencies, indent=2) + "\n", encoding="utf-8")
-print(manifest["platform-version"])
+print(f'{manifest["devkit"]["board"]}@=={manifest["platform-version"]}')
 PYTHON
 )"
 install -m 0644 "${ROOT_DIR}/schemas/performance-test-v1.schema.json" "${OUT_DIR}/"
@@ -76,7 +76,7 @@ SIMA_CLI_CHECK_FOR_UPDATE=0 "${SIMA_CLI_BIN}" packages build "${OUT_DIR}" \
   --description "Generic Python model benchmarker for Modalix DevKits" \
   --install-script "install_benchmarker_package.sh" \
   --download-compatible-files-only \
-  --board-platform "modalix@==${PLATFORM_VERSION}"
+  --board-platform "${BOARD_PLATFORM}"
 
 test -f "${OUT_DIR}/metadata.json"
 "${PYTHON_BIN}" -m json.tool "${OUT_DIR}/metadata.json" >/dev/null

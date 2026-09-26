@@ -79,7 +79,10 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
 
     board = devkit.get("board")
     os_type = devkit.get("os_type")
+    build = devkit.get("build")
     install_target = core.get("install_target")
+    if not isinstance(build, str) or re.fullmatch(r"B[0-9]+", build) is None:
+        raise ValidationError("devkit.build must use B followed by the build number")
     if not isinstance(board, str) or not board:
         raise ValidationError("devkit.board must be a non-empty string")
     if not isinstance(os_type, str) or not os_type:
@@ -101,6 +104,7 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         "devkit": {
             "board": board,
             "os_type": os_type,
+            "build": build,
             "platform_version": platform_version,
         },
         "neat_core": {"version": core_version, "install_target": install_target},

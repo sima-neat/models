@@ -160,7 +160,9 @@ def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> 
                 "Softmax": {"count": 4, "input_scalar_type": "int8", "output_scalar_type": "int8"},
             },
         },
-        "mpk": {"compiler_version": "3.0.0"},
+        "mpk": {
+            "compiler_version": json.loads((ROOT / "deps" / "manifest.json").read_text())["model-compiler"]["version"]
+        },
     }
     report_path = tmp_path / "compile-report.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")

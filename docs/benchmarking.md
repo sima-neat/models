@@ -8,17 +8,17 @@ model accuracy.
 
 ## Compatibility
 
-The first runner release is pinned to:
-
-| Component | Version |
-| --- | --- |
-| Platform | 2.1.3 |
-| Neat and pyneat | 0.4.0 |
-| MPK Model SDK | 2.1.3 |
+Runtime and compiler pins come from [`deps/manifest.json`](../deps/manifest.json).
+`platform-version` selects the platform, `devkit.build` selects the required
+board build, and `neat-core` declares the Core package and its base version.
+`model-compiler` selects the compiler identity and expected MPK SDK version.
+Package metadata, CI checks and repository dependency tests read these fields.
+Change dependency pins in this manifest rather than in scripts or tests.
 
 The installer rejects a different DevKit `DISTRO_VERSION` or pyneat base
-version. A local build such as `0.4.0+develop.<sha>` is accepted because its
-public API base version is 0.4.0.
+version. CI also verifies the declared board build. A Core version with a
+branch and commit suffix must still match the declared base version. MPK
+compiler provenance is checked separately from the runtime platform version.
 
 An MPK may contain more than one ELF. The runner verifies every MLA stage's ELF
 reference and passes the complete archive to `pyneat.Model`; Neat therefore
@@ -38,18 +38,16 @@ source ~/pyneat/bin/activate
 benchmarker --version
 ```
 
-The package declares `core@v0.4.0` in its own package metadata. Its installer
-checks the DevKit platform, installs that Core package through `sima-cli` when
-pyneat 0.4.0 is not already satisfied, and installs the benchmarker wheel into
-the resulting `~/pyneat` environment. Verify the installed benchmarker and
-pyneat versions before execution.
+The package's `dependencies.json` is generated from the repository manifest.
+Its installer checks the DevKit platform and installs the declared Core package
+through `sima-cli`, including the exact revision for a branch pin. It then
+installs the benchmarker wheel into the resulting `~/pyneat` environment.
+Verify the installed benchmarker and pyneat versions before execution.
 
-For a downloaded package payload, the equivalent manual installation is:
+For a downloaded package payload, run its installer from the payload directory:
 
 ```bash
-sima-cli neat install core@v0.4.0
-~/pyneat/bin/python -m pip install --no-deps --force-reinstall \
-  sima_neat_benchmarker-*.whl
+bash install_benchmarker_package.sh
 source ~/pyneat/bin/activate
 ```
 

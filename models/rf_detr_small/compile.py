@@ -40,6 +40,7 @@ from calibration import (
     to_afe_layout,
     transformer_inputs,
 )
+from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BOXES, FEATURES, INPUT, OUTPUTS, PROPOSALS, SCORES, prepare_model, validate_float_split
@@ -48,7 +49,7 @@ MODEL_DIR = Path(__file__).resolve().parent
 MODEL_ID = "rf_detr_small"
 INVOCATION_ID = "rf_detr"
 PROFILE_ID = "modalix_int8_bf16"
-COMPILER_VERSION = "3.0.0"
+COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 COMPONENT_INTERFACES = {
     "backbone": {

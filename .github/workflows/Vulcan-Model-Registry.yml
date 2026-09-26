@@ -5,6 +5,7 @@ run-name: Model Registry Contributor Tool (${{ inputs.environment || 'staging' }
 on:
   pull_request:
     paths:
+      - "deps/manifest.json"
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"
@@ -22,6 +23,7 @@ on:
     branches:
       - "**"
     paths:
+      - "deps/manifest.json"
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"

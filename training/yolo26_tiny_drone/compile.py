@@ -28,7 +28,9 @@ MINIMUM_CALIBRATION_IMAGES = 128
 EXPECTED_ATTENTION_MATMULS = 8
 EXPECTED_ATTENTION_SOFTMAXES = 4
 SERIALIZED_INT8_SCALAR_TYPE = 1
-EXPECTED_MODEL_SDK_VERSION = "3.0.0"
+EXPECTED_MODEL_SDK_VERSION = json.loads(
+    (Path(__file__).resolve().parents[2] / "deps" / "manifest.json").read_text(encoding="utf-8")
+)["model-compiler"]["version"]
 
 
 def serialized_model_sha256(output_dir: Path, model_name: str) -> dict[str, str]:

@@ -22,13 +22,14 @@ from calibration import (
     sha256_file,
     validate_dataset,
 )
+from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import Fetcher
 from model_registry.source import SourceSpec
 from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_model
 
 LOG = logging.getLogger("ssd_mobilenet_v1.compile")
 MODEL_DIR = Path(__file__).resolve().parent
-COMPILER_VERSION = "3.0.0"
+COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 PUBLIC_INPUT_SIZE = int(np.prod(INPUT_SHAPE)) * np.dtype(np.float32).itemsize
 PUBLIC_OUTPUT_SIZES = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _, shape in OUTPUTS]
 

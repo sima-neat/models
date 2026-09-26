@@ -111,6 +111,8 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert 'gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)' in runtime["run"]
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime["run"]
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime["run"]
+    assert '["devkit"]["build"]' in runtime["run"]
+    assert "${platform_build#B}" in runtime["run"]
     assert "sima-cli neat install" in install["run"]
     assert 'tooling_tag="${GITHUB_SHA:0:12}"' in install["run"]
     assert 'target="$name@$GITHUB_REF_NAME:$tooling_tag"' in install["run"]
