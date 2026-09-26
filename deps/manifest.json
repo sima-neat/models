@@ -18,7 +18,7 @@
     "version": "3.0.0"
   },
   "neat-core": {
-    "install_target": "core@fix/compiler-compatibility:41946c3b35b4",
+    "install_target": "core@release-3.0.0-prep:96d8805fe3c1",
     "version": "0.4.0"
   }
 }
