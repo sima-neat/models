@@ -140,6 +140,8 @@ def test_catalog_progress_is_initialized_then_updated_per_invocation() -> None:
     assert "needs.select.outputs.validation_count == '0'" in initialize["if"]
     assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
     assert "model-registry publish-catalog" in plan["run"]
+    assert plan["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
+    assert "--selected-matrix \"$matrix_file\"" in plan["run"]
     assert "--base-branch \"$BASE_BRANCH\"" in plan["run"]
     assert "needs.select.outputs.publishable == 'true'" in progress["if"]
     assert "needs.select.outputs.validation_count == '0'" in progress["if"]

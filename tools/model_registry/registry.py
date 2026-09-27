@@ -273,6 +273,33 @@ def _package_publication_receipts(package_dir: Path | None) -> dict[tuple[str, s
     return receipts
 
 
+def _selected_invocation_keys(selected_matrix: Path | None) -> set[tuple[str, str, str]]:
+    if selected_matrix is None:
+        return set()
+    try:
+        document = json.loads(selected_matrix.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"could not read selected build matrix {selected_matrix}: {exc}") from exc
+    include = document.get("include") if isinstance(document, dict) else None
+    if not isinstance(include, list):
+        raise ValidationError(f"{selected_matrix}: selected build matrix must contain an include list")
+    selected: set[tuple[str, str, str]] = set()
+    for index, entry in enumerate(include):
+        if not isinstance(entry, dict):
+            raise ValidationError(f"{selected_matrix}: selected build matrix entry {index} must be an object")
+        key = tuple(str(entry.get(field, "")) for field in (
+            "model_id", "build_profile_id", "compile_invocation_id",
+        ))
+        if not all(key):
+            raise ValidationError(
+                f"{selected_matrix}: selected build matrix entry {index} must identify a compile invocation"
+            )
+        if key in selected:
+            raise ValidationError(f"{selected_matrix}: selected build matrix contains duplicate invocation {key}")
+        selected.add(key)
+    return selected
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
@@ -280,6 +307,7 @@ def build_catalog_snapshot(
     git_sha: str,
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
+    selected_matrix: str | Path | None = None,
     previous: JsonObject | None = None,
     incremental: bool = False,
 ) -> JsonObject:
@@ -302,6 +330,21 @@ def build_catalog_snapshot(
     package_receipts = _package_publication_receipts(
         Path(package_dir).expanduser().resolve() if package_dir else None
     )
+    selected_invocations = _selected_invocation_keys(
+        Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+    )
+    known_invocations = {
+        (entry["model_id"], entry["build_profile_id"], entry["compile_invocation_id"])
+        for entry in matrix
+    }
+    unknown_invocations = sorted(selected_invocations - known_invocations)
+    if unknown_invocations:
+        model_id, profile_id, invocation_id = unknown_invocations[0]
+        raise ValidationError(
+            "selected build matrix references unknown compile invocation "
+            f"{model_id}/{profile_id}/{invocation_id}"
+        )
+    selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected_invocations}
     previous_builds: dict[tuple[str, str, str], JsonObject] = {}
     previous_packages: dict[tuple[str, str, str], JsonObject] = {}
     for model in (previous or {}).get("models", []):
@@ -432,7 +475,12 @@ def build_catalog_snapshot(
             for profile_id in declaration["build_profiles"]:
                 key = (model_id, profile_id, declaration["id"])
                 receipt = package_receipts.get(key)
-                prior = previous_packages.get(key)
+                # A selected profile may be rebuilt even when its compile
+                # fingerprint is unchanged (for example, after changing only
+                # its runner class). Do not seed the new catalog revision with
+                # the prior package: packages are immutable within a revision,
+                # and the replacement package must link the new component runs.
+                prior = None if (model_id, profile_id) in selected_profiles else previous_packages.get(key)
                 package = receipt or prior
                 if package is None:
                     # This model/profile was not rebuilt in the current invocation.
@@ -502,6 +550,7 @@ def publish_catalog(
     git_sha: str,
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
+    selected_matrix: str | Path | None = None,
     base_branch: str | None = None,
     request: Request | None = None,
     read_request: ReadRequest | None = None,
@@ -535,6 +584,7 @@ def publish_catalog(
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         package_dir=package_dir,
+        selected_matrix=selected_matrix,
         previous=previous,
         incremental=True,
     )

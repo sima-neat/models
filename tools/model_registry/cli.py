@@ -272,6 +272,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--repository", type=Path, default=Path.cwd())
     publish_catalog_parser.add_argument("--compiled-dir", type=Path)
     publish_catalog_parser.add_argument("--package-dir", type=Path)
+    publish_catalog_parser.add_argument(
+        "--selected-matrix",
+        type=Path,
+        help="omit prior packages for build profiles selected for replacement",
+    )
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
@@ -781,6 +786,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         repository=args.repository,
         compiled_dir=args.compiled_dir,
         package_dir=args.package_dir,
+        selected_matrix=args.selected_matrix,
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
