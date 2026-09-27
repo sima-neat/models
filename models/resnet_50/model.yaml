@@ -129,7 +129,6 @@ build_profiles:
       - 224
       - 224
       mla_tessellation: true
-    runner_class: expensive
     shape_profile: compile_input
 - id: modalix_int8
   target: modalix
