@@ -10,7 +10,7 @@
   "devkit": {
     "board": "modalix",
     "os_type": "elxr",
-    "build": "B1493"
+    "build": "B1748"
   },
   "model-compiler": {
     "channel": "develop",
