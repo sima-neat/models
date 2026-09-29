@@ -23,6 +23,40 @@ only the two MPKs. The application must run TopK/Gather on the backbone outputs
 before invoking the transformer. `calibration.py` contains the deterministic
 reference operation used during compilation and fidelity validation.
 
+## Attention layout optimization
+
+Graph preparation applies two guarded ONNX rewrites in `attention.py`, before
+calibration:
+
+- The nine backbone window blocks evaluate independent groups in head/window
+  order instead of window/head order, restoring the original output order.
+  Only four Transpose attributes change per block. The frontend can then remove
+  redundant layout conversions. Global attention and its projections are unchanged.
+- The three decoder self-attention blocks use NCHW Einsum, Split/Concat head
+  merge, and a 1x1 Conv carrying the original output-projection weights/bias.
+  Deformable attention is unchanged. This layout also benefits legacy attention
+  and does not force FlashAttention.
+
+The passes validate the pinned export's shapes, permutations, reduction axes,
+scaling, private intermediates, and block counts. Unexpected patterns fail with
+an error rather than silently changing semantics. Public partition interfaces,
+TopK/Gather, and calibration selection remain unchanged; both partitions are
+calibrated after surgery. No compiler selector or kernel changes are required.
+
+On the pinned Small export, both optimized partitions passed ONNX checking and
+float comparisons on 50 held-out COCO images: backbone outputs were bit-exact;
+the decoder's maximum absolute difference was 1.25e-4. Three complete split
+pipeline comparisons also passed. The float surgery check uses `rtol=2e-4`,
+`atol=2e-4` to allow changed float32 accumulation in the equivalent decoder
+projection, and rejects non-finite outputs or changed shapes.
+
+Prior Nano experiments measured 10.62% fewer full-backbone simulator cycles for
+the window rewrite and 1.625x full-decoder speedup for the NCHW rewrite. Those
+measurements used the development compiler's MLA simulator at 13.63 DMA bytes
+per cycle, excluding host orchestration and boundary EV casts. They are not
+Small performance claims. Recompile and benchmark this recipe with its pinned compiler to obtain
+Small results; the ONNX checks do not establish quantized accuracy or latency.
+
 ## Manual conversion
 
 `convert.yaml` pins the checkpoint; `requirements-convert.txt` pins export

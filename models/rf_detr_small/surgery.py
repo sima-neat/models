@@ -1,4 +1,4 @@
-"""Move proposal decoding before TopK and split RF-DETR into two ONNX graphs."""
+"""Split RF-DETR around TopK and optimize each partition's attention layout."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from attention import optimize_decoder_attention, optimize_window_attention
 
 INPUT = "input"
 FEATURES = "backbone_features"
@@ -124,12 +125,12 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     )
     if not valid:
         raise RuntimeError("RF-DETR transformer simplification failed validation")
-    transformer = onnx.shape_inference.infer_shapes(transformer)
+    transformer = optimize_decoder_attention(transformer)
     transformer.ir_version = 8
     onnx.checker.check_model(transformer)
     onnx.save(transformer, transformer_path)
 
-    backbone = onnx.load(backbone_path)
+    backbone = optimize_window_attention(onnx.load(backbone_path))
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)
@@ -154,6 +155,12 @@ def validate_float_split(
     expected = reference.run(None, {INPUT: sample})
     actual = transformer_session.run(None, {FEATURES: features, PROPOSALS: proposals})
     for name, expected_value, actual_value in zip(OUTPUTS, expected, actual, strict=True):
-        if not np.allclose(actual_value, expected_value, rtol=1e-4, atol=1e-5):
+        if actual_value.shape != expected_value.shape or not (
+            np.isfinite(expected_value).all() and np.isfinite(actual_value).all()
+        ):
+            raise RuntimeError(f"RF-DETR split output {name} has an invalid shape or non-finite values")
+        # Gemm -> NCHW Conv preserves the projection but changes float32
+        # accumulation order. This tolerance covers the validated ONNX rewrite.
+        if not np.allclose(actual_value, expected_value, rtol=2e-4, atol=2e-4):
             maximum_error = float(np.max(np.abs(actual_value - expected_value)))
             raise RuntimeError(f"RF-DETR split output {name} does not match the original graph: {maximum_error}")
