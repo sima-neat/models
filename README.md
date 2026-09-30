@@ -89,8 +89,9 @@ Each record links the model source checksum, variant parameters, Model Compiler
 version, build fingerprint, and exact versioned S3 MPK. For staging feature
 branches, the workflow discovers the Modalix compile artifacts actually produced
 by the current run and benchmarks each one on the resolved Modalix GitHub runner.
-The runner verifies the manifest-pinned platform and B1748 build, installs Core,
-and returns a schema-v5 result and log for each model component/profile. A
+The runner verifies the manifest-selected Platform version and installs Core from
+the configured target. Each schema-v5 result records the actual board build and
+installed Core and Internals versions, alongside a log for each model component/profile. A
 trusted hosted job publishes every completed result under its model's S3 hierarchy
 and records an immutable `model_benchmark` child of the matching compile run.
 

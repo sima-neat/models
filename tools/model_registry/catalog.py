@@ -518,6 +518,7 @@ def benchmark_fingerprint(
                 path: hashlib.sha256((root / path).read_bytes()).hexdigest()
                 if (root / path).is_file() else None
                 for path in (
+                    ".github/workflows/Vulcan-Model-Benchmarking.yml",
                     "tools/model_registry/core_benchmark.py",
                     "tools/model_registry/benchmark_publication.py",
                     "tools/model_registry/benchmark_manifest.py",

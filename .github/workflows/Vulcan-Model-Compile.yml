@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/Vulcan-Model-Compile.yml"
+      - ".github/workflows/Vulcan-Model-Benchmarking.yml"
       - "deps/**"
       - "models/**"
       - "schemas/**"
@@ -15,6 +16,7 @@ on:
   push:
     paths:
       - ".github/workflows/Vulcan-Model-Compile.yml"
+      - ".github/workflows/Vulcan-Model-Benchmarking.yml"
       - "deps/**"
       - "models/**"
       - "schemas/**"

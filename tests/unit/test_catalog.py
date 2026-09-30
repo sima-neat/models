@@ -732,6 +732,7 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
 
 @pytest.mark.parametrize("changed_input", [
     "models/alpha/tests/performance.yaml",
+    ".github/workflows/Vulcan-Model-Benchmarking.yml",
     "tools/model_registry/core_benchmark.py",
     "tools/model_registry/benchmark_publication.py",
     "tools/model_registry/benchmark_manifest.py",
@@ -757,6 +758,7 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     changed_file = catalog_repository / changed_input
     if changed_file != benchmark:
+        changed_file.parent.mkdir(parents=True, exist_ok=True)
         changed_file.write_text("initial tooling\n", encoding="utf-8")
     base = _initialize_repository(catalog_repository)
     unchanged = semantic_change_plan(catalog_repository, base, base, compiler_version=COMPILER_VERSION)

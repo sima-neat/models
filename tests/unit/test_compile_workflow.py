@@ -73,6 +73,8 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
     assert "branches" not in push_trigger
     assert "branches-ignore" not in push_trigger
     assert "models/**" in push_trigger["paths"]
+    for event in ("push", "pull_request"):
+        assert ".github/workflows/Vulcan-Model-Benchmarking.yml" in workflow["on"][event]["paths"]
     assert "deps/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in workflow["on"]["pull_request"]["paths"]
