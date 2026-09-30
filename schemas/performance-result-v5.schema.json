@@ -107,8 +107,12 @@
       }
     },
     "provenance": {"type": "object"},
-    "core_report": {"type": "object", "required": ["schema_version", "tool", "metrics"],
-      "properties": {"schema_version": {"const": 1}}
+    "core_report": {"type": "object", "required": ["core_version", "latency_ms", "fps", "avg_power_watts", "energy_joules"],
+      "properties": {
+        "core_version": {"type": "string", "minLength": 1},
+        "latency_ms": {"type": "number"}, "fps": {"type": "number"},
+        "avg_power_watts": {"type": "number"}, "energy_joules": {"type": "number"}
+      }
     },
     "error": {
       "type": "object",

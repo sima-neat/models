@@ -8,8 +8,8 @@ There is no shared benchmark executor or model-specific timing loop.
 ## Install on a DevKit
 
 Use the Core install target in `deps/manifest.json`. CI verifies Platform 3.0.0
-and B1748 before installing that package. The selected Core build must support
-`BenchmarkReport.save_json(path)`.
+and B1748 before installing the `release-3.0.0-prep` package. The scripts use
+the existing `BenchmarkReport` fields; no Core extension is required.
 
 ```bash
 sima-cli neat install --env production '<neat-core.install_target>'
@@ -29,13 +29,21 @@ python models/resnet_50/tests/benchmark.py \
 Every script follows the same pattern:
 
 ```python
+import json
 import sys
 
 import pyneat
 
 model = pyneat.Model(sys.argv[1])
 report = model.benchmark()
-report.save_json(sys.argv[2])
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    json.dump({
+        "core_version": pyneat.__version__,
+        "latency_ms": report.latency_ms,
+        "fps": report.fps,
+        "avg_power_watts": report.avg_power_watts,
+        "energy_joules": report.energy_joules,
+    }, output, allow_nan=False)
 ```
 
 A failed call exits unsuccessfully. Preserve the log; a missing report is not a
@@ -80,7 +88,7 @@ importer never executes or times a model.
 Model authors do not publish benchmark results directly.
 The board has no registry publication credentials. A separate hosted job validates
 the result set and publishes each schema-v5 report and log as a benchmark child
-of its immutable compilation. The raw Core report is embedded unchanged in that
+of its immutable compilation. The script's JSON export is embedded unchanged in that
 result. Failures retain the available workflow evidence and are not published as
 successful measurements.
 

@@ -98,8 +98,8 @@ def import_core_benchmark(
 ) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if report.get("schema_version") != 1 or report.get("tool", {}).get("name") != "pyneat.Model.benchmark":
-        raise ValidationError("unsupported Core benchmark report")
+    if not isinstance(report, dict):
+        raise ValidationError("benchmark report must be an object")
     configuration = manifest.get("configuration", {})
     workload = manifest.get("workload", {})
     if (
@@ -111,7 +111,9 @@ def import_core_benchmark(
         or workload["batch_size"] <= 0
     ):
         raise ValidationError("benchmark manifest is missing configuration or inspected workload")
-    actual_core = report["tool"].get("version", "")
+    actual_core = report.get("core_version", "")
+    if not isinstance(actual_core, str):
+        raise ValidationError("benchmark report must identify the Core version")
     expected = manifest["compatibility"]
     if actual_core.split("+", 1)[0] != expected["neat_version"]:
         raise ValidationError("Core report version does not match the benchmark dependency")
@@ -130,11 +132,19 @@ def import_core_benchmark(
     environment["core_version"] = actual_core
     environment["fingerprint"] = canonical_sha256(environment)
     metrics = {}
+    fields = {"latency_avg_ms": "latency_ms", "throughput_fps": "fps"}
     for name, unit in CORE_UNITS.items():
-        value = report.get("metrics", {}).get(name)
-        if not isinstance(value, dict):
-            raise ValidationError(f"Core report is missing metric {name}")
-        metrics[name] = _metric(value, unit)
+        field = fields.get(name, name)
+        value = report.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValidationError(f"benchmark report requires a finite number for {field}")
+        measured = value > 0
+        metrics[name] = _metric({
+            "status": "measured" if measured else "unavailable",
+            "value": value if measured else None,
+            "unit": unit,
+            "reason": None if measured else "not_measured_by_core_benchmark",
+        }, unit)
     for name in ("latency_avg_ms", "throughput_fps"):
         if metrics[name]["status"] != "measured":
             raise ValidationError(f"benchmark did not measure {name}")
@@ -159,7 +169,7 @@ def import_core_benchmark(
         "schema_version": 5,
         "status": "passed",
         "benchmark_type": "model.synthetic",
-        "tool": report["tool"],
+        "tool": {"name": "pyneat.Model.benchmark", "version": actual_core},
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "identity": {"algorithm": "sha256", "canonicalization_version": 5, "fingerprint": None},
         "model": {**manifest["model"], "contract": None},

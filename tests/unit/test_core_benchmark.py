@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from model_registry.benchmark_publication import load_benchmark_result
-from model_registry.core_benchmark import CORE_UNITS, import_core_benchmark
+from model_registry.core_benchmark import import_core_benchmark
 from model_registry.errors import ValidationError
 
 
@@ -13,7 +13,7 @@ def core_inputs(tmp_path):
     archive = tmp_path / "model.tar.gz"
     archive.write_bytes(b"test archive")
     script = tmp_path / "benchmark.py"
-    script.write_text("model.benchmark().save_json(output)")
+    script.write_text("report = model.benchmark()")
     manifest = {
         "model": {
             "id": "resnet_50",
@@ -31,15 +31,11 @@ def core_inputs(tmp_path):
         "provenance": {"compile_run_id": "00000000-0000-4000-8000-000000000001", "models_commit": "a" * 40},
     }
     report = {
-        "schema_version": 1,
-        "tool": {"name": "pyneat.Model.benchmark", "version": "0.4.0+test"},
-        "metrics": {name: {"status": "measured", "value": 2.0, "unit": unit} for name, unit in CORE_UNITS.items()},
-    }
-    report["metrics"]["avg_power_watts"] = {
-        "status": "unavailable",
-        "value": None,
-        "unit": "W",
-        "reason": "power_not_available",
+        "core_version": "0.4.0+test",
+        "latency_ms": 2.0,
+        "fps": 2.0,
+        "avg_power_watts": 0.0,
+        "energy_joules": 2.0,
     }
     manifest_path, report_path = tmp_path / "manifest.json", tmp_path / "core.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -76,7 +72,7 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
     assert result["metrics"]["throughput_fps"]["value"] == 2.0
     assert result["metrics"]["throughput_fps"]["unit"] == "inferences/s"
     assert result["metrics"]["avg_power_watts"]["value"] is None
-    assert result["metrics"]["avg_power_watts"]["reason"] == "power_not_available"
+    assert result["metrics"]["avg_power_watts"]["reason"] == "not_measured_by_core_benchmark"
     assert result["metrics"]["mla_memory_peak_delta_mib"]["status"] == "unavailable"
     assert result["trials"] == []
     assert result["core_report"] == json.loads(core_inputs[1].read_text())
@@ -85,17 +81,17 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
 
 
 @pytest.mark.parametrize(
-    "failure", ["nonfinite", "wrong_unit", "wrong_artifact", "wrong_core", "wrong_build", "missing_context"]
+    "failure", ["nonfinite", "missing_metric", "wrong_artifact", "wrong_core", "wrong_build", "missing_context"]
 )
 def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
     manifest_path, report_path = core_inputs
     report = json.loads(report_path.read_text())
     if failure == "nonfinite":
-        report["metrics"]["latency_avg_ms"]["value"] = float("nan")
-    elif failure == "wrong_unit":
-        report["metrics"]["latency_avg_ms"]["unit"] = "seconds"
+        report["latency_ms"] = float("nan")
+    elif failure == "missing_metric":
+        del report["latency_ms"]
     elif failure == "wrong_core":
-        report["tool"]["version"] = "0.3.0"
+        report["core_version"] = "0.3.0"
     else:
         manifest = json.loads(manifest_path.read_text())
         if failure == "wrong_artifact":
