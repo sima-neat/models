@@ -23,7 +23,7 @@ const METRIC_DEFINITIONS = {
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher", summary: true },
   avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower", summary: true },
-  energy_joules: { label: "Trial energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
+  energy_joules: { label: "Benchmark energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
   energy_per_inference_joules: {
     label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower", summary: true,
   },
@@ -112,6 +112,9 @@ function fallbackMetricLabel(key) {
 }
 
 function metricDefinition(key, metric = null) {
+  if (key === "throughput_fps" && metric?.unit) {
+    return { ...METRIC_DEFINITIONS[key], unit: metric.unit };
+  }
   return METRIC_DEFINITIONS[key] || {
     label: fallbackMetricLabel(key),
     unit: metric?.unit || "",
@@ -125,7 +128,7 @@ function metricDisplay(metric, definition = metricDefinition(metric?.key || "", 
   if (!metric || metric.status !== "measured" || !Number.isFinite(metric.value)) return null;
   return {
     value: metric.value * definition.scale,
-    unit: definition.unit || metric.unit,
+    unit: definition.scale === 1 ? (metric.unit || definition.unit) : definition.unit,
     digits: definition.digits,
   };
 }
@@ -848,7 +851,7 @@ function renderComparisonTable(entries) {
       total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
     ), 0);
     return `<tr>
-      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small></th>
+      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small><small>${escapeHtml(benchmark?.workload || "No benchmark")}</small></th>
       <td>${escapeHtml(branchName(run.git_ref))}</td>
       <td>${escapeHtml(run.toolchain_version || "—")}</td>
       <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
@@ -1078,7 +1081,7 @@ function benchmarkPanel(payload) {
     ${trialChart(benchmark.trials, benchmark.measurements)}
     ${temperatureChart(benchmark.temperatureSeries)}
     ${measurementTable(benchmark.measurements)}
-    <dl class="benchmark-context">${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
+    <dl class="benchmark-context">${keyValue("Workload", benchmark.workload)}${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
   </section>`;
 }
 

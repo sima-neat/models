@@ -102,7 +102,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
-    install = next(step for step in steps if step.get("name") == "Install branch benchmarker and Neat dependency")
+    install = next(step for step in steps if step.get("name") == "Install pinned Neat Core")
     execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
     assert "resolve-benchmark-runtime" in runtime["run"]
     assert "/etc/buildinfo" in runtime["run"]
@@ -114,19 +114,16 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert '["devkit"]["build"]' in runtime["run"]
     assert "${platform_build#B}" in runtime["run"]
     assert "sima-cli neat install" in install["run"]
-    assert 'tooling_tag="${GITHUB_SHA:0:12}"' in install["run"]
-    assert 'target="$name@$GITHUB_REF_NAME:$tooling_tag"' in install["run"]
-    assert "for attempt in {1..6}" in install["run"]
-    assert "retrying in 5 seconds" in install["run"]
-    assert "SOURCE_SHA" not in install["run"]
-    assert "latest" not in install["run"]
-    assert 'getattr(benchmarker, "RESULT_SCHEMA_VERSION", None) == 4' in install["run"]
+    assert '["neat_core"]["install_target"]' in install["run"]
+    assert '"models/$MODEL_ID/tests/benchmark.py"' in execute["run"]
+    assert "import-core-benchmark" in execute["run"]
+    assert "core-benchmark.json" in execute["run"]
     assert "make-benchmark-manifest" in execute["run"]
     assert '--model "$MODEL_ID"' in execute["run"]
     assert '--build-profile "$BUILD_PROFILE_ID"' in execute["run"]
     assert 'for component in "${components[@]}"' in execute["run"]
     assert '--component "$component"' in execute["run"]
-    assert "performance-result-v4.json" in execute["run"]
+    assert "performance-result-v5.json" in execute["run"]
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
 
@@ -143,14 +140,14 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
         "benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     publication = next(
-        step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v4 result and log"
+        step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v5 result and log"
     )
     assert publication["env"]["COMPONENT_IDS"] == "${{ inputs.component_ids }}"
     assert "validate-benchmark-set" in publication["run"]
-    assert "find _benchmarks -type f -name performance-result-v4.json" in publication["run"]
+    assert "find _benchmarks -type f -name performance-result-v5.json" in publication["run"]
     assert 'for component in "${components[@]}"' in publication["run"]
     assert "actual_count == ${#components[@]}" in publication["run"]
     assert 'for result in "${results[@]}"' in publication["run"]
     assert "model-registry publish-benchmark" in publication["run"]
-    assert "--schema schemas/performance-result-v4.schema.json" in publication["run"]
+    assert "--schema schemas/performance-result-v5.schema.json" in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]

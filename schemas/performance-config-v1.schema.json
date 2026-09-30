@@ -4,43 +4,48 @@
   "title": "Model Registry performance configuration v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "status", "metrics"],
+  "required": [
+    "schema_version",
+    "status",
+    "metrics"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
-    "status": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-    "reason": {"type": "string", "minLength": 1},
-    "target": {"type": "string", "minLength": 1},
-    "configuration": {"type": "object"},
-    "benchmark": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "warmup_samples", "samples"],
-      "properties": {
-        "mode": {"const": "bounded_runner"},
-        "warmup_samples": {"type": "integer", "minimum": 1},
-        "samples": {"type": "integer", "minimum": 1},
-        "trials": {"type": "integer", "minimum": 1, "maximum": 100},
-        "include_plugin_latency": {"type": "boolean"},
-        "original_width": {"type": "integer", "minimum": 1},
-        "original_height": {"type": "integer", "minimum": 1}
-      },
-      "dependentRequired": {
-        "original_width": ["original_height"],
-        "original_height": ["original_width"]
-      }
+    "schema_version": {
+      "const": 1
     },
-    "model_options": {"$ref": "#/$defs/options"},
+    "status": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
     "metrics": {
       "type": "array",
       "minItems": 1,
       "items": {
         "oneOf": [
-          {"type": "string", "minLength": 1},
+          {
+            "type": "string",
+            "minLength": 1
+          },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name"],
-            "properties": {"name": {"type": "string", "minLength": 1}}
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         ]
       }
@@ -49,26 +54,42 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1}
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "note": {"type": "string", "minLength": 1}
+    "note": {
+      "type": "string",
+      "minLength": 1
+    }
   },
   "allOf": [
     {
-      "if": {"properties": {"status": {"pattern": "^pending"}}, "required": ["status"]},
-      "then": {"anyOf": [{"required": ["reason"]}, {"required": ["note"]}]}
-    }
-  ],
-  "$defs": {
-    "options": {
-      "type": "object",
-      "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-      "additionalProperties": {
-        "oneOf": [
-          {"type": ["string", "integer", "number", "boolean", "null"]},
-          {"$ref": "#/$defs/options"}
+      "if": {
+        "properties": {
+          "status": {
+            "pattern": "^pending"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "required": [
+              "note"
+            ]
+          }
         ]
       }
     }
-  }
+  ]
 }

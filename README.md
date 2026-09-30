@@ -17,7 +17,7 @@ selection, MPK validation, checksumming, and publication remain shared.
 `model-registry` is an author-safe `sima-cli` package for local validation,
 verified input handling, variant inspection, and MPK checks. It is not a direct
 registry publishing client. Model authors compile with the model-owned
-`compile.py` and run performance tests with the DevKit `benchmarker`; CI keeps
+`compile.py` and run each model’s `tests/benchmark.py` on the DevKit; CI keeps
 the separate packaging and publication command surface.
 
 ## Local setup
@@ -53,15 +53,9 @@ Each successful staging Modalix compile dispatches the dedicated
 [`Vulcan-Model-Benchmarking.yml`](.github/workflows/Vulcan-Model-Benchmarking.yml)
 workflow, shown in GitHub Actions as `Vulcan Model Benchmarking`.
 
-The Python-only `benchmarker` is published separately when its source,
-schemas, dependency pins, or packaging change. Install its branch package with:
-
-```bash
-sima-cli neat install --stg models-utils/benchmarker@develop:latest
-```
-
-The package installs its benchmarker-specific declared `core@v0.4.0` dependency when needed, then
-installs the benchmarker wheel into the Core-managed pyneat environment.
+Each model has a minimal benchmark script that loads its MPK and calls Core’s
+benchmark API. CI installs Core directly from the dependency manifest and exports
+its structured measurements for registry publication.
 
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
@@ -95,8 +89,8 @@ Each record links the model source checksum, variant parameters, Model Compiler
 version, build fingerprint, and exact versioned S3 MPK. For staging feature
 branches, the workflow discovers the Modalix compile artifacts actually produced
 by the current run and benchmarks each one on the resolved Modalix GitHub runner.
-The runner verifies the manifest-pinned platform, installs the pinned benchmarker
-and Neat runtime, and returns a schema-v4 result and log for each model variant. A
+The runner verifies the manifest-pinned platform and B1748 build, installs Core,
+and returns a schema-v5 result and log for each model component/profile. A
 trusted hosted job publishes every completed result under its model's S3 hierarchy
 and records an immutable `model_benchmark` child of the matching compile run.
 

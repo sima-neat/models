@@ -44,7 +44,7 @@ _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md"}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
-BENCHMARK_FINGERPRINT_SCHEMA = 1
+BENCHMARK_FINGERPRINT_SCHEMA = 2
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -510,6 +510,10 @@ def benchmark_fingerprint(
             "compile_fingerprint": compiled,
             "compiled_artifact_sha256": artifact_sha256,
             "performance": documents,
+            "script_sha256": (
+                hashlib.sha256((root / "models" / model_id / "tests" / "benchmark.py").read_bytes()).hexdigest()
+                if (root / "models" / model_id / "tests" / "benchmark.py").is_file() else None
+            ),
             "runtime": resolve_benchmark_runtime(root),
         }
     )

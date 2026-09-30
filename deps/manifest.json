@@ -1,12 +1,5 @@
 {
   "platform-version": "3.0.0",
-  "benchmarker": {
-    "version": "0.2.0",
-    "vulcan": {
-      "environment": "stg",
-      "name": "models-utils/benchmarker"
-    }
-  },
   "devkit": {
     "board": "modalix",
     "os_type": "elxr",
@@ -18,7 +11,7 @@
     "version": "3.0.0"
   },
   "neat-core": {
-    "install_target": "core@release-3.0.0-prep",
+    "install_target": "core@feat/967-benchmark-report:faaa21296efd",
     "version": "0.4.0"
   }
 }

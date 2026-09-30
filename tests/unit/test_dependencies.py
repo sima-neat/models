@@ -28,7 +28,7 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
     assert runtime["neat_core"] == manifest["neat-core"]
-    assert runtime["benchmarker"] == manifest["benchmarker"]
+    assert "benchmarker" not in runtime
 
 
 @pytest.mark.parametrize("build", [None, "", "1493", "B1493.*"])
@@ -44,12 +44,12 @@ def test_benchmark_runtime_requires_a_literal_build_number(tmp_path: Path, build
 
 def test_benchmark_runtime_requires_a_package_name(tmp_path: Path) -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    manifest["benchmarker"]["vulcan"].pop("name")
+    manifest["neat-core"].pop("install_target")
     path = tmp_path / "deps" / "manifest.json"
     path.parent.mkdir()
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="benchmarker.vulcan is missing: name"):
+    with pytest.raises(ValidationError, match="neat-core.install_target"):
         resolve_benchmark_runtime(tmp_path)
 
 
