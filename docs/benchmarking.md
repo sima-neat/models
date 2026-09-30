@@ -76,7 +76,7 @@ The input follows
     "sha256": "<64 lowercase hexadecimal characters>"
   },
   "compatibility": {
-    "platform_version": "2.1.3",
+    "platform_version": "3.0.0",
     "neat_version": "0.4.0"
   },
   "benchmark": {

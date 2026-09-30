@@ -65,9 +65,12 @@ installs the benchmarker wheel into the Core-managed pyneat environment.
 
 The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
-`model-compiler`, and the derived `model-compiler-<version>` label. Each matrix
-item validates its complete output and uploads one GitHub Actions artifact. A
-GitHub-hosted job checks that artifact, publishes each component under an
+`model-compiler`, and a label derived from the pin. Pins with a channel and revision
+use `model-compiler-<channel>-<revision>`, such as
+`model-compiler-develop-e94f03a8f59c`; version-only pins use
+`model-compiler-<version>`. Each matrix item validates its complete output and
+uploads one GitHub Actions artifact. A GitHub-hosted job checks that artifact,
+publishes each component under an
 immutable object key, records its checksum, provenance, exact S3 object version,
 through the IAM-authenticated Model Registry API, then finalizes each component
 run. A hosted job publishes one complete catalog snapshot identified by the full
