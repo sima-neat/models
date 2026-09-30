@@ -152,3 +152,28 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     assert "model-registry publish-benchmark" in publication["run"]
     assert "--schema schemas/performance-result-v4.schema.json" in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]
+
+
+def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
+    workflow = yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["benchmark-dispatched-model"]["steps"]
+    names = [step.get("name") for step in steps]
+    install = steps[names.index("Install dataset-registry from the main branch artifact")]
+    cache = steps[names.index("Cache declared datasets on NVMe")]
+
+    assert names.index("Resolve and verify benchmark runtime") < names.index(
+        "Install dataset-registry from the main branch artifact"
+    )
+    assert names.index("Install dataset-registry from the main branch artifact") < names.index(
+        "Cache declared datasets on NVMe"
+    )
+    assert "--download-only" in install["run"]
+    assert "dataset/dataset-registry@main:latest" in install["run"]
+    assert '"$REGISTRY_PYTHON" -m pip install' in install["run"]
+    assert cache["env"]["DATASET_ROOT"] == "/media/nvme/datasets"
+    assert "mountpoint -q /media/nvme" in cache["run"]
+    assert 'flock --verbose --wait 1200 --close "$DATASET_ROOT/locks/prepare.lock"' in cache["run"]
+    assert "timeout --verbose" in cache["run"]
+    assert "fetch-accuracy-dataset" in cache["run"]
+    assert '--cache-dir "$DATASET_ROOT/artifacts"' in cache["run"]
+    assert "coco" not in cache["run"].lower()
