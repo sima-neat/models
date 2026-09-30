@@ -310,69 +310,10 @@ jobs:
       - name: Install dataset-registry from the main branch artifact
         env:
           DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-          sima-cli neat install --help | grep -q -- '--download-only'
-          package_dir="$RUNNER_TEMP/dataset-registry-package"
-          sima-cli neat install \
-            --env "$DATASET_REGISTRY_ENVIRONMENT" \
-            --install-dir "$package_dir" \
-            --download-only \
-            dataset/dataset-registry@main:latest
-          mapfile -t wheels < <(find "$package_dir" -maxdepth 1 -type f -name 'sima_neat_dataset_registry-*.whl' -print)
-          if (( ${#wheels[@]} != 1 )); then
-            echo "Expected one dataset-registry wheel, found ${#wheels[@]}" >&2
-            exit 1
-          fi
-          "$REGISTRY_PYTHON" -m pip install --disable-pip-version-check "${wheels[0]}"
-          "$REGISTRY_PYTHON" -m dataset_registry --version
+        run: scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
 
       - name: Cache declared datasets on NVMe
-        env:
-          DATASET_ROOT: /media/nvme/datasets
-        run: |
-          set -euo pipefail
-          if ! mountpoint -q /media/nvme; then
-            echo "/media/nvme is not mounted; refusing to cache datasets on the root filesystem" >&2
-            exit 1
-          fi
-          mkdir -p "$DATASET_ROOT/artifacts" "$DATASET_ROOT/locks"
-          probe="$(mktemp "$DATASET_ROOT/artifacts/.write-probe.XXXXXX")"
-          rm -f "$probe"
-          started="$RUNNER_TEMP/dataset-cache-started"
-          touch "$started"
-          {
-            echo "### Cached datasets"
-            echo
-            echo "| Component | Dataset | Path | SHA-256 | Bytes | Cache |"
-            echo "|---|---|---|---|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
-          IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          for component in "${components[@]}"; do
-            result="$(
-              flock --verbose --wait 1200 --close "$DATASET_ROOT/locks/prepare.lock" \
-                timeout --verbose --signal=TERM --kill-after=30s 1200 \
-                "$REGISTRY_PYTHON" -m model_registry fetch-accuracy-dataset "models/$MODEL_ID" \
-                  --build-profile "$BUILD_PROFILE_ID" \
-                  --component "$component" \
-                  --cache-dir "$DATASET_ROOT/artifacts" \
-                  --json
-            )"
-            if [[ "$(jq -er '.kind' <<< "$result")" == "none" ]]; then
-              echo "| $component | none | | | | |" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-            path="$(jq -er '.path' <<< "$result")"
-            receipt="$(dirname "$path")/resolution-receipt.json"
-            dataset="$(jq -er '"\(.dataset_id)/\(.variant)"' "$receipt")"
-            cache="hit"
-            if [[ "$receipt" -nt "$started" ]]; then
-              cache="downloaded"
-            fi
-            echo "Dataset $dataset for $component: $path ($cache)"
-            echo "| $component | $dataset | \`$path\` | \`$(jq -er '.sha256' <<< "$result")\` | $(jq -er '.size_bytes' <<< "$result") | $cache |" \
-              >> "$GITHUB_STEP_SUMMARY"
-          done
+        run: scripts/cache_declared_datasets.sh "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
 
       - name: Install branch benchmarker and Neat dependency
         run: |
