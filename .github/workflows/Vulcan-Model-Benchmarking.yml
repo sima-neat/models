@@ -267,6 +267,13 @@ jobs:
         with:
           ref: ${{ inputs.source_sha }}
 
+      - name: Check out benchmark helper scripts from the workflow revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: _workflow
+          sparse-checkout: scripts
+
       - name: Download the staged compiled model output
         uses: actions/download-artifact@v7
         with:
@@ -304,6 +311,14 @@ jobs:
           fi
           echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
+
+      - name: Install dataset-registry from the main branch artifact
+        env:
+          DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
+        run: _workflow/scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
+
+      - name: Cache declared datasets on NVMe
+        run: _workflow/scripts/cache_declared_datasets.sh "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
 
       - name: Install selected Neat Core
         run: |

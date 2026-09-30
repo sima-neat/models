@@ -151,3 +151,34 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     assert "model-registry publish-benchmark" in publication["run"]
     assert "--schema schemas/performance-result-v5.schema.json" in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]
+
+
+
+def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
+    workflow = yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["benchmark-dispatched-model"]["steps"]
+    names = [step.get("name") for step in steps]
+    runtime = names.index("Resolve and verify benchmark runtime")
+    install = names.index("Install dataset-registry from the main branch artifact")
+    cache = names.index("Cache declared datasets on NVMe")
+
+    assert runtime < install < cache
+    helpers = steps[names.index("Check out benchmark helper scripts from the workflow revision")]
+    assert names.index("Check out the trusted revision") < names.index(
+        "Check out benchmark helper scripts from the workflow revision"
+    ) < install
+    assert helpers["with"] == {"ref": "${{ github.sha }}", "path": "_workflow", "sparse-checkout": "scripts"}
+    assert steps[install]["run"].startswith("_workflow/scripts/install_dataset_registry.sh ")
+    assert steps[cache]["run"].startswith("_workflow/scripts/cache_declared_datasets.sh ")
+
+    install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
+    assert "--download-only" in install_script
+    assert "dataset/dataset-registry@main:latest" in install_script
+    cache_script = (ROOT / "scripts" / "cache_declared_datasets.sh").read_text(encoding="utf-8")
+    assert 'DATASET_ROOT="${DATASET_ROOT:-$NVME_MOUNT/datasets}"' in cache_script
+    assert 'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"' in cache_script
+    assert 'mountpoint -q "$NVME_MOUNT"' in cache_script
+    assert 'flock --verbose --wait "$LOCK_WAIT_SECONDS"' in cache_script
+    assert "fetch-accuracy-dataset" in cache_script
+    assert '--cache-dir "$DATASET_ROOT/artifacts"' in cache_script
+    assert "coco" not in cache_script.lower()
