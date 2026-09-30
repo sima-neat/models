@@ -164,8 +164,13 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
     cache = names.index("Cache declared datasets on NVMe")
 
     assert runtime < install < cache
-    assert steps[install]["run"].startswith("scripts/install_dataset_registry.sh ")
-    assert steps[cache]["run"].startswith("scripts/cache_declared_datasets.sh ")
+    helpers = steps[names.index("Check out benchmark helper scripts from the workflow revision")]
+    assert names.index("Check out the trusted revision") < names.index(
+        "Check out benchmark helper scripts from the workflow revision"
+    ) < install
+    assert helpers["with"] == {"ref": "${{ github.sha }}", "path": "_workflow", "sparse-checkout": "scripts"}
+    assert steps[install]["run"].startswith("_workflow/scripts/install_dataset_registry.sh ")
+    assert steps[cache]["run"].startswith("_workflow/scripts/cache_declared_datasets.sh ")
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
     assert "--download-only" in install_script
