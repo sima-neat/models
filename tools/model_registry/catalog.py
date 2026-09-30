@@ -519,6 +519,8 @@ def benchmark_fingerprint(
                 if (root / path).is_file() else None
                 for path in (
                     "tools/model_registry/core_benchmark.py",
+                    "tools/model_registry/benchmark_publication.py",
+                    "tools/model_registry/benchmark_manifest.py",
                     "schemas/performance-result-v5.schema.json",
                 )
             },

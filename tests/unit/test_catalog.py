@@ -733,6 +733,8 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
 @pytest.mark.parametrize("changed_input", [
     "models/alpha/tests/performance.yaml",
     "tools/model_registry/core_benchmark.py",
+    "tools/model_registry/benchmark_publication.py",
+    "tools/model_registry/benchmark_manifest.py",
     "schemas/performance-result-v5.schema.json",
 ])
 def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
