@@ -58,21 +58,16 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     manifest = _load_manifest(repository)
     devkit = manifest.get("devkit")
     core = manifest.get("neat-core")
-    benchmarker = manifest.get("benchmarker")
     if not isinstance(devkit, dict):
         raise ValidationError("dependency manifest must define devkit as an object")
     if not isinstance(core, dict):
         raise ValidationError("dependency manifest must define neat-core as an object")
-    if not isinstance(benchmarker, dict):
-        raise ValidationError("dependency manifest must define benchmarker as an object")
 
     platform_version = manifest.get("platform-version")
     core_version = core.get("version")
-    benchmarker_version = benchmarker.get("version")
     for field, value in (
         ("platform-version", platform_version),
         ("neat-core.version", core_version),
-        ("benchmarker.version", benchmarker_version),
     ):
         if not isinstance(value, str) or SEMANTIC_VERSION.fullmatch(value) is None:
             raise ValidationError(f"{field} must use MAJOR.MINOR.PATCH format")
@@ -92,14 +87,6 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     ) is None:
         raise ValidationError("neat-core.install_target must name a Core release or branch package")
 
-    vulcan = benchmarker.get("vulcan")
-    if not isinstance(vulcan, dict):
-        raise ValidationError("benchmarker.vulcan must be an object")
-    required = ("environment", "name")
-    missing = [field for field in required if not isinstance(vulcan.get(field), str) or not vulcan[field]]
-    if missing:
-        raise ValidationError(f"benchmarker.vulcan is missing: {', '.join(missing)}")
-
     return {
         "devkit": {
             "board": board,
@@ -108,8 +95,4 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
             "platform_version": platform_version,
         },
         "neat_core": {"version": core_version, "install_target": install_target},
-        "benchmarker": {
-            "version": benchmarker_version,
-            "vulcan": {field: vulcan[field] for field in required},
-        },
     }

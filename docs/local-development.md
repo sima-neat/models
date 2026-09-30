@@ -316,45 +316,25 @@ Complete the installation and compatibility checks in [Synthetic model
 benchmarking](benchmarking.md#install-on-a-devkit) once for the target DevKit.
 For each qualified component/profile pair, follow this shorter sequence.
 
-### 1. Prepare the exact MPK and manifest
+### Run on the DevKit and retain evidence
 
-Confirm that the NEAT SDK can reach the DevKit:
-
-```bash
-bash -lic 'type dk || type devkit-run'
-```
-
-Copy the compiled `*_mpk.tar.gz` under `/workspace`, calculate its SHA-256, and
-create `/workspace/benchmark-test.json` from the [benchmark manifest
-reference](benchmarking.md#create-a-benchmark-manifest). Keep its model,
-component, build profile, compatibility, and test settings consistent with the checked-in
-contracts. For a local run, `provenance.compile_run_id` may be omitted.
-
-The published contributor command intentionally does not expose CI's
-`make-benchmark-manifest` helper. Creating the local manifest explicitly keeps
-the MPK path, checksum, tested revision, and performance settings reviewable.
-
-### 2. Run on the DevKit and retain evidence
-
-From a DevKit shell:
+Copy the exact compiled MPK and the model’s `tests/benchmark.py` to the DevKit.
+Use the Core package selected in `deps/manifest.json`, then run:
 
 ```bash
 source ~/pyneat/bin/activate
-mkdir -p /workspace/results
-benchmarker \
-  --manifest /workspace/benchmark-test.json \
-  --output /workspace/results/performance-result.json \
-  2>&1 | tee /workspace/results/benchmark.log
+python models/resnet_50/tests/benchmark.py \
+  /workspace/resnet_50_mpk.tar.gz /workspace/core-benchmark.json \
+  2>&1 | tee /workspace/benchmark.log
 ```
 
-Confirm that the command exits successfully and that
-`performance-result.json` reports a successful result with the expected model,
-component, build profile, platform, Neat version, and measured sample count. Retain the JSON and
-log outside the repository, but do not commit either file.
+Confirm a successful exit and inspect the report’s Core version and measurements.
+CI records workload and default configuration separately in its manifest. Keep the report and log outside Git. Run each
+RF-DETR component separately. CI attaches registry provenance and publishes the
+results; local execution needs only the model script and MPK.
 
-See [Synthetic model benchmarking](benchmarking.md) for runner installation,
-manifest fields, bounded-runner behavior, power telemetry, and result
-semantics.
+See [Synthetic model benchmarking](benchmarking.md) for installation, metric
+availability, workload changes, and registry integration.
 
 ## Finish the local review
 

@@ -567,7 +567,7 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -586,12 +586,17 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
 
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 5\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
+    before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+    (model_dir / "tests/benchmark.py").write_text("report = model.benchmark()\n")
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
+
 
 
 def test_correctness_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
@@ -625,7 +630,7 @@ def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repo
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -641,7 +646,7 @@ def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repo
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 5\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
 
@@ -731,7 +736,7 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -746,7 +751,7 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
     base = _initialize_repository(catalog_repository)
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 100\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
     head = _commit(catalog_repository, "benchmark")

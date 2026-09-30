@@ -1,12 +1,10 @@
 schema_version: 1
-status: pending_hardware_qualification
+status: pending
 target: modalix
-configuration:
-  warmup_frames: 20
-  measured_frames: 100
-  batch_size: 1
+reason: Establish a Core API baseline for the default MPK workload.
 metrics:
-  - name: latency_p50_ms
-  - name: latency_p99_ms
-  - name: throughput_fps
-note: Compare tessellation in MLA with tessellation outside MLA separately for INT8 and BF16.
+  - latency_avg_ms
+  - throughput_fps
+  - avg_power_watts
+  - energy_joules
+  - energy_per_inference_joules

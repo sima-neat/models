@@ -1,12 +1,5 @@
 {
   "platform-version": "3.0.0",
-  "benchmarker": {
-    "version": "0.2.0",
-    "vulcan": {
-      "environment": "stg",
-      "name": "models-utils/benchmarker"
-    }
-  },
   "devkit": {
     "board": "modalix",
     "os_type": "elxr",

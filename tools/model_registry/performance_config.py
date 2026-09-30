@@ -9,12 +9,6 @@ from jsonschema import Draft202012Validator
 
 from .errors import ValidationError
 
-DEFAULT_BENCHMARK = {
-    "samples": 1000,
-    "trials": 3,
-    "include_plugin_latency": False,
-}
-
 
 def load_performance_config(
     path: str | Path,
@@ -45,25 +39,3 @@ def load_performance_config(
             f"{config_path}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}"
         )
     return value
-
-
-def benchmark_settings(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    configured = config.get("benchmark")
-    if configured is None:
-        benchmark = dict(DEFAULT_BENCHMARK)
-    else:
-        benchmark = {
-            "samples": configured["samples"],
-            "trials": configured.get("trials", DEFAULT_BENCHMARK["trials"]),
-            "include_plugin_latency": configured.get("include_plugin_latency", False),
-            "mode": configured["mode"],
-            "warmup_samples": configured["warmup_samples"],
-        }
-        if "original_width" in configured:
-            benchmark.update(
-                {
-                    "original_width": configured["original_width"],
-                    "original_height": configured["original_height"],
-                }
-            )
-    return benchmark, dict(config.get("model_options", {}))
