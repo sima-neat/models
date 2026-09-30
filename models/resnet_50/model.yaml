@@ -128,7 +128,6 @@ build_profiles:
       - 3
       - 224
       - 224
-    runner_class: expensive
     shape_profile: compile_input
 - id: modalix_int8
   target: modalix

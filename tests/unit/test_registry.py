@@ -675,6 +675,103 @@ def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(
     }]
 
 
+def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publication(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    catalog = discover_catalog(ROOT)
+    compiler_version = resolve_model_compiler(ROOT)["version"]
+    invocation = build_matrix(
+        catalog, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+    )["include"][0]
+    monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [invocation]})
+    old_run_id = "00000000-0000-4000-8000-000000000001"
+    new_run_id = "00000000-0000-4000-8000-000000000002"
+    prior_build = {
+        "build_profile_id": "modalix_bf16",
+        "compile_invocation_id": invocation["compile_invocation_id"],
+        "component_id": "model",
+        "compile_fingerprint": invocation["build_fingerprint"],
+        "artifact_sha256": "a" * 64,
+        "validation_fingerprint": None,
+        "benchmark_fingerprint": None,
+        "run_id": old_run_id,
+    }
+    prior_package = {
+        "package_id": "default",
+        "build_profile_id": "modalix_bf16",
+        "run_id": "00000000-0000-4000-8000-000000000003",
+        "artifact_sha256": "b" * 64,
+        "size_bytes": 100,
+        "package_fingerprint": "c" * 64,
+        "component_run_ids": {"model": old_run_id},
+    }
+    selected_matrix = tmp_path / "selected-matrix.json"
+    selected_matrix.write_text(json.dumps({"include": [invocation]}), encoding="utf-8")
+
+    initial = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="d" * 40,
+        selected_matrix=selected_matrix,
+        previous={"models": [{"id": "resnet_50", "builds": [prior_build], "packages": [prior_package]}]},
+        incremental=True,
+    )
+
+    resnet = next(model for model in initial["models"] if model["id"] == "resnet_50")
+    assert resnet["builds"][0]["run_id"] == old_run_id
+    assert resnet["builds"][0]["compile_fingerprint"] == invocation["build_fingerprint"]
+    assert resnet["packages"] == []
+    assert initial["pending_builds"] == []
+
+    compiled_dir = tmp_path / "compiled"
+    component_dir = compiled_dir / "resnet_50" / "modalix_bf16" / "model"
+    component_dir.mkdir(parents=True)
+    component_dir.joinpath("registry-publication.json").write_text(json.dumps({"runs": [{
+        "model_id": "resnet_50",
+        "build_profile_id": "modalix_bf16",
+        "component_id": "model",
+        "run_id": new_run_id,
+        "artifact_sha256": "d" * 64,
+        "compile_fingerprint": invocation["build_fingerprint"],
+    }]}), encoding="utf-8")
+    component_published = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="d" * 40,
+        compiled_dir=compiled_dir,
+        previous=initial,
+        incremental=True,
+    )
+    resnet = next(model for model in component_published["models"] if model["id"] == "resnet_50")
+    assert resnet["builds"][0]["run_id"] == new_run_id
+    assert resnet["packages"] == []
+
+    package_dir = tmp_path / "packages" / "resnet_50" / "modalix_bf16" / "packages" / "default"
+    package_dir.mkdir(parents=True)
+    package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
+        "model_id": "resnet_50",
+        "build_profile_id": "modalix_bf16",
+        "package_id": "default",
+        "run_id": "00000000-0000-4000-8000-000000000004",
+        "artifact_sha256": "e" * 64,
+        "size_bytes": 200,
+        "manifest_sha256": "f" * 64,
+        "package_fingerprint": "f" * 64,
+        "component_run_ids": {"model": new_run_id},
+    }]}), encoding="utf-8")
+    complete = build_catalog_snapshot(
+        repository=ROOT,
+        branch="develop",
+        git_sha="d" * 40,
+        compiled_dir=compiled_dir,
+        package_dir=tmp_path / "packages",
+        previous=component_published,
+        incremental=True,
+    )
+    resnet = next(model for model in complete["models"] if model["id"] == "resnet_50")
+    assert resnet["packages"][0]["component_run_ids"] == {"model": new_run_id}
+
+
 def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
     read_urls: list[str] = []

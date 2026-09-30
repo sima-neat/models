@@ -297,10 +297,66 @@ jobs:
           echo "Authorized $count compile invocation(s), including $elevated elevated runner request(s)." \
             >> "$GITHUB_STEP_SUMMARY"
 
+  initialize-catalog:
+    name: Initialize catalog progress
+    needs: [select, resolve-vulcan-config, authorize-runner-classes]
+    if: >-
+      !cancelled() &&
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.count != '0' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.select.outputs.validation_count == '0' &&
+      needs.resolve-vulcan-config.result == 'success' &&
+      needs.authorize-runner-classes.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-catalog-initialize-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish the pending invocation plan
+        env:
+          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          SELECTED_MATRIX: ${{ needs.authorize-runner-classes.outputs.matrix }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+        run: |
+          set -euo pipefail
+          matrix_file="$RUNNER_TEMP/selected-matrix.json"
+          printf '%s' "$SELECTED_MATRIX" > "$matrix_file"
+          model-registry publish-catalog --repository . \
+            --selected-matrix "$matrix_file" \
+            --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
+            --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
+            --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA"
+
   compile:
     name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, resolve-vulcan-config, authorize-runner-classes]
-    if: github.event_name != 'pull_request' && needs.select.outputs.count != '0'
+    needs: [select, resolve-vulcan-config, authorize-runner-classes, initialize-catalog]
+    if: >-
+      !cancelled() &&
+      github.event_name != 'pull_request' &&
+      needs.select.outputs.count != '0' &&
+      needs.resolve-vulcan-config.result == 'success' &&
+      needs.authorize-runner-classes.result == 'success' &&
+      (
+        needs.select.outputs.publishable != 'true' ||
+        needs.select.outputs.validation_count != '0' ||
+        needs.initialize-catalog.result == 'success'
+      )
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
       actions: write
@@ -711,6 +767,72 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Start the component benchmarks
+        if: >-
+          needs.select.outputs.vulcan_environment == 'staging' &&
+          matrix.target == 'modalix' &&
+          join(matrix.benchmark_component_ids, '') != ''
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
+          BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
+          BENCHMARK_BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
+          BENCHMARK_COMPILE_INVOCATION_ID: ${{ matrix.compile_invocation_id }}
+          BENCHMARK_COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
+        run: |
+          set -euo pipefail
+          "$MODEL_COMPILER_PYTHON" - <<'PY'
+          import json
+          import os
+          import ssl
+          import urllib.error
+          import urllib.request
+
+          import certifi
+
+          payload = {
+              "ref": os.environ["GITHUB_REF_NAME"],
+              "inputs": {
+                  "environment": os.environ["BENCHMARK_ENVIRONMENT"],
+                  "source_run_id": os.environ["GITHUB_RUN_ID"],
+                  "source_sha": os.environ["GITHUB_SHA"],
+                  "model_id": os.environ["BENCHMARK_MODEL_ID"],
+                  "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
+                  "compile_invocation_id": os.environ["BENCHMARK_COMPILE_INVOCATION_ID"],
+                  "component_ids": os.environ["BENCHMARK_COMPONENT_IDS"],
+              },
+          }
+          endpoint = (
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
+              "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches"
+          )
+          request = urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              tls = ssl.create_default_context(cafile=certifi.where())
+              with urllib.request.urlopen(request, context=tls, timeout=30) as response:
+                  if response.status != 204:
+                      raise SystemExit(f"Workflow dispatch returned HTTP {response.status}")
+          except urllib.error.HTTPError as error:
+              detail = error.read().decode(errors="replace")
+              raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
+          print(
+              "Dispatched benchmark for "
+              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_BUILD_PROFILE_ID']}/"
+              f"{os.environ['BENCHMARK_COMPONENT_IDS']}"
+          )
+          PY
+
   publish-compilations:
     name: Publish ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, compile]
@@ -813,71 +935,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Start the component benchmarks
+      - name: Publish this invocation in the catalog
         if: >-
-          needs.select.outputs.vulcan_environment == 'staging' &&
-          matrix.target == 'modalix' &&
-          join(matrix.benchmark_component_ids, '') != ''
-        continue-on-error: true
+          needs.select.outputs.publishable == 'true' &&
+          needs.select.outputs.validation_count == '0'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BENCHMARK_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
-          BENCHMARK_MODEL_ID: ${{ matrix.model_id }}
-          BENCHMARK_BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
-          BENCHMARK_COMPILE_INVOCATION_ID: ${{ matrix.compile_invocation_id }}
-          BENCHMARK_COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
+          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          import ssl
-          import urllib.error
-          import urllib.request
-
-          import certifi
-
-          payload = {
-              "ref": os.environ["GITHUB_REF_NAME"],
-              "inputs": {
-                  "environment": os.environ["BENCHMARK_ENVIRONMENT"],
-                  "source_run_id": os.environ["GITHUB_RUN_ID"],
-                  "source_sha": os.environ["GITHUB_SHA"],
-                  "model_id": os.environ["BENCHMARK_MODEL_ID"],
-                  "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
-                  "compile_invocation_id": os.environ["BENCHMARK_COMPILE_INVOCATION_ID"],
-                  "component_ids": os.environ["BENCHMARK_COMPONENT_IDS"],
-              },
-          }
-          endpoint = (
-              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}"
-              "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches"
-          )
-          request = urllib.request.Request(
-              endpoint,
-              data=json.dumps(payload).encode(),
-              method="POST",
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-                  "Content-Type": "application/json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          try:
-              tls = ssl.create_default_context(cafile=certifi.where())
-              with urllib.request.urlopen(request, context=tls, timeout=30) as response:
-                  if response.status != 204:
-                      raise SystemExit(f"Workflow dispatch returned HTTP {response.status}")
-          except urllib.error.HTTPError as error:
-              detail = error.read().decode(errors="replace")
-              raise SystemExit(f"Workflow dispatch failed with HTTP {error.code}: {detail}") from error
-          print(
-              "Dispatched benchmark for "
-              f"{os.environ['BENCHMARK_MODEL_ID']}/{os.environ['BENCHMARK_BUILD_PROFILE_ID']}/"
-              f"{os.environ['BENCHMARK_COMPONENT_IDS']}"
-          )
-          PY
+          failure="$RUNNER_TEMP/catalog-publication-error"
+          for attempt in 1 2 3 4 5; do
+            if model-registry publish-catalog --repository . --compiled-dir _compiled \
+              --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
+              --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
+              --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA" 2>"$failure"; then
+              exit 0
+            fi
+            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 5 )); then
+              cat "$failure" >&2
+              exit 1
+            fi
+            sleep "$(( attempt * 2 ))"
+          done
 
   assemble-packages:
     name: Assemble complete model packages
