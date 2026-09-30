@@ -102,7 +102,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     runtime = next(step for step in steps if step.get("name") == "Resolve and verify benchmark runtime")
-    install = next(step for step in steps if step.get("name") == "Install pinned Neat Core")
+    install = next(step for step in steps if step.get("name") == "Install selected Neat Core")
     execute = next(step for step in steps if step.get("name") == "Generate manifest and run benchmark")
     assert "resolve-benchmark-runtime" in runtime["run"]
     assert "/etc/buildinfo" in runtime["run"]
@@ -111,8 +111,8 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert 'gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)' in runtime["run"]
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime["run"]
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime["run"]
-    assert '["devkit"]["build"]' in runtime["run"]
-    assert "${platform_build#B}" in runtime["run"]
+    assert '["devkit"]["build"]' not in runtime["run"]
+    assert "NEAT_VERSION" not in install["run"]
     assert "sima-cli neat install" in install["run"]
     assert '["neat_core"]["install_target"]' in install["run"]
     assert '"models/$MODEL_ID/tests/benchmark.py"' in execute["run"]

@@ -118,7 +118,6 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     dependencies = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["compatibility"] == {
         "platform_version": dependencies["platform-version"],
-        "neat_version": dependencies["neat-core"]["version"],
     }
     assert manifest["model"]["id"] == model_id
     assert manifest["model"]["build_profile_id"] == build_profile_id
@@ -127,6 +126,6 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
     assert manifest["script"] == str(ROOT / "models" / model_id / "tests" / "benchmark.py")
-    assert manifest["runtime"]["devkit"]["build"] == "B1748"
+    assert "build" not in manifest["runtime"]["devkit"]
     assert "benchmark" not in manifest
     assert "model_options" not in manifest

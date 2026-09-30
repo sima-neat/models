@@ -284,8 +284,6 @@ jobs:
           set -euo pipefail
           runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository .)"
           platform_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])' <<< "$runtime")"
-          platform_build="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["build"])' <<< "$runtime")"
-          neat_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["version"])' <<< "$runtime")"
           actual_platform="$(
             awk -F= '
               /^[[:space:]]*DISTRO_VERSION[[:space:]]*=/ {
@@ -304,20 +302,15 @@ jobs:
             echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
             exit 1
           fi
-          if ! grep -Eq "(^|[^[:alnum:]])B?${platform_build#B}([^[:alnum:]]|$)" /etc/buildinfo; then
-            echo "DevKit build mismatch: expected $platform_build." >&2
-            exit 1
-          fi
-          echo "Verified DevKit platform $actual_platform, build $platform_build."
+          echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
-          echo "NEAT_VERSION=$neat_version" >> "$GITHUB_ENV"
 
-      - name: Install pinned Neat Core
+      - name: Install selected Neat Core
         run: |
           set -euo pipefail
           target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
           sima-cli neat install --env production "$target"
-          "$HOME/pyneat/bin/python" -c 'import pyneat, os; print("Core:", pyneat.__version__, pyneat.__file__); assert pyneat.__version__.split("+", 1)[0] == os.environ["NEAT_VERSION"]'
+          "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
           dpkg-query -W '*neat*'
 
       - name: Generate manifest and run benchmark

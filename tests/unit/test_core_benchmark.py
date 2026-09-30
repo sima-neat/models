@@ -26,12 +26,11 @@ def core_inputs(tmp_path):
         "configuration": {"samples": 100, "include_plugin_latency": False},
         "workload": {"kind": "model.synthetic", "batch_size": 4, "inputs": [{"shape": [4, 3, 224, 224]}]},
         "script": str(script),
-        "runtime": {"devkit": {"build": "B1748"}},
-        "compatibility": {"platform_version": "3.0.0", "neat_version": "0.4.0"},
+        "compatibility": {"platform_version": "3.0.0"},
         "provenance": {"compile_run_id": "00000000-0000-4000-8000-000000000001", "models_commit": "a" * 40},
     }
     report = {
-        "core_version": "0.4.0+test",
+        "core_version": "0.5.0+test",
         "latency_ms": 2.0,
         "fps": 2.0,
         "avg_power_watts": 0.0,
@@ -50,8 +49,8 @@ def package(core_inputs, tmp_path):
         output,
         schema_path=Path(__file__).resolve().parents[2] / "schemas/performance-result-v5.schema.json",
         environment={
-            "buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = B1748\n",
-            "packages": {"neat-internals": "0.4.0+test"},
+            "buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = B1800\n",
+            "packages": {"neat-internals": "0.5.0+test"},
             "runner": "test",
             "fingerprint_version": 2,
             "kernel_release": "test",
@@ -77,13 +76,15 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
     assert result["trials"] == []
     assert result["core_report"] == json.loads(core_inputs[1].read_text())
     assert result["configuration"]["method"] == "core_model_benchmark"
-    assert result["environment"]["core_version"] == "0.4.0+test"
+    assert result["environment"]["core_version"] == "0.5.0+test"
+    assert "B1800" in result["environment"]["buildinfo"]
+    assert result["compatibility"]["expected_neat_version"] is None
 
 
 @pytest.mark.parametrize(
     "failure", [
         "nonfinite", "negative_power", "negative_energy", "missing_metric",
-        "wrong_artifact", "wrong_core", "wrong_build", "missing_context",
+        "wrong_artifact", "missing_core", "wrong_platform", "missing_context",
     ]
 )
 def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
@@ -97,14 +98,14 @@ def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
         report["energy_joules"] = -1.0
     elif failure == "missing_metric":
         del report["latency_ms"]
-    elif failure == "wrong_core":
-        report["core_version"] = "0.3.0"
+    elif failure == "missing_core":
+        report["core_version"] = ""
     else:
         manifest = json.loads(manifest_path.read_text())
         if failure == "wrong_artifact":
             Path(manifest["model"]["path"]).write_bytes(b"different archive")
-        elif failure == "wrong_build":
-            manifest["runtime"]["devkit"]["build"] = "B1493"
+        elif failure == "wrong_platform":
+            manifest["compatibility"]["platform_version"] = "2.1.3"
         else:
             del manifest["workload"]
         manifest_path.write_text(json.dumps(manifest))

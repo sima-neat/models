@@ -31,17 +31,6 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
     assert "benchmarker" not in runtime
 
 
-@pytest.mark.parametrize("build", [None, "", "1493", "B1493.*"])
-def test_benchmark_runtime_requires_a_literal_build_number(tmp_path: Path, build: object) -> None:
-    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    manifest["devkit"]["build"] = build
-    path = tmp_path / "deps" / "manifest.json"
-    path.parent.mkdir()
-    path.write_text(json.dumps(manifest), encoding="utf-8")
-    with pytest.raises(ValidationError, match="devkit.build"):
-        resolve_benchmark_runtime(tmp_path)
-
-
 def test_benchmark_runtime_requires_a_package_name(tmp_path: Path) -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
     manifest["neat-core"].pop("install_target")

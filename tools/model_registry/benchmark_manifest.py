@@ -168,7 +168,6 @@ def make_benchmark_manifest(
         },
         "compatibility": {
             "platform_version": runtime["devkit"]["platform_version"],
-            "neat_version": runtime["neat_core"]["version"],
         },
         "script": str(script),
         "runtime": runtime,

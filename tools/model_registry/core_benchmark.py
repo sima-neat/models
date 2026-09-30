@@ -112,11 +112,9 @@ def import_core_benchmark(
     ):
         raise ValidationError("benchmark manifest is missing configuration or inspected workload")
     actual_core = report.get("core_version", "")
-    if not isinstance(actual_core, str):
+    if not isinstance(actual_core, str) or not actual_core:
         raise ValidationError("benchmark report must identify the Core version")
     expected = manifest["compatibility"]
-    if actual_core.split("+", 1)[0] != expected["neat_version"]:
-        raise ValidationError("Core report version does not match the benchmark dependency")
     digest, _ = sha256_file(Path(manifest["model"]["path"]))
     if digest != manifest["model"]["sha256"]:
         raise ValidationError("benchmark input digest does not match the compilation")
@@ -124,11 +122,8 @@ def import_core_benchmark(
     buildinfo = environment["buildinfo"]
     found = re.search(r"^\s*DISTRO_VERSION\s*=\s*(\S+)", buildinfo, re.MULTILINE)
     actual_platform = found.group(1) if found else None
-    build = manifest["runtime"]["devkit"]["build"]
-    if actual_platform != expected["platform_version"] or not re.search(
-        rf"(?<![A-Za-z0-9])B?{re.escape(build.removeprefix('B'))}(?![A-Za-z0-9])", buildinfo
-    ):
-        raise ValidationError("benchmark environment does not match the required platform/build")
+    if actual_platform != expected["platform_version"]:
+        raise ValidationError("benchmark environment does not match the required platform")
     environment["core_version"] = actual_core
     environment["fingerprint"] = canonical_sha256(environment)
     metrics = {}
@@ -178,7 +173,7 @@ def import_core_benchmark(
         "compatibility": {
             "expected_platform_version": expected["platform_version"],
             "actual_platform_version": actual_platform,
-            "expected_neat_version": expected["neat_version"],
+            "expected_neat_version": None,
             "actual_neat_version": actual_core,
         },
         "configuration": {

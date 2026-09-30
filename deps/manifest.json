@@ -2,8 +2,7 @@
   "platform-version": "3.0.0",
   "devkit": {
     "board": "modalix",
-    "os_type": "elxr",
-    "build": "B1748"
+    "os_type": "elxr"
   },
   "model-compiler": {
     "channel": "develop",
@@ -11,7 +10,6 @@
     "version": "3.0.0"
   },
   "neat-core": {
-    "install_target": "core@release-3.0.0-prep",
-    "version": "0.4.0"
+    "install_target": "core@release-3.0.0-prep"
   }
 }

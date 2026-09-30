@@ -8,7 +8,7 @@ There is no shared benchmark executor or model-specific timing loop.
 ## Install on a DevKit
 
 Use the Core install target in `deps/manifest.json`. CI verifies Platform 3.0.0
-and B1748 before installing the `release-3.0.0-prep` package. The scripts use
+before installing the `release-3.0.0-prep` package. The scripts use
 the existing `BenchmarkReport` fields; no Core extension is required.
 
 ```bash
