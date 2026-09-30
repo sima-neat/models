@@ -51,10 +51,8 @@ summary_row() {
 }
 
 main() {
-  local started components component result row
+  local components component result row
   prepare_cache_root
-  started="$(mktemp)"
-  trap 'rm -f "$started"' EXIT
   {
     echo "### Cached datasets"
     echo
@@ -64,10 +62,13 @@ main() {
   IFS=',' read -ra components <<< "$COMPONENT_IDS"
   for component in "${components[@]}"; do
     result="$(resolve_dataset "$component")"
-    row="$(summary_row "$component" "$result" "$started")"
+    row="$(summary_row "$component" "$result" "$STARTED")"
     echo "$row"
     echo "$row" >> "$SUMMARY"
   done
 }
 
+# Receipts newer than this marker were written by a download in this run.
+STARTED="$(mktemp)"
+trap 'rm -f "$STARTED"' EXIT
 main
