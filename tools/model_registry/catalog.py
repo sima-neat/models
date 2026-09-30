@@ -44,7 +44,7 @@ _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md"}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
-BENCHMARK_FINGERPRINT_SCHEMA = 2
+BENCHMARK_FINGERPRINT_SCHEMA = 3
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -514,6 +514,14 @@ def benchmark_fingerprint(
                 hashlib.sha256((root / "models" / model_id / "tests" / "benchmark.py").read_bytes()).hexdigest()
                 if (root / "models" / model_id / "tests" / "benchmark.py").is_file() else None
             ),
+            "tooling_sha256": {
+                path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                if (root / path).is_file() else None
+                for path in (
+                    "tools/model_registry/core_benchmark.py",
+                    "schemas/performance-result-v5.schema.json",
+                )
+            },
             "runtime": resolve_benchmark_runtime(root),
         }
     )

@@ -98,7 +98,7 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
         "COMPILE_FINGERPRINT_SCHEMA = 3\n"
         "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
-        "BENCHMARK_FINGERPRINT_SCHEMA = 1\n",
+        "BENCHMARK_FINGERPRINT_SCHEMA = 3\n",
         encoding="utf-8",
     )
     _write_model(tmp_path, "alpha")
@@ -730,7 +730,12 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
     assert plan["metadata_changed"] is False
 
 
-def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path) -> None:
+@pytest.mark.parametrize("changed_input", [
+    "models/alpha/tests/performance.yaml",
+    "tools/model_registry/core_benchmark.py",
+    "schemas/performance-result-v5.schema.json",
+])
+def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "tests").mkdir()
     benchmark = model_dir / "tests" / "performance.yaml"
@@ -748,8 +753,13 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
         "build_profiles": ["fixture"],
     }]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    changed_file = catalog_repository / changed_input
+    if changed_file != benchmark:
+        changed_file.write_text("initial tooling\n", encoding="utf-8")
     base = _initialize_repository(catalog_repository)
-    benchmark.write_text(
+    unchanged = semantic_change_plan(catalog_repository, base, base, compiler_version=COMPILER_VERSION)
+    assert unchanged["benchmark_include"] == []
+    changed_file.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
         "note: revised metric profile\n",
         encoding="utf-8",
