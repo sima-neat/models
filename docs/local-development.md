@@ -328,8 +328,8 @@ python models/resnet_50/tests/benchmark.py \
   2>&1 | tee /workspace/benchmark.log
 ```
 
-Confirm a successful exit and inspect the report’s workload, Core version,
-configuration, and measurements. Keep the report and log outside Git. Run each
+Confirm a successful exit and inspect the report’s Core version and measurements.
+CI records workload and default configuration separately in its manifest. Keep the report and log outside Git. Run each
 RF-DETR component separately. CI attaches registry provenance and publishes the
 results; local execution needs only the model script and MPK.
 

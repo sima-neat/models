@@ -343,6 +343,32 @@ jobs:
             "$HOME/pyneat/bin/python" "models/$MODEL_ID/tests/benchmark.py" \
               "$archive" "$output/core-benchmark.json" \
               2>&1 | tee "$output/benchmark.log"
+            # Record default workload context separately from the four measured report fields.
+            "$HOME/pyneat/bin/python" - "$output/performance-test.json" <<'PYCONTEXT'
+          import json
+          import sys
+          from pathlib import Path
+          import pyneat
+
+          path = Path(sys.argv[1])
+          manifest = json.loads(path.read_text())
+          model = pyneat.Model(manifest["model"]["path"])
+          options = pyneat.BenchmarkOptions()
+          info = model.info()
+          manifest["configuration"] = {
+              "samples": options.num_samples,
+              "include_plugin_latency": options.include_plugin_latency,
+              "original_width": None, "original_height": None, "resize_mode": None,
+          }
+          manifest["workload"] = {
+              "kind": "model.synthetic", "input_generation": "deterministic",
+              "selection": "mpk_default", "batch_size": model.compiled_batch_size(),
+              "inputs": [{"shape": spec.shape, "dtype": spec.dtypes[0].name} for spec in model.input_specs()],
+              "preprocess": info.selection.preprocess_graph,
+              "postprocess": info.selection.selected_post_kind,
+          }
+          path.write_text(json.dumps(manifest, indent=2) + "\n")
+          PYCONTEXT
             "$REGISTRY_PYTHON" -m model_registry import-core-benchmark \
               --manifest "$output/performance-test.json" \
               --report "$output/core-benchmark.json" \

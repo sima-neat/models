@@ -107,7 +107,7 @@
       }
     },
     "provenance": {"type": "object"},
-    "core_report": {"type": "object", "required": ["schema_version", "tool", "configuration", "workload", "metrics"],
+    "core_report": {"type": "object", "required": ["schema_version", "tool", "metrics"],
       "properties": {"schema_version": {"const": 1}}
     },
     "error": {

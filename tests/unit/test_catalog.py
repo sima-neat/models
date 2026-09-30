@@ -593,7 +593,7 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
     before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    (model_dir / "tests/benchmark.py").write_text("model.benchmark(output_path=output)\n")
+    (model_dir / "tests/benchmark.py").write_text("model.benchmark().save_json(output)\n")
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
 

@@ -13,7 +13,7 @@ def core_inputs(tmp_path):
     archive = tmp_path / "model.tar.gz"
     archive.write_bytes(b"test archive")
     script = tmp_path / "benchmark.py"
-    script.write_text("model.benchmark(output_path=output)")
+    script.write_text("model.benchmark().save_json(output)")
     manifest = {
         "model": {
             "id": "resnet_50",
@@ -23,6 +23,8 @@ def core_inputs(tmp_path):
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             "uri": None,
         },
+        "configuration": {"samples": 100, "include_plugin_latency": False},
+        "workload": {"kind": "model.synthetic", "batch_size": 4, "inputs": [{"shape": [4, 3, 224, 224]}]},
         "script": str(script),
         "runtime": {"devkit": {"build": "B1748"}},
         "compatibility": {"platform_version": "3.0.0", "neat_version": "0.4.0"},
@@ -31,8 +33,6 @@ def core_inputs(tmp_path):
     report = {
         "schema_version": 1,
         "tool": {"name": "pyneat.Model.benchmark", "version": "0.4.0+test"},
-        "configuration": {"samples": 100, "include_plugin_latency": False},
-        "workload": {"kind": "model.synthetic", "batch_size": 1, "inputs": [{"shape": [1, 3, 224, 224]}]},
         "metrics": {name: {"status": "measured", "value": 2.0, "unit": unit} for name, unit in CORE_UNITS.items()},
     }
     report["metrics"]["avg_power_watts"] = {
@@ -72,6 +72,7 @@ def package(core_inputs, tmp_path):
 
 def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp_path):
     result = package(core_inputs, tmp_path)
+    assert result["metrics"]["energy_per_inference_joules"]["value"] == pytest.approx(2.0 / 400)
     assert result["metrics"]["throughput_fps"]["value"] == 2.0
     assert result["metrics"]["throughput_fps"]["unit"] == "inferences/s"
     assert result["metrics"]["avg_power_watts"]["value"] is None
@@ -83,7 +84,9 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
     assert result["environment"]["core_version"] == "0.4.0+test"
 
 
-@pytest.mark.parametrize("failure", ["nonfinite", "wrong_unit", "wrong_artifact", "wrong_core", "wrong_build"])
+@pytest.mark.parametrize(
+    "failure", ["nonfinite", "wrong_unit", "wrong_artifact", "wrong_core", "wrong_build", "missing_context"]
+)
 def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
     manifest_path, report_path = core_inputs
     report = json.loads(report_path.read_text())
@@ -97,8 +100,10 @@ def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
         manifest = json.loads(manifest_path.read_text())
         if failure == "wrong_artifact":
             Path(manifest["model"]["path"]).write_bytes(b"different archive")
-        else:
+        elif failure == "wrong_build":
             manifest["runtime"]["devkit"]["build"] = "B1493"
+        else:
+            del manifest["workload"]
         manifest_path.write_text(json.dumps(manifest))
     report_path.write_text(json.dumps(report))
     with pytest.raises(ValidationError):

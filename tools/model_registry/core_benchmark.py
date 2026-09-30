@@ -22,7 +22,6 @@ CORE_UNITS = {
     "throughput_fps": "inferences/s",
     "avg_power_watts": "W",
     "energy_joules": "J",
-    "energy_per_inference_joules": "J/inference",
 }
 UNAVAILABLE_UNITS = {
     "latency_p50_ms": "ms",
@@ -101,15 +100,17 @@ def import_core_benchmark(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("schema_version") != 1 or report.get("tool", {}).get("name") != "pyneat.Model.benchmark":
         raise ValidationError("unsupported Core benchmark report")
-    configuration = report.get("configuration", {})
-    workload = report.get("workload", {})
+    configuration = manifest.get("configuration", {})
+    workload = manifest.get("workload", {})
     if (
-        not isinstance(configuration.get("samples"), int)
+        type(configuration.get("samples")) is not int
         or configuration["samples"] <= 0
         or workload.get("kind") != "model.synthetic"
         or not workload.get("inputs")
+        or type(workload.get("batch_size")) is not int
+        or workload["batch_size"] <= 0
     ):
-        raise ValidationError("Core report is missing benchmark configuration or workload")
+        raise ValidationError("benchmark manifest is missing configuration or inspected workload")
     actual_core = report["tool"].get("version", "")
     expected = manifest["compatibility"]
     if actual_core.split("+", 1)[0] != expected["neat_version"]:
@@ -137,6 +138,19 @@ def import_core_benchmark(
     for name in ("latency_avg_ms", "throughput_fps"):
         if metrics[name]["status"] != "measured":
             raise ValidationError(f"benchmark did not measure {name}")
+    energy = metrics["energy_joules"]
+    metrics["energy_per_inference_joules"] = _metric(
+        {
+            "status": energy["status"],
+            "value": (
+                energy["value"] / (configuration["samples"] * workload["batch_size"])
+                if energy["status"] == "measured" else None
+            ),
+            "unit": "J/inference",
+            "reason": energy["reason"],
+        },
+        "J/inference",
+    )
     for name, unit in UNAVAILABLE_UNITS.items():
         metrics[name] = _metric(
             {"status": "unavailable", "value": None, "unit": unit, "reason": "not_reported_by_core_benchmark"}, unit

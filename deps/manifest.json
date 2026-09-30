@@ -11,7 +11,7 @@
     "version": "3.0.0"
   },
   "neat-core": {
-    "install_target": "core@feat/967-benchmark-report:faaa21296efd",
+    "install_target": "core@feat/967-benchmark-report:f0de5ff56906",
     "version": "0.4.0"
   }
 }

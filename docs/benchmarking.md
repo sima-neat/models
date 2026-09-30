@@ -9,7 +9,7 @@ There is no shared benchmark executor or model-specific timing loop.
 
 Use the Core install target in `deps/manifest.json`. CI verifies Platform 3.0.0
 and B1748 before installing that package. The selected Core build must support
-`Model.benchmark(output_path=...)`.
+`BenchmarkReport.save_json(path)`.
 
 ```bash
 sima-cli neat install --env production '<neat-core.install_target>'
@@ -34,7 +34,8 @@ import sys
 import pyneat
 
 model = pyneat.Model(sys.argv[1])
-model.benchmark(output_path=sys.argv[2])
+report = model.benchmark()
+report.save_json(sys.argv[2])
 ```
 
 A failed call exits unsuccessfully. Preserve the log; a missing report is not a
@@ -43,8 +44,10 @@ successful benchmark. Keep model archives and results outside Git.
 ## Workload and measurements
 
 The workload is the default route selected by Core from the MPK, using Core's
-synthetic input and benchmark defaults. The report records the actual input
-shapes, batch size, preprocessing, postprocessing, and sample configuration.
+synthetic input and benchmark defaults. The raw report contains measurements.
+CI records the input shapes, batch size, preprocessing, postprocessing, and default
+sample configuration separately in its manifest using Core's model-inspection API.
+Model scripts must use these default model and benchmark options.
 RF-DETR's backbone and transformer each produce a separate result. Their numbers
 are not a measured combined pipeline.
 
@@ -53,7 +56,9 @@ preprocessing and BoxDecode. Default-MPK results are a new baseline and must not
 be treated as equivalent to those historical fused-pipeline measurements.
 
 Core reports mean latency, throughput in logical inferences per second, average
-power, total energy, and energy per inference. Missing power remains unavailable.
+power, and total energy. The registry derives energy per logical inference by
+dividing total energy by the default sample count times the inspected compiled
+batch size. Missing power remains unavailable.
 RF-DETR still requires measured power and energy per inference for publication.
 
 Percentiles, initialization timings, peak MLA memory, and temperature traces are
@@ -68,7 +73,9 @@ CI verifies the dispatched component set and compiled archive digests, installs
 the pinned Core package, then invokes each model's script once per component.
 `model-registry import-core-benchmark` validates the raw Core report and packages
 it with compilation identity, script digest, source revision, runner build, and
-actual Core/Internals package versions. It never executes or times a model.
+actual Core/Internals package versions. The CI metadata step loads the same MPK
+with default options to inspect its workload; it does not run inference. The
+importer never executes or times a model.
 
 Model authors do not publish benchmark results directly.
 The board has no registry publication credentials. A separate hosted job validates
