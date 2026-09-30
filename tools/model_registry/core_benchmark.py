@@ -138,6 +138,8 @@ def import_core_benchmark(
         value = report.get(field)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValidationError(f"benchmark report requires a finite number for {field}")
+        if value < 0:
+            raise ValidationError(f"benchmark report requires a nonnegative number for {field}")
         measured = value > 0
         metrics[name] = _metric({
             "status": "measured" if measured else "unavailable",

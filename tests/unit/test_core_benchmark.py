@@ -81,13 +81,20 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
 
 
 @pytest.mark.parametrize(
-    "failure", ["nonfinite", "missing_metric", "wrong_artifact", "wrong_core", "wrong_build", "missing_context"]
+    "failure", [
+        "nonfinite", "negative_power", "negative_energy", "missing_metric",
+        "wrong_artifact", "wrong_core", "wrong_build", "missing_context",
+    ]
 )
 def test_rejects_invalid_report_or_provenance(core_inputs, tmp_path, failure):
     manifest_path, report_path = core_inputs
     report = json.loads(report_path.read_text())
     if failure == "nonfinite":
         report["latency_ms"] = float("nan")
+    elif failure == "negative_power":
+        report["avg_power_watts"] = -1.0
+    elif failure == "negative_energy":
+        report["energy_joules"] = -1.0
     elif failure == "missing_metric":
         del report["latency_ms"]
     elif failure == "wrong_core":
