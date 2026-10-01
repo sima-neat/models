@@ -245,8 +245,9 @@ jobs:
 
   benchmark-dispatched-model:
     name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
-    needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner]
+    needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner, resolve-dispatched-benchmark-config]
     if: inputs.environment == 'staging'
+    environment: ${{ inputs.environment }}
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
       labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ inputs.environment }}"]
@@ -254,6 +255,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
     env:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
@@ -317,7 +319,16 @@ jobs:
           DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
         run: _workflow/scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
 
+      - name: Configure dataset reader credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
+          role-to-assume: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}
+          role-session-name: models-dataset-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Cache declared datasets on NVMe
+        env:
+          SIMA_DATASET_S3_URI: s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}
         run: _workflow/scripts/cache_declared_datasets.sh "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
 
       - name: Install selected Neat Core

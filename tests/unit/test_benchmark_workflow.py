@@ -82,7 +82,13 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     steps = benchmark["steps"]
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
-    assert benchmark["needs"] == ["stage-dispatched-benchmark", "resolve-dispatched-benchmark-runner"]
+    assert benchmark["needs"] == [
+        "stage-dispatched-benchmark",
+        "resolve-dispatched-benchmark-runner",
+        "resolve-dispatched-benchmark-config",
+    ]
+    assert benchmark["environment"] == "${{ inputs.environment }}"
+    assert benchmark["permissions"]["id-token"] == "write"
     assert benchmark["runs-on"]["group"] == (
         "${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
     )
@@ -162,15 +168,24 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
     names = [step.get("name") for step in steps]
     runtime = names.index("Resolve and verify benchmark runtime")
     install = names.index("Install dataset-registry from the main branch artifact")
+    credentials = names.index("Configure dataset reader credentials")
     cache = names.index("Cache declared datasets on NVMe")
 
-    assert runtime < install < cache
+    assert runtime < install < credentials < cache
     helpers = steps[names.index("Check out benchmark helper scripts from the workflow revision")]
     assert names.index("Check out the trusted revision") < names.index(
         "Check out benchmark helper scripts from the workflow revision"
     ) < install
     assert helpers["with"] == {"ref": "${{ github.sha }}", "path": "_workflow", "sparse-checkout": "scripts"}
     assert steps[install]["run"].startswith("_workflow/scripts/install_dataset_registry.sh ")
+    assert steps[credentials]["with"] == {
+        "aws-region": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
+        "role-to-assume": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}",
+        "role-session-name": "models-dataset-${{ github.run_id }}-${{ github.run_attempt }}",
+    }
+    assert steps[cache]["env"]["SIMA_DATASET_S3_URI"] == (
+        "s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}"
+    )
     assert steps[cache]["run"].startswith("_workflow/scripts/cache_declared_datasets.sh ")
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
