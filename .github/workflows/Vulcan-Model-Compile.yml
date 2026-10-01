@@ -896,11 +896,12 @@ jobs:
           import certifi
 
           payload = {
-              "ref": os.environ["GITHUB_REF_NAME"],
+              "ref": "develop",
               "inputs": {
                   "environment": os.environ["BENCHMARK_ENVIRONMENT"],
                   "source_run_id": os.environ["GITHUB_RUN_ID"],
                   "source_sha": os.environ["GITHUB_SHA"],
+                  "source_branch": os.environ["GITHUB_REF_NAME"],
                   "model_id": os.environ["BENCHMARK_MODEL_ID"],
                   "build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"],
                   "compile_invocation_id": os.environ["BENCHMARK_COMPILE_INVOCATION_ID"],
@@ -1236,10 +1237,11 @@ jobs:
         run: |
           set -euo pipefail
           gh workflow run Vulcan-Model-Benchmarking.yml \
-            --ref "$GITHUB_REF_NAME" \
+            --ref develop \
             -f environment=staging \
             -f source_run_id= \
             -f source_sha="$GITHUB_SHA" \
+            -f source_branch="$GITHUB_REF_NAME" \
             -f model_id="${{ matrix.model_id }}" \
             -f build_profile_id="${{ matrix.build_profile_id }}" \
             -f compile_invocation_id="${{ matrix.compile_invocation_id }}" \

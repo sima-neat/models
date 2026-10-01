@@ -16,6 +16,7 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
         "environment",
         "source_run_id",
         "source_sha",
+        "source_branch",
         "model_id",
         "build_profile_id",
         "compile_invocation_id",
@@ -35,10 +36,14 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert stage["environment"] == "${{ inputs.environment }}"
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
+    assert "github.ref == 'refs/heads/develop'" in stage["if"]
     assert "inputs.operation" not in stage["if"]
     verify = next(step for step in stage["steps"] if step.get("name") == "Verify the source run and compiled artifact")
     assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
     assert ".head_sha == $sha" in verify["run"]
+    assert ".head_branch == $branch" in verify["run"]
+    assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in verify["run"]
+    assert 'git check-ref-format --branch "$SOURCE_BRANCH"' in verify["run"]
     assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify["run"]
     assert "compiler-output-" not in verify["run"]
     download = next(step for step in stage["steps"] if step.get("uses") == "actions/download-artifact@v7")
@@ -46,15 +51,36 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
         "compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
-    checkout = next(
+    trusted_checkout = next(
         step
         for step in stage["steps"]
-        if step.get("name") == "Check out the trusted source revision for registry tooling"
+        if step.get("name") == "Check out trusted registry tooling from the protected workflow revision"
     )
-    assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
-    assert checkout["with"]["path"] == "_registry_source"
+    assert trusted_checkout["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+    }
+    source_checkout = next(
+        step for step in stage["steps"] if step.get("name") == "Check out the source revision as data"
+    )
+    assert source_checkout["with"] == {
+        "ref": "${{ inputs.source_sha }}",
+        "path": "_source",
+        "persist-credentials": "false",
+    }
+    install = next(step for step in stage["steps"] if step.get("name") == "Install registry publication tooling")
+    assert install["run"] == "python -m pip install ."
     publication = next(
         step for step in stage["steps"] if step.get("name") == "Register an unpublished compilation for benchmarking"
+    )
+    credentials = next(
+        step for step in stage["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
+    )
+    assert credentials["id"] == "artifact-publisher-credentials"
+    assert credentials["with"]["output-credentials"] == "true"
+    assert credentials["with"]["output-env-credentials"] == "false"
+    assert publication["env"]["AWS_ACCESS_KEY_ID"] == (
+        "${{ steps.artifact-publisher-credentials.outputs.aws-access-key-id }}"
     )
     assert publication["if"] == "inputs.source_run_id != '' && steps.publication.outputs.required == 'true'"
     assert "model-registry publish" in publication["run"]
@@ -64,7 +90,7 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     )
     assert restore["if"] == "inputs.source_run_id == ''"
     assert "model-registry stage-registry-build" in restore["run"]
-    assert '--repository _registry_source' in publication["run"]
+    assert '--repository _source' in publication["run"]
     assert '--dist-dir _compiled' in publication["run"]
     assert '--github-run-id "$SOURCE_RUN_ID"' in publication["run"]
     assert '--github-run-attempt "$SOURCE_RUN_ATTEMPT"' in publication["run"]
@@ -82,6 +108,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     steps = benchmark["steps"]
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
+    assert "github.ref == 'refs/heads/develop'" in resolver["if"]
     assert benchmark["needs"] == [
         "stage-dispatched-benchmark",
         "resolve-dispatched-benchmark-runner",
@@ -103,8 +130,26 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert benchmark["env"]["SOURCE_BRANCH"] == (
         "${{ needs.stage-dispatched-benchmark.outputs.source_branch }}"
     )
-    checkout = next(step for step in steps if step.get("name") == "Check out the trusted revision")
-    assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
+    trusted_checkout = next(
+        step for step in steps if step.get("name") == "Check out trusted tooling from the protected workflow revision"
+    )
+    assert trusted_checkout["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+    }
+    source_checkout = next(
+        step for step in steps if step.get("name") == "Check out the source revision as data"
+    )
+    assert source_checkout["with"] == {
+        "ref": "${{ inputs.source_sha }}",
+        "path": "_source",
+        "persist-credentials": "false",
+    }
+    registry_install = next(
+        step for step in steps if step.get("name") == "Install registry tooling in an isolated environment"
+    )
+    assert 'pip install .' in registry_install["run"]
+    assert "pip install _source" not in registry_install["run"]
     download = next(step for step in steps if step.get("name") == "Download the staged compiled model output")
     assert download["with"]["name"] == (
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
@@ -123,7 +168,9 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "NEAT_VERSION" not in install["run"]
     assert 'sima-cli neat install --env production --type minimal "$target"' in install["run"]
     assert '["neat_core"]["install_target"]' in install["run"]
-    assert '"models/$MODEL_ID/tests/benchmark.py"' in execute["run"]
+    assert '"models/$MODEL_ID/tests/benchmark.py"' not in execute["run"]
+    assert "report = model.benchmark()" in execute["run"]
+    assert "PYBENCH" in execute["run"]
     assert "import-core-benchmark" in execute["run"]
     assert "core-benchmark.json" in execute["run"]
     assert "make-benchmark-manifest" in execute["run"]
@@ -141,8 +188,16 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
 
     assert publish["runs-on"] == "ubuntu-latest"
     assert publish["needs"] == ["benchmark-dispatched-model", "resolve-dispatched-benchmark-config"]
-    checkout = next(step for step in publish["steps"] if step.get("uses") == "actions/checkout@v6")
-    assert checkout["with"]["ref"] == "${{ github.sha }}"
+    checkouts = [step for step in publish["steps"] if step.get("uses") == "actions/checkout@v6"]
+    assert checkouts[0]["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+    }
+    assert checkouts[1]["with"] == {
+        "ref": "${{ inputs.source_sha }}",
+        "path": "_source",
+        "persist-credentials": "false",
+    }
     download = next(step for step in publish["steps"] if step.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == (
         "benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
@@ -150,14 +205,25 @@ def test_completed_dispatched_benchmark_is_published_from_a_hosted_runner() -> N
     publication = next(
         step for step in publish["steps"] if step.get("name") == "Publish every completed schema-v5 result and log"
     )
+    credentials = next(
+        step for step in publish["steps"] if step.get("id") == "benchmark-publisher-credentials"
+    )
+    assert credentials["with"]["output-credentials"] == "true"
+    assert credentials["with"]["output-env-credentials"] == "false"
+    assert publication["env"]["AWS_ACCESS_KEY_ID"] == (
+        "${{ steps.benchmark-publisher-credentials.outputs.aws-access-key-id }}"
+    )
     assert publication["env"]["COMPONENT_IDS"] == "${{ inputs.component_ids }}"
+    assert publication["env"]["SOURCE_BRANCH"] == "${{ inputs.source_branch }}"
     assert "validate-benchmark-set" in publication["run"]
+    assert "--repository _source" in publication["run"]
     assert "find _benchmarks -type f -name performance-result-v5.json" in publication["run"]
     assert 'for component in "${components[@]}"' in publication["run"]
     assert "actual_count == ${#components[@]}" in publication["run"]
     assert 'for result in "${results[@]}"' in publication["run"]
     assert "model-registry publish-benchmark" in publication["run"]
     assert "--schema schemas/performance-result-v5.schema.json" in publication["run"]
+    assert '--branch "$SOURCE_BRANCH"' in publication["run"]
     assert '--git-sha "$SOURCE_SHA"' in publication["run"]
 
 
@@ -172,18 +238,8 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
     cache = names.index("Cache declared datasets on NVMe")
 
     assert runtime < install < credentials < cache
-    helpers = steps[names.index("Check out trusted tooling from the workflow revision")]
-    assert names.index("Check out the trusted revision") < names.index(
-        "Check out trusted tooling from the workflow revision"
-    ) < install
-    assert helpers["with"] == {
-        "ref": "${{ github.sha }}",
-        "path": "_workflow",
-        "sparse-checkout": "pyproject.toml\nscripts\ntools/model_registry\n",
-    }
-    assert 'python3 -m venv "$RUNNER_TEMP/dataset-registry-tools"' in steps[install]["run"]
-    assert '"$dataset_python" -m pip install ./_workflow' in steps[install]["run"]
-    assert '_workflow/scripts/install_dataset_registry.sh "$dataset_python"' in steps[install]["run"]
+    assert names.index("Check out trusted tooling from the protected workflow revision") < install
+    assert 'scripts/install_dataset_registry.sh "$REGISTRY_PYTHON"' in steps[install]["run"]
     assert steps[credentials]["with"] == {
         "aws-region": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
         "role-to-assume": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}",
@@ -200,8 +256,12 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
         "AWS_DEFAULT_REGION": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
         "SIMA_DATASET_S3_URI": "s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}",
     }
-    assert 'REGISTRY_PYTHON="$DATASET_REGISTRY_PYTHON"' in steps[cache]["run"]
-    assert "_workflow/scripts/cache_declared_datasets.sh" in steps[cache]["run"]
+    assert steps[cache]["run"].startswith('scripts/cache_declared_datasets.sh "_source/models/$MODEL_ID"')
+    credentialed_runs = "\n".join(
+        step.get("run", "") for step in steps[credentials:] if isinstance(step, dict)
+    )
+    assert "pip install _source" not in credentialed_runs
+    assert '"models/$MODEL_ID/tests/benchmark.py"' not in credentialed_runs
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
     assert "--download-only" in install_script
