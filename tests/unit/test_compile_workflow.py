@@ -610,21 +610,22 @@ def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
     assert "--calibration-sha256" in verify_step["run"]
 
 
-def test_completed_compile_dispatches_one_grouped_benchmark_immediately() -> None:
+def test_published_compile_dispatches_one_grouped_benchmark_after_handoff() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     compile_job = workflow["jobs"]["compile"]
     publish_job = workflow["jobs"]["publish-compilations"]
-    dispatch = next(step for step in compile_job["steps"] if step.get("name") == "Start the component benchmarks")
+    dispatch = next(step for step in publish_job["steps"] if step.get("name") == "Start the component benchmarks")
 
-    assert compile_job["permissions"]["actions"] == "write"
+    assert all(step.get("name") != "Start the component benchmarks" for step in compile_job["steps"])
+    assert publish_job["permissions"]["actions"] == "write"
     assert dispatch["continue-on-error"] == "true"
     assert "needs.select.outputs.publishable" not in dispatch["if"]
     assert "needs.select.outputs.vulcan_environment == 'staging'" in dispatch["if"]
     assert "matrix.target == 'modalix'" in dispatch["if"]
     assert "github.ref_name" not in dispatch["if"]
     assert "gh workflow run" not in dispatch["run"]
-    assert '"$MODEL_COMPILER_PYTHON" - <<\'PY\'' in dispatch["run"]
-    assert "\npython - <<'PY'" not in dispatch["run"]
+    assert "python - <<'PY'" in dispatch["run"]
+    assert "$MODEL_COMPILER_PYTHON" not in dispatch["run"]
     assert 'method="POST"' in dispatch["run"]
     assert "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches" in dispatch["run"]
     assert '"operation"' not in dispatch["run"]
@@ -634,15 +635,19 @@ def test_completed_compile_dispatches_one_grouped_benchmark_immediately() -> Non
     assert '"build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"]' in dispatch["run"]
     dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     compile(dispatch_python, "<benchmark-dispatch>", "exec")
-    retain_index = next(
+    publish_index = next(
         index
-        for index, step in enumerate(compile_job["steps"])
-        if step.get("name") == "Retain the complete compiler output"
+        for index, step in enumerate(publish_job["steps"])
+        if step.get("name") == "Publish the complete component set"
     )
-    retained_output = compile_job["steps"][retain_index]
-    assert retained_output["with"]["name"].startswith("compiler-output-")
-    assert retain_index < compile_job["steps"].index(dispatch)
-    assert all(step.get("name") != "Start the component benchmarks" for step in publish_job["steps"])
+    handoff_index = next(
+        index
+        for index, step in enumerate(publish_job["steps"])
+        if step.get("name") == "Retain the published model output for benchmark handoff"
+    )
+    retained_output = publish_job["steps"][handoff_index]
+    assert retained_output["with"]["name"].startswith("compiled-model-")
+    assert publish_index < handoff_index < publish_job["steps"].index(dispatch)
     assert "discover-benchmark-matrix" not in workflow["jobs"]
     assert "inputs.operation" not in workflow["concurrency"]["group"]
     assert "stage-dispatched-benchmark" not in workflow["jobs"]
