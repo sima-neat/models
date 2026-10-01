@@ -115,7 +115,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime["run"]
     assert '["devkit"]["build"]' not in runtime["run"]
     assert "NEAT_VERSION" not in install["run"]
-    assert "sima-cli neat install" in install["run"]
+    assert 'sima-cli neat install --env production --type minimal "$target"' in install["run"]
     assert '["neat_core"]["install_target"]' in install["run"]
     assert '"models/$MODEL_ID/tests/benchmark.py"' in execute["run"]
     assert "import-core-benchmark" in execute["run"]
