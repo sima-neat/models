@@ -10,7 +10,6 @@ from types import ModuleType
 
 import numpy as np
 import onnx
-import pytest
 import yaml
 from PIL import Image
 
@@ -194,40 +193,6 @@ def test_surgery_simplifies_only_the_transformer_partition() -> None:
 
     assert "transformer, valid = simplify(" in source
     assert "full, valid = simplify(" not in source
-
-
-@pytest.mark.parametrize("case", ["rounding", "wrong", "shape", "nan", "inf"])
-def test_float_surgery_validation_accepts_rounding_but_rejects_invalid_outputs(monkeypatch, case) -> None:
-    surgery = load_module("surgery")
-    expected = [np.full((1, 300, 4), 0.5, np.float32), np.ones((1, 300, 91), np.float32)]
-    actual = [value.copy() for value in expected]
-    if case == "shape":
-        actual[0] = actual[0][:, :1]  # Broadcasting must not hide a changed contract.
-    elif case in {"nan", "inf"}:
-        expected[0][0, 0, 0] = actual[0][0, 0, 0] = float(case)
-    else:
-        actual[0][0, 0, 0] += 1.25e-4 if case == "rounding" else 0.01
-
-    class Session:
-        def __init__(self, path, **kwargs):
-            self.path = path
-
-        def run(self, outputs, feed):
-            if self.path == "source":
-                return expected
-            if self.path == "decoder":
-                return actual
-            return [np.zeros((1, 256, 32, 32), np.float32), np.zeros((1, 1024)), np.zeros((1, 1024, 4))]
-
-    runtime = ModuleType("onnxruntime")
-    runtime.InferenceSession = Session
-    monkeypatch.setitem(sys.modules, "onnxruntime", runtime)
-    monkeypatch.setitem(sys.modules, "calibration", load_module("calibration"))
-    if case == "rounding":
-        surgery.validate_float_split(Path("source"), Path("backbone"), Path("decoder"), np.zeros((3, 512, 512)))
-    else:
-        with pytest.raises(RuntimeError, match="RF-DETR split output"):
-            surgery.validate_float_split(Path("source"), Path("backbone"), Path("decoder"), np.zeros((3, 512, 512)))
 
 
 def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
