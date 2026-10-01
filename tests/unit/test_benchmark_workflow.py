@@ -182,10 +182,18 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
         "aws-region": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
         "role-to-assume": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}",
         "role-session-name": "models-dataset-${{ github.run_id }}-${{ github.run_attempt }}",
+        "output-credentials": "true",
+        "output-env-credentials": "false",
     }
-    assert steps[cache]["env"]["SIMA_DATASET_S3_URI"] == (
-        "s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}"
-    )
+    assert steps[credentials]["id"] == "dataset-credentials"
+    assert steps[cache]["env"] == {
+        "AWS_ACCESS_KEY_ID": "${{ steps.dataset-credentials.outputs.aws-access-key-id }}",
+        "AWS_SECRET_ACCESS_KEY": "${{ steps.dataset-credentials.outputs.aws-secret-access-key }}",
+        "AWS_SESSION_TOKEN": "${{ steps.dataset-credentials.outputs.aws-session-token }}",
+        "AWS_REGION": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
+        "AWS_DEFAULT_REGION": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
+        "SIMA_DATASET_S3_URI": "s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}",
+    }
     assert steps[cache]["run"].startswith("_workflow/scripts/cache_declared_datasets.sh ")
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")

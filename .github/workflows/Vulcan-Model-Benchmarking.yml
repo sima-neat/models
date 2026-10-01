@@ -320,14 +320,22 @@ jobs:
         run: _workflow/scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
 
       - name: Configure dataset reader credentials
+        id: dataset-credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
           role-to-assume: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}
           role-session-name: models-dataset-${{ github.run_id }}-${{ github.run_attempt }}
+          output-credentials: true
+          output-env-credentials: false
 
       - name: Cache declared datasets on NVMe
         env:
+          AWS_ACCESS_KEY_ID: ${{ steps.dataset-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.dataset-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.dataset-credentials.outputs.aws-session-token }}
+          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
+          AWS_DEFAULT_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
           SIMA_DATASET_S3_URI: s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}
         run: _workflow/scripts/cache_declared_datasets.sh "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
 
