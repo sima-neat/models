@@ -167,17 +167,23 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
     steps = workflow["jobs"]["benchmark-dispatched-model"]["steps"]
     names = [step.get("name") for step in steps]
     runtime = names.index("Resolve and verify benchmark runtime")
-    install = names.index("Install dataset-registry from the main branch artifact")
+    install = names.index("Install trusted dataset tooling")
     credentials = names.index("Configure dataset reader credentials")
     cache = names.index("Cache declared datasets on NVMe")
 
     assert runtime < install < credentials < cache
-    helpers = steps[names.index("Check out benchmark helper scripts from the workflow revision")]
+    helpers = steps[names.index("Check out trusted tooling from the workflow revision")]
     assert names.index("Check out the trusted revision") < names.index(
-        "Check out benchmark helper scripts from the workflow revision"
+        "Check out trusted tooling from the workflow revision"
     ) < install
-    assert helpers["with"] == {"ref": "${{ github.sha }}", "path": "_workflow", "sparse-checkout": "scripts"}
-    assert steps[install]["run"].startswith("_workflow/scripts/install_dataset_registry.sh ")
+    assert helpers["with"] == {
+        "ref": "${{ github.sha }}",
+        "path": "_workflow",
+        "sparse-checkout": "pyproject.toml\nscripts\ntools/model_registry\n",
+    }
+    assert 'python3 -m venv "$RUNNER_TEMP/dataset-registry-tools"' in steps[install]["run"]
+    assert '"$dataset_python" -m pip install ./_workflow' in steps[install]["run"]
+    assert '_workflow/scripts/install_dataset_registry.sh "$dataset_python"' in steps[install]["run"]
     assert steps[credentials]["with"] == {
         "aws-region": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
         "role-to-assume": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}",
@@ -194,7 +200,8 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
         "AWS_DEFAULT_REGION": "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}",
         "SIMA_DATASET_S3_URI": "s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}",
     }
-    assert steps[cache]["run"].startswith("_workflow/scripts/cache_declared_datasets.sh ")
+    assert 'REGISTRY_PYTHON="$DATASET_REGISTRY_PYTHON"' in steps[cache]["run"]
+    assert "_workflow/scripts/cache_declared_datasets.sh" in steps[cache]["run"]
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
     assert "--download-only" in install_script

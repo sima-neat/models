@@ -269,12 +269,15 @@ jobs:
         with:
           ref: ${{ inputs.source_sha }}
 
-      - name: Check out benchmark helper scripts from the workflow revision
+      - name: Check out trusted tooling from the workflow revision
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           path: _workflow
-          sparse-checkout: scripts
+          sparse-checkout: |
+            pyproject.toml
+            scripts
+            tools/model_registry
 
       - name: Download the staged compiled model output
         uses: actions/download-artifact@v7
@@ -314,10 +317,15 @@ jobs:
           echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
 
-      - name: Install dataset-registry from the main branch artifact
+      - name: Install trusted dataset tooling
         env:
           DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
-        run: _workflow/scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dataset-registry-tools"
+          dataset_python="$RUNNER_TEMP/dataset-registry-tools/bin/python"
+          "$dataset_python" -m pip install ./_workflow
+          _workflow/scripts/install_dataset_registry.sh "$dataset_python" "$DATASET_REGISTRY_ENVIRONMENT"
+          echo "DATASET_REGISTRY_PYTHON=$dataset_python" >> "$GITHUB_ENV"
 
       - name: Configure dataset reader credentials
         id: dataset-credentials
@@ -337,7 +345,10 @@ jobs:
           AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
           AWS_DEFAULT_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
           SIMA_DATASET_S3_URI: s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}
-        run: _workflow/scripts/cache_declared_datasets.sh "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
+        run: >-
+          REGISTRY_PYTHON="$DATASET_REGISTRY_PYTHON"
+          _workflow/scripts/cache_declared_datasets.sh
+          "models/$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPONENT_IDS"
 
       - name: Install selected Neat Core
         run: |
