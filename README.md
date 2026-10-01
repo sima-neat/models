@@ -79,6 +79,10 @@ sima-cli models list --branch develop
 sima-cli models download --id resnet_50 --variant modalix_bf16 --branch develop
 ```
 
+Registry run metadata publishes the canonical `build_profile_id` plus the
+equivalent `variant_id` compatibility alias consumed by released sima-cli
+versions.
+
 The former Models-specific `metadata.json`, `latest.json`, `latest.tag`, and
 `catalog.json` publication path is retired. Existing objects remain historical
 artifacts, but workflows no longer read, carry forward, validate, generate, or
