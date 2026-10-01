@@ -45,9 +45,9 @@ def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
         "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"
     )
     assert binding["parameters"]["quantized_source"] == {
-        "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/508162355",
-        "sha256": "9d8444f989563e71f32ab2569f4f49e02607036b92c376f0c64b79e3ac4530cc",
-        "size_bytes": 9644979,
+        "uri": "https://api.github.com/repos/sima-neat/models/releases/assets/586847300",
+        "sha256": "fe4479a3bf6f533cd73bcd96f6b398226e77e97914fff785a8e6192b2326025c",
+        "size_bytes": 9682946,
         "media_type": "application/gzip",
     }
 
@@ -71,7 +71,7 @@ def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
     assert "Model.load(MODEL_NAME" in source
     assert "restore_public_output_labels(quantized, contract.output_names())" in source
     assert '"mpk": audit_mpk(archive, contract)' in source
-    assert 'parameters.get("tessellation_owner") != "mla"' in source
+    assert "tessellate_parameters" not in source
 
 
 def test_modelsdk_output_labels_are_restored_and_verified() -> None:
@@ -160,7 +160,9 @@ def test_quantized_snapshot_is_deterministic_and_fail_closed(tmp_path: Path) -> 
                 "Softmax": {"count": 4, "input_scalar_type": "int8", "output_scalar_type": "int8"},
             },
         },
-        "mpk": {"compiler_version": "2.1.3"},
+        "mpk": {
+            "compiler_version": json.loads((ROOT / "deps" / "manifest.json").read_text())["model-compiler"]["version"]
+        },
     }
     report_path = tmp_path / "compile-report.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")

@@ -140,24 +140,15 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     if precision == "int8":
         plugins.append(plugin("EV74", sequence, kernel="quantization_transform", params={"output_data_type": "int8"}))
         sequence += 1
-    plugins.append(plugin("MLA", sequence))
+    plugins.append(plugin("MLA", sequence, output_nodes=[{"name": f"MLA_{i}"} for i in range(12)]))
     sequence += 1
-    internal_type = "int8" if precision == "int8" or not tessellation_mla else "bfloat16"
-    plugins.append(
-        plugin(
-            "EV74",
-            sequence,
-            kernel="unpack_transform",
-            params={"tensor_types": [internal_type] * 12},
-        )
-    )
-    sequence += 1
-    if precision == "int8":
-        for _ in range(12):
-            plugins.append(
-                plugin("EV74", sequence, kernel="dequantization_transform", params={"input_data_type": "int8"})
-            )
-            sequence += 1
+    for _ in range(12):
+        kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
+        params = {"input_data_type": "int8"} if precision == "int8" else {
+            "in_dtype": "bfloat16", "out_dtype": "float32"
+        }
+        plugins.append(plugin("EV74", sequence, kernel=kernel, params=params))
+        sequence += 1
     plugins.append(
         plugin(
             "EV74",
@@ -186,11 +177,10 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
 
 
 @pytest.mark.parametrize("precision", ["int8", "bf16"])
-@pytest.mark.parametrize("tessellation_mla", [False, True])
-def test_mpk_audit_proves_all_four_variants(tmp_path: Path, precision: str, tessellation_mla: bool) -> None:
+def test_mpk_audit_proves_default_variants(tmp_path: Path, precision: str) -> None:
     compile_module = load_module("compile")
-    suffix = "tess_mla" if tessellation_mla else "tess_off_mla"
-    variant = f"modalix_{precision}_{suffix}"
+    tessellation_mla = True
+    variant = f"modalix_{precision}"
     archive = write_mpk(tmp_path / f"{variant}_mpk.tar.gz", compile_module, precision, tessellation_mla)
     report = compile_module.audit_mpk(archive, variant)
     assert report["output_transport_tensor_count"] == 12
@@ -276,7 +266,7 @@ def test_quantization_quality_gate_rejects_regression() -> None:
         compile_module.enforce_quantization_quality(report, "int8")
 
 
-def test_recipe_uses_supported_compiler_2_1_3_api_only() -> None:
+def test_recipe_preserves_quantization_and_public_io_policy() -> None:
     source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
     assert "with_activation_quantization" in source
     assert "with_weight_quantization" in source
@@ -285,12 +275,12 @@ def test_recipe_uses_supported_compiler_2_1_3_api_only() -> None:
     assert "public_output_types" not in source
 
 
-def test_model_declares_exact_four_variant_cross_product() -> None:
+def test_model_declares_default_precision_profiles() -> None:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
-        (binding["parameters"]["precision"], binding["parameters"]["tessellation_mla"])
+        binding["parameters"]["precision"]
         for binding in bindings
     }
-    assert matrix == {("int8", False), ("int8", True), ("bf16", False), ("bf16", True)}
+    assert matrix == {"int8", "bf16"}
     assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)

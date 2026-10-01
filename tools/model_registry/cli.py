@@ -149,6 +149,14 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
+    core_report = subcommands.add_parser(
+        "import-core-benchmark", help="attach registry provenance to a Core benchmark report"
+    )
+    core_report.add_argument("--manifest", type=Path, required=True)
+    core_report.add_argument("--report", type=Path, required=True)
+    core_report.add_argument("--output", type=Path, required=True)
+    core_report.add_argument("--schema", type=Path, required=True)
+
     benchmark_manifest = subcommands.add_parser(
         "make-benchmark-manifest", help="generate a direct-DevKit benchmark manifest for one compiled model"
     )
@@ -272,6 +280,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--repository", type=Path, default=Path.cwd())
     publish_catalog_parser.add_argument("--compiled-dir", type=Path)
     publish_catalog_parser.add_argument("--package-dir", type=Path)
+    publish_catalog_parser.add_argument(
+        "--selected-matrix",
+        type=Path,
+        help="omit prior packages for build profiles selected for replacement",
+    )
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
@@ -781,6 +794,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         repository=args.repository,
         compiled_dir=args.compiled_dir,
         package_dir=args.package_dir,
+        selected_matrix=args.selected_matrix,
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
@@ -842,6 +856,12 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "import-core-benchmark":
+            from .core_benchmark import import_core_benchmark
+
+            result = import_core_benchmark(args.manifest, args.report, args.output, schema_path=args.schema)
+            print(json.dumps(result, sort_keys=True))
+            return 0
         if args.command == "make-benchmark-manifest":
             return _make_benchmark_manifest(args)
         if args.command == "verify-mpk":

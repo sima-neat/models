@@ -232,7 +232,7 @@ def test_fetch_accuracy_dataset_skips_legacy_correctness_declaration(monkeypatch
             "fetch-accuracy-dataset",
             str(ROOT / "models" / "ssd_mobilenet_v1"),
             "--build-profile",
-            "modalix_bf16_tess_mla",
+            "modalix_bf16",
             "--component",
             "model",
             "--json",
@@ -264,7 +264,7 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
 
 
 def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
-    profile = "modalix_int8_tess_mla"
+    profile = "modalix_int8"
     result = main(
         [
             "matrix",

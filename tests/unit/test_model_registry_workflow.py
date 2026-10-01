@@ -15,6 +15,7 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
         "scripts/build_model_registry_vulcan_package.sh",
         "tests/unit/**",
         "models/**",
+        "deps/manifest.json",
         "schemas/**",
         "taxonomies/**",
     ):

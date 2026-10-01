@@ -44,7 +44,7 @@ _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md"}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
-BENCHMARK_FINGERPRINT_SCHEMA = 1
+BENCHMARK_FINGERPRINT_SCHEMA = 3
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -510,6 +510,21 @@ def benchmark_fingerprint(
             "compile_fingerprint": compiled,
             "compiled_artifact_sha256": artifact_sha256,
             "performance": documents,
+            "script_sha256": (
+                hashlib.sha256((root / "models" / model_id / "tests" / "benchmark.py").read_bytes()).hexdigest()
+                if (root / "models" / model_id / "tests" / "benchmark.py").is_file() else None
+            ),
+            "tooling_sha256": {
+                path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                if (root / path).is_file() else None
+                for path in (
+                    ".github/workflows/Vulcan-Model-Benchmarking.yml",
+                    "tools/model_registry/core_benchmark.py",
+                    "tools/model_registry/benchmark_publication.py",
+                    "tools/model_registry/benchmark_manifest.py",
+                    "schemas/performance-result-v5.schema.json",
+                )
+            },
             "runtime": resolve_benchmark_runtime(root),
         }
     )
@@ -717,7 +732,7 @@ def semantic_change_plan(
             base_benchmark_schema = _integer_constant(
                 base_root / "tools" / "model_registry" / "catalog.py", "BENCHMARK_FINGERPRINT_SCHEMA"
             )
-            base_compiler_version = resolve_model_compiler(base_root)["version"]
+            base_compiler_version = resolve_model_compiler(base_root)["identity"]
             base_entries = build_matrix(
                 base_catalog,
                 sorted(base_catalog),

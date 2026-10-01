@@ -28,7 +28,7 @@ FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
 PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
-COMPILER_VERSION = resolve_model_compiler(ROOT)["version"]
+COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
@@ -98,7 +98,7 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
         "COMPILE_FINGERPRINT_SCHEMA = 3\n"
         "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
-        "BENCHMARK_FINGERPRINT_SCHEMA = 1\n",
+        "BENCHMARK_FINGERPRINT_SCHEMA = 3\n",
         encoding="utf-8",
     )
     _write_model(tmp_path, "alpha")
@@ -567,7 +567,7 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -586,12 +586,17 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
 
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 5\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
+    before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+    (model_dir / "tests/benchmark.py").write_text("report = model.benchmark()\n")
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
+
 
 
 def test_correctness_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
@@ -625,7 +630,7 @@ def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repo
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -641,7 +646,7 @@ def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repo
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 5\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
 
@@ -685,6 +690,21 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     assert plan["metadata_changed"] is True
 
 
+def test_semantic_plan_rebuilds_every_model_for_a_new_develop_revision(catalog_repository: Path) -> None:
+    base = _initialize_repository(catalog_repository)
+    manifest_path = catalog_repository / "deps" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["model-compiler"]["revision"] = "f94f03a8f59c"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    head = _commit(catalog_repository, "compiler revision")
+    compiler_identity = resolve_model_compiler(catalog_repository)["identity"]
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=compiler_identity)
+
+    assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
+    assert all(entry["build_fingerprint"] for entry in plan["include"])
+
+
 def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) -> None:
     base = _initialize_repository(catalog_repository)
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
@@ -710,13 +730,21 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
     assert plan["metadata_changed"] is False
 
 
-def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path) -> None:
+@pytest.mark.parametrize("changed_input", [
+    "models/alpha/tests/performance.yaml",
+    ".github/workflows/Vulcan-Model-Benchmarking.yml",
+    "tools/model_registry/core_benchmark.py",
+    "tools/model_registry/benchmark_publication.py",
+    "tools/model_registry/benchmark_manifest.py",
+    "schemas/performance-result-v5.schema.json",
+])
+def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "tests").mkdir()
     benchmark = model_dir / "tests" / "performance.yaml"
     benchmark.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 10\n  samples: 100\n",
+        "note: initial metric profile\n",
         encoding="utf-8",
     )
     manifest = model_dir / "model.yaml"
@@ -728,10 +756,16 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
         "build_profiles": ["fixture"],
     }]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    changed_file = catalog_repository / changed_input
+    if changed_file != benchmark:
+        changed_file.parent.mkdir(parents=True, exist_ok=True)
+        changed_file.write_text("initial tooling\n", encoding="utf-8")
     base = _initialize_repository(catalog_repository)
-    benchmark.write_text(
+    unchanged = semantic_change_plan(catalog_repository, base, base, compiler_version=COMPILER_VERSION)
+    assert unchanged["benchmark_include"] == []
+    changed_file.write_text(
         "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "benchmark:\n  mode: bounded_runner\n  warmup_samples: 2\n  samples: 100\n",
+        "note: revised metric profile\n",
         encoding="utf-8",
     )
     head = _commit(catalog_repository, "benchmark")

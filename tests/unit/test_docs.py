@@ -160,28 +160,18 @@ def test_local_guide_covers_the_complete_local_qualification_loop() -> None:
         "compile.py --model <verified-entrypoint>",
         "model-registry verify-mpk",
         "Benchmark locally on a Modalix DevKit",
-        "type dk || type devkit-run",
-        "benchmarker \\",
-        "performance-result.json",
+        "python models/resnet_50/tests/benchmark.py",
+        "core-benchmark.json",
         "Finish the local review",
     ):
         assert expected in text
 
     assert "Compilation is intentionally model-owned" in text
     assert "does not provide a public compile command" in text.replace("\n", " ")
-    assert "commit either file" in text
+    assert "Keep the report and log outside Git" in text
     assert "Vulcan" not in text
     assert "What CI repeats" not in text
     assert "GitHub-hosted runner" not in text
-
-
-def test_bounded_runner_documents_dynamic_image_geometry() -> None:
-    text = (ROOT / "docs" / "benchmarking.md").read_text(encoding="utf-8")
-
-    assert "original_width: 1280" in text
-    assert "original_height: 720" in text
-    assert "For image inputs with dynamic spatial dimensions" in text
-    assert "Input geometry overrides are not supported" not in text
 
 
 def test_docs_keep_author_tools_separate_from_ci_publication() -> None:

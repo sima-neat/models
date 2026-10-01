@@ -1,8 +1,4 @@
 schema_version: 1
 status: qualified_reference
 metrics: [latency_avg_ms]
-benchmark:
-  mode: bounded_runner
-  warmup_samples: 10
-  samples: 100
-  unsupported_setting: true
+unsupported_setting: true

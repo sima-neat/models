@@ -222,7 +222,7 @@ calibrations:
     size_bytes: 48695578
     media_type: application/x-npz
 build_profiles:
-- id: modalix_int8_tess_mla
+- id: modalix_int8
   target: modalix
   components:
   - id: model
@@ -234,23 +234,8 @@ build_profiles:
       calibration_method: mse
       calibration_samples: 128
       requantization: sima
-      tessellation_mla: true
     calibration: default
-- id: modalix_int8_tess_off_mla
-  target: modalix
-  components:
-  - id: model
-    artifact_suffix: int8_mse
-    parameters:
-      precision: int8
-      activation_quantization: asymmetric_per_tensor_8bit
-      weight_quantization: symmetric_per_channel_8bit
-      calibration_method: mse
-      calibration_samples: 128
-      requantization: sima
-      tessellation_mla: false
-    calibration: default
-- id: modalix_bf16_tess_mla
+- id: modalix_bf16
   target: modalix
   components:
   - id: model
@@ -262,21 +247,6 @@ build_profiles:
       calibration_method: mse
       calibration_samples: 128
       requantization: sima
-      tessellation_mla: true
-    calibration: default
-- id: modalix_bf16_tess_off_mla
-  target: modalix
-  components:
-  - id: model
-    artifact_suffix: bf16
-    parameters:
-      precision: bf16
-      activation_quantization: bfloat16
-      weight_quantization: bfloat16
-      calibration_method: mse
-      calibration_samples: 128
-      requantization: sima
-      tessellation_mla: false
     calibration: default
 compositions:
 - id: default
@@ -290,10 +260,8 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_int8_tess_mla
-  - modalix_int8_tess_off_mla
-  - modalix_bf16_tess_mla
-  - modalix_bf16_tess_off_mla
+  - modalix_int8
+  - modalix_bf16
   composition: default
 tests:
   correctness:
@@ -303,10 +271,8 @@ tests:
       type: component
       component: model
     build_profiles:
-    - modalix_int8_tess_mla
-    - modalix_int8_tess_off_mla
-    - modalix_bf16_tess_mla
-    - modalix_bf16_tess_off_mla
+    - modalix_int8
+    - modalix_bf16
   performance:
   - id: modalix_latency
     config: tests/performance.yaml
@@ -314,8 +280,6 @@ tests:
       type: component
       component: model
     build_profiles:
-    - modalix_int8_tess_mla
-    - modalix_int8_tess_off_mla
-    - modalix_bf16_tess_mla
-    - modalix_bf16_tess_off_mla
+    - modalix_int8
+    - modalix_bf16
 maturity: experimental

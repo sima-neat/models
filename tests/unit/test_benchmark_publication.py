@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from model_registry.benchmark_publication import (
@@ -33,72 +30,46 @@ class FakeStore:
         return S3Object(key, "version-1", sha256, path.stat().st_size)
 
 
-def load_benchmarker() -> ModuleType:
-    path = ROOT / "tools" / "runtime" / "benchmarker.py"
-    spec = importlib.util.spec_from_file_location("publication_benchmarker", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def single_metric(value: float, unit: str) -> dict:
+    return {
+        "status": "measured",
+        "reason": None,
+        "unit": unit,
+        "aggregation": "single",
+        "value": value,
+        "minimum": value,
+        "maximum": value,
+        "standard_deviation": 0.0,
+        "sample_count": 1,
+    }
 
 
 def valid_result(tmp_path: Path) -> Path:
-    benchmarker = load_benchmarker()
-    manifest = {
-        "schema_version": 1,
-        "model": {
-            "id": "resnet_50",
-            "build_profile_id": "modalix_bf16",
-            "component_id": "model",
-            "path": str(tmp_path / "model.tar.gz"),
-            "sha256": "a" * 64,
-        },
-        "compatibility": {"platform_version": "2.1.3", "neat_version": "0.4.0"},
-        "benchmark": {"samples": 100, "trials": 3},
-        "provenance": {"compile_run_id": COMPILE_RUN_ID},
-    }
-    preflight = {
-        "status": "available",
-        "reason": None,
-        "runtime_user": "sima",
-        "required_group": "i2c",
-        "devices": [{"path": "/dev/i2c-3", "readable": True, "writable": True}],
-    }
-    result = benchmarker._result_base(
-        manifest,
-        Path(manifest["model"]["path"]),
-        "2.1.3",
-        preflight=preflight,
-        actual_neat="0.4.0",
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v4.json").read_text())
+    result["environment"].update(
+        fingerprint_version=1, kernel_release="test", machine="aarch64", cpu_count=8, cpu_governor="performance"
     )
-    result["status"] = "passed"
-    result["metrics"]["latency_avg_ms"] = benchmarker.metric(
-        [{"latency_avg_ms": 3.5}, {"latency_avg_ms": 3.7}], "latency_avg_ms", "ms", "unavailable"
+    result["provenance"]["compile_run_id"] = COMPILE_RUN_ID
+    for metric in result["metrics"].values():
+        metric.update(
+            status="unavailable",
+            reason="test_fixture",
+            value=None,
+            minimum=None,
+            maximum=None,
+            standard_deviation=None,
+            sample_count=0,
+        )
+    result["metrics"].update(
+        {
+            "latency_avg_ms": single_metric(3.6, "ms"),
+            "throughput_fps": single_metric(460.0, "fps"),
+            "model_load_ms": single_metric(125.0, "ms"),
+            "time_to_first_inference_ms": single_metric(340.0, "ms"),
+            "mla_memory_peak_delta_mib": {**single_metric(128.0, "MiB"), "aggregation": "maximum"},
+        }
     )
-    result["metrics"]["throughput_fps"] = benchmarker.metric(
-        [{"throughput_fps": 450.0}, {"throughput_fps": 470.0}], "throughput_fps", "fps", "unavailable"
-    )
-    result["metrics"]["model_load_ms"] = benchmarker._single_measurement(
-        125.0, "ms", details={"phase": "pyneat_model_construction"}
-    )
-    result["metrics"]["time_to_first_inference_ms"] = benchmarker._single_measurement(
-        340.0,
-        "ms",
-        details={"phase": "before_model_construction_to_first_synchronous_result"},
-    )
-    result["metrics"]["mla_memory_peak_delta_mib"] = {
-        "status": "measured",
-        "reason": None,
-        "unit": "MiB",
-        "aggregation": "maximum",
-        "value": 128.0,
-        "minimum": 0.0,
-        "maximum": 128.0,
-        "standard_deviation": 32.0,
-        "sample_count": 8,
-    }
-    result["environment"]["observations"]["end"] = benchmarker.runtime_observation()
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     path = tmp_path / "performance-result.json"
     path.write_text(json.dumps(result), encoding="utf-8")
     return path
@@ -116,11 +87,8 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
     )
     result["provenance"]["models_commit"] = "a" * 40
     if include_power:
-        benchmarker = load_benchmarker()
-        result["metrics"]["avg_power_watts"] = benchmarker._single_measurement(8.5, "W", details={})
-        result["metrics"]["energy_per_inference_joules"] = benchmarker._single_measurement(
-            0.03, "J", details={}
-        )
+        result["metrics"]["avg_power_watts"] = single_metric(8.5, "W")
+        result["metrics"]["energy_per_inference_joules"] = single_metric(0.03, "J")
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     destination = tmp_path.parent / component_id / "performance-result-v4.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -274,16 +242,12 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
         "model.initialization.time_to_first_inference",
         "model.mla_memory.peak_delta",
     }
-    mla_memory = next(
-        item for item in measurements["measurements"] if item["name"] == "model.mla_memory.peak_delta"
-    )
+    mla_memory = next(item for item in measurements["measurements"] if item["name"] == "model.mla_memory.peak_delta")
     assert mla_memory["unit"] == "MiB"
     assert mla_memory["aggregation"] == "max"
     assert mla_memory["dimensions"]["result_aggregation"] == "maximum"
     assert mla_memory["direction"] == "lower"
-    model_load = next(
-        item for item in measurements["measurements"] if item["name"] == "model.initialization.load"
-    )
+    model_load = next(item for item in measurements["measurements"] if item["name"] == "model.initialization.load")
     assert model_load["aggregation"] == "raw"
     assert model_load["dimensions"]["result_aggregation"] == "single"
     assert calls[-1][2] == {"status": "completed"}

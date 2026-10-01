@@ -64,7 +64,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     ("model_id", "build_profile_id", "component_id"),
     [
         ("resnet_50", "modalix_bf16", "model"),
-        ("ssd_mobilenet_v1", "modalix_int8_tess_mla", "model"),
+        ("ssd_mobilenet_v1", "modalix_int8", "model"),
         ("yolo26_tiny_drone", "modalix_int8_tessellation_mla", "model"),
         ("rf_detr_small", "modalix_int8_bf16", "backbone"),
         ("rf_detr_small", "modalix_int8_bf16", "transformer"),
@@ -75,9 +75,15 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
 ) -> None:
     component = tmp_path / "compiled" / model_id / build_profile_id / component_id
     component.mkdir(parents=True)
+    archive = component / f"{model_id}_mpk.tar.gz"
+    archive.write_bytes(b"compiled model")
     (component / "compile-result.json").write_text(
         json.dumps(
-            {"archive": f"{model_id}_mpk.tar.gz", "sha256": "a" * 64, "provenance": {"compiler_version": "2.1.3"}}
+            {
+                "archive": f"{model_id}_mpk.tar.gz",
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "provenance": {"compiler_version": "2.1.3"},
+            }
         ),
         encoding="utf-8",
     )
@@ -109,40 +115,17 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     )
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
 
-    assert manifest["compatibility"] == {"platform_version": "2.1.3", "neat_version": "0.4.0"}
+    dependencies = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["compatibility"] == {
+        "platform_version": dependencies["platform-version"],
+    }
     assert manifest["model"]["id"] == model_id
     assert manifest["model"]["build_profile_id"] == build_profile_id
     assert manifest["model"]["component_id"] == component_id
     assert manifest["model"]["path"].endswith(f"/{model_id}/{build_profile_id}/{component_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
-    if model_id == "yolo26_tiny_drone":
-        assert manifest["benchmark"] == {
-            "mode": "bounded_runner",
-            "warmup_samples": 10,
-            "samples": 100,
-            "trials": 3,
-            "include_plugin_latency": False,
-            "original_width": 1280,
-            "original_height": 720,
-        }
-        assert manifest["model_options"] == {
-            "preprocess": {
-                "kind": "pyneat:InputKind.Image",
-                "enable": "pyneat:AutoFlag.On",
-                "color_convert": {"input_format": "pyneat:PreprocessColorFormat.BGR"},
-                "preset": "pyneat:NormalizePreset.COCO_YOLO",
-            },
-            "decode_type": "pyneat:BoxDecodeType.YoloV26",
-            "decode_type_option": "pyneat:BoxDecodeTypeOption.GroupedByRoleLogit",
-            "num_classes": 1,
-            "score_threshold": 0.05,
-            "nms_iou_threshold": 0.60,
-            "top_k": 100,
-        }
-    else:
-        assert manifest["benchmark"] == {
-            "samples": 1000,
-            "trials": 3,
-            "include_plugin_latency": False,
-        }
+    assert manifest["script"] == str(ROOT / "models" / model_id / "tests" / "benchmark.py")
+    assert "build" not in manifest["runtime"]["devkit"]
+    assert "benchmark" not in manifest
+    assert "model_options" not in manifest

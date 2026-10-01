@@ -167,15 +167,14 @@ build_profiles:
     artifact_suffix: int8_qat_tmio
     parameters:
       precision: int8
-      tessellation_owner: mla
       model_size: 1600
       calibration_samples: 128
       calibration_tensor_sha256: d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e
       expected_convolutions: 129
       quantized_source:
-        uri: https://api.github.com/repos/sima-neat/models/releases/assets/508162355
-        sha256: 9d8444f989563e71f32ab2569f4f49e02607036b92c376f0c64b79e3ac4530cc
-        size_bytes: 9644979
+        uri: https://api.github.com/repos/sima-neat/models/releases/assets/586847300
+        sha256: fe4479a3bf6f533cd73bcd96f6b398226e77e97914fff785a8e6192b2326025c
+        size_bytes: 9682946
         media_type: application/gzip
     calibration: default
 compositions:

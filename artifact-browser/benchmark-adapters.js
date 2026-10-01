@@ -79,6 +79,9 @@ function common(result) {
     .filter(([, metric]) => metric));
   return {
     schemaVersion: result.schema_version,
+    workload: result.schema_version === 5
+      ? `Core default MPK · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
+      : "Historical benchmark configuration",
     status: result.status,
     timestamp: result.timestamp_utc,
     measurements,
@@ -111,7 +114,7 @@ function adaptV4(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4]]);
+export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]]);
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

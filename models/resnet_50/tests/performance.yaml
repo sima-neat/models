@@ -1,17 +1,10 @@
 schema_version: 1
 status: pending
-reason: A real-DevKit baseline will be recorded after this metric profile reaches a pinned compiler build.
+target: modalix
+reason: Establish a Core API baseline for the default MPK workload.
 metrics:
   - latency_avg_ms
-  - latency_p50_ms
-  - latency_p95_ms
   - throughput_fps
   - avg_power_watts
   - energy_joules
   - energy_per_inference_joules
-  - model_load_ms
-  - time_to_first_inference_ms
-  - mla_memory_baseline_mib
-  - mla_memory_peak_mib
-  - mla_memory_peak_delta_mib
-  - mla_memory_final_mib

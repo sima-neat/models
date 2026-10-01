@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
 import json
 import logging
@@ -29,7 +28,9 @@ MINIMUM_CALIBRATION_IMAGES = 128
 EXPECTED_ATTENTION_MATMULS = 8
 EXPECTED_ATTENTION_SOFTMAXES = 4
 SERIALIZED_INT8_SCALAR_TYPE = 1
-EXPECTED_MODEL_SDK_VERSION = "2.1.3"
+EXPECTED_MODEL_SDK_VERSION = json.loads(
+    (Path(__file__).resolve().parents[2] / "deps" / "manifest.json").read_text(encoding="utf-8")
+)["model-compiler"]["version"]
 
 
 def serialized_model_sha256(output_dir: Path, model_name: str) -> dict[str, str]:
@@ -305,44 +306,6 @@ def _kernel(plugin: dict[str, Any]) -> str:
     return str(plugin.get("config_params", {}).get("kernel", ""))
 
 
-def build_mla_tessellation_parameters(model: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build direct MLA layout parameters from the quantized graph itself."""
-    from afe.apis.defines import TensorDRAMLayout, TensorTessellateParameters
-    from afe.ir.node import node_is_tuple
-
-    try:
-        mla = model._net.nodes["MLA_0"]
-        input_keys = list(mla.input_names)
-        output_node = mla.ir.nodes[mla.ir.output_node_name]
-    except (AttributeError, KeyError, TypeError) as exc:
-        raise RuntimeError("quantized model has no readable MLA_0 layout contract") from exc
-    logical_outputs = output_node.input_node_names if node_is_tuple(output_node) else [output_node.name]
-    output_keys = [f"{name}_output" for name in logical_outputs]
-    if not input_keys or not output_keys or len(set(input_keys + output_keys)) != len(input_keys) + len(output_keys):
-        raise RuntimeError(f"invalid MLA layout keys: inputs={input_keys}, outputs={output_keys}")
-
-    input_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC,
-    )
-    output_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0),
-        enable_mla=True,
-        dram_layout=TensorDRAMLayout.HWC16,
-    )
-    parameters = {key: dataclasses.replace(input_layout) for key in input_keys}
-    parameters.update({key: dataclasses.replace(output_layout) for key in output_keys})
-    evidence = {
-        "input_keys": input_keys,
-        "input_dram_layout": "HWC",
-        "output_keys": output_keys,
-        "output_dram_layout": "HWC16",
-        "tessellation": "mla",
-    }
-    return parameters, evidence
-
-
 def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
     names, manifest = _safe_mpk(archive)
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -374,10 +337,18 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
             "MPK public output ABI mismatch: "
             f"expected {expected_output_abi}, got roles={role_input_abi}, output_sizes={output_sizes}"
         )
+    mla_outputs = mla[0].get("output_nodes", [])
     unpack = [plugin for plugin in plugins if _kernel(plugin) == "unpack_transform"]
-    tensor_types = (
-        unpack[0].get("config_params", {}).get("params", {}).get("tensor_types", []) if len(unpack) == 1 else []
-    )
+    if unpack:
+        if (
+            len(mla_outputs) != 1
+            or len(unpack) != 1
+            or unpack[0].get("config_params", {}).get("params", {}).get("tensor_types")
+            != ["int8"] * len(contract.outputs)
+        ):
+            raise RuntimeError("MPK packed INT8 output transport mismatch")
+    elif len(mla_outputs) != len(contract.outputs):
+        raise RuntimeError(f"expected {len(contract.outputs)} MLA outputs, found {len(mla_outputs)}")
     quantize = [plugin for plugin in plugins if _kernel(plugin) == "quantization_transform"]
     dequantize = [plugin for plugin in plugins if _kernel(plugin) == "dequantization_transform"]
     external_tessellate = [plugin for plugin in plugins if _kernel(plugin) == "tessellation_transform"]
@@ -387,13 +358,12 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
         plugin.get("config_params", {}).get("params", {}).get("input_data_type") for plugin in dequantize
     ]
     if (
-        tensor_types != ["int8"] * len(contract.outputs)
-        or quantized_types != ["int8"]
+        quantized_types != ["int8"]
         or dequantized_types != ["int8"] * len(contract.outputs)
     ):
         raise RuntimeError(
             "MPK INT8 transport mismatch: "
-            f"unpack={tensor_types}, quantize={quantized_types}, dequantize={dequantized_types}"
+            f"quantize={quantized_types}, dequantize={dequantized_types}"
         )
     if external_tessellate or external_detessellate:
         raise RuntimeError(
@@ -429,7 +399,9 @@ def audit_mpk(archive: Path, contract: DeploymentContract) -> dict[str, Any]:
         "public_output_names": [name for name, _size in role_input_abi],
         "public_output_sizes": output_sizes,
         "public_output_abi": role_input_abi,
-        "output_transport_types": tensor_types,
+        "output_transport_types": dequantized_types,
+        "mla_output_buffer_count": len(mla_outputs),
+        "packed_outputs": bool(unpack),
         "quant_to_mla_direct": True,
         "external_tessellation_plugin_count": len(external_tessellate),
         "external_detessellation_plugin_count": len(external_detessellate),
@@ -445,7 +417,7 @@ def compile_model(
     model_name: str,
     contract: DeploymentContract,
     expected_convolutions: int,
-) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+) -> tuple[Path, dict[str, Any]]:
     # Keep SDK imports out of source-validation and unit-test paths.
     from afe.apis.defines import (
         CalibrationMethod,
@@ -483,10 +455,6 @@ def compile_model(
     quantized = loaded.quantize(
         calibration_data=calibration_data,
         quantization_config=config,
-        # Attention uses static rank-4 tensors and ModelSDK's documented
-        # two-input Einsum representation for batch matrix multiplication.
-        any_shape_on_mla=True,
-        automatic_layout_conversion=False,
         model_name=model_name,
         log_level=logging.INFO,
     )
@@ -498,17 +466,15 @@ def compile_model(
         expected_convolutions,
     )
     quantized_report["serialized_model_sha256"] = serialized_model_sha256(output_dir, model_name)
-    tessellation_parameters, tessellation_report = build_mla_tessellation_parameters(quantized)
     quantized.compile(
         output_path=str(output_dir),
         batch_size=1,
         log_level=logging.INFO,
-        tessellate_parameters=tessellation_parameters,
     )
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one compiled MPK, found {archives}")
-    return archives[0], quantized_report, tessellation_report
+    return archives[0], quantized_report
 
 
 def main() -> int:
@@ -561,7 +527,7 @@ def main() -> int:
             context="calibration",
         )
         output_dir.mkdir(parents=True, exist_ok=False)
-        archive, quantized_report, tessellation_report = compile_model(
+        archive, quantized_report = compile_model(
             source,
             calibration,
             output_dir,
@@ -589,7 +555,6 @@ def main() -> int:
             },
             "calibration": calibration_report,
             "quantized_model": quantized_report,
-            "mla_layout": tessellation_report,
             "mpk": audit_mpk(archive, contract),
         }
     (output_dir / "compile-report.json").write_text(

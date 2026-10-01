@@ -73,6 +73,8 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
     assert "branches" not in push_trigger
     assert "branches-ignore" not in push_trigger
     assert "models/**" in push_trigger["paths"]
+    for event in ("push", "pull_request"):
+        assert ".github/workflows/Vulcan-Model-Benchmarking.yml" in workflow["on"][event]["paths"]
     assert "deps/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in push_trigger["paths"]
     assert "training/yolo26_tiny_drone/**" in workflow["on"]["pull_request"]["paths"]
@@ -88,6 +90,8 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert "model-registry resolve-compiler --repository ." in compiler_step["run"]
     assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
     assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
+    matrix = next(step for step in select["steps"] if step.get("id") == "matrix")
+    assert matrix["env"]["COMPILER_VERSION"] == "${{ steps.compiler.outputs.identity }}"
     assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == ("${{ needs.select.outputs.model_compiler_version }}")
     assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
 
@@ -140,6 +144,8 @@ def test_catalog_progress_is_initialized_then_updated_per_invocation() -> None:
     assert "needs.select.outputs.validation_count == '0'" in initialize["if"]
     assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
     assert "model-registry publish-catalog" in plan["run"]
+    assert plan["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
+    assert "--selected-matrix \"$matrix_file\"" in plan["run"]
     assert "--base-branch \"$BASE_BRANCH\"" in plan["run"]
     assert "needs.select.outputs.publishable == 'true'" in progress["if"]
     assert "needs.select.outputs.validation_count == '0'" in progress["if"]
@@ -382,7 +388,9 @@ def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() ->
     assert dispatch["strategy"]["matrix"] == "${{ fromJSON(needs.select.outputs.benchmark_matrix) }}"
     step = dispatch["steps"][0]
     assert "gh workflow run Vulcan-Model-Benchmarking.yml" in step["run"]
+    assert '--ref develop' in step["run"]
     assert "-f source_run_id=" in step["run"]
+    assert '-f source_branch="$GITHUB_REF_NAME"' in step["run"]
 
 
 def test_changed_selection_does_not_fetch_or_carry_forward_a_previous_catalog() -> None:
@@ -631,6 +639,8 @@ def test_published_compile_dispatches_one_grouped_benchmark_after_handoff() -> N
     assert '"operation"' not in dispatch["run"]
     assert '"source_run_id": os.environ["GITHUB_RUN_ID"]' in dispatch["run"]
     assert '"source_sha": os.environ["GITHUB_SHA"]' in dispatch["run"]
+    assert '"source_branch": os.environ["GITHUB_REF_NAME"]' in dispatch["run"]
+    assert '"ref": "develop"' in dispatch["run"]
     assert '"model_id": os.environ["BENCHMARK_MODEL_ID"]' in dispatch["run"]
     assert '"build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"]' in dispatch["run"]
     dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]

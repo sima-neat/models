@@ -7,12 +7,14 @@ export; its held-out AP50 is 0.9649 and tiny-object recall50 is 0.9810.
 The `modalix_int8_tessellation_mla` build profile uses exactly 128 representative
 MultiUAV training images. The calibration archive pins every JPEG digest and
 the reconstructed NHWC FP32 tensor digest. CI revalidates those bytes and then
-compiles the immutable, qualified ModelSDK 2.1.3 quantized snapshot; it does not
-silently recalibrate an already-qualified QAT model. ModelSDK must produce one
-MLA segment in which the INT8 quantizer feeds MLA directly, with HWC input
-tessellation and HWC16 output detessellation implemented on MLA. The compile
-audit rejects A65 fallback, host shared objects, external tessellation or
-detessellation transforms, non-INT8 convolution/attention compute, and any
+compiles the immutable ModelSDK 3.0.0 quantized snapshot, rebuilt from the same
+ONNX and calibration inputs with AFE defaults. CI does not recalibrate the
+model. ModelSDK must produce one MLA segment in which the INT8 quantizer feeds
+MLA directly and tensor-layout conversion on MLA. The compiler may pack the
+eight outputs into one MLA buffer; the audit validates the INT8 unpacking and
+eight public output bindings. The compile audit rejects A65 fallback, host
+shared objects, external tessellation or detessellation transforms, non-INT8
+convolution/attention compute, and any
 change to the eight named P2-P5 output bindings.
 
 Install the branch package while the model PR is under review:

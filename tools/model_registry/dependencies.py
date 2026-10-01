@@ -9,6 +9,8 @@ from .errors import ValidationError
 
 SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
+MODEL_COMPILER_CHANNEL = re.compile(r"^[a-z][a-z0-9-]*$")
+MODEL_COMPILER_REVISION = re.compile(r"^[0-9a-f]{12}$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -37,31 +39,33 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
             "model-compiler.version must use MAJOR.MINOR.PATCH or "
             "MAJOR.MINOR.PATCH.SERVICE format"
         )
-    return {"label": f"model-compiler-{version}", "version": version}
+    channel = dependency.get("channel")
+    revision = dependency.get("revision")
+    if channel is None and revision is None:
+        return {"identity": version, "label": f"model-compiler-{version}", "version": version}
+    if not isinstance(channel, str) or MODEL_COMPILER_CHANNEL.fullmatch(channel) is None:
+        raise ValidationError("model-compiler.channel must use lowercase letters, digits, and hyphens")
+    if not isinstance(revision, str) or MODEL_COMPILER_REVISION.fullmatch(revision) is None:
+        raise ValidationError("model-compiler.revision must be a 12-character lowercase Git hash")
+    return {
+        "identity": f"{version}+{channel}.{revision}",
+        "label": f"model-compiler-{channel}-{revision}",
+        "version": version,
+    }
 
 
 def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     manifest = _load_manifest(repository)
     devkit = manifest.get("devkit")
     core = manifest.get("neat-core")
-    benchmarker = manifest.get("benchmarker")
     if not isinstance(devkit, dict):
         raise ValidationError("dependency manifest must define devkit as an object")
     if not isinstance(core, dict):
         raise ValidationError("dependency manifest must define neat-core as an object")
-    if not isinstance(benchmarker, dict):
-        raise ValidationError("dependency manifest must define benchmarker as an object")
 
     platform_version = manifest.get("platform-version")
-    core_version = core.get("version")
-    benchmarker_version = benchmarker.get("version")
-    for field, value in (
-        ("platform-version", platform_version),
-        ("neat-core.version", core_version),
-        ("benchmarker.version", benchmarker_version),
-    ):
-        if not isinstance(value, str) or SEMANTIC_VERSION.fullmatch(value) is None:
-            raise ValidationError(f"{field} must use MAJOR.MINOR.PATCH format")
+    if not isinstance(platform_version, str) or SEMANTIC_VERSION.fullmatch(platform_version) is None:
+        raise ValidationError("platform-version must use MAJOR.MINOR.PATCH format")
 
     board = devkit.get("board")
     os_type = devkit.get("os_type")
@@ -70,16 +74,10 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         raise ValidationError("devkit.board must be a non-empty string")
     if not isinstance(os_type, str) or not os_type:
         raise ValidationError("devkit.os_type must be a non-empty string")
-    if install_target != f"core@v{core_version}":
-        raise ValidationError("neat-core.install_target must match neat-core.version")
-
-    vulcan = benchmarker.get("vulcan")
-    if not isinstance(vulcan, dict):
-        raise ValidationError("benchmarker.vulcan must be an object")
-    required = ("environment", "name")
-    missing = [field for field in required if not isinstance(vulcan.get(field), str) or not vulcan[field]]
-    if missing:
-        raise ValidationError(f"benchmarker.vulcan is missing: {', '.join(missing)}")
+    if not isinstance(install_target, str) or re.fullmatch(
+        r"core@[A-Za-z0-9][A-Za-z0-9._/-]*(?::[a-f0-9]{12,40})?", install_target
+    ) is None:
+        raise ValidationError("neat-core.install_target must name a Core release or branch package")
 
     return {
         "devkit": {
@@ -87,9 +85,5 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
             "os_type": os_type,
             "platform_version": platform_version,
         },
-        "neat_core": {"version": core_version, "install_target": install_target},
-        "benchmarker": {
-            "version": benchmarker_version,
-            "vulcan": {field: vulcan[field] for field in required},
-        },
+        "neat_core": {"install_target": install_target},
     }

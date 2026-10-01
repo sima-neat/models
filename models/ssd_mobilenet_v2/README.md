@@ -4,26 +4,23 @@ This entry compiles the 12 raw box and class predictor heads of the pinned
 Kalray SSD-MobileNet V2 ONNX model. Neat owns anchor decode, scoring, and NMS;
 the immutable source is already cut at the raw predictor heads.
 
-## Four build profiles
+## Compiler-default build profiles
 
-| Variant | Internal precision | Tessellation placement | Public ABI |
-| --- | --- | --- | --- |
-| `modalix_int8_tess_mla` | W8A8 INT8 | MLA | FP32 input and 12 FP32 heads |
-| `modalix_int8_tess_off_mla` | W8A8 INT8 | outside MLA | FP32 input and 12 FP32 heads |
-| `modalix_bf16_tess_mla` | BF16 weights/activations | MLA | FP32 input and 12 FP32 heads |
-| `modalix_bf16_tess_off_mla` | BF16 weights/activations | outside MLA | FP32 input and 12 FP32 heads |
+| Profile | Internal precision | Public ABI |
+| --- | --- | --- |
+| `modalix_int8` | W8A8 INT8 | FP32 input and 12 FP32 heads |
+| `modalix_bf16` | BF16 weights/activations | FP32 input and 12 FP32 heads |
 
-The public boundary is intentionally left at the Model Compiler 2.1.3 default.
-The recipe does not use `quantization_mla`, `public_input_types`, or
-`public_output_types`, because those APIs are not available in the qualified
-compiler. Only internal precision and tessellation placement vary.
+AFE 3.0 owns tensor-layout defaults. These two precision profiles replace
+both `_tess_mla` and `_tess_off_mla` profile pairs. Calibration, quantization
+and the public tensor contract are unchanged.
 
 The audit proves the resulting behavior from two independent compiler outputs.
 The serialized quantized topology checks all 76 MLA convolutions and verifies
 per-channel integer weights for INT8 or BF16 compute tensors/weights for BF16.
 The MPK checks one MLA ELF, no shared objects or A65 stages, all 12 output
-transport tensor types, FP32 public buffer sizes, and whether the external EV74
-`tessellate` or fused INT8 `quanttess` stage is present. A profile name alone is
+transport tensor types, FP32 public buffer sizes, and absence of external
+tensor-layout transforms in the MPK manifest. A profile name alone is
 never accepted as evidence of precision.
 
 Every compiler run also executes the floating and quantized raw-head models on

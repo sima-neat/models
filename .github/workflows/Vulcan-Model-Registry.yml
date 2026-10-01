@@ -5,6 +5,7 @@ run-name: Model Registry Contributor Tool (${{ inputs.environment || 'staging' }
 on:
   pull_request:
     paths:
+      - "deps/manifest.json"
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"
@@ -22,6 +23,7 @@ on:
     branches:
       - "**"
     paths:
+      - "deps/manifest.json"
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"
@@ -106,6 +108,7 @@ jobs:
             tests/unit/test_compile_workflow.py \
             tests/unit/test_benchmark_manifest.py \
             tests/unit/test_benchmark_publication.py \
+            tests/unit/test_core_benchmark.py \
             tests/unit/test_benchmark_workflow.py \
             tests/unit/test_artifact_browser.py \
             tests/unit/test_ssd_mobilenet_v3.py \

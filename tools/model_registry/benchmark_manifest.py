@@ -11,7 +11,7 @@ from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import load_and_validate_model
-from .performance_config import benchmark_settings, load_performance_config
+from .performance_config import load_performance_config
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
@@ -101,12 +101,6 @@ def load_component_performance_config(
     return load_performance_config(path, root / "schemas" / "performance-config-v1.schema.json")
 
 
-def _performance_configuration(
-    root: Path, model_id: str, component_id: str, build_profile_id: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    return benchmark_settings(load_component_performance_config(root, model_id, component_id, build_profile_id))
-
-
 def make_benchmark_manifest(
     *,
     repository: str | Path,
@@ -155,7 +149,13 @@ def make_benchmark_manifest(
         raise ValidationError("registry publication run_id must be a non-empty string")
 
     runtime = resolve_benchmark_runtime(root)
-    benchmark, model_options = _performance_configuration(root, model_id, component_id, build_profile_id)
+    load_component_performance_config(root, model_id, component_id, build_profile_id)
+    script = root / "models" / model_id / "tests" / "benchmark.py"
+    if not script.is_file():
+        raise ValidationError(f"model benchmark script is missing: {script}")
+    actual_sha256, _ = sha256_file(component_dir / archive)
+    if actual_sha256 != sha256:
+        raise ValidationError("compiled artifact digest does not match the benchmark input")
     manifest = {
         "schema_version": 1,
         "model": {
@@ -168,9 +168,9 @@ def make_benchmark_manifest(
         },
         "compatibility": {
             "platform_version": runtime["devkit"]["platform_version"],
-            "neat_version": runtime["neat_core"]["version"],
         },
-        "benchmark": benchmark,
+        "script": str(script),
+        "runtime": runtime,
         "provenance": {
             "compile_run_id": compile_run_id,
             "models_commit": git_sha.lower(),
@@ -179,8 +179,6 @@ def make_benchmark_manifest(
             "execution_provider": "github-actions-devkit-runner",
         },
     }
-    if model_options:
-        manifest["model_options"] = model_options
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"manifest": str(output), "compile_run_id": compile_run_id, "model_path": manifest["model"]["path"]}

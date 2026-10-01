@@ -481,7 +481,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4]])" in adapters
+    assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]])" in adapters
     assert "Object.entries(result.metrics || {})" in adapters
     assert "Object.entries(trial)" in adapters
     assert "/benchmarks/latest" in script

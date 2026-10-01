@@ -13,8 +13,6 @@ import yaml
 from afe.apis.defines import (
     CalibrationMethod,
     QuantizationParams,
-    TensorDRAMLayout,
-    TensorTessellateParameters,
     bfloat16_scheme,
     gen2_target,
     quantization_scheme,
@@ -22,7 +20,6 @@ from afe.apis.defines import (
 from afe.apis.loaded_net import load_model
 from afe.apis.model import Model as AfeModel
 from afe.core.utils import convert_data_generator_to_iterable
-from afe.ir.node import node_is_tuple
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from model_registry.accuracy import load_calibration_samples
@@ -40,21 +37,6 @@ def _variant(variant_id: str) -> dict[str, Any]:
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == "model")
     return {**profile, "parameters": binding["parameters"]}
-
-
-def _tessellation(quantized_model: Any) -> dict[str, TensorTessellateParameters]:
-    mla = quantized_model._net.nodes["MLA_0"]
-    input_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0), enable_mla=True, dram_layout=TensorDRAMLayout.HWC
-    )
-    output_layout = TensorTessellateParameters(
-        tile_shape=(0, 0, 0, 0), enable_mla=True, dram_layout=TensorDRAMLayout.HWC16
-    )
-    parameters = {name: input_layout for name in mla.input_names}
-    output_node = mla.ir.nodes[mla.ir.output_node_name]
-    output_names = output_node.input_node_names if node_is_tuple(output_node) else [output_node.name]
-    parameters.update({f"{name}_output": output_layout for name in output_names})
-    return parameters
 
 
 def compile_model(
@@ -105,8 +87,7 @@ def compile_model(
     )
     quantized.save(model_name=model_name, output_directory=str(output_dir))
     saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(output_dir))
-    tessellation = _tessellation(saved) if parameters["mla_tessellation"] else None
-    saved.compile(output_path=str(output_dir), tessellate_parameters=tessellation)
+    saved.compile(output_path=str(output_dir))
 
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:

@@ -73,7 +73,7 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
         version = result.get("schema_version") if isinstance(result, dict) else None
-        if version not in {1, 2, 3, 4}:
+        if version not in {1, 2, 3, 4, 5}:
             raise ValidationError(f"unsupported benchmark result schema version: {version!r}")
         schema = (
             Path(schema_path).expanduser().resolve()
@@ -113,19 +113,20 @@ def validate_benchmark_set(
     if len(component_ids) != len(set(component_ids)) or not component_ids:
         raise ValidationError("benchmark component IDs must be non-empty and unique")
     commit_sha = _require_git_sha(git_sha)
-    expected_paths = {
-        (results_root / component_id / "performance-result-v4.json").resolve()
-        for component_id in component_ids
-    }
-    actual_paths = {path.resolve() for path in results_root.rglob("performance-result-v4.json")}
+    actual_paths = {path.resolve() for path in results_root.rglob("performance-result-v*.json")}
+    expected_paths = set()
+    for component_id in component_ids:
+        matches = list((results_root / component_id).glob("performance-result-v[45].json"))
+        if len(matches) != 1:
+            raise ValidationError("benchmark result tree must contain exactly one result per component")
+        expected_paths.add(matches[0].resolve())
     if actual_paths != expected_paths:
         raise ValidationError("benchmark result tree does not match the declared component set")
 
     validated = []
-    result_schema = root / "schemas" / "performance-result-v4.schema.json"
-    for component_id in component_ids:
-        path = results_root / component_id / "performance-result-v4.json"
-        result = load_benchmark_result(path, result_schema)
+    for path in sorted(expected_paths):
+        component_id = path.parent.name
+        result = load_benchmark_result(path, root / "schemas" / f"{path.stem}.schema.json")
         model = result["model"]
         expected = (model_id, build_profile_id, component_id)
         actual = (model["id"], model["build_profile_id"], model["component_id"])

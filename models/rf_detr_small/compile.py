@@ -31,8 +31,7 @@ from afe.apis.defines import (
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
-from afe.ir.tensor_type import ScalarType
-from afe.load.importers.general_importer import ImporterParams, ModelFormat
+from afe.load.importers.general_importer import onnx_source
 from calibration import (
     execute_backbone,
     load_images,
@@ -41,6 +40,7 @@ from calibration import (
     to_afe_layout,
     transformer_inputs,
 )
+from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BOXES, FEATURES, INPUT, OUTPUTS, PROPOSALS, SCORES, prepare_model, validate_float_split
@@ -49,7 +49,7 @@ MODEL_DIR = Path(__file__).resolve().parent
 MODEL_ID = "rf_detr_small"
 INVOCATION_ID = "rf_detr"
 PROFILE_ID = "modalix_int8_bf16"
-COMPILER_VERSION = "2.1.3"
+COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 COMPONENT_INTERFACES = {
     "backbone": {
@@ -99,25 +99,14 @@ def _quantize_component(
 ) -> tuple[Any, Path]:
     build_dir = temporary_dir / name
     build_dir.mkdir(parents=True, exist_ok=False)
-    names = list(input_shapes)
-    importer = ImporterParams(
-        format=ModelFormat.onnx,
-        file_paths=[str(graph)],
-        input_names=names,
-        input_shapes=[input_shapes[name] for name in names],
-        input_types=[ScalarType.float32 for _ in names],
-        layout="NCHW",
-        output_names=output_names,
-    )
-    loaded = load_model(importer, target=gen2_target, flexible_batch_size=True)
+    importer = onnx_source(str(graph), shape_dict=input_shapes, layout="NCHW", flexible_batch_size=True)
+    loaded = load_model(importer, target=gen2_target)
     data = convert_data_generator_to_iterable(
         DataGenerator({InputName(key): to_afe_layout(value) for key, value in inputs.items()})
     )
     quantized = loaded.quantize(
         calibration_data=data,
         quantization_config=_quantization(precision),
-        any_shape_on_mla=True,
-        automatic_layout_conversion=True,
         model_name=name,
         log_level=logging.INFO,
     )

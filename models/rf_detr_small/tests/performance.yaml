@@ -1,14 +1,13 @@
 schema_version: 1
-status: provisional
+status: pending
 target: modalix
+reason: Establish a Core API baseline for the default MPK workload.
 metrics:
-- latency_avg_ms
-- latency_p50_ms
-- latency_p95_ms
-- throughput_fps
-- avg_power_watts
-- energy_per_inference_joules
-- mla_memory_peak_delta_mib
+  - latency_avg_ms
+  - throughput_fps
+  - avg_power_watts
+  - energy_joules
+  - energy_per_inference_joules
 required_metrics:
-- avg_power_watts
-- energy_per_inference_joules
+  - avg_power_watts
+  - energy_per_inference_joules

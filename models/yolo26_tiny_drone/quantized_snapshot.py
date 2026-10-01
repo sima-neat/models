@@ -21,7 +21,9 @@ MODEL_FILES = (
     f"{MODEL_NAME}.fp32.sima",
     f"{MODEL_NAME}.fp32.sima.json",
 )
-EXPECTED_MODEL_SDK_VERSION = "2.1.3"
+EXPECTED_MODEL_SDK_VERSION = json.loads(
+    (Path(__file__).resolve().parents[2] / "deps" / "manifest.json").read_text(encoding="utf-8")
+)["model-compiler"]["version"]
 EXPECTED_ONNX_SHA256 = "2627762fc29dbd377a3f471a3ab0407569dd39c13cd324d46ca426629ec80f66"
 EXPECTED_CALIBRATION_SHA256 = "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b"
 EXPECTED_CALIBRATION_TENSOR_SHA256 = "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"
