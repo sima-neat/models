@@ -212,6 +212,17 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
+def test_browser_history_restores_category_filters_and_empty_detail() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
+
+    assert 'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""])' in initialize
+    assert "state.taxonomy = null" in initialize
+    assert "if (state.selectedId) detailSkeleton();\n  else showEmptyDetail();" in initialize
+    assert "if (state.taxonomy) populateCategoryFilters();" in initialize
+    assert 'window.addEventListener("popstate", () => {' in script
+
+
 def test_detail_error_can_be_retried_and_closed() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -314,8 +325,9 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert "Switches from models to chronological build runs." in html
     assert "Show build history" in html
     assert 'if (historical) {' in script
-    assert 'allBranchRuns(`${base}/runs`, compileQuery)' in script
-    assert 'allBranchRuns(`${base}/runs`, packageQuery)' in script
+    assert 'allPages(api, `${base}/runs`, compileQuery, "runs")' in script
+    assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
+    assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
     assert 'query.set("run_type", "model_compile")' in script
     assert 'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
     assert 'link.get("history") === "1"' in script
@@ -723,7 +735,7 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
 def test_branch_cards_use_only_coherent_branch_runs_and_matching_packages() -> None:
     script = r"""
 import assert from 'node:assert/strict';
-import {branchModels} from './artifact-browser/branch-builds.js';
+import {allPages, branchModels} from './artifact-browser/branch-builds.js';
 
 const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01T12:00:00Z') => ({
   id, run_type: 'model_compile', status: 'completed',
@@ -759,6 +771,16 @@ assert.deepEqual(branchModels([{...run('benchmark', 'inherited', 'model', 'workf
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
   .map(model => run(model, model, 'model', model));
 assert.equal(branchModels(develop, [], catalog).length, 6);
+const calls = [];
+const definitions = await allPages(async path => {
+  calls.push(path);
+  return calls.length === 1
+    ? {models: [{model_id: 'first'}], has_more: true, next_cursor: 'page-2'}
+    : {models: [{model_id: 'second'}], has_more: false};
+}, '/models', new URLSearchParams({git_ref: 'refs/heads/develop', limit: '100'}), 'models');
+assert.deepEqual(definitions.map(model => model.model_id), ['first', 'second']);
+assert.equal(calls.length, 2);
+assert.match(calls[1], /cursor=page-2/);
 """
     subprocess.run(
         ["node", "--experimental-default-type=module", "--input-type=module", "-e", script],

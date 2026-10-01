@@ -1,7 +1,7 @@
 import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
-import { branchModels } from "./branch-builds.js";
+import { allPages, branchModels } from "./branch-builds.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
@@ -917,6 +917,10 @@ function detailSkeleton() {
   elements["detail-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span><span></span></div>`;
 }
 
+function showEmptyDetail() {
+  elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to choose a variant, inspect provenance, and download a verified build.</p></div>`;
+}
+
 async function selectRun(runId, { updateUrl = true } = {}) {
   state.selectedId = runId;
   const catalogRun = state.runs.find((run) => run.id === runId);
@@ -1506,22 +1510,6 @@ async function copyText(value) {
   }
 }
 
-async function allBranchRuns(basePath, query) {
-  const runs = [];
-  const seen = new Set();
-  let cursor = null;
-  do {
-    if (cursor) query.set("cursor", cursor);
-    const page = await api(`${basePath}?${query}`);
-    runs.push(...(page.runs || []));
-    const next = page.next_cursor ?? page.cursor ?? null;
-    if (page.has_more && (!next || seen.has(next))) throw new Error("The registry returned an incomplete build page.");
-    cursor = page.has_more ? next : null;
-    if (cursor) seen.add(cursor);
-  } while (cursor);
-  return runs;
-}
-
 async function loadRuns({ append = false, branch = elements["branch-filter"].value, limit = 50 } = {}) {
   const repo = state.repository;
   if (!repo) return;
@@ -1552,17 +1540,18 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       const packageQuery = new URLSearchParams({
         limit: "100", status: "completed", run_type: "model_package", git_ref: `refs/heads/${branch}`,
       });
-      const [branchRuns, packageRuns, catalog] = await Promise.all([
-        allBranchRuns(`${base}/runs`, compileQuery),
-        allBranchRuns(`${base}/runs`, packageQuery),
-        api(`${base}/models?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`).catch(() => ({ models: [] })),
+      const modelQuery = new URLSearchParams({ limit: "100", git_ref: `refs/heads/${branch}` });
+      const [branchRuns, packageRuns, catalogDefinitions] = await Promise.all([
+        allPages(api, `${base}/runs`, compileQuery, "runs"),
+        allPages(api, `${base}/runs`, packageQuery, "runs"),
+        allPages(api, `${base}/models`, modelQuery, "models"),
       ]);
       const gitRef = `refs/heads/${branch}`;
       payload = {
         mode: "models",
         branchRuns: branchRuns.filter((run) => run.git_ref === gitRef),
         packageRuns: packageRuns.filter((run) => run.git_ref === gitRef),
-        catalogDefinitions: catalog.models || [],
+        catalogDefinitions,
       };
     }
     if (requestId !== state.runsRequestId) return;
@@ -1583,6 +1572,12 @@ async function initialize() {
   elements.search.value = link.get("q") || "";
   elements["history-filter"].checked = link.get("history") === "1";
   state.selectedId = link.get("run");
+  state.categorySelection = Object.fromEntries(
+    Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""]),
+  );
+  state.taxonomy = null;
+  if (state.selectedId) detailSkeleton();
+  else showEmptyDetail();
   state.urlBranch = link.has("branch");
   state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
@@ -1683,7 +1678,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.packageRuns = [];
   state.catalogDefinitions = [];
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
-  elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to inspect its build.</p></div>`;
+  showEmptyDetail();
   const url = new URL(location.href);
   if (state.preferredBranch) url.searchParams.set("branch", state.preferredBranch);
   else url.searchParams.delete("branch");
@@ -1746,6 +1741,7 @@ elements["clear-filters"].addEventListener("click", async () => {
   resetUrl.searchParams.delete("run");
   history.pushState({}, "", resetUrl);
   state.selectedId = null;
+  showEmptyDetail();
   elements["compiler-filter"].value = "";
   elements["history-filter"].checked = false;
   Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => {
@@ -1835,7 +1831,7 @@ elements["detail-pane"].addEventListener("click", (event) => {
     url.searchParams.delete("run");
     history.pushState({}, "", url);
     renderRuns();
-    elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to choose a variant, inspect provenance, and download a verified build.</p></div>`;
+    showEmptyDetail();
   }
 });
 elements["detail-pane"].addEventListener("change", (event) => {

@@ -1,5 +1,22 @@
 // The model catalog describes models; only completed compile runs prove that a
 // branch produced a build. Keep components from one workflow together.
+export async function allPages(fetchPage, basePath, query, collection) {
+  const items = [];
+  const seen = new Set();
+  let cursor = null;
+  do {
+    if (cursor) query.set("cursor", cursor);
+    const page = await fetchPage(`${basePath}?${query}`);
+    if (!Array.isArray(page[collection])) throw new Error(`The registry did not return ${collection}.`);
+    items.push(...page[collection]);
+    const next = page.next_cursor ?? page.cursor ?? null;
+    if (page.has_more && (!next || seen.has(next))) throw new Error(`The registry returned an incomplete ${collection} page.`);
+    cursor = page.has_more ? next : null;
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return items;
+}
+
 export function branchModels(compileRuns, packageRuns, catalogModels, compiler = "") {
   const definitions = new Map(catalogModels.map((model) => [model.model_id, model]));
   const groups = new Map();
