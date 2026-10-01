@@ -82,21 +82,28 @@ The default is the WAF-protected public staging registry at
 `artifacts-registry.stg.neat.sima.ai` endpoint is reserved for IAM-signed
 publisher traffic and rejects direct public reads.
 
-The initial view loads the repository branch catalog independently from the
-paginated runs request and caches both so repeat visits can render immediately
-while refreshing. If branch discovery is temporarily unavailable, the browser
-keeps saved branches and can infer additional branches from returned runs. Full
+The initial view loads the repository branch catalog independently from build
+runs and caches both so repeat visits can render immediately while refreshing.
+The selected branch's model cards come from completed compile runs with that
+exact `git_ref`; the model catalog supplies names and categories, not build
+membership. Components are grouped only within the same workflow build, and a
+full package appears only when its recorded component run IDs match the group.
+Build history continues to show chronological runs. If branch discovery is
+temporarily unavailable, the browser keeps saved branches and can infer
+additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
 model, build-profile, and component names together with category names; secondary branch,
 compiler, type, task, architecture, paradigm, and input facets are collapsed by
 default and display an active-filter count when used.
 The branch filter defaults to `develop`. A branch selected by the user is saved per
-registry and repository in browser storage. The dedicated branch catalog, not a
-limited runs page, determines whether the portal falls back to `develop` (or all
-branches when `develop` is unavailable).
-Pagination is branch-aware, so **Load earlier builds** is shown only when the
-registry reports another page for the currently selected branch.
+registry and repository in browser storage. Shared links include `branch` and
+`run`; URL state takes precedence over that preference. Legacy links containing
+only `run` resolve the run's actual branch. The dedicated branch catalog, not a
+limited runs page, determines whether a saved branch falls back to `develop` (or all
+branches when `develop` is unavailable). Build-history pagination remains
+branch-aware; the model view fetches all pages needed to group the latest
+completed builds.
 
 ## Downloading model variants
 

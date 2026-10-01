@@ -1,6 +1,7 @@
 import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { branchModels } from "./branch-builds.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
@@ -14,8 +15,6 @@ const CATEGORY_QUERY_FIELDS = {
   "input-modality-filter": "input_modality",
 };
 const initialQuery = new URLSearchParams(location.search);
-const initialSearch = initialQuery.get("q") || "";
-const initialIncludeHistory = initialQuery.get("history") === "1";
 const DETAIL_LAYOUT_KEY = "sima-neat-model-detail-layout";
 const METRIC_DEFINITIONS = {
   latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower", summary: true },
@@ -47,13 +46,19 @@ const state = {
   repository: configuredRepository,
   models: [],
   runs: [],
+  branchRuns: [],
+  packageRuns: [],
+  catalogDefinitions: [],
   catalogMode: "runs",
   cursor: null,
   hasMore: false,
   availableBranches: [],
   runsRequestId: 0,
+  navigationId: 0,
+  taxonomyRequestId: 0,
   selectedId: new URLSearchParams(location.search).get("run"),
   preferredBranch: null,
+  urlBranch: false,
   detailCache: new Map(),
   comparisonCache: new Map(),
   compareSelection: new Map(),
@@ -254,7 +259,7 @@ function catalogCacheKey() {
   const history = elements["history-filter"].checked ? "history" : "latest";
   const branch = (state.preferredBranch ?? elements["branch-filter"].value) || "all";
   const compiler = elements["compiler-filter"].value || "any";
-  return `sima-neat-model-catalog:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  return `sima-neat-model-catalog:v2:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -324,6 +329,9 @@ function writeCachedCatalog() {
       mode: state.catalogMode,
       models: state.models,
       runs: state.runs,
+      branchRuns: state.branchRuns,
+      packageRuns: state.packageRuns,
+      catalogDefinitions: state.catalogDefinitions,
       cursor: state.cursor,
       hasMore: state.hasMore,
       taxonomy: state.taxonomy,
@@ -366,9 +374,11 @@ function setCategoryFiltersDisabled(disabled) {
 
 async function loadTaxonomy(branch = elements["branch-filter"].value || DEFAULT_BRANCH) {
   const repo = state.repository;
+  const requestId = ++state.taxonomyRequestId;
   const payload = await api(
     `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
   );
+  if (requestId !== state.taxonomyRequestId) return;
   state.taxonomy = payload.catalog?.document?.taxonomy || null;
   if (!state.taxonomy) throw new Error("The registry did not return a model taxonomy.");
   populateCategoryFilters();
@@ -435,10 +445,20 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
     || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
   state.catalogMode = modelsMode ? "models" : "runs";
   if (modelsMode) {
-    state.models = append ? [...state.models, ...models] : models;
+    if (Array.isArray(payload.branchRuns)) {
+      state.branchRuns = payload.branchRuns;
+      state.packageRuns = payload.packageRuns || [];
+      state.catalogDefinitions = payload.catalogDefinitions || [];
+      state.models = branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+    } else {
+      state.models = append ? [...state.models, ...models] : models;
+    }
     state.runs = state.models.flatMap((model) => (model.builds || []).map((build) => runFromCatalogBuild(model, build)));
   } else {
     state.models = [];
+    state.branchRuns = [];
+    state.packageRuns = [];
+    state.catalogDefinitions = [];
     state.runs = append ? [...state.runs, ...runs] : runs;
   }
   state.availableBranches = [...new Set([
@@ -531,6 +551,7 @@ function modelCategory(model, name, fallback) {
 }
 
 function runFromCatalogBuild(model, build) {
+  if (build.run) return build.run;
   const categories = model.categories || {};
   const architecture = categories.architecture || {};
   const branch = elements["branch-filter"].value || DEFAULT_BRANCH;
@@ -661,14 +682,16 @@ function activeModelBuild(model) {
 
 function populateFilters({ persistBranchFallback = false } = {}) {
   const selectedCompiler = elements["compiler-filter"].value;
-  const branches = state.availableBranches;
+  const preferredBranch = state.preferredBranch ?? DEFAULT_BRANCH;
+  const branches = state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
+    ? [...state.availableBranches, preferredBranch].sort() : state.availableBranches;
   const compilers = [...new Set([
     selectedCompiler,
+    ...state.branchRuns.map((run) => run.toolchain_version),
     ...state.runs.map((run) => run.toolchain_version),
   ].filter(Boolean))].sort().reverse();
   elements["branch-filter"].innerHTML = `<option value="">All branches</option>${branches.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
   elements["compiler-filter"].innerHTML = `<option value="">Any version</option>${compilers.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
-  const preferredBranch = state.preferredBranch ?? DEFAULT_BRANCH;
   const selectedBranch = preferredBranch === "" || branches.includes(preferredBranch)
     ? preferredBranch
     : branches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : "";
@@ -762,7 +785,10 @@ function renderModels() {
   const models = filteredModels();
   elements["result-count"].textContent = `${models.length}${state.hasMore ? "+" : ""} model${models.length === 1 ? "" : "s"}`;
   if (!models.length) {
-    elements["result-list"].innerHTML = `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
+    const noBuilds = !state.branchRuns.length && elements["branch-filter"].value;
+    elements["result-list"].innerHTML = noBuilds
+      ? `<div class="no-results"><span>0</span><h3>No completed builds on this branch</h3><p>Select another branch to browse its models.</p></div>`
+      : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }
   elements["result-list"].innerHTML = models.map(renderModelRow).join("");
@@ -905,12 +931,15 @@ async function selectRun(runId, { updateUrl = true } = {}) {
   if (updateUrl) {
     const url = new URL(location.href);
     url.searchParams.set("run", runId);
-    history.replaceState({}, "", url);
+    const branch = branchName(catalogRun?.git_ref || "");
+    if (branch !== "detached") url.searchParams.set("branch", branch);
+    history.pushState({}, "", url);
   }
   try {
     let detail = state.detailCache.get(runId);
     if (!detail) {
-      const [summary, provenance, tests, metrics, benchmark, accuracy] = await Promise.all([
+      const packageRun = catalogRun && fullPackageForRun(catalogRun);
+      const [summary, provenance, tests, metrics, benchmark, accuracy, packageSummary] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
         api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
@@ -921,11 +950,17 @@ async function selectRun(runId, { updateUrl = true } = {}) {
           if (error.status === 404) return null;
           throw error;
         }),
+        packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : Promise.resolve(null),
       ]);
-      detail = { summary, provenance, tests, metrics, benchmark, accuracy };
+      detail = { summary, provenance, tests, metrics, benchmark, accuracy, packageSummary };
       state.detailCache.set(runId, detail);
     }
-    if (state.selectedId === runId) renderDetail(detail);
+    if (state.selectedId === runId) {
+      const linkedBranch = new URLSearchParams(location.search).get("branch");
+      if (linkedBranch && branchName(detail.summary.run.git_ref) !== linkedBranch) {
+        elements["detail-pane"].innerHTML = errorPanel("This run belongs to a different branch than the link specifies.", "Branch and run do not match", { closable: true });
+      } else renderDetail(detail);
+    }
   } catch (error) {
     if (state.selectedId === runId) {
       elements["detail-pane"].innerHTML = errorPanel(error.message, "Could not load this build", { closable: true });
@@ -1202,6 +1237,7 @@ function selectedCatalogBuild(modelId, profileId, requestedComponent = null) {
 function detailBuildSwitcher(run) {
   const model = catalogModelForRun(run);
   if (!model) return "";
+  if (!model.builds.some((build) => build.run_id === run.id)) return "";
   const availableModel = { ...model, builds: compilerFilteredBuilds(model) };
   const profiles = profileGroups(availableModel);
   if (!profiles.length) return "";
@@ -1253,6 +1289,7 @@ function renderDetail(detail) {
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
   const primaryArtifact = artifacts[0];
   const fullPackage = fullPackageForRun(run);
+  const packageArtifact = (detail.packageSummary?.artifacts || []).find((item) => item.artifact_type === "model-package");
   const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
@@ -1268,7 +1305,7 @@ function renderDetail(detail) {
       </dl>`).join("") : `<p class="muted-message">No artifact metadata was registered for this run.</p>`}
     </section>
 
-    ${fullPackage ? `<section class="artifact-section"><div class="detail-section-title"><h3>Full Package</h3><button class="text-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">Download ZIP</button></div><dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(fullPackage.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(fullPackage.artifact_sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(fullPackage.artifact_sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl><p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></section>` : ""}
+    ${fullPackage ? `<section class="artifact-section"><div class="detail-section-title"><h3>Full Package</h3><button class="text-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">Download ZIP</button></div>${packageArtifact ? `<dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}<p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></section>` : ""}
 
     <section><div class="detail-section-title"><h3>Build provenance</h3></div><dl class="key-grid">
       ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
@@ -1469,6 +1506,22 @@ async function copyText(value) {
   }
 }
 
+async function allBranchRuns(basePath, query) {
+  const runs = [];
+  const seen = new Set();
+  let cursor = null;
+  do {
+    if (cursor) query.set("cursor", cursor);
+    const page = await api(`${basePath}?${query}`);
+    runs.push(...(page.runs || []));
+    const next = page.next_cursor ?? page.cursor ?? null;
+    if (page.has_more && (!next || seen.has(next))) throw new Error("The registry returned an incomplete build page.");
+    cursor = page.has_more ? next : null;
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return runs;
+}
+
 async function loadRuns({ append = false, branch = elements["branch-filter"].value, limit = 50 } = {}) {
   const repo = state.repository;
   if (!repo) return;
@@ -1476,23 +1529,42 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   elements["load-more"].disabled = true;
   const query = new URLSearchParams({ limit: String(limit) });
   const historical = elements["history-filter"].checked || !branch;
-  if (historical) {
-    query.set("status", "completed");
-    query.set("run_type", "model_compile");
-    if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
-  }
+  query.set("status", "completed");
+  query.set("run_type", "model_compile");
+  if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
   if (branch) query.set("git_ref", `refs/heads/${branch}`);
-  if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
-  Object.entries(categoryFilters()).forEach(([name, value]) => {
-    if (value) query.set(name, value);
-  });
-  if (!historical && elements["compiler-filter"].value) {
-    query.set("toolchain_version", elements["compiler-filter"].value);
+  if (historical) {
+    if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
+    Object.entries(categoryFilters()).forEach(([name, value]) => {
+      if (value) query.set(name, value);
+    });
   }
   if (append && state.cursor) query.set("cursor", state.cursor);
 
   try {
-    const payload = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/${historical ? "runs" : "models"}?${query}`);
+    const base = `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}`;
+    let payload;
+    if (historical) {
+      payload = await api(`${base}/runs?${query}`);
+    } else {
+      const compileQuery = new URLSearchParams(query);
+      compileQuery.set("limit", "100");
+      const packageQuery = new URLSearchParams({
+        limit: "100", status: "completed", run_type: "model_package", git_ref: `refs/heads/${branch}`,
+      });
+      const [branchRuns, packageRuns, catalog] = await Promise.all([
+        allBranchRuns(`${base}/runs`, compileQuery),
+        allBranchRuns(`${base}/runs`, packageQuery),
+        api(`${base}/models?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`).catch(() => ({ models: [] })),
+      ]);
+      const gitRef = `refs/heads/${branch}`;
+      payload = {
+        mode: "models",
+        branchRuns: branchRuns.filter((run) => run.git_ref === gitRef),
+        packageRuns: packageRuns.filter((run) => run.git_ref === gitRef),
+        catalogDefinitions: catalog.models || [],
+      };
+    }
     if (requestId !== state.runsRequestId) return;
     applyCatalog(payload, { append });
   } catch (error) {
@@ -1504,10 +1576,15 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
 }
 
 async function initialize() {
+  const navigationId = ++state.navigationId;
+  state.runsRequestId += 1;
   setTheme(document.documentElement.dataset.theme || "light");
-  elements.search.value = initialSearch;
-  elements["history-filter"].checked = initialIncludeHistory;
-  state.preferredBranch = readBranchPreference();
+  const link = new URLSearchParams(location.search);
+  elements.search.value = link.get("q") || "";
+  elements["history-filter"].checked = link.get("history") === "1";
+  state.selectedId = link.get("run");
+  state.urlBranch = link.has("branch");
+  state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
 
@@ -1518,6 +1595,23 @@ async function initialize() {
     elements["result-list"].setAttribute("aria-busy", "false");
     return;
   }
+
+  if (!state.urlBranch && state.selectedId) {
+    try {
+      const summary = await api(`/v1/runs/${encodeURIComponent(state.selectedId)}`);
+      const branch = branchName(summary.run?.git_ref);
+      if (branch !== "detached") {
+        state.preferredBranch = branch;
+        state.urlBranch = true;
+        const url = new URL(location.href);
+        url.searchParams.set("branch", branch);
+        history.replaceState({}, "", url);
+      }
+    } catch {
+      // The detail request below will show the precise error for an invalid run.
+    }
+  }
+  if (navigationId !== state.navigationId) return;
 
   const cached = readCachedCatalog();
   const cachedBranches = readCachedBranches();
@@ -1538,6 +1632,7 @@ async function initialize() {
       () => ({ status: "fulfilled" }),
       (reason) => ({ status: "rejected", reason }),
     );
+    if (navigationId !== state.navigationId) return;
     if (taxonomyResult.status === "rejected") {
       setCategoryFiltersDisabled(true);
       showToast(`Category filters are temporarily unavailable. ${taxonomyResult.reason.message}`, true);
@@ -1561,7 +1656,7 @@ async function initialize() {
     }
   }
 
-  if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false });
+  if (navigationId === state.navigationId && state.selectedId) await selectRun(state.selectedId, { updateUrl: false });
 }
 
 elements["theme-toggle"].addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
@@ -1576,11 +1671,28 @@ elements.search.addEventListener("input", () => {
   searchTimer = setTimeout(() => loadRuns({ branch: state.preferredBranch }).catch((error) => showToast(error.message, true)), 250);
 });
 elements["branch-filter"].addEventListener("change", async () => {
+  const navigationId = ++state.navigationId;
+  state.runsRequestId += 1;
   state.preferredBranch = elements["branch-filter"].value;
+  state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
+  state.selectedId = null;
+  state.models = [];
+  state.runs = [];
+  state.branchRuns = [];
+  state.packageRuns = [];
+  state.catalogDefinitions = [];
+  elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
+  elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to inspect its build.</p></div>`;
+  const url = new URL(location.href);
+  if (state.preferredBranch) url.searchParams.set("branch", state.preferredBranch);
+  else url.searchParams.delete("branch");
+  url.searchParams.delete("run");
+  history.pushState({}, "", url);
   updateFilterDisclosure();
   try {
     await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);
+    if (navigationId !== state.navigationId) return;
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
     showToast(error.message, true);
@@ -1588,6 +1700,13 @@ elements["branch-filter"].addEventListener("change", async () => {
 });
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterDisclosure();
+  if (state.branchRuns.length && !elements["history-filter"].checked) {
+    state.models = branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+    state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
+    renderRuns();
+    writeCachedCatalog();
+    return;
+  }
   renderRuns();
   try {
     await loadRuns({ branch: state.preferredBranch });
@@ -1619,7 +1738,14 @@ elements["clear-filters"].addEventListener("click", async () => {
   const resetBranch = state.availableBranches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : state.availableBranches[0] || "";
   elements["branch-filter"].value = resetBranch;
   state.preferredBranch = resetBranch;
+  state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
+  const resetUrl = new URL(location.href);
+  if (resetBranch) resetUrl.searchParams.set("branch", resetBranch);
+  else resetUrl.searchParams.delete("branch");
+  resetUrl.searchParams.delete("run");
+  history.pushState({}, "", resetUrl);
+  state.selectedId = null;
   elements["compiler-filter"].value = "";
   elements["history-filter"].checked = false;
   Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => {
@@ -1707,7 +1833,7 @@ elements["detail-pane"].addEventListener("click", (event) => {
     state.selectedId = null;
     const url = new URL(location.href);
     url.searchParams.delete("run");
-    history.replaceState({}, "", url);
+    history.pushState({}, "", url);
     renderRuns();
     elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to choose a variant, inspect provenance, and download a verified build.</p></div>`;
   }
@@ -1771,3 +1897,8 @@ document.addEventListener("keydown", (event) => {
 
 applyDetailLayout();
 initialize();
+window.addEventListener("popstate", () => {
+  // Rehydrate branch and selection from the URL, never from the last local choice.
+  state.runsRequestId += 1;
+  initialize();
+});
