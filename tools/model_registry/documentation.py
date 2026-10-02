@@ -360,7 +360,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     fence_length = 0
     fence_outer_indent = 0
     fence_containers: list[tuple[str, int]] = []
-    previous_is_paragraph_text = False
+    previous_paragraph_context: tuple[tuple[int, ...], tuple[str, ...]] | None = None
     current_section = None
     list_indents: list[int] = []
     for index, line in enumerate(lines):
@@ -375,7 +375,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                     rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line,
                 ):
                     fence_character = None
-                previous_is_paragraph_text = False
+                previous_paragraph_context = None
                 continue
             fence_character = None
             fence_outer_indent = 0
@@ -394,6 +394,11 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 list_indents.append(content_indent)
         nested_line, nested = _strip_markdown_containers(container_line)
         markdown_line = nested_line if nested else container_line
+        _, markdown_containers = _markdown_container_stack(container_line)
+        paragraph_context = (
+            tuple(list_indents),
+            tuple(kind for kind, _ in markdown_containers if kind == "blockquote"),
+        )
         fence = _FENCE_OPEN_RE.fullmatch(markdown_line)
         if fence is not None:
             marker, info = fence.groups()
@@ -402,7 +407,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 fence_outer_indent = existing_list_indent
                 _, fence_containers = _markdown_container_stack(container_line)
-                previous_is_paragraph_text = False
+                previous_paragraph_context = None
                 continue
         if (
             _RAW_HTML_BLOCK_RE.match(markdown_line) and not _AUTOLINK_RE.fullmatch(markdown_line)
@@ -411,26 +416,26 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             and _INLINE_HTML_HEADING_RE.search(markdown_line)
         ):
             has_invalid_heading = True
-            previous_is_paragraph_text = False
+            previous_paragraph_context = None
             continue
         if nested and (
             _ATX_HEADING_RE.fullmatch(nested_line) or _SETEXT_HEADING_RE.fullmatch(nested_line)
         ):
             has_invalid_heading = True
-            previous_is_paragraph_text = False
+            previous_paragraph_context = None
             continue
-        if _SETEXT_HEADING_RE.fullmatch(container_line) and previous_is_paragraph_text:
+        if _SETEXT_HEADING_RE.fullmatch(container_line) and previous_paragraph_context == paragraph_context:
             has_invalid_heading = True
-            previous_is_paragraph_text = False
+            previous_paragraph_context = None
             continue
         if match := _H2_RE.fullmatch(container_line):
             if list_indents:
                 has_invalid_heading = True
-                previous_is_paragraph_text = False
+                previous_paragraph_context = None
                 continue
             current_section = match.group(1)
             sections.append((index, current_section))
-            previous_is_paragraph_text = False
+            previous_paragraph_context = None
             continue
         if heading := _ATX_HEADING_RE.fullmatch(container_line):
             level = len(heading.group(1))
@@ -440,14 +445,15 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 and current_section == "Reproducing the artifact" and heading_text
             ):
                 has_invalid_heading = True
-            previous_is_paragraph_text = False
+            previous_paragraph_context = None
             continue
         paragraph_line = nested_line if nested else container_line
         stripped = paragraph_line.strip()
-        previous_is_paragraph_text = bool(stripped) and not (
+        is_paragraph_text = bool(stripped) and not (
             _is_indented_code(paragraph_line) or _PARAGRAPH_EXCLUDED_RE.match(paragraph_line)
             or _THEMATIC_BREAK_RE.fullmatch(paragraph_line)
         )
+        previous_paragraph_context = paragraph_context if is_paragraph_text else None
     return sections, has_invalid_heading
 
 

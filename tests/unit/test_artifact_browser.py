@@ -353,6 +353,18 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
+def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert "historicalCatalogModels: new Map()" in script
+    assert "async function loadHistoricalCatalogModel(run)" in script
+    assert "/catalogs/${encodeURIComponent(run.commit_sha)}?${query}" in script
+    assert "payload.catalog?.document?.models" in script
+    assert 'state.catalogMode === "runs"' in select_run
+    assert "await loadHistoricalCatalogModel(detail.summary.run)" in select_run
+
+
 def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]

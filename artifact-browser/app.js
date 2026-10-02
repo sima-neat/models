@@ -61,6 +61,7 @@ const state = {
   preferredBranch: null,
   urlBranch: false,
   detailCache: new Map(),
+  historicalCatalogModels: new Map(),
   documentationCache: new Map(),
   expandedDocumentationModelId: null,
   documentationRequestId: 0,
@@ -1000,6 +1001,7 @@ async function selectRun(runId, { updateUrl = true } = {}) {
       && currentPackage.run_id !== requestedPackageId) {
       detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
     }
+    if (state.catalogMode === "runs") await loadHistoricalCatalogModel(detail.summary.run);
     if (state.selectedId === runId) {
       const linkedBranch = new URLSearchParams(location.search).get("branch");
       if (linkedBranch && branchName(detail.summary.run.git_ref) !== linkedBranch) {
@@ -1246,7 +1248,30 @@ function modelPackArtifacts(artifacts) {
 
 function catalogModelForRun(run) {
   const modelId = run.metadata?.model_id;
-  return state.models.find((model) => model.model_id === modelId) || null;
+  const key = `${run.git_ref || ""}:${run.commit_sha || ""}:${modelId || ""}`;
+  const historical = state.historicalCatalogModels.get(key);
+  return historical?.model_id ? historical : state.models.find((model) => model.model_id === modelId) || null;
+}
+
+async function loadHistoricalCatalogModel(run) {
+  const modelId = run.metadata?.model_id;
+  if (!modelId || !/^refs\/heads\/.+/.test(run.git_ref || "") || !/^[0-9a-f]{40}$/.test(run.commit_sha || "")) return null;
+  const key = `${run.git_ref}:${run.commit_sha}:${modelId}`;
+  if (state.historicalCatalogModels.has(key)) return state.historicalCatalogModels.get(key);
+  const repo = state.repository;
+  try {
+    const query = new URLSearchParams({ git_ref: run.git_ref });
+    const payload = await api(
+      `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/${encodeURIComponent(run.commit_sha)}?${query}`,
+    );
+    const definition = (payload.catalog?.document?.models || []).find((model) => (model.model_id || model.id) === modelId);
+    const model = definition ? { ...definition, model_id: definition.model_id || definition.id } : null;
+    state.historicalCatalogModels.set(key, model);
+    return model;
+  } catch {
+    state.historicalCatalogModels.set(key, null);
+    return null;
+  }
 }
 
 function documentationHeroUrl(documentation) {
