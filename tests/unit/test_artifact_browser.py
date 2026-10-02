@@ -177,6 +177,7 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
         tilde: renderMarkdown('~~~~bash\\n## Setup\\necho <ready>\\n~~~~'),
         longBacktick: renderMarkdown('````python\\nprint("ready")\\n````'),
         heading: renderMarkdown('   ### Conversion'),
+        indented: renderMarkdown('    first-command\\n\\tsecond-command\\n\\n    printf "<ready>"\\nnext'),
       }));
     """
     result = subprocess.run(
@@ -191,6 +192,10 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
     assert rendered["tilde"] == '<pre><code class="language-bash">## Setup\necho &lt;ready&gt;</code></pre>'
     assert rendered["longBacktick"] == '<pre><code class="language-python">print(&quot;ready&quot;)</code></pre>'
     assert rendered["heading"] == "<h4>Conversion</h4>"
+    assert rendered["indented"] == (
+        "<pre><code>first-command\nsecond-command\n\nprintf &quot;&lt;ready&gt;&quot;</code></pre>\n"
+        "<p>next</p>"
+    )
 
 
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:

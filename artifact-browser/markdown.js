@@ -75,6 +75,18 @@ function closesFence(line, fence) {
     && match[1].length >= fence.length);
 }
 
+function stripIndentedCode(line) {
+  let column = 0;
+  let offset = 0;
+  while (offset < line.length && column < 4) {
+    if (line[offset] === " ") column += 1;
+    else if (line[offset] === "\t") column += 4 - (column % 4);
+    else break;
+    offset += 1;
+  }
+  return column >= 4 ? line.slice(offset) : null;
+}
+
 export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null, resolveLink = null } = {}) {
   let lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
@@ -83,6 +95,19 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
+    if (stripIndentedCode(line) !== null) {
+      const code = [];
+      while (index < lines.length) {
+        const content = stripIndentedCode(lines[index]);
+        if (content !== null) code.push(content);
+        else if (!lines[index].trim()) code.push("");
+        else break;
+        index += 1;
+      }
+      while (code.at(-1) === "") code.pop();
+      output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+      continue;
+    }
     const image = /^!\[([^\]\n]+)\]\(([^)\s]+)\)$/.exec(line.trim());
     if (image) {
       const source = typeof resolveImage === "function" ? resolveImage(image[2]) : null;
