@@ -281,6 +281,20 @@ def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, head
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
+@pytest.mark.parametrize(
+    "heading", ("> ### Setup", "- ### Setup", "1. ### Setup", "- > ### Setup", "> Unexpected\n> ---"),
+)
+def test_model_readme_contract_rejects_headings_in_markdown_containers(tmp_path: Path, heading: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="H2 sections must be"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
 def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)

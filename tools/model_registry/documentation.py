@@ -29,6 +29,7 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
+_CONTAINER_PREFIX_RE = re.compile(r"^ {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
 )
@@ -264,6 +265,14 @@ def _is_indented_code(line: str) -> bool:
     return column >= 4
 
 
+def _strip_markdown_containers(line: str) -> tuple[str, bool]:
+    nested = False
+    while match := _CONTAINER_PREFIX_RE.match(line):
+        nested = True
+        line = line[match.end():]
+    return line, nested
+
+
 def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
     has_invalid_heading = False
@@ -285,6 +294,13 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 previous_is_paragraph_text = False
                 continue
+        nested_line, nested = _strip_markdown_containers(line)
+        if nested and (
+            _ATX_HEADING_RE.fullmatch(nested_line) or _SETEXT_HEADING_RE.fullmatch(nested_line)
+        ):
+            has_invalid_heading = True
+            previous_is_paragraph_text = False
+            continue
         if _SETEXT_HEADING_RE.fullmatch(line) and previous_is_paragraph_text:
             has_invalid_heading = True
             previous_is_paragraph_text = False
