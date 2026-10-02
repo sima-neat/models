@@ -947,8 +947,10 @@ async function selectRun(runId, { updateUrl = true } = {}) {
   }
   try {
     let detail = state.detailCache.get(runId);
+    let requestedPackageId = null;
     if (!detail) {
       const packageRun = catalogRun && fullPackageForRun(catalogRun);
+      requestedPackageId = packageRun?.run_id || null;
       const [summary, provenance, tests, metrics, benchmark, accuracy, packageSummary] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
@@ -964,6 +966,12 @@ async function selectRun(runId, { updateUrl = true } = {}) {
       ]);
       detail = { summary, provenance, tests, metrics, benchmark, accuracy, packageSummary };
       state.detailCache.set(runId, detail);
+    }
+    const currentPackage = fullPackageForRun(detail.summary.run);
+    // A cached run may gain package context later; avoid retrying a fetch from this selection.
+    if (currentPackage && detail.packageSummary?.run?.id !== currentPackage.run_id
+      && currentPackage.run_id !== requestedPackageId) {
+      detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
     }
     if (state.selectedId === runId) {
       const linkedBranch = new URLSearchParams(location.search).get("branch");

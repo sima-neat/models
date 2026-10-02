@@ -234,6 +234,16 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
+def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert 'const currentPackage = fullPackageForRun(detail.summary.run);' in select_run
+    assert 'detail.packageSummary?.run?.id !== currentPackage.run_id' in select_run
+    assert 'currentPackage.run_id !== requestedPackageId' in select_run
+    assert 'detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);' in select_run
+
+
 def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
