@@ -214,10 +214,11 @@ def test_model_readme_contract_rejects_setext_heading_in_overview(tmp_path: Path
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
-def test_model_readme_contract_rejects_indented_code_in_overview(tmp_path: Path) -> None:
+@pytest.mark.parametrize("indent", ("    ", "\t", " \t", "  \t", "   \t"))
+def test_model_readme_contract_rejects_indented_code_in_overview(tmp_path: Path, indent: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    overview = _overview() + "\n\n    model-registry validate-catalog"
+    overview = _overview() + f"\n\n{indent}model-registry validate-catalog"
     (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 

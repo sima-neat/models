@@ -29,7 +29,7 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
-    r"^(?:(?: {4}|\t)|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
+    r"^(?:\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
 )
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
@@ -251,6 +251,18 @@ def _is_setext_heading(lines: list[str]) -> bool:
     )
 
 
+def _is_indented_code(line: str) -> bool:
+    column = 0
+    for character in line:
+        if character == " ":
+            column += 1
+        elif character == "\t":
+            column += 4 - column % 4
+        else:
+            break
+    return column >= 4
+
+
 def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
     has_invalid_heading = False
@@ -291,7 +303,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             continue
         stripped = line.strip()
         previous_is_paragraph_text = bool(stripped) and not (
-            _OVERVIEW_FORBIDDEN_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
+            _is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
         )
     return sections, has_invalid_heading
 
@@ -367,7 +379,7 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         raise ValidationError(f"model README Overview must contain 50 to 120 words, found {word_count}: {readme}")
     overview_lines = overview.splitlines()
     if (
-        any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines)
+        any(_is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines)
         or _is_markdown_table(overview_lines)
         or _is_setext_heading(overview_lines)
         or any(_THEMATIC_BREAK_RE.fullmatch(line) for line in overview_lines)
