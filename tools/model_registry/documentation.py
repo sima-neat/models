@@ -290,14 +290,18 @@ def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
         return line, containers
 
 
-def _strip_expected_containers(line: str, containers: list[tuple[str, int]]) -> str:
+def _strip_expected_containers(line: str, containers: list[tuple[str, int]]) -> tuple[str, bool]:
     for kind, indent in containers:
         if kind == "blockquote":
             if match := re.match(r"^ {0,3}>[ \t]?", line):
                 line = line[match.end():]
-        elif _leading_columns(line) >= indent:
+            else:
+                return line, False
+        elif _leading_columns(line) < indent:
+            return line, False
+        else:
             line = _strip_columns(line, indent)
-    return line
+    return line, True
 
 
 def _column_width(text: str) -> int:
@@ -333,15 +337,19 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     list_indents: list[int] = []
     for index, line in enumerate(lines):
         if fence_character is not None:
-            container_line = (
-                _strip_columns(line, fence_outer_indent)
-                if fence_outer_indent and _leading_columns(line) >= fence_outer_indent else line
-            )
-            markdown_line = _strip_expected_containers(container_line, fence_containers)
-            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line):
-                fence_character = None
-            previous_is_paragraph_text = False
-            continue
+            outer_matches = not fence_outer_indent or _leading_columns(line) >= fence_outer_indent
+            container_line = _strip_columns(line, fence_outer_indent) if fence_outer_indent and outer_matches else line
+            markdown_line, containers_match = _strip_expected_containers(container_line, fence_containers)
+            if outer_matches and containers_match:
+                if re.fullmatch(
+                    rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line,
+                ):
+                    fence_character = None
+                previous_is_paragraph_text = False
+                continue
+            fence_character = None
+            fence_outer_indent = 0
+            fence_containers = []
         if line.strip():
             indentation = _leading_columns(line)
             while list_indents and indentation < list_indents[-1]:

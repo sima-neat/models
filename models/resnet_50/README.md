@@ -75,9 +75,12 @@ Resolve the registered dataset, then compile the verified ONNX in the pinned
 Model Compiler environment:
 
 ```bash
+source_json="$(model-registry fetch models/resnet_50 --component model --json)"
+verified_model="$(python -c 'import json,sys; print(json.load(sys.stdin)["path"])' \
+  <<<"$source_json")"
 dataset="$(dataset-registry resolve imagenet-2012 --variant mini | python -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
 python models/resnet_50/compile.py \
-  --model /path/to/model.onnx \
+  --model "$verified_model" \
   --dataset "$dataset" \
   --output-dir /tmp/resnet50-int8 \
   --build-profile modalix_int8 \
@@ -96,7 +99,7 @@ Run the regular correctness profile after compilation:
 model-registry evaluate models/resnet_50 \
   --build-profile modalix_int8 \
   --component model \
-  --reference-model /path/to/model.onnx \
+  --reference-model "$verified_model" \
   --candidate-model /tmp/resnet50-int8/resnet_50_modalix_int8.sima \
   --dataset "$dataset" \
   --profile regular \

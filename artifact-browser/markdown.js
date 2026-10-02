@@ -57,12 +57,13 @@ function isTableDivider(line, columns) {
 }
 
 function parseFence(line) {
-  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-  if (!match || (match[1][0] === "`" && match[2].includes("`"))) return null;
-  const languageCandidate = match[2].trim().split(/\s+/, 1)[0];
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match || (match[2][0] === "`" && match[3].includes("`"))) return null;
+  const languageCandidate = match[3].trim().split(/\s+/, 1)[0];
   return {
-    character: match[1][0],
-    length: match[1].length,
+    character: match[2][0],
+    length: match[2].length,
+    indent: match[1].length,
     language: /^[A-Za-z0-9_-]+$/.test(languageCandidate) ? languageCandidate : "",
   };
 }
@@ -100,12 +101,13 @@ function normalizeFenceContainer(line, expectedContainers = null) {
   if (expectedContainers !== null) {
     for (const container of expectedContainers) {
       if (container.type === "blockquote") {
-        if (/^ {0,3}>[ \t]?/.test(normalized)) normalized = normalized.replace(/^ {0,3}>[ \t]?/, "");
+        if (!/^ {0,3}>[ \t]?/.test(normalized)) return {line: normalized, containers: expectedContainers, matched: false};
+        normalized = normalized.replace(/^ {0,3}>[ \t]?/, "");
       } else if (leadingColumns(normalized) >= container.indent) {
         normalized = stripColumns(normalized, container.indent);
-      }
+      } else return {line: normalized, containers: expectedContainers, matched: false};
     }
-    return {line: normalized, containers: expectedContainers};
+    return {line: normalized, containers: expectedContainers, matched: true};
   }
   const containers = [];
   while (true) {
@@ -119,7 +121,7 @@ function normalizeFenceContainer(line, expectedContainers = null) {
     containers.push({type: "list", indent: columnWidth(normalized.slice(0, list[0].length))});
     normalized = normalized.slice(list[0].length);
   }
-  return {line: normalized, containers};
+  return {line: normalized, containers, matched: true};
 }
 
 function stripIndentedCode(line) {
@@ -139,9 +141,32 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
   const output = [];
   let index = 0;
+  let listContinuationIndent = 0;
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
+    if (listContinuationIndent && leadingColumns(line) < listContinuationIndent) listContinuationIndent = 0;
+    const expectedContainers = listContinuationIndent
+      ? [{type: "list", indent: listContinuationIndent}]
+      : null;
+    const normalizedFence = normalizeFenceContainer(line, expectedContainers);
+    const fence = normalizedFence.matched ? parseFence(normalizedFence.line) : null;
+    if (fence) {
+      const code = [];
+      let closed = false;
+      index += 1;
+      while (index < lines.length) {
+        const content = normalizeFenceContainer(lines[index], normalizedFence.containers);
+        if (!content.matched) break;
+        if (closesFence(content.line, fence)) { closed = true; break; }
+        code.push(stripColumns(content.line, Math.min(fence.indent, leadingColumns(content.line))));
+        index += 1;
+      }
+      if (closed) index += 1;
+      const language = fence.language ? ` class="language-${escapeHtml(fence.language)}"` : "";
+      output.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
+      continue;
+    }
     if (stripIndentedCode(line) !== null) {
       const code = [];
       while (index < lines.length) {
@@ -162,22 +187,6 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
         ? `<figure class="model-card-hero"><img src="${escapeHtml(source)}" alt="${escapeHtml(image[1])}" loading="lazy" decoding="async" /></figure>`
         : `<p>${escapeHtml(image[1])}</p>`);
       index += 1;
-      continue;
-    }
-    const normalizedFence = normalizeFenceContainer(line);
-    const fence = parseFence(normalizedFence.line);
-    if (fence) {
-      const code = [];
-      index += 1;
-      while (index < lines.length) {
-        const content = normalizeFenceContainer(lines[index], normalizedFence.containers).line;
-        if (closesFence(content, fence)) break;
-        code.push(content);
-        index += 1;
-      }
-      if (index < lines.length) index += 1;
-      const language = fence.language ? ` class="language-${escapeHtml(fence.language)}"` : "";
-      output.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
     const heading = /^ {0,3}(#{2,4})\s+(.+)$/.exec(line);
@@ -209,6 +218,8 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       while (index < lines.length) {
         const item = /^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(lines[index]);
         if (!item || Boolean(item[2]) !== ordered) break;
+        const prefix = /^\s*(?:[-*+]|\d+[.)])\s+/.exec(lines[index]);
+        listContinuationIndent = columnWidth(prefix[0]);
         items.push(`<li>${inlineMarkdown(item[3], resolveLink)}</li>`);
         index += 1;
       }
