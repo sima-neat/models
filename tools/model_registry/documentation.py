@@ -57,7 +57,11 @@ def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
         if end > len(payload):
             raise ValidationError(f"model hero image contains a truncated PNG chunk: {hero}")
         kind = payload[offset + 4:offset + 8]
-        if len(kind) != 4 or not all(65 <= byte <= 90 or 97 <= byte <= 122 for byte in kind):
+        if (
+            len(kind) != 4
+            or not all(65 <= byte <= 90 or 97 <= byte <= 122 for byte in kind)
+            or not 65 <= kind[2] <= 90
+        ):
             raise ValidationError(f"model hero image has an invalid PNG structure: {hero}")
         data = payload[offset + 8:offset + 8 + length]
         checksum = struct.unpack(">I", payload[offset + 8 + length:end])[0]
@@ -90,11 +94,15 @@ def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
     if not idat_indexes or idat_indexes != list(range(idat_indexes[0], idat_indexes[-1] + 1)):
         raise ValidationError(f"model hero image has an invalid PNG data stream: {hero}")
     palette_indexes = [index for index, (kind, _) in enumerate(chunks) if kind == b"PLTE"]
+    palette = chunks[palette_indexes[0]][1] if len(palette_indexes) == 1 else b""
+    palette_entries = len(palette) // 3
     if (
         len(palette_indexes) > 1
         or (palette_indexes and palette_indexes[0] > idat_indexes[0])
         or (color_type == 3 and not palette_indexes)
         or (color_type in {0, 4} and palette_indexes)
+        or (palette_indexes and (not palette or len(palette) % 3 != 0 or palette_entries > 256))
+        or (color_type == 3 and palette_entries > 2 ** depth)
     ):
         raise ValidationError(f"model hero image has an invalid PNG palette: {hero}")
     compressed = b"".join(chunks[index][1] for index in idat_indexes)

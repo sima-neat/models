@@ -34,6 +34,20 @@ def _png(width: int = 1200, height: int = 480, *, filter_byte: int = 0) -> bytes
     ))
 
 
+def _indexed_png(palette: bytes) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+    rows = b"".join(b"\x00" + b"\x00" * 1200 for _ in range(480))
+    return b"".join((
+        b"\x89PNG\r\n\x1a\n",
+        chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 480, 8, 3, 0, 0, 0)),
+        chunk(b"PLTE", palette),
+        chunk(b"IDAT", zlib.compress(rows)),
+        chunk(b"IEND", b""),
+    ))
+
+
 def test_repository_model_readmes_follow_the_documentation_contract() -> None:
     root = Path(__file__).resolve().parents[2]
     for manifest in sorted((root / "models").glob("*/model.yaml")):
@@ -109,3 +123,25 @@ def test_model_readme_contract_rejects_undecodable_hero_pixels(tmp_path: Path) -
 
     with pytest.raises(ValidationError, match="invalid PNG filter"):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize("palette", [b"\x00", b"", b"\x00\x00\x00" * 257])
+def test_model_readme_contract_rejects_invalid_indexed_palette(tmp_path: Path, palette: bytes) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_indexed_png(palette))
+
+    with pytest.raises(ValidationError, match="invalid PNG palette"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_valid_indexed_palette(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_indexed_png(b"\x00\x00\x00"))
+
+    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+    assert documentation["hero"]["media_type"] == "image/png"
