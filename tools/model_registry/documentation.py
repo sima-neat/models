@@ -25,7 +25,11 @@ REQUIRED_SECTIONS = (
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-_OVERVIEW_FORBIDDEN_RE = re.compile(r"^(?:\s*(?:[-*+] |\d+[.)] |```|~~~|#|> |\||!\[)|\s*<[^>]+>)")
+_SETEXT_H2_RE = re.compile(r"^ {0,3}-+[ \t]*$")
+_THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
+_OVERVIEW_FORBIDDEN_RE = re.compile(
+    r"^(?:(?: {4}|\t)|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
+)
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
@@ -246,14 +250,17 @@ def _is_setext_heading(lines: list[str]) -> bool:
     )
 
 
-def _markdown_h2_sections(lines: list[str]) -> list[tuple[int, str]]:
+def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
+    has_setext_h2 = False
     fence_character = None
     fence_length = 0
+    previous_is_paragraph_text = False
     for index, line in enumerate(lines):
         if fence_character is not None:
             if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", line):
                 fence_character = None
+            previous_is_paragraph_text = False
             continue
         fence = _FENCE_OPEN_RE.fullmatch(line)
         if fence is not None:
@@ -261,10 +268,21 @@ def _markdown_h2_sections(lines: list[str]) -> list[tuple[int, str]]:
             if marker[0] == "~" or "`" not in info:
                 fence_character = marker[0]
                 fence_length = len(marker)
+                previous_is_paragraph_text = False
                 continue
+        if _SETEXT_H2_RE.fullmatch(line) and previous_is_paragraph_text:
+            has_setext_h2 = True
+            previous_is_paragraph_text = False
+            continue
         if match := _H2_RE.fullmatch(line):
             sections.append((index, match.group(1)))
-    return sections
+            previous_is_paragraph_text = False
+            continue
+        stripped = line.strip()
+        previous_is_paragraph_text = bool(stripped) and not (
+            _OVERVIEW_FORBIDDEN_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
+        )
+    return sections, has_setext_h2
 
 
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
@@ -317,9 +335,9 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
             f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
         )
 
-    sections = _markdown_h2_sections(lines)
+    sections, has_setext_h2 = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
-    if names != REQUIRED_SECTIONS:
+    if names != REQUIRED_SECTIONS or has_setext_h2:
         raise ValidationError(
             f"model README H2 sections must be {', '.join(REQUIRED_SECTIONS)} in order: {readme}"
         )
@@ -341,6 +359,7 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines)
         or _is_markdown_table(overview_lines)
         or _is_setext_heading(overview_lines)
+        or any(_THEMATIC_BREAK_RE.fullmatch(line) for line in overview_lines)
     ):
         raise ValidationError(f"model README Overview must contain prose paragraphs only: {readme}")
 
