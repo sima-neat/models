@@ -268,6 +268,20 @@ def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path)
     assert documentation["source_path"] == "models/fixture/README.md"
 
 
+@pytest.mark.parametrize("heading", ("###", "### #", "### ##", "   ### ###"))
+def test_model_readme_contract_rejects_empty_h3_in_reproduction_section(tmp_path: Path, heading: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace(
+        "Content for reproducing the artifact.", f"{heading}\n\nRun the supported conversion command.",
+    )
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="H2 sections must be"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
 @pytest.mark.parametrize("indent", ("", "   "))
 def test_model_readme_contract_rejects_link_reference_definition_in_overview(tmp_path: Path, indent: str) -> None:
     model_dir = tmp_path / "models" / "fixture"

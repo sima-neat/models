@@ -295,7 +295,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             continue
         if heading := _ATX_HEADING_RE.fullmatch(line):
             level = len(heading.group(1))
-            heading_text = re.sub(r"[ \t]+#+[ \t]*$", "", heading.group(2) or "").strip()
+            heading_text = re.sub(r"(?:^#+$|[ \t]+#+[ \t]*$)", "", heading.group(2) or "").strip()
             if not (index == 0 and level == 1) and not (
                 level == 3 and current_section == "Reproducing the artifact" and heading_text
             ):
