@@ -24,12 +24,12 @@ REQUIRED_SECTIONS = (
     "Reproducing the artifact",
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
-_ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*$")
+_ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
-    r"^(?:\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
+    r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
 )
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
@@ -295,8 +295,9 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             continue
         if heading := _ATX_HEADING_RE.fullmatch(line):
             level = len(heading.group(1))
+            heading_text = re.sub(r"[ \t]+#+[ \t]*$", "", heading.group(2) or "").strip()
             if not (index == 0 and level == 1) and not (
-                level == 3 and current_section == "Reproducing the artifact"
+                level == 3 and current_section == "Reproducing the artifact" and heading_text
             ):
                 has_invalid_heading = True
             previous_is_paragraph_text = False

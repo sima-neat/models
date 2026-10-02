@@ -240,7 +240,8 @@ def test_model_readme_contract_rejects_setext_h2_outside_overview(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    "heading", ("# Extra title", "### Setup", "   ### Setup", "#### Setup", "Unexpected section\n==="),
+    "heading",
+    ("# Extra title", "##", "### Setup", "   ###", "   ### Setup", "#### Setup", "Unexpected section\n==="),
 )
 def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, heading: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
@@ -265,6 +266,18 @@ def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path)
     documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
     assert documentation["source_path"] == "models/fixture/README.md"
+
+
+@pytest.mark.parametrize("indent", ("", "   "))
+def test_model_readme_contract_rejects_link_reference_definition_in_overview(tmp_path: Path, indent: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    overview = _overview() + f"\n\n{indent}[guide]: https://example.invalid/guide"
+    (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="prose paragraphs only"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
 @pytest.mark.parametrize("marker", ("```", "~~~~"))
