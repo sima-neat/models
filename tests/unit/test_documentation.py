@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -70,6 +71,15 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
         assert documentation["source_path"] == f"models/{model_dir.name}/README.md"
         assert len(documentation["readme_sha256"]) == 64
         assert documentation["hero"]["source_path"] == f"models/{model_dir.name}/hero.png"
+
+
+def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_placeholders() -> None:
+    root = Path(__file__).resolve().parents[2]
+    placeholder = re.compile(r"<[A-Za-z0-9_-]+>")
+    for readme in sorted((root / "models").glob("*/README.md")):
+        markdown = readme.read_text(encoding="utf-8")
+        for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)```", markdown, flags=re.DOTALL):
+            assert not placeholder.search(block), f"shell-unsafe placeholder in {readme}"
 
 
 @pytest.mark.parametrize(

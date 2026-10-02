@@ -25,8 +25,9 @@ sima-cli models download \
 To install the model package from a feature branch while it is under review:
 
 ```bash
+branch=$(git branch --show-current)
 sima-cli neat install --stg \
-  models/yolo26_tiny_drone@<branch>:latest \
+  "models/yolo26_tiny_drone@${branch}:latest" \
   --install-dir models/yolo26_tiny_drone
 ```
 
