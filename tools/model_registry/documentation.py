@@ -35,6 +35,7 @@ _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+](?:\s+|$)|\d+[.)](?:\s+|$)|```|~~~|#|>\s?|\||!\[|<))"
 )
+_IMAGE_TOKEN_RE = re.compile(r"(?<!\\)!\[[^]\n]*\](?:\([^)]*\)|\[[^]\n]*\])")
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
@@ -531,7 +532,10 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         raise ValidationError(f"model README Overview must contain 50 to 120 words, found {word_count}: {readme}")
     overview_lines = overview.splitlines()
     if (
-        any(_is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines)
+        any(
+            _is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line) or _IMAGE_TOKEN_RE.search(line)
+            for line in overview_lines
+        )
         or _is_markdown_table(overview_lines)
         or _is_setext_heading(overview_lines)
         or any(_THEMATIC_BREAK_RE.fullmatch(line) for line in overview_lines)
