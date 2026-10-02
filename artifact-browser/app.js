@@ -2,7 +2,7 @@ import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { allPages, branchModels } from "./branch-builds.js";
-import { renderMarkdown } from "./markdown.js";
+import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
@@ -1263,12 +1263,13 @@ function documentationPanel(model) {
   const fullMarkdown = state.documentationCache.get(cacheKey);
   const heroUrl = documentationHeroUrl(documentation);
   const resolveImage = (source) => source === documentation.hero?.markdown_path ? heroUrl : null;
+  const resolveLink = (source) => resolveDocumentationLink(documentation, source);
   const overviewHero = heroUrl
     ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
     : "";
   const body = expanded && fullMarkdown
-    ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage })
-    : `${overviewHero}${renderMarkdown(documentation.overview_markdown)}`;
+    ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage, resolveLink })
+    : `${overviewHero}${renderMarkdown(documentation.overview_markdown, { resolveLink })}`;
   const label = expanded ? "Show overview only" : "Read full model card";
   return `<section class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title">
     <div class="detail-section-title"><h3 id="model-documentation-title">Model card</h3>${expanded ? `<button class="documentation-collapse" type="button" data-documentation-toggle aria-expanded="true" aria-controls="model-documentation-body">${label}</button>` : ""}</div>

@@ -6,7 +6,25 @@ function escapeHtml(value = "") {
   })[character]);
 }
 
-function inlineMarkdown(value) {
+export function resolveDocumentationLink(documentation, source) {
+  const commit = documentation?.source_commit;
+  const sourcePath = documentation?.source_path;
+  if (
+    !/^[0-9a-f]{40}$/.test(commit || "")
+    || !/^models\/[a-z][a-z0-9_]*\/README\.md$/.test(sourcePath || "")
+    || /[\\\u0000-\u001f]/.test(source || "")
+  ) return null;
+  const encodedPath = sourcePath.split("/").map(encodeURIComponent).join("/");
+  const prefix = `/sima-neat/models/blob/${commit}/`;
+  try {
+    const resolved = new URL(source, `https://github.com${prefix}${encodedPath}`);
+    return resolved.origin === "https://github.com" && resolved.pathname.startsWith(prefix) ? resolved.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function inlineMarkdown(value, resolveLink = null) {
   const source = String(value);
   const expression = /(`[^`\n]+`|\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*)/g;
   let output = "";
@@ -15,7 +33,10 @@ function inlineMarkdown(value) {
     output += escapeHtml(source.slice(offset, match.index));
     if (match[0].startsWith("`")) output += `<code>${escapeHtml(match[0].slice(1, -1))}</code>`;
     else if (match[2] !== undefined) {
-      const href = SAFE_LINK.test(match[3]) ? match[3] : null;
+      const resolved = SAFE_LINK.test(match[3])
+        ? match[3]
+        : (typeof resolveLink === "function" ? resolveLink(match[3]) : null);
+      const href = resolved && SAFE_LINK.test(resolved) ? resolved : null;
       output += href
         ? `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${escapeHtml(match[2])}</a>`
         : escapeHtml(match[2]);
@@ -35,7 +56,7 @@ function isTableDivider(line, columns) {
   return cells.length === columns && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null } = {}) {
+export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null, resolveLink = null } = {}) {
   let lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
   const output = [];
@@ -65,7 +86,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     const heading = /^(#{2,4})\s+(.+)$/.exec(line);
     if (heading) {
       const level = heading[1].length + 1;
-      output.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+      output.push(`<h${level}>${inlineMarkdown(heading[2], resolveLink)}</h${level}>`);
       index += 1;
       continue;
     }
@@ -80,7 +101,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
           rows.push(cells);
           index += 1;
         }
-        output.push(`<div class="model-card-table"><table><thead><tr>${headers.map((cell) => `<th scope="col">${inlineMarkdown(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${inlineMarkdown(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+        output.push(`<div class="model-card-table"><table><thead><tr>${headers.map((cell) => `<th scope="col">${inlineMarkdown(cell, resolveLink)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${inlineMarkdown(cell, resolveLink)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
         continue;
       }
     }
@@ -91,7 +112,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       while (index < lines.length) {
         const item = /^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(lines[index]);
         if (!item || Boolean(item[2]) !== ordered) break;
-        items.push(`<li>${inlineMarkdown(item[3])}</li>`);
+        items.push(`<li>${inlineMarkdown(item[3], resolveLink)}</li>`);
         index += 1;
       }
       output.push(`<${ordered ? "ol" : "ul"}>${items.join("")}</${ordered ? "ol" : "ul"}>`);
@@ -106,7 +127,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       paragraph.push(lines[index].trim());
       index += 1;
     }
-    output.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+    output.push(`<p>${inlineMarkdown(paragraph.join(" "), resolveLink)}</p>`);
   }
   return output.join("\n");
 }

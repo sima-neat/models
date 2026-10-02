@@ -128,8 +128,43 @@ def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None
     assert "SAFE_LINK" in renderer
     assert "escapeHtml" in renderer
     assert "resolveImage" in renderer
+    assert "resolveDocumentationLink" in renderer
     assert 'loading="lazy"' in renderer
     assert "export function renderMarkdown" in renderer
+
+
+def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit() -> None:
+    script = """
+      import {readFileSync} from 'node:fs';
+      const moduleSource = readFileSync('./artifact-browser/markdown.js', 'utf8');
+      const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(moduleSource).toString('base64');
+      const {renderMarkdown, resolveDocumentationLink} = await import(moduleUrl);
+      const documentation = {
+        source_commit: 'a'.repeat(40),
+        source_path: 'models/ssd_mobilenet_v3/README.md',
+      };
+      const resolveLink = (source) => resolveDocumentationLink(documentation, source);
+      const markdown = '[QAT](qat/README.md) [section](#usage) [unsafe](javascript:alert(1))';
+      console.log(JSON.stringify({
+        html: renderMarkdown(markdown, {resolveLink}),
+        traversal: resolveLink('../../../../outside.md'),
+        external: resolveLink('//example.invalid/steal'),
+      }));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+    source_url = "https://github.com/sima-neat/models/blob/" + "a" * 40
+    assert f'{source_url}/models/ssd_mobilenet_v3/qat/README.md' in rendered["html"]
+    assert f'{source_url}/models/ssd_mobilenet_v3/README.md#usage' in rendered["html"]
+    assert "javascript:" not in rendered["html"]
+    assert rendered["traversal"] is None
+    assert rendered["external"] is None
 
 
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
