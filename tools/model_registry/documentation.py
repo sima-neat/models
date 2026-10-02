@@ -32,16 +32,57 @@ _ADAM7_PASSES = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4),
                  (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
 
 
-def _png_scanline_lengths(width: int, height: int, bits_per_pixel: int, interlace: int) -> list[int]:
+def _png_pass_dimensions(width: int, height: int, interlace: int) -> list[tuple[int, int]]:
     if interlace == 0:
-        return [1 + (width * bits_per_pixel + 7) // 8] * height
-    lengths = []
+        return [(width, height)]
+    dimensions = []
     for x_start, y_start, x_step, y_step in _ADAM7_PASSES:
         pass_width = 0 if width <= x_start else (width - x_start + x_step - 1) // x_step
         pass_height = 0 if height <= y_start else (height - y_start + y_step - 1) // y_step
         if pass_width and pass_height:
-            lengths.extend([1 + (pass_width * bits_per_pixel + 7) // 8] * pass_height)
-    return lengths
+            dimensions.append((pass_width, pass_height))
+    return dimensions
+
+
+def _png_scanline_lengths(width: int, height: int, bits_per_pixel: int, interlace: int) -> list[int]:
+    return [
+        1 + (pass_width * bits_per_pixel + 7) // 8
+        for pass_width, pass_height in _png_pass_dimensions(width, height, interlace)
+        for _ in range(pass_height)
+    ]
+
+
+def _paeth(left: int, above: int, upper_left: int) -> int:
+    estimate = left + above - upper_left
+    distances = (abs(estimate - left), abs(estimate - above), abs(estimate - upper_left))
+    return (left, above, upper_left)[distances.index(min(distances))]
+
+
+def _validate_indexed_pixels(
+    decoded: bytes, width: int, height: int, depth: int, interlace: int, palette_entries: int, hero: Path
+) -> None:
+    offset = 0
+    mask = (1 << depth) - 1
+    for pass_width, pass_height in _png_pass_dimensions(width, height, interlace):
+        row_bytes = (pass_width * depth + 7) // 8
+        previous = bytearray(row_bytes)
+        for _ in range(pass_height):
+            filter_type = decoded[offset]
+            filtered = decoded[offset + 1:offset + 1 + row_bytes]
+            reconstructed = bytearray(row_bytes)
+            for index, value in enumerate(filtered):
+                left = reconstructed[index - 1] if index else 0
+                above = previous[index]
+                upper_left = previous[index - 1] if index else 0
+                predictor = (0, left, above, (left + above) // 2, _paeth(left, above, upper_left))[filter_type]
+                reconstructed[index] = (value + predictor) & 0xFF
+            for pixel in range(pass_width):
+                bit_offset = pixel * depth
+                palette_index = (reconstructed[bit_offset // 8] >> (8 - depth - bit_offset % 8)) & mask
+                if palette_index >= palette_entries:
+                    raise ValidationError(f"model hero image references an undefined PNG palette entry: {hero}")
+            previous = reconstructed
+            offset += row_bytes + 1
 
 
 def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
@@ -123,7 +164,22 @@ def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
         if decoded[scanline_offset] > 4:
             raise ValidationError(f"model hero image has an invalid PNG filter: {hero}")
         scanline_offset += scanline_length
+    if color_type == 3:
+        _validate_indexed_pixels(decoded, width, height, depth, interlace, palette_entries, hero)
     return width, height
+
+
+def _is_markdown_table(lines: list[str]) -> bool:
+    for index, line in enumerate(lines[:-1]):
+        if "|" not in line:
+            continue
+        headers = line.strip().strip("|").split("|")
+        divider = lines[index + 1].strip().strip("|").split("|")
+        if len(headers) > 1 and len(divider) == len(headers) and all(
+            re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in divider
+        ):
+            return True
+    return False
 
 
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
@@ -195,7 +251,8 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     word_count = len(re.findall(r"\S+", overview))
     if not 50 <= word_count <= 120:
         raise ValidationError(f"model README Overview must contain 50 to 120 words, found {word_count}: {readme}")
-    if any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview.splitlines()):
+    overview_lines = overview.splitlines()
+    if any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines) or _is_markdown_table(overview_lines):
         raise ValidationError(f"model README Overview must contain prose paragraphs only: {readme}")
 
     try:

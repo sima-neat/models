@@ -97,6 +97,7 @@ jobs:
         run: |
           python -m pytest \
             tests/unit/test_cli.py \
+            tests/unit/test_documentation.py \
             tests/unit/test_dependencies.py \
             tests/unit/test_model_registry_package.py \
             tests/unit/test_model_registry_workflow.py \

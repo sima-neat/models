@@ -34,11 +34,15 @@ def _png(width: int = 1200, height: int = 480, *, filter_byte: int = 0) -> bytes
     ))
 
 
-def _indexed_png(palette: bytes) -> bytes:
+def _indexed_png(palette: bytes, *, pixel: int = 0, filter_type: int = 0) -> bytes:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
 
-    rows = b"".join(b"\x00" + b"\x00" * 1200 for _ in range(480))
+    if filter_type == 1:
+        encoded_row = bytes([pixel]) + b"\x00" * 1199
+    else:
+        encoded_row = bytes([pixel]) * 1200
+    rows = b"".join(bytes([filter_type]) + encoded_row for _ in range(480))
     return b"".join((
         b"\x89PNG\r\n\x1a\n",
         chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 480, 8, 3, 0, 0, 0)),
@@ -145,3 +149,28 @@ def test_model_readme_contract_accepts_valid_indexed_palette(tmp_path: Path) -> 
     documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
     assert documentation["hero"]["media_type"] == "image/png"
+
+
+def test_model_readme_contract_rejects_undefined_palette_index(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_indexed_png(b"\x00\x00\x00", pixel=1, filter_type=1))
+
+    with pytest.raises(ValidationError, match="undefined PNG palette entry"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_rejects_pipe_table_without_leading_delimiter(tmp_path: Path) -> None:
+    overview = "\n".join((
+        "Name | Value",
+        "--- | ---",
+        "model | " + _overview(48),
+    ))
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="prose paragraphs only"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
