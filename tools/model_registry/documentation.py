@@ -24,6 +24,7 @@ REQUIRED_SECTIONS = (
     "Reproducing the artifact",
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _OVERVIEW_FORBIDDEN_RE = re.compile(r"^(?:\s*(?:[-*+] |\d+[.)] |```|~~~|#|> |\||!\[)|\s*<[^>]+>)")
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
@@ -245,6 +246,27 @@ def _is_setext_heading(lines: list[str]) -> bool:
     )
 
 
+def _markdown_h2_sections(lines: list[str]) -> list[tuple[int, str]]:
+    sections = []
+    fence_character = None
+    fence_length = 0
+    for index, line in enumerate(lines):
+        if fence_character is not None:
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", line):
+                fence_character = None
+            continue
+        fence = _FENCE_OPEN_RE.fullmatch(line)
+        if fence is not None:
+            marker, info = fence.groups()
+            if marker[0] == "~" or "`" not in info:
+                fence_character = marker[0]
+                fence_length = len(marker)
+                continue
+        if match := _H2_RE.fullmatch(line):
+            sections.append((index, match.group(1)))
+    return sections
+
+
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
     hero = model_dir / HERO_FILENAME
     try:
@@ -295,7 +317,7 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
             f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
         )
 
-    sections = [(index, match.group(1)) for index, line in enumerate(lines) if (match := _H2_RE.fullmatch(line))]
+    sections = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
     if names != REQUIRED_SECTIONS:
         raise ValidationError(

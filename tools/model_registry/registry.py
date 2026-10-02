@@ -610,8 +610,7 @@ def publish_model_documentation(
             "target_platform": "documentation",
             "publisher": "model-registry",
         }
-        stable_key = f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-{run_fingerprint[:16]}"
-        create = client.request("POST", "/v1/runs", {
+        create_body = {
             "schema_version": 1,
             "run_type": "model_documentation",
             "commit_sha": git_sha.lower(),
@@ -633,7 +632,13 @@ def publish_model_documentation(
                 "source_path": documentation["source_path"],
                 "hero_source_path": hero["source_path"],
             },
-        }, f"{stable_key}-create")
+        }
+        invocation_identity = canonical_sha256(create_body)[:16]
+        stable_key = (
+            f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-"
+            f"{run_fingerprint[:16]}-{invocation_identity}"
+        )
+        create = client.request("POST", "/v1/runs", create_body, f"{stable_key}-create")
         run_id = _require_text(create.get("run_id"), "run_id")
         client.request("PUT", f"/v1/runs/{run_id}/parameters", {
             "parameters": parameters,

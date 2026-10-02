@@ -98,6 +98,35 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
 
 
+def test_publish_model_documentation_keys_bind_create_request_identity() -> None:
+    def create_keys(environment: str, github_run_url: str) -> list[str]:
+        calls: list[tuple[str, str, dict | None, str]] = []
+
+        def request(method: str, path: str, body: dict | None, key: str) -> dict:
+            calls.append((method, path, body, key))
+            return {"run_id": "00000000-0000-4000-8000-000000000001"} if path == "/v1/runs" else {"ok": True}
+
+        publish_model_documentation(
+            repository=ROOT,
+            api_url="https://writer.example.invalid",
+            aws_region="us-west-2",
+            bucket="model-artifacts",
+            kms_key_id=None,
+            environment=environment,
+            branch="develop",
+            git_sha="a" * 40,
+            github_run_url=github_run_url,
+            request=request,
+            artifact_store=FakeStore(),
+        )
+        return [key for method, path, _, key in calls if method == "POST" and path == "/v1/runs"]
+
+    first = create_keys("staging", "https://github.example.invalid/actions/runs/123")
+    assert first == create_keys("staging", "https://github.example.invalid/actions/runs/123")
+    assert first != create_keys("staging", "https://github.example.invalid/actions/runs/456")
+    assert first != create_keys("production", "https://github.example.invalid/actions/runs/123")
+
+
 def _packaged_result(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
     output = dist / "resnet_50" / "modalix_bf16" / "model"
