@@ -295,6 +295,18 @@ def test_model_readme_contract_rejects_headings_in_markdown_containers(tmp_path:
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
+@pytest.mark.parametrize("heading", ("<h2>Extra section</h2>", "<H3>Setup</H3>", "   <h6>Detail</h6>"))
+def test_model_readme_contract_rejects_raw_html_headings(tmp_path: Path, heading: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="H2 sections must be"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
 def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
@@ -346,7 +358,7 @@ def test_model_readme_contract_rejects_multiline_html_in_overview(tmp_path: Path
     (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
-    with pytest.raises(ValidationError, match="prose paragraphs only"):
+    with pytest.raises(ValidationError, match="H2 sections must be"):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 

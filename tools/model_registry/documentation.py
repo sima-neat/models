@@ -30,6 +30,7 @@ _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
 _CONTAINER_PREFIX_RE = re.compile(r"^ {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)")
+_RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[|<))"
 )
@@ -294,6 +295,10 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 previous_is_paragraph_text = False
                 continue
+        if _RAW_HTML_BLOCK_RE.match(line):
+            has_invalid_heading = True
+            previous_is_paragraph_text = False
+            continue
         nested_line, nested = _strip_markdown_containers(line)
         if nested and (
             _ATX_HEADING_RE.fullmatch(nested_line) or _SETEXT_HEADING_RE.fullmatch(nested_line)
