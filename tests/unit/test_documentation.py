@@ -138,6 +138,10 @@ def test_model_readme_contract_rejects_undecodable_hero_pixels(tmp_path: Path) -
     ("payload", "message"),
     [
         (_png(color_type=6, ancillary=((b"tRNS", b"\x00" * 6),)), "invalid PNG transparency chunk"),
+        (
+            _png(ancillary=((b"tRNS", b"\x00" * 6), (b"PLTE", b"\x00\x00\x00"))),
+            "invalid PNG transparency chunk",
+        ),
         (_png(ancillary=((b"tIME", b"\x00" * 7),)), "invalid PNG time chunk"),
     ],
 )
@@ -194,6 +198,16 @@ def test_model_readme_contract_rejects_pipe_table_without_leading_delimiter(tmp_
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="prose paragraphs only"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_rejects_setext_heading_in_overview(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview() + "\n---"), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
     with pytest.raises(ValidationError, match="prose paragraphs only"):

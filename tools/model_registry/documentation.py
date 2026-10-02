@@ -116,7 +116,10 @@ def _validate_ancillary_chunks(
     if transparency is None:
         return
     transparency_index, payload = transparency
-    if transparency_index > idat_index or color_type not in {0, 2, 3}:
+    if (
+        transparency_index > idat_index or color_type not in {0, 2, 3}
+        or (palette_index is not None and palette_index > transparency_index)
+    ):
         raise ValidationError(f"model hero image contains an invalid PNG transparency chunk: {hero}")
     maximum_sample = (1 << depth) - 1
     if color_type == 0:
@@ -235,6 +238,13 @@ def _is_markdown_table(lines: list[str]) -> bool:
     return False
 
 
+def _is_setext_heading(lines: list[str]) -> bool:
+    return any(
+        lines[index - 1].strip() and re.fullmatch(r"\s*(?:=+|-+)\s*", line)
+        for index, line in enumerate(lines[1:], start=1)
+    )
+
+
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
     hero = model_dir / HERO_FILENAME
     try:
@@ -305,7 +315,11 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     if not 50 <= word_count <= 120:
         raise ValidationError(f"model README Overview must contain 50 to 120 words, found {word_count}: {readme}")
     overview_lines = overview.splitlines()
-    if any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines) or _is_markdown_table(overview_lines):
+    if (
+        any(_OVERVIEW_FORBIDDEN_RE.match(line) for line in overview_lines)
+        or _is_markdown_table(overview_lines)
+        or _is_setext_heading(overview_lines)
+    ):
         raise ValidationError(f"model README Overview must contain prose paragraphs only: {readme}")
 
     try:
