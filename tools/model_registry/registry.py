@@ -777,15 +777,15 @@ def publish_catalog(
         "previous_snapshot": previous_snapshot,
         "catalog": document,
     }
+    snapshot_identity = canonical_sha256(snapshot)[:16]
     result = client.request(
         "POST",
         f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
         snapshot,
-        # The prior snapshot is part of the compare-and-swap request.  Include
-        # it in the idempotency key so a retry that appends newly published
-        # packages does not collide with an earlier request for the same Git
-        # revision but a different catalog body.
-        f"models-catalog-{branch}-{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}",
+        # Bind the key to the complete compare-and-swap request. Documentation
+        # receipt run IDs and incrementally published packages can differ across
+        # workflow dispatches even for the same branch and Git revision.
+        f"models-catalog-{branch}-{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
     )
     return {"catalog": document, "registry": result}
 

@@ -898,7 +898,43 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     ]
     assert calls[0][0:2] == ("POST", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40 + "/snapshots")
     assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "catalog": result["catalog"]}
-    assert calls[0][3] == "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16
+    assert calls[0][3] == (
+        "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16 + "-" + canonical_sha256(calls[0][2])[:16]
+    )
+
+
+def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": {"models": []}}
+    monkeypatch.setattr(
+        "model_registry.registry.publish_model_documentation",
+        lambda **kwargs: {"fixture": {"run_id": kwargs["github_run_url"].rsplit("/", 1)[-1]}},
+    )
+    monkeypatch.setattr(
+        "model_registry.registry.build_catalog_snapshot",
+        lambda **kwargs: {"documentation": kwargs["documentation_receipts"]},
+    )
+
+    def publish(github_run_url: str) -> None:
+        publish_catalog(
+            repository=ROOT,
+            api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid",
+            aws_region="us-west-2",
+            branch="develop",
+            git_sha="a" * 40,
+            bucket="artifacts",
+            environment="staging",
+            github_run_url=github_run_url,
+            request=lambda *args: calls.append(args) or {"stored": True},
+            read_request=lambda _: {"catalog": target_catalog},
+        )
+
+    publish("https://github.example.invalid/actions/runs/123")
+    publish("https://github.example.invalid/actions/runs/456")
+
+    assert calls[0][2] != calls[1][2]
+    assert calls[0][3] != calls[1][3]
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
