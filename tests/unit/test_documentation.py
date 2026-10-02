@@ -336,6 +336,8 @@ def test_model_readme_contract_rejects_headings_in_markdown_containers(tmp_path:
         "- item\n\n    ### Setup",
         "1. item\n\n    ## Setup",
         "- item\n\n    - nested item\n\n      #### Setup",
+        "- Unexpected\n  ---",
+        "1. Unexpected\n   ===",
     ),
 )
 def test_model_readme_contract_rejects_headings_on_list_continuation_lines(

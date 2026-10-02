@@ -361,10 +361,11 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        stripped = container_line.strip()
+        paragraph_line = nested_line if nested else container_line
+        stripped = paragraph_line.strip()
         previous_is_paragraph_text = bool(stripped) and not (
-            _is_indented_code(container_line) or _PARAGRAPH_EXCLUDED_RE.match(container_line)
-            or _THEMATIC_BREAK_RE.fullmatch(container_line)
+            _is_indented_code(paragraph_line) or _PARAGRAPH_EXCLUDED_RE.match(paragraph_line)
+            or _THEMATIC_BREAK_RE.fullmatch(paragraph_line)
         )
     return sections, has_invalid_heading
 
