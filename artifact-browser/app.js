@@ -1249,15 +1249,26 @@ function catalogModelForRun(run) {
   return state.models.find((model) => model.model_id === modelId) || null;
 }
 
+function documentationHeroUrl(documentation) {
+  const hero = documentation?.hero;
+  if (!hero?.artifact_name || !hero?.artifact_sha256 || !documentation?.run_id) return null;
+  return `${state.apiBase}/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(hero.artifact_name)}/content`;
+}
+
 function documentationPanel(model) {
   const documentation = model?.documentation;
   if (!documentation?.overview_markdown || !documentation?.run_id || !documentation?.artifact_sha256) return "";
   const expanded = state.expandedDocumentationModelId === model.model_id;
   const cacheKey = `${documentation.run_id}:${documentation.artifact_sha256}`;
   const fullMarkdown = state.documentationCache.get(cacheKey);
+  const heroUrl = documentationHeroUrl(documentation);
+  const resolveImage = (source) => source === documentation.hero?.markdown_path ? heroUrl : null;
+  const overviewHero = heroUrl
+    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
+    : "";
   const body = expanded && fullMarkdown
-    ? renderMarkdown(fullMarkdown, { stripTitle: true })
-    : renderMarkdown(documentation.overview_markdown);
+    ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage })
+    : `${overviewHero}${renderMarkdown(documentation.overview_markdown)}`;
   const label = expanded ? "Show overview only" : "Read full model card";
   return `<section class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title">
     <div class="detail-section-title"><h3 id="model-documentation-title">Model card</h3>${expanded ? `<button class="documentation-collapse" type="button" data-documentation-toggle aria-expanded="true" aria-controls="model-documentation-body">${label}</button>` : ""}</div>

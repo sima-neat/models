@@ -555,6 +555,7 @@ def test_build_fingerprint_ignores_model_documentation_and_non_benchmark_tests(c
     first = _fingerprint(catalog_repository, "alpha", "2.1.3")
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "README.md").write_text("documentation only\n", encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(b"documentation image only")
     (model_dir / "tests").mkdir()
     (model_dir / "tests" / "correctness.yaml").write_text("samples: 100\n", encoding="utf-8")
 
@@ -690,11 +691,12 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     assert plan["metadata_changed"] is True
 
 
-def test_semantic_plan_treats_readme_as_catalog_only(catalog_repository: Path) -> None:
-    readme = catalog_repository / "models" / "alpha" / "README.md"
-    readme.write_text("Initial model documentation.\n", encoding="utf-8")
+@pytest.mark.parametrize("filename", ["README.md", "hero.png"])
+def test_semantic_plan_treats_documentation_as_catalog_only(catalog_repository: Path, filename: str) -> None:
+    documentation = catalog_repository / "models" / "alpha" / filename
+    documentation.write_bytes(b"initial model documentation\n")
     base = _initialize_repository(catalog_repository)
-    readme.write_text("Revised model documentation.\n", encoding="utf-8")
+    documentation.write_bytes(b"revised model documentation\n")
     head = _commit(catalog_repository, "documentation")
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)

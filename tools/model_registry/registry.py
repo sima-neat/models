@@ -580,13 +580,28 @@ def publish_model_documentation(
             digest,
             media_type="text/markdown; charset=utf-8",
         )
+        hero = documentation["hero"]
+        stored_hero = store.ensure_native_sha256(
+            hero["path"],
+            f"models/{branch_key}/{git_sha.lower()}/documentation/{model_id}/{hero['markdown_path']}",
+            hero["sha256"],
+            media_type=hero["media_type"],
+        )
         parameters = {
-            "schema_version": 1,
+            "schema_version": 2,
             "model_id": model_id,
             "source_path": documentation["source_path"],
             "source_commit": git_sha.lower(),
             "readme_sha256": digest,
             "overview_markdown": documentation["overview_markdown"],
+            "hero": {
+                "source_path": hero["source_path"],
+                "markdown_path": hero["markdown_path"],
+                "alt_text": hero["alt_text"],
+                "sha256": stored_hero.sha256,
+                "size_bytes": stored_hero.size_bytes,
+                "media_type": hero["media_type"],
+            },
         }
         run_fingerprint = canonical_sha256(parameters)
         environment_document = {
@@ -595,7 +610,7 @@ def publish_model_documentation(
             "target_platform": "documentation",
             "publisher": "model-registry",
         }
-        stable_key = f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-{digest[:16]}"
+        stable_key = f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-{run_fingerprint[:16]}"
         create = client.request("POST", "/v1/runs", {
             "schema_version": 1,
             "run_type": "model_documentation",
@@ -616,6 +631,7 @@ def publish_model_documentation(
                 "model_id": model_id,
                 "artifact_kind": "model-readme",
                 "source_path": documentation["source_path"],
+                "hero_source_path": hero["source_path"],
             },
         }, f"{stable_key}-create")
         run_id = _require_text(create.get("run_id"), "run_id")
@@ -639,6 +655,21 @@ def publish_model_documentation(
                 "source_commit": git_sha.lower(),
             },
         }, f"{stable_key}-artifact")
+        client.request("PUT", f"/v1/runs/{run_id}/artifacts/{hero['artifact_name']}", {
+            "artifact_type": "model-readme-hero",
+            "s3_bucket": bucket,
+            "s3_key": stored_hero.key,
+            "s3_version_id": stored_hero.version_id,
+            "sha256": stored_hero.sha256,
+            "size_bytes": stored_hero.size_bytes,
+            "media_type": hero["media_type"],
+            "retention_class": "branch",
+            "metadata": {
+                "model_id": model_id,
+                "source_path": hero["source_path"],
+                "source_commit": git_sha.lower(),
+            },
+        }, f"{stable_key}-hero-artifact")
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
         receipts[model_id] = {
             "format": "markdown",
@@ -650,6 +681,15 @@ def publish_model_documentation(
             "media_type": "text/markdown; charset=utf-8",
             "source_path": documentation["source_path"],
             "source_commit": git_sha.lower(),
+            "hero": {
+                "artifact_name": hero["artifact_name"],
+                "markdown_path": hero["markdown_path"],
+                "alt_text": hero["alt_text"],
+                "artifact_sha256": stored_hero.sha256,
+                "size_bytes": stored_hero.size_bytes,
+                "media_type": hero["media_type"],
+                "source_path": hero["source_path"],
+            },
         }
     return receipts
 

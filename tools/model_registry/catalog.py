@@ -41,7 +41,7 @@ CALIBRATION_COMPILE_INPUT_PATHS = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-_IGNORED_MODEL_BUILD_NAMES = {"README.md"}
+_IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 3
@@ -52,14 +52,16 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _documentation_metadata(root: Path, catalog: dict[str, dict[str, Any]]) -> dict[str, str | None]:
-    metadata: dict[str, str | None] = {}
+def _documentation_metadata(root: Path, catalog: dict[str, dict[str, Any]]) -> dict[str, dict[str, str | None]]:
+    metadata: dict[str, dict[str, str | None]] = {}
     for model_id in sorted(catalog):
-        path = root / "models" / model_id / "README.md"
-        try:
-            metadata[model_id] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            metadata[model_id] = None
+        metadata[model_id] = {}
+        for name in ("README.md", "hero.png"):
+            path = root / "models" / model_id / name
+            try:
+                metadata[model_id][name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                metadata[model_id][name] = None
     return metadata
 
 
@@ -730,7 +732,7 @@ def semantic_change_plan(
     base_compile_schema = None
     base_validation_schema = None
     base_benchmark_schema = None
-    base_documentation: dict[str, str | None] = {}
+    base_documentation: dict[str, dict[str, str | None]] = {}
     try:
         with _revision_tree(root, base) as base_root:
             base_catalog = discover_catalog(base_root)

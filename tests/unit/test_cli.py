@@ -88,6 +88,7 @@ def test_validation_checks_complete_filename_length(command, filename_length, tm
         ]
         (model_dir / "README.md").write_text(
             f"# {model['display_name']}\n\n"
+            f"![{model['display_name']} model hero](hero.png)\n\n"
             + "\n\n".join(f"## {heading}\n\n{body}" for heading, body in sections)
             + "\n",
             encoding="utf-8",

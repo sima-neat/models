@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
@@ -12,11 +14,24 @@ def _readme(overview: str, *, title: str = "Fixture Model") -> str:
     for heading in REQUIRED_SECTIONS:
         body = overview if heading == "Overview" else f"Content for {heading.lower()}."
         sections.append(f"## {heading}\n\n{body}")
-    return f"# {title}\n\n" + "\n\n".join(sections) + "\n"
+    return f"# {title}\n\n![{title} model hero](hero.png)\n\n" + "\n\n".join(sections) + "\n"
 
 
 def _overview(words: int = 50) -> str:
     return " ".join(f"word{index}" for index in range(words))
+
+
+def _png(width: int = 1200, height: int = 480) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+    rows = b"".join(b"\x00" + b"\x22\x33\x44" * width for _ in range(height))
+    return b"".join((
+        b"\x89PNG\r\n\x1a\n",
+        chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)),
+        chunk(b"IDAT", zlib.compress(rows)),
+        chunk(b"IEND", b""),
+    ))
 
 
 def test_repository_model_readmes_follow_the_documentation_contract() -> None:
@@ -31,12 +46,14 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
         documentation = load_model_documentation(model_dir, display_name, repository=root)
         assert documentation["source_path"] == f"models/{model_dir.name}/README.md"
         assert len(documentation["readme_sha256"]) == 64
+        assert documentation["hero"]["source_path"] == f"models/{model_dir.name}/hero.png"
 
 
 @pytest.mark.parametrize(
     ("markdown", "message"),
     [
         (_readme(_overview(), title="Wrong title"), "H1 must exactly match"),
+        (_readme(_overview()).replace("(hero.png)", "(https://example.invalid/hero.png)"), "must begin with H1"),
         (_readme(_overview()).replace("## Usage", "## How to use"), "H2 sections must be"),
         (_readme(_overview(49)), "50 to 120 words"),
         (_readme(_overview(121)), "50 to 120 words"),
@@ -49,6 +66,17 @@ def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
 
     with pytest.raises(ValidationError, match=message):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_rejects_wrong_hero_dimensions(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png(600, 240))
+
+    with pytest.raises(ValidationError, match="must be 1200x480"):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)

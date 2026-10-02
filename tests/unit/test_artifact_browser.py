@@ -121,9 +121,14 @@ def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None
     assert 'aria-expanded="${expanded}"' in script
     assert "Read full model card" in script
     assert "Show overview only" in script
+    assert "documentationHeroUrl" in script
+    assert "documentation.hero?.markdown_path" in script
     assert "linear-gradient(to bottom, transparent" in styles
+    assert ".model-card-hero" in styles
     assert "SAFE_LINK" in renderer
     assert "escapeHtml" in renderer
+    assert "resolveImage" in renderer
+    assert 'loading="lazy"' in renderer
     assert "export function renderMarkdown" in renderer
 
 

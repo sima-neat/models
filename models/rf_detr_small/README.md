@@ -1,5 +1,7 @@
 # RF-DETR Small 512x512
 
+![RF-DETR Small 512x512 model hero](hero.png)
+
 ## Overview
 
 RF-DETR Small is a COCO object detector that accepts a normalized 512×512 RGB

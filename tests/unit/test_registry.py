@@ -75,13 +75,15 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     )
 
     assert set(receipts) == set(discover_catalog(ROOT))
-    assert len(store.objects) == len(receipts)
-    assert len(calls) == len(receipts) * 4
+    assert len(store.objects) == len(receipts) * 2
+    assert len(calls) == len(receipts) * 5
     for model_id, receipt in receipts.items():
         assert receipt["format"] == "markdown"
         assert receipt["artifact_name"] == "readme"
         assert receipt["source_path"] == f"models/{model_id}/README.md"
         assert receipt["source_commit"] == "a" * 40
+        assert receipt["hero"]["source_path"] == f"models/{model_id}/hero.png"
+        assert receipt["hero"]["media_type"] == "image/png"
         assert 50 <= len(receipt["overview_markdown"].split()) <= 120
     assert all("feat%2Fmodel%20cards" in key for _, key, _, _ in store.objects)
     artifact_calls = [call for call in calls if call[0:2] != ("POST", "/v1/runs") and "/artifacts/" in call[1]]
@@ -89,8 +91,10 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     assert all(call[2]["parameters"]["overview_markdown"] in {
         receipt["overview_markdown"] for receipt in receipts.values()
     } for call in parameter_calls)
-    assert all(call[2]["artifact_type"] == "model-readme" for call in artifact_calls)
-    assert all(call[2]["media_type"] == "text/markdown; charset=utf-8" for call in artifact_calls)
+    assert all(call[2]["parameters"]["hero"]["markdown_path"] == "hero.png" for call in parameter_calls)
+    assert all(call[2]["parameters"]["hero"]["alt_text"].endswith(" model hero") for call in parameter_calls)
+    assert {call[2]["artifact_type"] for call in artifact_calls} == {"model-readme", "model-readme-hero"}
+    assert {call[2]["media_type"] for call in artifact_calls} == {"text/markdown; charset=utf-8", "image/png"}
     assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
 
 

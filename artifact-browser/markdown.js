@@ -35,7 +35,7 @@ function isTableDivider(line, columns) {
   return cells.length === columns && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-export function renderMarkdown(markdown, { stripTitle = false } = {}) {
+export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null } = {}) {
   let lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
   const output = [];
@@ -43,6 +43,15 @@ export function renderMarkdown(markdown, { stripTitle = false } = {}) {
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
+    const image = /^!\[([^\]\n]+)\]\(([^)\s]+)\)$/.exec(line.trim());
+    if (image) {
+      const source = typeof resolveImage === "function" ? resolveImage(image[2]) : null;
+      output.push(source
+        ? `<figure class="model-card-hero"><img src="${escapeHtml(source)}" alt="${escapeHtml(image[1])}" loading="lazy" decoding="async" /></figure>`
+        : `<p>${escapeHtml(image[1])}</p>`);
+      index += 1;
+      continue;
+    }
     const fence = /^```([A-Za-z0-9_-]*)\s*$/.exec(line);
     if (fence) {
       const code = [];
@@ -91,7 +100,7 @@ export function renderMarkdown(markdown, { stripTitle = false } = {}) {
     const paragraph = [line.trim()];
     index += 1;
     while (index < lines.length && lines[index].trim()
-      && !/^(?:#{2,4}\s+|```|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
+      && !/^(?:#{2,4}\s+|```|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
       if (lines[index].includes("|") && index + 1 < lines.length
         && isTableDivider(lines[index + 1], tableRow(lines[index]).length)) break;
       paragraph.push(lines[index].trim());

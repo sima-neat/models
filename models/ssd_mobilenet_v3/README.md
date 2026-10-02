@@ -1,5 +1,7 @@
 # SSD-MobileNet V3 Large 320x320
 
+![SSD-MobileNet V3 Large 320x320 model hero](hero.png)
+
 ## Overview
 
 SSD-MobileNet V3 Large is a TorchVision COCO object detector that accepts a

@@ -301,6 +301,8 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .model-documentation-body code { padding: 2px 5px; background: var(--surface); font: 12px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 .model-documentation-body pre { max-width: 100%; overflow: auto; margin: 15px 0; padding: 15px; background: var(--surface); }
 .model-documentation-body pre code { padding: 0; background: transparent; white-space: pre; }
+.model-card-hero { aspect-ratio: 5 / 2; max-width: 100%; overflow: hidden; margin: 0 0 20px; border: 1px solid var(--line); background: var(--surface); }
+.model-card-hero img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .model-card-table { max-width: 100%; overflow-x: auto; margin: 15px 0 18px; }
 .model-card-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .model-card-table th, .model-card-table td { padding: 9px 11px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
