@@ -435,6 +435,20 @@ def test_model_readme_contract_ignores_h2_inside_fenced_code(tmp_path: Path, mar
     assert documentation["source_path"] == "models/fixture/README.md"
 
 
+def test_model_readme_contract_keeps_active_fence_content_opaque(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace(
+        "Content for usage.", "````text\n- ```\n## not a section\n````",
+    )
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+    assert documentation["source_path"] == "models/fixture/README.md"
+
+
 @pytest.mark.parametrize(
     "block",
     (

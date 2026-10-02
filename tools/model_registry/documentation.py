@@ -275,6 +275,31 @@ def _strip_markdown_containers(line: str) -> tuple[str, bool]:
     return line, nested
 
 
+def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
+    containers: list[tuple[str, int]] = []
+    while True:
+        if match := re.match(r"^ {0,3}>[ \t]?", line):
+            containers.append(("blockquote", 0))
+            line = line[match.end():]
+            continue
+        if match := _LIST_ITEM_RE.match(line):
+            indent = _column_width(line[:match.end()])
+            containers.append(("list", indent))
+            line = line[match.end():]
+            continue
+        return line, containers
+
+
+def _strip_expected_containers(line: str, containers: list[tuple[str, int]]) -> str:
+    for kind, indent in containers:
+        if kind == "blockquote":
+            if match := re.match(r"^ {0,3}>[ \t]?", line):
+                line = line[match.end():]
+        elif _leading_columns(line) >= indent:
+            line = _strip_columns(line, indent)
+    return line
+
+
 def _column_width(text: str) -> int:
     column = 0
     for character in text:
@@ -301,14 +326,27 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     has_invalid_heading = False
     fence_character = None
     fence_length = 0
+    fence_outer_indent = 0
+    fence_containers: list[tuple[str, int]] = []
     previous_is_paragraph_text = False
     current_section = None
     list_indents: list[int] = []
     for index, line in enumerate(lines):
+        if fence_character is not None:
+            container_line = (
+                _strip_columns(line, fence_outer_indent)
+                if fence_outer_indent and _leading_columns(line) >= fence_outer_indent else line
+            )
+            markdown_line = _strip_expected_containers(container_line, fence_containers)
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line):
+                fence_character = None
+            previous_is_paragraph_text = False
+            continue
         if line.strip():
             indentation = _leading_columns(line)
             while list_indents and indentation < list_indents[-1]:
                 list_indents.pop()
+        existing_list_indent = list_indents[-1] if list_indents else 0
         container_line = _strip_columns(line, list_indents[-1]) if list_indents else line
         if list_item := _LIST_ITEM_RE.match(container_line):
             base_indent = list_indents[-1] if list_indents else 0
@@ -317,17 +355,14 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 list_indents.append(content_indent)
         nested_line, nested = _strip_markdown_containers(container_line)
         markdown_line = nested_line if nested else container_line
-        if fence_character is not None:
-            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line):
-                fence_character = None
-            previous_is_paragraph_text = False
-            continue
         fence = _FENCE_OPEN_RE.fullmatch(markdown_line)
         if fence is not None:
             marker, info = fence.groups()
             if marker[0] == "~" or "`" not in info:
                 fence_character = marker[0]
                 fence_length = len(marker)
+                fence_outer_indent = existing_list_indent
+                _, fence_containers = _markdown_container_stack(container_line)
                 previous_is_paragraph_text = False
                 continue
         if _RAW_HTML_BLOCK_RE.match(markdown_line):
