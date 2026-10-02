@@ -28,6 +28,7 @@ _ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
+_PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
 )
@@ -304,7 +305,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             continue
         stripped = line.strip()
         previous_is_paragraph_text = bool(stripped) and not (
-            _is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
+            _is_indented_code(line) or _PARAGRAPH_EXCLUDED_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
         )
     return sections, has_invalid_heading
 

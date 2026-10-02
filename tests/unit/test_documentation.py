@@ -241,6 +241,23 @@ def test_model_readme_contract_rejects_setext_h2_outside_overview(tmp_path: Path
 
 @pytest.mark.parametrize(
     "heading",
+    ("<em>Unexpected</em>", "[Unexpected](https://example.invalid)", "**Unexpected**", "![Unexpected](hero.png)"),
+)
+def test_model_readme_contract_recognizes_inline_markup_in_setext_h2(tmp_path: Path, heading: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace(
+        "Content for usage.", f"Content for usage.\n\n{heading}\n---\n\nUnexpected content.",
+    )
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="H2 sections must be"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "heading",
     ("# Extra title", "##", "### Setup", "   ###", "   ### Setup", "#### Setup", "Unexpected section\n==="),
 )
 def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, heading: str) -> None:
