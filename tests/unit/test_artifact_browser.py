@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -21,6 +22,7 @@ def test_artifact_browser_assets_exist() -> None:
         "index.html",
         "app.js",
         "benchmark-adapters.js",
+        "branch-builds.js",
         "downloads.js",
         "styles.css",
         "config.js",
@@ -99,7 +101,7 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
     assert "process.env.GITHUB_SHA" in assemble
-    for asset in ("app", "benchmark-adapters", "downloads", "styles", "config"):
+    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "styles", "config"):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble
@@ -181,6 +183,28 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "state.runs[0]?.id" not in script
 
 
+def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'const branchSnapshot = history === "latest" && branch !== "all"' in script
+    assert 'const categories = branchSnapshot ? [] :' in script
+    assert 'const search = branchSnapshot ? "" :' in script
+    assert 'const compiler = branchSnapshot ? "any" :' in script
+    assert 'if (branchSnapshotMode()) return;' in script
+    assert 'if (branchSnapshotMode()) {\n    renderRuns();\n    return;\n  }' in script
+
+
+def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    branch_change = script.split('elements["branch-filter"].addEventListener("change", async () => {', 1)[1]
+    branch_change = branch_change.split('elements["compiler-filter"].addEventListener', 1)[0]
+
+    assert 'await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);\n  } catch (error) {' in branch_change
+    assert 'setCategoryFiltersDisabled(true);' in branch_change
+    assert 'if (navigationId !== state.navigationId) return;\n  try {\n    await loadRuns({ branch: state.preferredBranch });' in branch_change
+    assert 'elements[elementId].disabled ? "" :' in script
+
+
 def test_cached_build_history_preserves_run_mode() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -205,9 +229,47 @@ def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
 def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
-    assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
+    assert "navigationId === state.navigationId && state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in script
     assert "state.detailCache.get(runId)?.summary?.run" in script
+
+
+def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert 'const currentPackage = fullPackageForRun(detail.summary.run);' in select_run
+    assert 'detail.packageSummary?.run?.id !== currentPackage.run_id' in select_run
+    assert 'currentPackage.run_id !== requestedPackageId' in select_run
+    assert 'detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);' in select_run
+
+
+def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in select_run
+    assert 'url.searchParams.set("branch", branch);' not in select_run
+    assert 'state.urlBranch = link.has("branch")' in script
+
+
+def test_all_branches_selection_has_an_explicit_url_value() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'url.searchParams.set("branch", state.preferredBranch);' in script
+    assert 'resetUrl.searchParams.set("branch", resetBranch);' in script
+    assert 'searchParams.delete("branch")' not in script
+
+
+def test_browser_history_restores_category_filters_and_empty_detail() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
+
+    assert 'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""])' in initialize
+    assert "state.taxonomy = null" in initialize
+    assert "if (state.selectedId) detailSkeleton();\n  else showEmptyDetail();" in initialize
+    assert "if (state.taxonomy) populateCategoryFilters();" in initialize
+    assert 'window.addEventListener("popstate", () => {' in script
 
 
 def test_detail_error_can_be_retried_and_closed() -> None:
@@ -311,10 +373,13 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert 'id="history-filter" type="checkbox" role="switch"' in html
     assert "Switches from models to chronological build runs." in html
     assert "Show build history" in html
-    assert 'historical ? "runs" : "models"' in script
+    assert 'if (historical) {' in script
+    assert 'allPages(api, `${base}/runs`, compileQuery, "runs")' in script
+    assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
+    assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
     assert 'query.set("run_type", "model_compile")' in script
-    assert 'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
-    assert 'initialQuery.get("history") === "1"' in script
+    assert 'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
+    assert 'link.get("history") === "1"' in script
     assert 'url.searchParams.set("history", "1")' in script
     assert 'elements["history-filter"].checked = false' in script
     assert ".switch-row input:checked + i" in styles
@@ -614,8 +679,8 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
     assert "build.toolchain_version === compiler" in script
-    assert 'query.set("toolchain_version", elements["compiler-filter"].value)' in script
-    assert "selectedCompiler,\n    ...state.runs.map((run) => run.toolchain_version)" in script
+    assert 'branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
+    assert "...state.branchRuns.map((run) => run.toolchain_version)" in script
     assert "payload.models.flatMap" not in script
     assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
     assert ".model-row.selected" in styles
@@ -714,3 +779,65 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
     assert "PREVIEW_RUNS = (" in server
     assert "range(len(PREVIEW_RUNS))" in server
     assert "127\\.0\\.0\\.1|localhost" in script
+
+
+def test_branch_cards_use_only_coherent_branch_runs_and_matching_packages() -> None:
+    script = r"""
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const source = readFileSync('./artifact-browser/branch-builds.js', 'utf8');
+const {allPages, branchModels} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+
+const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01T12:00:00Z') => ({
+  id, run_type: 'model_compile', status: 'completed',
+  git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: workflow,
+  toolchain_version: version, target_platform: 'modalix', finished_at: time,
+  metadata: {model_id: model, build_profile_id: 'modalix_int8_bf16', component_id: component, github_run_id: workflow},
+});
+const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
+                 run('transformer', 'rf_detr_small', 'transformer', 'workflow-2')];
+const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
+             run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
+const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
+  {run_id: 'stale-backbone', build_profile_id: 'modalix_int8_bf16', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
+  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16'},
+]},
+                 {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
+const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
+  git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
+  model_id: 'rf_detr_small', build_profile_id: 'modalix_int8_bf16', component_run_ids: components,
+}});
+const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transformer'}),
+                  packageRun('wrong', {backbone: 'backbone', transformer: 'old-transformer'})];
+const models = branchModels([...old, ...current], packages, catalog);
+assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
+assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
+assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_int8', 'transformer_bf16']);
+assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
+assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
+assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
+                 ['old-backbone', 'old-transformer']);
+const sameCompilerOld = [run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
+                         run('same-old-transformer', 'rf_detr_small', 'transformer', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
+assert.deepEqual(branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
+                 ['backbone', 'transformer']);
+assert.deepEqual(branchModels([], packages, catalog), []);
+assert.deepEqual(branchModels([{...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_benchmark'}], [], catalog), []);
+const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
+  .map(model => run(model, model, 'model', model));
+assert.equal(branchModels(develop, [], catalog).length, 6);
+const calls = [];
+const definitions = await allPages(async path => {
+  calls.push(path);
+  return calls.length === 1
+    ? {models: [{model_id: 'first'}], has_more: true, next_cursor: 'page-2'}
+    : {models: [{model_id: 'second'}], has_more: false};
+}, '/models', new URLSearchParams({git_ref: 'refs/heads/develop', limit: '100'}), 'models');
+assert.deepEqual(definitions.map(model => model.model_id), ['first', 'second']);
+assert.equal(calls.length, 2);
+assert.match(calls[1], /cursor=page-2/);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )

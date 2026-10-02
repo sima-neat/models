@@ -1,10 +1,12 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from model_registry import core_benchmark
 from model_registry.benchmark_publication import load_benchmark_result
-from model_registry.core_benchmark import import_core_benchmark
+from model_registry.core_benchmark import _require_internals_runtime, import_core_benchmark
 from model_registry.errors import ValidationError
 
 
@@ -50,7 +52,7 @@ def package(core_inputs, tmp_path):
         schema_path=Path(__file__).resolve().parents[2] / "schemas/performance-result-v5.schema.json",
         environment={
             "buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = B1800\n",
-            "packages": {"neat-internals": "0.5.0+test"},
+            "packages": {"neat-runtime": "0.5.0+test"},
             "runner": "test",
             "fingerprint_version": 2,
             "kernel_release": "test",
@@ -63,6 +65,61 @@ def package(core_inputs, tmp_path):
     return load_benchmark_result(
         output, Path(__file__).resolve().parents[2] / "schemas/performance-result-v5.schema.json"
     )
+
+
+@pytest.mark.parametrize(
+    "packages",
+    [
+        {"neat-runtime": "0.5.0+release-3.0.0-prep.464889585182"},
+        {"neat-runtime:arm64": "0.5.0+release-3.0.0-prep.464889585182"},
+    ],
+)
+def test_accepts_versioned_internals_runtime_package(packages):
+    _require_internals_runtime(packages)
+
+
+@pytest.mark.parametrize(
+    "packages",
+    [
+        {},
+        {"neat-runtime": ""},
+        {"neat-internals": "0.4.0+legacy"},
+        {"neat-internals-dev": "0.5.0+test"},
+        {"sima-neat": "0.4.0+test"},
+    ],
+)
+def test_rejects_missing_internals_runtime_package(packages):
+    with pytest.raises(ValidationError, match="installed Neat Internals version"):
+        _require_internals_runtime(packages)
+
+
+def test_runner_environment_records_only_installed_packages(monkeypatch):
+    package_output = "\n".join([
+        "ii \tneat-runtime:arm64\t0.5.0+release-3.0.0-prep.464889585182",
+        "ii \tsima-neat\t0.4.0+release-3.0.0-prep.02a5ca96b124",
+        "rc \tneat-gst-plugins\t0.4.0+removed",
+        "un \tneat-internals\t",
+    ])
+
+    def run(command, **kwargs):
+        assert command == [
+            "dpkg-query", "-W",
+            "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n",
+            "*neat*",
+        ]
+        assert kwargs == {"capture_output": True, "text": True, "check": True}
+        return SimpleNamespace(stdout=package_output)
+
+    monkeypatch.setattr(Path, "read_text", lambda self, encoding: "DISTRO_VERSION = 3.0.0\nBUILD = B1800\n")
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    monkeypatch.setattr(core_benchmark.subprocess, "run", run)
+
+    environment = core_benchmark.runner_environment()
+
+    assert environment["packages"] == {
+        "neat-runtime:arm64": "0.5.0+release-3.0.0-prep.464889585182",
+        "sima-neat": "0.4.0+release-3.0.0-prep.02a5ca96b124",
+    }
 
 
 def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp_path):

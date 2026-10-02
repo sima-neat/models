@@ -15,7 +15,7 @@ const revision = (
   || execFileSync('git', ['rev-parse', 'HEAD'], {cwd: repository, encoding: 'utf8'}).trim()
 ).slice(0, 12);
 
-const fingerprintedAssets = ['app', 'benchmark-adapters', 'downloads', 'styles', 'config'];
+const fingerprintedAssets = ['app', 'benchmark-adapters', 'branch-builds', 'downloads', 'styles', 'config'];
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
@@ -37,6 +37,7 @@ writeFileSync(join(output, 'index.html'), browserHtml);
 const applicationPath = join(output, `app.${revision}.js`);
 const application = readFileSync(applicationPath, 'utf8')
   .replace('./benchmark-adapters.js', `./benchmark-adapters.${revision}.js`)
+  .replace('./branch-builds.js', `./branch-builds.${revision}.js`)
   .replace('./downloads.js', `./downloads.${revision}.js`);
 writeFileSync(applicationPath, application);
 

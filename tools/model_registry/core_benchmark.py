@@ -35,18 +35,31 @@ UNAVAILABLE_UNITS = {
 }
 
 
+def _require_internals_runtime(installed: dict[str, str]) -> None:
+    """Require a versioned Internals runtime package in the dpkg inventory."""
+    if any(
+        name.partition(":")[0] == "neat-runtime" and version.strip()
+        for name, version in installed.items()
+    ):
+        return
+    raise ValidationError("could not establish installed Neat Internals version")
+
+
 def runner_environment() -> dict[str, Any]:
     """Record installation identity, without taking performance measurements."""
     buildinfo = Path("/etc/buildinfo").read_text(encoding="utf-8")
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n", "*neat*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*"],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    installed = dict(line.split("\t", 1) for line in packages.splitlines() if "\t" in line)
-    if not any("internals" in name for name in installed):
-        raise ValidationError("could not establish installed Neat Internals version")
+    installed = {}
+    for line in packages.splitlines():
+        fields = line.split("\t", 2)
+        if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
+            installed[fields[1]] = fields[2]
+    _require_internals_runtime(installed)
     return {
         "buildinfo": buildinfo,
         "packages": installed,

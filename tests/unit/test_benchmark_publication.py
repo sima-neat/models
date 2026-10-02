@@ -75,6 +75,25 @@ def valid_result(tmp_path: Path) -> Path:
     return path
 
 
+def core_result(tmp_path: Path) -> Path:
+    path = valid_result(tmp_path)
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["schema_version"] = 5
+    result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
+    result["identity"]["canonicalization_version"] = 5
+    result["metrics"]["throughput_fps"]["unit"] = "inferences/s"
+    result["core_report"] = {
+        "core_version": "3.0.0",
+        "latency_ms": 3.6,
+        "fps": 460.0,
+        "avg_power_watts": 8.5,
+        "energy_joules": 1.0,
+    }
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    path.write_text(json.dumps(result), encoding="utf-8")
+    return path
+
+
 def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = True) -> Path:
     path = valid_result(tmp_path)
     result = json.loads(path.read_text(encoding="utf-8"))
@@ -254,6 +273,65 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v4.json")
+
+
+def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> None:
+    path = core_result(tmp_path)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        if endpoint == "/v1/runs":
+            return {"run_id": BENCHMARK_RUN_ID}
+        return {"ok": True}
+
+    publish_benchmark_result(
+        result_path=path,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        request=request,
+        artifact_store=FakeStore(),
+    )
+
+    body = next(body for _, endpoint, body, _ in calls if endpoint.endswith("/measurements/batch"))
+    assert body is not None
+    throughput = next(item for item in body["measurements"] if item["measurement_key"].endswith("-throughput_fps"))
+    assert throughput["name"] == "model.inference_rate"
+    assert throughput["unit"] == "inferences/s"
+
+
+@pytest.mark.parametrize(
+    ("version", "unit", "expected_unit"),
+    [(4, "inferences/s", "fps"), (5, "fps", "inferences/s")],
+)
+def test_rejects_throughput_unit_that_does_not_match_schema(
+    tmp_path: Path, version: int, unit: str, expected_unit: str
+) -> None:
+    path = core_result(tmp_path) if version == 5 else valid_result(tmp_path)
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["metrics"]["throughput_fps"]["unit"] = unit
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    path.write_text(json.dumps(result), encoding="utf-8")
+
+    with pytest.raises(
+        ValidationError,
+        match=f"schema v{version} requires throughput_fps unit {expected_unit!r}",
+    ):
+        publish_benchmark_result(
+            result_path=path,
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            environment="staging",
+            branch="feature/benchmark",
+            git_sha="a" * 40,
+            request=lambda *_: {},
+            artifact_store=FakeStore(),
+        )
 
 
 def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:
