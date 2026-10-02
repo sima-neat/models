@@ -391,7 +391,7 @@ function categoryFilters() {
   return Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [
       queryName,
-      state.taxonomy ? elements[elementId].value : state.categorySelection[elementId],
+      elements[elementId].disabled ? "" : (state.taxonomy ? elements[elementId].value : state.categorySelection[elementId]),
     ]),
   );
 }
@@ -1694,7 +1694,13 @@ elements["branch-filter"].addEventListener("change", async () => {
   updateFilterDisclosure();
   try {
     await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);
+  } catch (error) {
     if (navigationId !== state.navigationId) return;
+    setCategoryFiltersDisabled(true);
+    showToast(`Category filters are temporarily unavailable. ${error.message}`, true);
+  }
+  if (navigationId !== state.navigationId) return;
+  try {
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
     showToast(error.message, true);

@@ -194,6 +194,17 @@ def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
     assert 'if (branchSnapshotMode()) {\n    renderRuns();\n    return;\n  }' in script
 
 
+def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    branch_change = script.split('elements["branch-filter"].addEventListener("change", async () => {', 1)[1]
+    branch_change = branch_change.split('elements["compiler-filter"].addEventListener', 1)[0]
+
+    assert 'await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);\n  } catch (error) {' in branch_change
+    assert 'setCategoryFiltersDisabled(true);' in branch_change
+    assert 'if (navigationId !== state.navigationId) return;\n  try {\n    await loadRuns({ branch: state.preferredBranch });' in branch_change
+    assert 'elements[elementId].disabled ? "" :' in script
+
+
 def test_cached_build_history_preserves_run_mode() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
