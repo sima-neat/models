@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import stat
 import struct
 import zlib
 from pathlib import Path
@@ -418,10 +419,30 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     return sections, has_invalid_heading
 
 
+def _repository_regular_file(path: Path, repository: Path, description: str) -> str:
+    repository = repository.absolute()
+    path = path.absolute()
+    try:
+        relative = path.relative_to(repository)
+    except ValueError as exc:
+        raise ValidationError(f"{description} must be inside the repository: {path}") from exc
+    current = repository
+    try:
+        for part in relative.parts:
+            current /= part
+            mode = current.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                raise ValidationError(f"{description} path must not contain symlinks: {path}")
+        if not stat.S_ISREG(mode):
+            raise ValidationError(f"{description} must be a regular file: {path}")
+    except OSError as exc:
+        raise ValidationError(f"could not inspect {description} {path}: {exc}") from exc
+    return relative.as_posix()
+
+
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
     hero = model_dir / HERO_FILENAME
-    if hero.is_symlink():
-        raise ValidationError(f"model hero image must be a regular file, not a symlink: {hero}")
+    source_path = _repository_regular_file(hero, repository, "model hero image")
     try:
         payload = hero.read_bytes()
     except OSError as exc:
@@ -429,10 +450,6 @@ def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str
     if not payload or len(payload) > MAX_HERO_BYTES:
         raise ValidationError(f"model hero image must contain between 1 and {MAX_HERO_BYTES} bytes: {hero}")
     _validate_png(payload, hero)
-    try:
-        source_path = hero.relative_to(repository).as_posix()
-    except ValueError as exc:
-        raise ValidationError(f"model hero image must be inside the repository: {hero}") from exc
     return {
         "artifact_name": "hero",
         "markdown_path": HERO_FILENAME,
@@ -447,8 +464,7 @@ def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str
 
 def load_model_documentation(model_dir: Path, display_name: str, *, repository: Path) -> dict[str, Any]:
     readme = model_dir / "README.md"
-    if readme.is_symlink():
-        raise ValidationError(f"model README must be a regular file, not a symlink: {readme}")
+    source_path = _repository_regular_file(readme, repository, "model README")
     try:
         payload = readme.read_bytes()
     except OSError as exc:
@@ -508,10 +524,6 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     ):
         raise ValidationError(f"model README Overview must contain prose paragraphs only: {readme}")
 
-    try:
-        source_path = readme.relative_to(repository).as_posix()
-    except ValueError as exc:
-        raise ValidationError(f"model README must be inside the repository: {readme}") from exc
     documentation = {
         "format": "markdown",
         "overview_markdown": overview,

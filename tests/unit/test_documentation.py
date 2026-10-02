@@ -146,7 +146,21 @@ def test_model_readme_contract_rejects_symlinked_documentation_asset(tmp_path: P
     else:
         other_asset.write_bytes(_png())
 
-    with pytest.raises(ValidationError, match="regular file, not a symlink"):
+    with pytest.raises(ValidationError, match="path must not contain symlinks"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_rejects_symlinked_model_directory(tmp_path: Path) -> None:
+    external_model_dir = tmp_path / "external" / "fixture"
+    external_model_dir.mkdir(parents=True)
+    (external_model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (external_model_dir / "hero.png").write_bytes(_png())
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    model_dir = models_dir / "fixture"
+    model_dir.symlink_to(external_model_dir, target_is_directory=True)
+
+    with pytest.raises(ValidationError, match="path must not contain symlinks"):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
