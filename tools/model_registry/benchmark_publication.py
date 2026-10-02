@@ -37,6 +37,10 @@ REGISTRY_AGGREGATIONS = {
     "p99",
     "sum",
 }
+THROUGHPUT_METRIC_NAMES = {
+    "fps": "model.throughput",
+    "inferences/s": "model.inference_rate",
+}
 
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
@@ -199,6 +203,12 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         metric = result["metrics"].get(field)
         if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
             continue
+        if field == "throughput_fps":
+            unit = metric["unit"]
+            try:
+                name = THROUGHPUT_METRIC_NAMES[unit]
+            except KeyError as exc:
+                raise ValidationError(f"benchmark metric {field} uses unsupported throughput unit {unit!r}") from exc
         result_aggregation = metric["aggregation"]
         aggregation = REGISTRY_AGGREGATION_ALIASES.get(result_aggregation, result_aggregation)
         if aggregation not in REGISTRY_AGGREGATIONS:
