@@ -108,6 +108,9 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(45) + " ![five alt words are not prose](hero.png)"), "prose paragraphs only"),
         (_readme(_overview(49) + " ![diagram]"), "prose paragraphs only"),
         (_readme(_overview(45) + r" \\![five alt words are not prose](hero.png)"), "prose paragraphs only"),
+        (_readme(_overview(49) + " <!-- maintainer note -->"), "prose paragraphs only"),
+        (_readme(_overview(49) + " <h3>Internal</h3>"), "prose paragraphs only"),
+        (_readme(_overview(49) + r" \\<!--note-->"), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
 )
@@ -136,6 +139,26 @@ def test_model_readme_contract_accepts_autolink_on_its_own_line(tmp_path: Path, 
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace("Content for usage.", autolink)
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_autolink_in_overview(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(
+        _readme(_overview(49) + "\n<https://huggingface.co/example>"), encoding="utf-8",
+    )
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_escaped_html_syntax_in_overview(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview(49) + r" \<!--note-->"), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
     load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
