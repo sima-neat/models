@@ -85,6 +85,55 @@ def _validate_indexed_pixels(
             offset += row_bytes + 1
 
 
+def _valid_png_time(payload: bytes) -> bool:
+    if len(payload) != 7:
+        return False
+    year = struct.unpack(">H", payload[:2])[0]
+    month, day, hour, minute, second = payload[2:]
+    leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    month_days = (31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    return (
+        year > 0 and 1 <= month <= 12 and 1 <= day <= month_days[month - 1]
+        and hour <= 23 and minute <= 59 and second <= 60
+    )
+
+
+def _validate_ancillary_chunks(
+    chunks: list[tuple[bytes, bytes]], color_type: int, depth: int,
+    idat_index: int, palette_index: int | None, palette_entries: int, hero: Path,
+) -> None:
+    ancillary = [(index, kind, data) for index, (kind, data) in enumerate(chunks) if kind[0] & 0x20]
+    unsupported = [kind for _, kind, _ in ancillary if kind not in {b"tIME", b"tRNS"}]
+    if unsupported:
+        raise ValidationError(f"model hero image contains an unsupported PNG ancillary chunk: {hero}")
+    for kind in (b"tIME", b"tRNS"):
+        if sum(chunk_kind == kind for _, chunk_kind, _ in ancillary) > 1:
+            raise ValidationError(f"model hero image contains a duplicate PNG ancillary chunk: {hero}")
+    time_payload = next((data for _, kind, data in ancillary if kind == b"tIME"), None)
+    if time_payload is not None and not _valid_png_time(time_payload):
+        raise ValidationError(f"model hero image contains an invalid PNG time chunk: {hero}")
+    transparency = next(((index, data) for index, kind, data in ancillary if kind == b"tRNS"), None)
+    if transparency is None:
+        return
+    transparency_index, payload = transparency
+    if transparency_index > idat_index or color_type not in {0, 2, 3}:
+        raise ValidationError(f"model hero image contains an invalid PNG transparency chunk: {hero}")
+    maximum_sample = (1 << depth) - 1
+    if color_type == 0:
+        valid = len(payload) == 2 and struct.unpack(">H", payload)[0] <= maximum_sample
+    elif color_type == 2:
+        valid = len(payload) == 6 and all(
+            struct.unpack(">H", payload[index:index + 2])[0] <= maximum_sample for index in range(0, 6, 2)
+        )
+    else:
+        valid = (
+            palette_index is not None and palette_index < transparency_index
+            and 1 <= len(payload) <= palette_entries
+        )
+    if not valid:
+        raise ValidationError(f"model hero image contains an invalid PNG transparency chunk: {hero}")
+
+
 def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
     if payload[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValidationError(f"model hero image must be a PNG: {hero}")
@@ -146,6 +195,10 @@ def _validate_png(payload: bytes, hero: Path) -> tuple[int, int]:
         or (color_type == 3 and palette_entries > 2 ** depth)
     ):
         raise ValidationError(f"model hero image has an invalid PNG palette: {hero}")
+    _validate_ancillary_chunks(
+        chunks, color_type, depth, idat_indexes[0],
+        palette_indexes[0] if palette_indexes else None, palette_entries, hero,
+    )
     compressed = b"".join(chunks[index][1] for index in idat_indexes)
     scanline_lengths = _png_scanline_lengths(width, height, _PNG_CHANNELS[color_type] * depth, interlace)
     expected_size = sum(scanline_lengths)

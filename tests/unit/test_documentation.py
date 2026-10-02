@@ -21,14 +21,19 @@ def _overview(words: int = 50) -> str:
     return " ".join(f"word{index}" for index in range(words))
 
 
-def _png(width: int = 1200, height: int = 480, *, filter_byte: int = 0) -> bytes:
+def _png(
+    width: int = 1200, height: int = 480, *, filter_byte: int = 0,
+    color_type: int = 2, ancillary: tuple[tuple[bytes, bytes], ...] = (),
+) -> bytes:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
 
-    rows = b"".join(bytes([filter_byte]) + b"\x22\x33\x44" * width for _ in range(height))
+    channels = {2: 3, 6: 4}[color_type]
+    rows = b"".join(bytes([filter_byte]) + b"\x22" * (width * channels) for _ in range(height))
     return b"".join((
         b"\x89PNG\r\n\x1a\n",
-        chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)),
+        chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)),
+        *(chunk(kind, data) for kind, data in ancillary),
         chunk(b"IDAT", zlib.compress(rows)),
         chunk(b"IEND", b""),
     ))
@@ -126,6 +131,25 @@ def test_model_readme_contract_rejects_undecodable_hero_pixels(tmp_path: Path) -
     (model_dir / "hero.png").write_bytes(_png(filter_byte=5))
 
     with pytest.raises(ValidationError, match="invalid PNG filter"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (_png(color_type=6, ancillary=((b"tRNS", b"\x00" * 6),)), "invalid PNG transparency chunk"),
+        (_png(ancillary=((b"tIME", b"\x00" * 7),)), "invalid PNG time chunk"),
+    ],
+)
+def test_model_readme_contract_rejects_invalid_ancillary_chunks(
+    tmp_path: Path, payload: bytes, message: str,
+) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(payload)
+
+    with pytest.raises(ValidationError, match=message):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
