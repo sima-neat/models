@@ -941,8 +941,8 @@ async function selectRun(runId, { updateUrl = true } = {}) {
   if (updateUrl) {
     const url = new URL(location.href);
     url.searchParams.set("run", runId);
-    const branch = branchName(catalogRun?.git_ref || "");
-    if (branch !== "detached") url.searchParams.set("branch", branch);
+    // An explicit empty branch preserves the All branches view on refresh.
+    url.searchParams.set("branch", elements["branch-filter"].value);
     history.pushState({}, "", url);
   }
   try {

@@ -234,6 +234,15 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "state.detailCache.get(runId)?.summary?.run" in script
 
 
+def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in select_run
+    assert 'url.searchParams.set("branch", branch);' not in select_run
+    assert 'state.urlBranch = link.has("branch")' in script
+
+
 def test_browser_history_restores_category_filters_and_empty_detail() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
