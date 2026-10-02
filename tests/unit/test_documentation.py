@@ -238,7 +238,9 @@ def test_model_readme_contract_rejects_setext_h2_outside_overview(tmp_path: Path
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
-@pytest.mark.parametrize("heading", ("# Extra title", "### Setup", "#### Setup", "Unexpected section\n==="))
+@pytest.mark.parametrize(
+    "heading", ("# Extra title", "### Setup", "   ### Setup", "#### Setup", "Unexpected section\n==="),
+)
 def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, heading: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
@@ -254,7 +256,7 @@ def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path)
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for reproducing the artifact.", "### Conversion\n\nRun the supported conversion command.",
+        "Content for reproducing the artifact.", "   ### Conversion\n\nRun the supported conversion command.",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())

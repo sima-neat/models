@@ -102,7 +102,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       output.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
-    const heading = /^(#{2,4})\s+(.+)$/.exec(line);
+    const heading = /^ {0,3}(#{2,4})\s+(.+)$/.exec(line);
     if (heading) {
       const level = heading[1].length + 1;
       output.push(`<h${level}>${inlineMarkdown(heading[2], resolveLink)}</h${level}>`);
@@ -141,7 +141,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     index += 1;
     while (index < lines.length && lines[index].trim()
       && !parseFence(lines[index])
-      && !/^(?:#{2,4}\s+|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
+      && !/^(?: {0,3}#{2,4}\s+|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
       if (lines[index].includes("|") && index + 1 < lines.length
         && isTableDivider(lines[index + 1], tableRow(lines[index]).length)) break;
       paragraph.push(lines[index].trim());
