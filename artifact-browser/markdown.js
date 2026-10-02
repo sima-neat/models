@@ -75,6 +75,38 @@ function closesFence(line, fence) {
     && match[1].length >= fence.length);
 }
 
+function columnWidth(value) {
+  let column = 0;
+  for (const character of value) column += character === "\t" ? 4 - (column % 4) : 1;
+  return column;
+}
+
+function leadingColumns(line) {
+  return columnWidth((/^[ \t]*/.exec(line) || [""])[0]);
+}
+
+function stripColumns(line, columns) {
+  let column = 0;
+  let offset = 0;
+  while (offset < line.length && column < columns && /[ \t]/.test(line[offset])) {
+    column += line[offset] === "\t" ? 4 - (column % 4) : 1;
+    offset += 1;
+  }
+  return " ".repeat(Math.max(0, column - columns)) + line.slice(offset);
+}
+
+function normalizeFenceContainer(line, continuationIndent = 0) {
+  let normalized = line;
+  while (/^ {0,3}>[ \t]?/.test(normalized)) normalized = normalized.replace(/^ {0,3}>[ \t]?/, "");
+  if (continuationIndent && leadingColumns(normalized) >= continuationIndent) {
+    normalized = stripColumns(normalized, continuationIndent);
+  }
+  const list = /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)/.exec(normalized);
+  if (!list) return {line: normalized, continuationIndent};
+  const contentIndent = columnWidth(normalized.slice(0, list[0].length));
+  return {line: normalized.slice(list[0].length), continuationIndent: contentIndent};
+}
+
 function stripIndentedCode(line) {
   let column = 0;
   let offset = 0;
@@ -117,11 +149,17 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       index += 1;
       continue;
     }
-    const fence = parseFence(line);
+    const normalizedFence = normalizeFenceContainer(line);
+    const fence = parseFence(normalizedFence.line);
     if (fence) {
       const code = [];
       index += 1;
-      while (index < lines.length && !closesFence(lines[index], fence)) code.push(lines[index++]);
+      while (index < lines.length) {
+        const content = normalizeFenceContainer(lines[index], normalizedFence.continuationIndent).line;
+        if (closesFence(content, fence)) break;
+        code.push(content);
+        index += 1;
+      }
       if (index < lines.length) index += 1;
       const language = fence.language ? ` class="language-${escapeHtml(fence.language)}"` : "";
       output.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
@@ -165,7 +203,7 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     const paragraph = [line.trim()];
     index += 1;
     while (index < lines.length && lines[index].trim()
-      && !parseFence(lines[index])
+      && !parseFence(normalizeFenceContainer(lines[index]).line)
       && !/^(?: {0,3}#{2,4}\s+|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
       if (lines[index].includes("|") && index + 1 < lines.length
         && isTableDivider(lines[index + 1], tableRow(lines[index]).length)) break;
