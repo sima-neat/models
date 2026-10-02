@@ -35,7 +35,7 @@ _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+](?:\s+|$)|\d+[.)](?:\s+|$)|```|~~~|#|>\s?|\||!\[|<))"
 )
-_IMAGE_TOKEN_RE = re.compile(r"(?<!\\)!\[[^]\n]*\]")
+_IMAGE_TOKEN_RE = re.compile(r"(?<!\\)(?:\\\\)*!\[[^]\n]*\]")
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}

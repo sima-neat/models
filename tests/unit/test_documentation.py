@@ -107,6 +107,7 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(49) + "\n\n1."), "prose paragraphs only"),
         (_readme(_overview(45) + " ![five alt words are not prose](hero.png)"), "prose paragraphs only"),
         (_readme(_overview(49) + " ![diagram]"), "prose paragraphs only"),
+        (_readme(_overview(45) + r" \\![five alt words are not prose](hero.png)"), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
 )
@@ -118,6 +119,15 @@ def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown:
 
     with pytest.raises(ValidationError, match=message):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_escaped_image_syntax_in_overview(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview(49) + r" \![diagram]"), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
 def test_model_readme_contract_rejects_wrong_hero_dimensions(tmp_path: Path) -> None:
