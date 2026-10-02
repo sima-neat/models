@@ -291,6 +291,8 @@ def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
 
 
 def _strip_expected_containers(line: str, containers: list[tuple[str, int]]) -> tuple[str, bool]:
+    if not line.strip():
+        return line, True
     for kind, indent in containers:
         if kind == "blockquote":
             if match := re.match(r"^ {0,3}>[ \t]?", line):
@@ -337,7 +339,9 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     list_indents: list[int] = []
     for index, line in enumerate(lines):
         if fence_character is not None:
-            outer_matches = not fence_outer_indent or _leading_columns(line) >= fence_outer_indent
+            outer_matches = (
+                not line.strip() or not fence_outer_indent or _leading_columns(line) >= fence_outer_indent
+            )
             container_line = _strip_columns(line, fence_outer_indent) if fence_outer_indent and outer_matches else line
             markdown_line, containers_match = _strip_expected_containers(container_line, fence_containers)
             if outer_matches and containers_match:

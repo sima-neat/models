@@ -99,6 +99,7 @@ function stripColumns(line, columns) {
 function normalizeFenceContainer(line, expectedContainers = null) {
   let normalized = line;
   if (expectedContainers !== null) {
+    if (!normalized.trim()) return {line: normalized, containers: expectedContainers, matched: true};
     for (const container of expectedContainers) {
       if (container.type === "blockquote") {
         if (!/^ {0,3}>[ \t]?/.test(normalized)) return {line: normalized, containers: expectedContainers, matched: false};
