@@ -100,13 +100,18 @@ fidelity; labels are not needed for the tensor comparison. Resolve the dataset,
 then run the grouped recipe in the pinned Model Compiler environment:
 
 ```bash
-dataset_repository=/path/to/dataset-repository
-verified_model=/path/to/verified-model.onnx
-resolved_coco_archive=/path/to/resolved-coco-archive
 output_dir=/tmp/rf-detr-small
 
-dataset-registry resolve --repository "$dataset_repository" \
-  --variant mini coco-2017
+source_json="$(model-registry fetch models/rf_detr_small \
+  --component backbone --json)"
+verified_model="$(jq -er .path <<<"$source_json")"
+
+calibration_json="$(model-registry fetch-calibration models/rf_detr_small \
+  --build-profile modalix_int8_bf16 --component backbone --json)"
+resolved_coco_archive="$(jq -er 'select(.kind == "dataset") | .path' \
+  <<<"$calibration_json")"
+test -f "$verified_model"
+test -e "$resolved_coco_archive"
 
 python models/rf_detr_small/compile.py \
   --model "$verified_model" \

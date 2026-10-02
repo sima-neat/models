@@ -179,6 +179,7 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
         heading: renderMarkdown('   ### Conversion'),
         indented: renderMarkdown('    first-command\\n\\tsecond-command\\n\\n    printf "<ready>"\\nnext'),
         blockquoteFence: renderMarkdown('> ```bash\\n> ### configure\\n> echo ready\\n> ````'),
+        blockquoteLiteral: renderMarkdown('> ```bash\\n> > output.txt\\n> ````'),
         listFence: renderMarkdown('- ```bash\\n  ### configure\\n  echo ready\\n  ````'),
       }));
     """
@@ -200,6 +201,9 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
     )
     assert rendered["blockquoteFence"] == (
         '<pre><code class="language-bash">### configure\necho ready</code></pre>'
+    )
+    assert rendered["blockquoteLiteral"] == (
+        '<pre><code class="language-bash">&gt; output.txt</code></pre>'
     )
     assert rendered["listFence"] == (
         '<pre><code class="language-bash">### configure\necho ready</code></pre>'

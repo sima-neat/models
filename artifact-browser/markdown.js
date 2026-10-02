@@ -95,16 +95,21 @@ function stripColumns(line, columns) {
   return " ".repeat(Math.max(0, column - columns)) + line.slice(offset);
 }
 
-function normalizeFenceContainer(line, continuationIndent = 0) {
+function normalizeFenceContainer(line, continuationIndent = 0, expectedBlockquotes = null) {
   let normalized = line;
-  while (/^ {0,3}>[ \t]?/.test(normalized)) normalized = normalized.replace(/^ {0,3}>[ \t]?/, "");
+  let blockquoteDepth = 0;
+  while ((expectedBlockquotes === null || blockquoteDepth < expectedBlockquotes)
+    && /^ {0,3}>[ \t]?/.test(normalized)) {
+    normalized = normalized.replace(/^ {0,3}>[ \t]?/, "");
+    blockquoteDepth += 1;
+  }
   if (continuationIndent && leadingColumns(normalized) >= continuationIndent) {
     normalized = stripColumns(normalized, continuationIndent);
   }
   const list = /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)/.exec(normalized);
-  if (!list) return {line: normalized, continuationIndent};
+  if (!list) return {line: normalized, continuationIndent, blockquoteDepth};
   const contentIndent = columnWidth(normalized.slice(0, list[0].length));
-  return {line: normalized.slice(list[0].length), continuationIndent: contentIndent};
+  return {line: normalized.slice(list[0].length), continuationIndent: contentIndent, blockquoteDepth};
 }
 
 function stripIndentedCode(line) {
@@ -155,7 +160,9 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       const code = [];
       index += 1;
       while (index < lines.length) {
-        const content = normalizeFenceContainer(lines[index], normalizedFence.continuationIndent).line;
+        const content = normalizeFenceContainer(
+          lines[index], normalizedFence.continuationIndent, normalizedFence.blockquoteDepth,
+        ).line;
         if (closesFence(content, fence)) break;
         code.push(content);
         index += 1;
