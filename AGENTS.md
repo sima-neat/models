@@ -64,11 +64,13 @@ Nested documentation such as training or QAT guides may use a structure suited
 to that workflow, but the top-level README should link to it from the relevant
 standard section.
 
-The hero must be a 1200x480 PNG no larger than 2 MiB. Keep it legible in light
-and dark themes, avoid embedding essential instructions in the pixels, and use
-the exact accessible Markdown alt text shown above. The registry publishes the
-image as a checksum-bound Vulcan artifact alongside the README; do not use a
-remote image URL or reference an image outside the model directory.
+The hero must be a 1200x480 PNG no larger than 2 MiB. The registry's strict PNG
+profile permits `IHDR`, optional `PLTE`, `IDAT`, `IEND`, and optional validated
+`tIME` or `tRNS` ancillary chunks. Keep it legible in light and dark themes,
+avoid embedding essential instructions in the pixels, and use the exact
+accessible Markdown alt text shown above. The registry publishes the image as
+a checksum-bound Vulcan artifact alongside the README; do not use a remote
+image URL or reference an image outside the model directory.
 
 When changing model behavior, interfaces, supported builds, qualification
 evidence, installation steps, or redistribution terms, update the owning
