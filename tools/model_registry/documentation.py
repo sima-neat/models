@@ -315,12 +315,14 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             content_indent = base_indent + _column_width(container_line[:list_item.end()])
             if not list_indents or content_indent > list_indents[-1]:
                 list_indents.append(content_indent)
+        nested_line, nested = _strip_markdown_containers(container_line)
+        markdown_line = nested_line if nested else container_line
         if fence_character is not None:
-            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", container_line):
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", markdown_line):
                 fence_character = None
             previous_is_paragraph_text = False
             continue
-        fence = _FENCE_OPEN_RE.fullmatch(container_line)
+        fence = _FENCE_OPEN_RE.fullmatch(markdown_line)
         if fence is not None:
             marker, info = fence.groups()
             if marker[0] == "~" or "`" not in info:
@@ -328,11 +330,10 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 previous_is_paragraph_text = False
                 continue
-        if _RAW_HTML_BLOCK_RE.match(container_line):
+        if _RAW_HTML_BLOCK_RE.match(markdown_line):
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        nested_line, nested = _strip_markdown_containers(container_line)
         if nested and (
             _ATX_HEADING_RE.fullmatch(nested_line) or _SETEXT_HEADING_RE.fullmatch(nested_line)
         ):
