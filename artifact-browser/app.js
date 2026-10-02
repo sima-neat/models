@@ -1687,8 +1687,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
   showEmptyDetail();
   const url = new URL(location.href);
-  if (state.preferredBranch) url.searchParams.set("branch", state.preferredBranch);
-  else url.searchParams.delete("branch");
+  url.searchParams.set("branch", state.preferredBranch);
   url.searchParams.delete("run");
   history.pushState({}, "", url);
   updateFilterDisclosure();
@@ -1753,8 +1752,7 @@ elements["clear-filters"].addEventListener("click", async () => {
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
   const resetUrl = new URL(location.href);
-  if (resetBranch) resetUrl.searchParams.set("branch", resetBranch);
-  else resetUrl.searchParams.delete("branch");
+  resetUrl.searchParams.set("branch", resetBranch);
   resetUrl.searchParams.delete("run");
   history.pushState({}, "", resetUrl);
   state.selectedId = null;

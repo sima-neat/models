@@ -243,6 +243,14 @@ def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
     assert 'state.urlBranch = link.has("branch")' in script
 
 
+def test_all_branches_selection_has_an_explicit_url_value() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'url.searchParams.set("branch", state.preferredBranch);' in script
+    assert 'resetUrl.searchParams.set("branch", resetBranch);' in script
+    assert 'searchParams.delete("branch")' not in script
+
+
 def test_browser_history_restores_category_filters_and_empty_detail() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
