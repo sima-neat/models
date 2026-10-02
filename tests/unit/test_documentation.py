@@ -335,6 +335,21 @@ def test_model_readme_contract_rejects_link_reference_definition_in_overview(tmp
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
+@pytest.mark.parametrize(
+    "html",
+    ("<!--\nmaintainer note\n-->", "<div\nclass=note>", "<?xml\nversion=1?>", "<![CDATA[\nmaintainer note\n]]>"),
+)
+def test_model_readme_contract_rejects_multiline_html_in_overview(tmp_path: Path, html: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    overview = _overview() + f"\n\n{html}"
+    (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="prose paragraphs only"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
 @pytest.mark.parametrize("marker", ("```", "~~~~"))
 def test_model_readme_contract_ignores_h2_inside_fenced_code(tmp_path: Path, marker: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
