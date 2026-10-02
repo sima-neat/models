@@ -15,7 +15,7 @@ const revision = (
   || execFileSync('git', ['rev-parse', 'HEAD'], {cwd: repository, encoding: 'utf8'}).trim()
 ).slice(0, 12);
 
-const fingerprintedAssets = ['app', 'benchmark-adapters', 'branch-builds', 'downloads', 'styles', 'config'];
+const fingerprintedAssets = ['app', 'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'styles', 'config'];
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
@@ -38,7 +38,8 @@ const applicationPath = join(output, `app.${revision}.js`);
 const application = readFileSync(applicationPath, 'utf8')
   .replace('./benchmark-adapters.js', `./benchmark-adapters.${revision}.js`)
   .replace('./branch-builds.js', `./branch-builds.${revision}.js`)
-  .replace('./downloads.js', `./downloads.${revision}.js`);
+  .replace('./downloads.js', `./downloads.${revision}.js`)
+  .replace('./markdown.js', `./markdown.${revision}.js`);
 writeFileSync(applicationPath, application);
 
 console.log(`Assembled Model Registry portal at ${output}`);

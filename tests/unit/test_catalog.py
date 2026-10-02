@@ -690,6 +690,21 @@ def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repositor
     assert plan["metadata_changed"] is True
 
 
+def test_semantic_plan_treats_readme_as_catalog_only(catalog_repository: Path) -> None:
+    readme = catalog_repository / "models" / "alpha" / "README.md"
+    readme.write_text("Initial model documentation.\n", encoding="utf-8")
+    base = _initialize_repository(catalog_repository)
+    readme.write_text("Revised model documentation.\n", encoding="utf-8")
+    head = _commit(catalog_repository, "documentation")
+
+    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
+
+    assert plan["include"] == []
+    assert plan["validation_include"] == []
+    assert plan["benchmark_include"] == []
+    assert plan["metadata_changed"] is True
+
+
 def test_semantic_plan_rebuilds_every_model_for_a_new_develop_revision(catalog_repository: Path) -> None:
     base = _initialize_repository(catalog_repository)
     manifest_path = catalog_repository / "deps" / "manifest.json"

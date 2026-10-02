@@ -29,6 +29,7 @@ from .catalog import (
     validation_fingerprint,
 )
 from .dependencies import resolve_model_compiler
+from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
@@ -310,6 +311,7 @@ def build_catalog_snapshot(
     selected_matrix: str | Path | None = None,
     previous: JsonObject | None = None,
     incremental: bool = False,
+    documentation_receipts: dict[str, JsonObject] | None = None,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
@@ -509,23 +511,27 @@ def build_catalog_snapshot(
 
     models = []
     for model_id, model in sorted(catalog.items()):
-        models.append(
-            {
-                "id": model_id,
-                "display_name": model["display_name"],
-                "description": model["description"],
-                "license": model["license"],
-                "maturity": model["maturity"],
-                "categories": validate_model_categorization(model, taxonomy),
-                "builds": sorted(
-                    builds_by_model[model_id],
-                    key=lambda item: (item["build_profile_id"], item["component_id"]),
-                ),
-                "packages": sorted(
-                    packages_by_model[model_id], key=lambda item: (item["build_profile_id"], item["package_id"])
-                ),
-            }
-        )
+        entry = {
+            "id": model_id,
+            "display_name": model["display_name"],
+            "description": model["description"],
+            "license": model["license"],
+            "maturity": model["maturity"],
+            "categories": validate_model_categorization(model, taxonomy),
+            "builds": sorted(
+                builds_by_model[model_id],
+                key=lambda item: (item["build_profile_id"], item["component_id"]),
+            ),
+            "packages": sorted(
+                packages_by_model[model_id], key=lambda item: (item["build_profile_id"], item["package_id"])
+            ),
+        }
+        if documentation_receipts is not None:
+            documentation = documentation_receipts.get(model_id)
+            if not isinstance(documentation, dict):
+                raise ValidationError(f"model documentation receipt is missing: {model_id}")
+            entry["documentation"] = documentation
+        models.append(entry)
     document: JsonObject = {
         "schema_version": 2 if incremental else 1,
         "repository": "sima-neat/models",
@@ -540,6 +546,114 @@ def build_catalog_snapshot(
     return document
 
 
+def publish_model_documentation(
+    *,
+    repository: str | Path,
+    api_url: str,
+    aws_region: str,
+    bucket: str,
+    kms_key_id: str | None,
+    environment: str,
+    branch: str,
+    git_sha: str,
+    github_run_url: str | None = None,
+    request: Request | None = None,
+    artifact_store: S3ArtifactStore | None = None,
+) -> dict[str, JsonObject]:
+    root = Path(repository).expanduser().resolve()
+    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
+        raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
+    if not branch.strip() or not environment.strip():
+        raise ValidationError("branch and environment must not be empty")
+    catalog = discover_catalog(root)
+    client = SigV4RegistryClient(api_url, aws_region, request=request)
+    store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
+    branch_key = quote(branch, safe="")
+    branch_identity = hashlib.sha256(branch.encode()).hexdigest()[:16]
+    receipts: dict[str, JsonObject] = {}
+    for model_id, model in sorted(catalog.items()):
+        documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root)
+        digest = documentation["readme_sha256"]
+        stored = store.ensure_native_sha256(
+            documentation["path"],
+            f"models/{branch_key}/{git_sha.lower()}/documentation/{model_id}/README.md",
+            digest,
+            media_type="text/markdown; charset=utf-8",
+        )
+        parameters = {
+            "schema_version": 1,
+            "model_id": model_id,
+            "source_path": documentation["source_path"],
+            "source_commit": git_sha.lower(),
+            "readme_sha256": digest,
+            "overview_markdown": documentation["overview_markdown"],
+        }
+        run_fingerprint = canonical_sha256(parameters)
+        environment_document = {
+            "schema_version": 1,
+            "vulcan_environment": environment,
+            "target_platform": "documentation",
+            "publisher": "model-registry",
+        }
+        stable_key = f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-{digest[:16]}"
+        create = client.request("POST", "/v1/runs", {
+            "schema_version": 1,
+            "run_type": "model_documentation",
+            "commit_sha": git_sha.lower(),
+            "git_ref": f"refs/heads/{branch}",
+            "ci_provider": "github-actions",
+            "ci_run_url": github_run_url,
+            "run_fingerprint": run_fingerprint,
+            "environment": {
+                "fingerprint": canonical_sha256(environment_document),
+                "fingerprint_version": 1,
+                "toolchain_name": "sima-model-registry",
+                "toolchain_version": "1",
+                "target_platform": "documentation",
+                "properties": {"vulcan_environment": environment},
+            },
+            "metadata": {
+                "model_id": model_id,
+                "artifact_kind": "model-readme",
+                "source_path": documentation["source_path"],
+            },
+        }, f"{stable_key}-create")
+        run_id = _require_text(create.get("run_id"), "run_id")
+        client.request("PUT", f"/v1/runs/{run_id}/parameters", {
+            "parameters": parameters,
+            "canonical_sha256": canonical_sha256(parameters),
+            "canonicalization_version": 1,
+        }, f"{stable_key}-parameters")
+        client.request("PUT", f"/v1/runs/{run_id}/artifacts/readme", {
+            "artifact_type": "model-readme",
+            "s3_bucket": bucket,
+            "s3_key": stored.key,
+            "s3_version_id": stored.version_id,
+            "sha256": stored.sha256,
+            "size_bytes": stored.size_bytes,
+            "media_type": "text/markdown; charset=utf-8",
+            "retention_class": "branch",
+            "metadata": {
+                "model_id": model_id,
+                "source_path": documentation["source_path"],
+                "source_commit": git_sha.lower(),
+            },
+        }, f"{stable_key}-artifact")
+        client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
+        receipts[model_id] = {
+            "format": "markdown",
+            "overview_markdown": documentation["overview_markdown"],
+            "run_id": run_id,
+            "artifact_name": "readme",
+            "artifact_sha256": stored.sha256,
+            "size_bytes": stored.size_bytes,
+            "media_type": "text/markdown; charset=utf-8",
+            "source_path": documentation["source_path"],
+            "source_commit": git_sha.lower(),
+        }
+    return receipts
+
+
 def publish_catalog(
     *,
     repository: str | Path,
@@ -552,8 +666,13 @@ def publish_catalog(
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
     base_branch: str | None = None,
+    bucket: str | None = None,
+    kms_key_id: str | None = None,
+    environment: str | None = None,
+    github_run_url: str | None = None,
     request: Request | None = None,
     read_request: ReadRequest | None = None,
+    artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     read = read_request or _public_registry_json
@@ -578,6 +697,23 @@ def publish_catalog(
         except RegistryPublicationError as exc:
             if "HTTP 404 catalog_not_found" not in str(exc):
                 raise
+    documentation_receipts = None
+    if bucket is not None:
+        if not environment:
+            raise ValidationError("environment is required when publishing model documentation")
+        documentation_receipts = publish_model_documentation(
+            repository=repository,
+            api_url=api_url,
+            aws_region=aws_region,
+            bucket=bucket,
+            kms_key_id=kms_key_id,
+            environment=environment,
+            branch=branch,
+            git_sha=git_sha,
+            github_run_url=github_run_url,
+            request=request,
+            artifact_store=artifact_store,
+        )
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
@@ -587,6 +723,7 @@ def publish_catalog(
         selected_matrix=selected_matrix,
         previous=previous,
         incremental=True,
+        documentation_receipts=documentation_receipts,
     )
     target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None

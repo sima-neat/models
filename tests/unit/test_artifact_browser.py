@@ -24,6 +24,7 @@ def test_artifact_browser_assets_exist() -> None:
         "benchmark-adapters.js",
         "branch-builds.js",
         "downloads.js",
+        "markdown.js",
         "styles.css",
         "config.js",
         "favicon.svg",
@@ -101,10 +102,29 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
     assert "process.env.GITHUB_SHA" in assemble
-    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "styles", "config"):
+    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config"):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble
+
+
+def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
+
+    assert "documentation?.overview_markdown" in script
+    assert 'headers: { Accept: "text/markdown" }' in script
+    assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
+    assert 'crypto.subtle.digest("SHA-256"' in script
+    assert "state.documentationCache.set(cacheKey, markdown)" in script
+    assert 'aria-expanded="${expanded}"' in script
+    assert "Read full model card" in script
+    assert "Show overview only" in script
+    assert "linear-gradient(to bottom, transparent" in styles
+    assert "SAFE_LINK" in renderer
+    assert "escapeHtml" in renderer
+    assert "export function renderMarkdown" in renderer
 
 
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:

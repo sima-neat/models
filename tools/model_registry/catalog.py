@@ -52,6 +52,17 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _documentation_metadata(root: Path, catalog: dict[str, dict[str, Any]]) -> dict[str, str | None]:
+    metadata: dict[str, str | None] = {}
+    for model_id in sorted(catalog):
+        path = root / "models" / model_id / "README.md"
+        try:
+            metadata[model_id] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            metadata[model_id] = None
+    return metadata
+
+
 def _integer_constant(path: Path, name: str) -> int:
     try:
         module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -719,9 +730,11 @@ def semantic_change_plan(
     base_compile_schema = None
     base_validation_schema = None
     base_benchmark_schema = None
+    base_documentation: dict[str, str | None] = {}
     try:
         with _revision_tree(root, base) as base_root:
             base_catalog = discover_catalog(base_root)
+            base_documentation = _documentation_metadata(base_root, base_catalog)
             base_taxonomy_sha = taxonomy_sha256(load_taxonomy(base_root / TAXONOMY_RELATIVE_PATH))
             base_compile_schema = _integer_constant(
                 base_root / "tools" / "model_registry" / "catalog.py", "COMPILE_FINGERPRINT_SCHEMA"
@@ -827,6 +840,7 @@ def semantic_change_plan(
 
     metadata_changed = fallback_reason is not None or (
         publication_metadata(base_catalog) != publication_metadata(head_catalog)
+        or base_documentation != _documentation_metadata(root, head_catalog)
     )
     return {
         "include": compile_include,

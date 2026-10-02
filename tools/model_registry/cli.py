@@ -19,6 +19,7 @@ from .catalog import (
     semantic_change_plan,
 )
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher
 from .fidelity_config import find_recipe_fidelity_config
@@ -288,9 +289,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
+    publish_catalog_parser.add_argument("--bucket", required=True)
+    publish_catalog_parser.add_argument("--kms-key-id")
+    publish_catalog_parser.add_argument("--environment", required=True)
     publish_catalog_parser.add_argument("--branch", required=True)
     publish_catalog_parser.add_argument("--base-branch", help="reuse this catalog when the target branch has none")
     publish_catalog_parser.add_argument("--git-sha", required=True)
+    publish_catalog_parser.add_argument("--github-run-url")
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
 
     stage_registry = subcommands.add_parser(
@@ -325,7 +330,14 @@ def _validate(args: argparse.Namespace) -> int:
 
 
 def _validate_catalog(args: argparse.Namespace) -> int:
-    catalog = discover_catalog(args.repository)
+    repository = args.repository.expanduser().resolve()
+    catalog = discover_catalog(repository)
+    for model_id, model in sorted(catalog.items()):
+        load_model_documentation(
+            repository / "models" / model_id,
+            model["display_name"],
+            repository=repository,
+        )
     result = {"model_count": len(catalog), "model_ids": sorted(catalog), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model catalog: {len(catalog)} models")
     return 0
@@ -798,9 +810,13 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
         branch=args.branch,
         base_branch=args.base_branch,
         git_sha=args.git_sha,
+        github_run_url=args.github_run_url,
     )
     message = (
         json.dumps(result, sort_keys=True)

@@ -79,6 +79,19 @@ def test_validation_checks_complete_filename_length(command, filename_length, tm
     suffix_length = filename_length - len(f"{model['id']}__mpk.tar.gz")
     model["build_profiles"][0]["components"][0]["artifact_suffix"] = "a" * suffix_length
     manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
+    if command == "validate-catalog":
+        overview = " ".join(f"word{index}" for index in range(50))
+        sections = [
+            ("Overview", overview), ("Usage", "Usage."), ("Model interface", "Interface."),
+            ("Available builds", "Builds."), ("Quality and performance", "Quality."),
+            ("Source and license", "Source."), ("Reproducing the artifact", "Reproduction."),
+        ]
+        (model_dir / "README.md").write_text(
+            f"# {model['display_name']}\n\n"
+            + "\n\n".join(f"## {heading}\n\n{body}" for heading, body in sections)
+            + "\n",
+            encoding="utf-8",
+        )
     args = [str(model_dir)] if command == "validate" else ["--repository", str(tmp_path)]
 
     assert main([command, *args]) == (0 if filename_length == 255 else 2)
@@ -349,10 +362,13 @@ def test_publish_catalog_passes_optional_base_branch(monkeypatch, base_branch) -
     args = [
         "publish-catalog", "--api-url", "https://writer.example.invalid",
         "--read-api-url", "https://reader.example.invalid", "--branch", "feat/names",
-        "--git-sha", "a" * 40,
+        "--git-sha", "a" * 40, "--bucket", "model-artifacts",
+        "--environment", "staging",
     ]
     if base_branch:
         args.extend(["--base-branch", base_branch])
     assert main(args) == 0
     assert calls[0]["base_branch"] == base_branch
     assert calls[0]["branch"] == "feat/names"
+    assert calls[0]["bucket"] == "model-artifacts"
+    assert calls[0]["environment"] == "staging"

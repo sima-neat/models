@@ -20,6 +20,7 @@ from model_registry.registry import (
     canonical_sha256,
     publish_catalog,
     publish_compilations,
+    publish_model_documentation,
     publish_packages,
     stage_catalog_build,
 )
@@ -44,6 +45,53 @@ class FakeStore:
     ) -> S3Object:
         self.objects.append((path, key, sha256, media_type))
         return S3Object(key=key, version_id="version-1", sha256=sha256, size_bytes=path.stat().st_size)
+
+
+def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+    store = FakeStore()
+    next_run = 0
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        nonlocal next_run
+        calls.append((method, path, body, key))
+        if method == "POST" and path == "/v1/runs":
+            next_run += 1
+            return {"run_id": f"00000000-0000-4000-8000-{next_run:012d}"}
+        return {"stored": True}
+
+    receipts = publish_model_documentation(
+        repository=ROOT,
+        api_url="https://writer.example.invalid",
+        aws_region="us-west-2",
+        bucket="model-artifacts",
+        kms_key_id="alias/models",
+        environment="staging",
+        branch="feat/model cards",
+        git_sha="a" * 40,
+        github_run_url="https://github.example.invalid/actions/runs/123",
+        request=request,
+        artifact_store=store,
+    )
+
+    assert set(receipts) == set(discover_catalog(ROOT))
+    assert len(store.objects) == len(receipts)
+    assert len(calls) == len(receipts) * 4
+    for model_id, receipt in receipts.items():
+        assert receipt["format"] == "markdown"
+        assert receipt["artifact_name"] == "readme"
+        assert receipt["source_path"] == f"models/{model_id}/README.md"
+        assert receipt["source_commit"] == "a" * 40
+        assert 50 <= len(receipt["overview_markdown"].split()) <= 120
+    assert all("feat%2Fmodel%20cards" in key for _, key, _, _ in store.objects)
+    artifact_calls = [call for call in calls if call[0:2] != ("POST", "/v1/runs") and "/artifacts/" in call[1]]
+    parameter_calls = [call for call in calls if call[0] == "PUT" and call[1].endswith("/parameters")]
+    assert all(call[2]["parameters"]["overview_markdown"] in {
+        receipt["overview_markdown"] for receipt in receipts.values()
+    } for call in parameter_calls)
+    assert all(call[2]["artifact_type"] == "model-readme" for call in artifact_calls)
+    assert all(call[2]["media_type"] == "text/markdown; charset=utf-8" for call in artifact_calls)
+    assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
 
 
 def _packaged_result(tmp_path: Path) -> Path:
