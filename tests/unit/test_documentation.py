@@ -103,6 +103,8 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(121)), "50 to 120 words"),
         (_readme("\n\n".join((_overview(20), _overview(20), _overview(20)))), "one or two prose paragraphs"),
         (_readme("- " + _overview()), "prose paragraphs only"),
+        (_readme(_overview(49) + "\n\n+"), "prose paragraphs only"),
+        (_readme(_overview(49) + "\n\n1."), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
 )
