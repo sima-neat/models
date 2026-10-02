@@ -30,7 +30,6 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
-_CONTAINER_PREFIX_RE = re.compile(r"^ {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)")
 _LIST_ITEM_RE = re.compile(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+|$)")
 _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
@@ -270,10 +269,24 @@ def _is_indented_code(line: str) -> bool:
 
 def _strip_markdown_containers(line: str) -> tuple[str, bool]:
     nested = False
-    while match := _CONTAINER_PREFIX_RE.match(line):
-        nested = True
-        line = line[match.end():]
-    return line, nested
+    while True:
+        if match := re.match(r"^ {0,3}>[ \t]?", line):
+            nested = True
+            line = line[match.end():]
+            continue
+        if match := _LIST_ITEM_RE.match(line):
+            nested = True
+            line, _ = _list_item_content(line, match)
+            continue
+        return line, nested
+
+
+def _list_item_content(line: str, match: re.Match[str]) -> tuple[str, int]:
+    marker_width = _column_width(line[:match.start(2)])
+    padding_width = _column_width(line[:match.end()]) - marker_width
+    effective_padding = padding_width if 1 <= padding_width <= 4 else 1
+    content = " " * max(0, padding_width - effective_padding) + line[match.end():]
+    return content, marker_width + effective_padding
 
 
 def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
@@ -284,9 +297,8 @@ def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
             line = line[match.end():]
             continue
         if match := _LIST_ITEM_RE.match(line):
-            indent = _column_width(line[:match.end()]) + (not match.group(2))
+            line, indent = _list_item_content(line, match)
             containers.append(("list", indent))
-            line = line[match.end():]
             continue
         return line, containers
 
@@ -363,10 +375,8 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
         container_line = _strip_columns(line, list_indents[-1]) if list_indents else line
         if list_item := _LIST_ITEM_RE.match(container_line):
             base_indent = list_indents[-1] if list_indents else 0
-            content_indent = (
-                base_indent + _column_width(container_line[:list_item.end()])
-                + (not list_item.group(2))
-            )
+            _, item_indent = _list_item_content(container_line, list_item)
+            content_indent = base_indent + item_indent
             if not list_indents or content_indent > list_indents[-1]:
                 list_indents.append(content_indent)
         nested_line, nested = _strip_markdown_containers(container_line)

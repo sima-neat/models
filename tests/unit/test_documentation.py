@@ -481,6 +481,20 @@ def test_model_readme_contract_keeps_blank_lines_in_list_fences(tmp_path: Path) 
     assert documentation["source_path"] == "models/fixture/README.md"
 
 
+def test_model_readme_contract_keeps_five_space_list_padding_as_code(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace(
+        "Content for reproducing the artifact.", "-     ### configure\n      echo ready",
+    )
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+    assert documentation["source_path"] == "models/fixture/README.md"
+
+
 def test_model_readme_contract_ends_fence_when_its_container_ends(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
