@@ -47,6 +47,7 @@ _IMAGE_TOKEN_RE = re.compile(r"(?<!\\)(?:\\\\)*!\[[^]\n]*\]")
 _INLINE_HTML_RE = re.compile(
     r"(?<!\\)(?:\\\\)*(?:<!--|<\?|<![A-Z]|<!\[CDATA\[|</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]|/?>))"
 )
+_INLINE_HTML_HEADING_RE = re.compile(r"(?<!\\)(?:\\\\)*</?h[1-6](?:[ \t]|/?>)", re.IGNORECASE)
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
@@ -403,7 +404,12 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 _, fence_containers = _markdown_container_stack(container_line)
                 previous_is_paragraph_text = False
                 continue
-        if _RAW_HTML_BLOCK_RE.match(markdown_line) and not _AUTOLINK_RE.fullmatch(markdown_line):
+        if (
+            _RAW_HTML_BLOCK_RE.match(markdown_line) and not _AUTOLINK_RE.fullmatch(markdown_line)
+            or current_section != "Overview"
+            and not _is_indented_code(markdown_line)
+            and _INLINE_HTML_HEADING_RE.search(markdown_line)
+        ):
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue

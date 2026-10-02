@@ -99,6 +99,14 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(), title="Wrong title"), "H1 must exactly match"),
         (_readme(_overview()).replace("(hero.png)", "(https://example.invalid/hero.png)"), "must begin with H1"),
         (_readme(_overview()).replace("## Usage", "## How to use"), "H2 sections must be"),
+        (
+            _readme(_overview()).replace("Content for usage.", "Content for usage. <h2>Unexpected</h2>"),
+            "H2 sections must be",
+        ),
+        (
+            _readme(_overview()).replace("Content for usage.", r"Content for usage. \\<h2>"),
+            "H2 sections must be",
+        ),
         (_readme(_overview(49)), "50 to 120 words"),
         (_readme(_overview(121)), "50 to 120 words"),
         (_readme("\n\n".join((_overview(20), _overview(20), _overview(20)))), "one or two prose paragraphs"),
@@ -138,6 +146,16 @@ def test_model_readme_contract_accepts_autolink_on_its_own_line(tmp_path: Path, 
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace("Content for usage.", autolink)
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_escaped_inline_html_heading(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("Content for usage.", r"Content for usage. \<h2>")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
