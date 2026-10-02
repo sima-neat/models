@@ -37,10 +37,8 @@ REGISTRY_AGGREGATIONS = {
     "p99",
     "sum",
 }
-THROUGHPUT_METRIC_NAMES = {
-    "fps": "model.throughput",
-    "inferences/s": "model.inference_rate",
-}
+LEGACY_THROUGHPUT_DEFINITION = ("model.throughput", "fps")
+CORE_THROUGHPUT_DEFINITION = ("model.inference_rate", "inferences/s")
 
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
@@ -204,11 +202,13 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
             continue
         if field == "throughput_fps":
-            unit = metric["unit"]
-            try:
-                name = THROUGHPUT_METRIC_NAMES[unit]
-            except KeyError as exc:
-                raise ValidationError(f"benchmark metric {field} uses unsupported throughput unit {unit!r}") from exc
+            name, expected_unit = (
+                CORE_THROUGHPUT_DEFINITION if result["schema_version"] == 5 else LEGACY_THROUGHPUT_DEFINITION
+            )
+            if metric["unit"] != expected_unit:
+                raise ValidationError(
+                    f"benchmark result schema v{result['schema_version']} requires {field} unit {expected_unit!r}"
+                )
         result_aggregation = metric["aggregation"]
         aggregation = REGISTRY_AGGREGATION_ALIASES.get(result_aggregation, result_aggregation)
         if aggregation not in REGISTRY_AGGREGATIONS:
