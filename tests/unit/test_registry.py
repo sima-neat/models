@@ -20,6 +20,7 @@ from model_registry.registry import (
     canonical_sha256,
     publish_catalog,
     publish_compilations,
+    publish_model_documentation,
     publish_packages,
     stage_catalog_build,
 )
@@ -44,6 +45,128 @@ class FakeStore:
     ) -> S3Object:
         self.objects.append((path, key, sha256, media_type))
         return S3Object(key=key, version_id="version-1", sha256=sha256, size_bytes=path.stat().st_size)
+
+
+def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+    store = FakeStore()
+    next_run = 0
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        nonlocal next_run
+        calls.append((method, path, body, key))
+        if method == "POST" and path == "/v1/runs":
+            next_run += 1
+            return {"run_id": f"00000000-0000-4000-8000-{next_run:012d}"}
+        return {"stored": True}
+
+    receipts = publish_model_documentation(
+        repository=ROOT,
+        api_url="https://writer.example.invalid",
+        aws_region="us-west-2",
+        bucket="model-artifacts",
+        kms_key_id="alias/models",
+        environment="staging",
+        branch="feat/model cards",
+        git_sha="a" * 40,
+        github_run_url="https://github.example.invalid/actions/runs/123",
+        request=request,
+        artifact_store=store,
+    )
+
+    assert set(receipts) == set(discover_catalog(ROOT))
+    assert len(store.objects) == len(receipts)
+    assert len(calls) == len(receipts) * 4
+    for model_id, receipt in receipts.items():
+        assert receipt["format"] == "markdown"
+        assert receipt["artifact_name"] == "readme"
+        assert receipt["source_path"] == f"models/{model_id}/README.md"
+        assert receipt["source_commit"] == "a" * 40
+        assert "hero" not in receipt
+        assert 50 <= len(receipt["overview_markdown"].split()) <= 120
+    assert all("feat%2Fmodel%20cards" in key for _, key, _, _ in store.objects)
+    artifact_calls = [call for call in calls if call[0:2] != ("POST", "/v1/runs") and "/artifacts/" in call[1]]
+    parameter_calls = [call for call in calls if call[0] == "PUT" and call[1].endswith("/parameters")]
+    assert all(call[2]["parameters"]["overview_markdown"] in {
+        receipt["overview_markdown"] for receipt in receipts.values()
+    } for call in parameter_calls)
+    assert all("hero" not in call[2]["parameters"] for call in parameter_calls)
+    assert {call[2]["artifact_type"] for call in artifact_calls} == {"model-readme"}
+    assert {call[2]["media_type"] for call in artifact_calls} == {"text/markdown; charset=utf-8"}
+    assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
+
+
+def test_publish_model_documentation_includes_an_available_optional_hero(tmp_path: Path, monkeypatch) -> None:
+    readme = tmp_path / "models" / "fixture" / "README.md"
+    hero = readme.with_name("hero.png")
+    readme.parent.mkdir(parents=True)
+    readme.write_text("# Fixture\n", encoding="utf-8")
+    hero.write_bytes(b"png")
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    monkeypatch.setattr(
+        "model_registry.registry.discover_catalog",
+        lambda _: {"fixture": {"display_name": "Fixture"}},
+    )
+    monkeypatch.setattr(
+        "model_registry.registry.load_model_documentation",
+        lambda *_args, **_kwargs: {
+            "readme_sha256": hashlib.sha256(readme.read_bytes()).hexdigest(),
+            "path": readme,
+            "source_path": "models/fixture/README.md",
+            "overview_markdown": " ".join(f"word{index}" for index in range(50)),
+            "hero": {
+                "artifact_name": "hero", "markdown_path": "hero.png",
+                "alt_text": "Fixture model hero", "sha256": hashlib.sha256(b"png").hexdigest(),
+                "media_type": "image/png", "source_path": "models/fixture/hero.png", "path": hero,
+            },
+        },
+    )
+
+    receipts = publish_model_documentation(
+        repository=tmp_path, api_url="https://writer.example.invalid", aws_region="us-west-2",
+        bucket="model-artifacts", kms_key_id=None, environment="staging", branch="develop",
+        git_sha="a" * 40, github_run_url="https://github.example.invalid/actions/runs/123",
+        request=lambda method, path, body, key: (
+            calls.append((method, path, body, key))
+            or ({"run_id": "00000000-0000-4000-8000-000000000001"} if path == "/v1/runs" else {})
+        ),
+        artifact_store=FakeStore(),
+    )
+
+    assert receipts["fixture"]["hero"]["source_path"] == "models/fixture/hero.png"
+    assert any(call[1].endswith("/artifacts/hero") for call in calls)
+    parameter_call = next(call for call in calls if call[1].endswith("/parameters"))
+    assert parameter_call[2]["parameters"]["hero"]["markdown_path"] == "hero.png"
+
+
+def test_publish_model_documentation_keys_bind_create_request_identity() -> None:
+    def create_keys(environment: str, github_run_url: str) -> list[str]:
+        calls: list[tuple[str, str, dict | None, str]] = []
+
+        def request(method: str, path: str, body: dict | None, key: str) -> dict:
+            calls.append((method, path, body, key))
+            return {"run_id": "00000000-0000-4000-8000-000000000001"} if path == "/v1/runs" else {"ok": True}
+
+        publish_model_documentation(
+            repository=ROOT,
+            api_url="https://writer.example.invalid",
+            aws_region="us-west-2",
+            bucket="model-artifacts",
+            kms_key_id=None,
+            environment=environment,
+            branch="develop",
+            git_sha="a" * 40,
+            github_run_url=github_run_url,
+            request=request,
+            artifact_store=FakeStore(),
+        )
+        return [key for method, path, _, key in calls if method == "POST" and path == "/v1/runs"]
+
+    first = create_keys("staging", "https://github.example.invalid/actions/runs/123")
+    assert first == create_keys("staging", "https://github.example.invalid/actions/runs/123")
+    assert first != create_keys("staging", "https://github.example.invalid/actions/runs/456")
+    assert first != create_keys("production", "https://github.example.invalid/actions/runs/123")
 
 
 def _packaged_result(tmp_path: Path) -> Path:
@@ -817,7 +940,43 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     ]
     assert calls[0][0:2] == ("POST", "/v1/repositories/sima-neat/models/catalogs/" + "a" * 40 + "/snapshots")
     assert calls[0][2] == {"initialize": False, "previous_snapshot": "c" * 64, "catalog": result["catalog"]}
-    assert calls[0][3] == "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16
+    assert calls[0][3] == (
+        "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16 + "-" + canonical_sha256(calls[0][2])[:16]
+    )
+
+
+def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": {"models": []}}
+    monkeypatch.setattr(
+        "model_registry.registry.publish_model_documentation",
+        lambda **kwargs: {"fixture": {"run_id": kwargs["github_run_url"].rsplit("/", 1)[-1]}},
+    )
+    monkeypatch.setattr(
+        "model_registry.registry.build_catalog_snapshot",
+        lambda **kwargs: {"documentation": kwargs["documentation_receipts"]},
+    )
+
+    def publish(github_run_url: str) -> None:
+        publish_catalog(
+            repository=ROOT,
+            api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid",
+            aws_region="us-west-2",
+            branch="develop",
+            git_sha="a" * 40,
+            bucket="artifacts",
+            environment="staging",
+            github_run_url=github_run_url,
+            request=lambda *args: calls.append(args) or {"stored": True},
+            read_request=lambda _: {"catalog": target_catalog},
+        )
+
+    publish("https://github.example.invalid/actions/runs/123")
+    publish("https://github.example.invalid/actions/runs/456")
+
+    assert calls[0][2] != calls[1][2]
+    assert calls[0][3] != calls[1][3]
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
