@@ -70,7 +70,18 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
         documentation = load_model_documentation(model_dir, display_name, repository=root)
         assert documentation["source_path"] == f"models/{model_dir.name}/README.md"
         assert len(documentation["readme_sha256"]) == 64
-        assert documentation["hero"]["source_path"] == f"models/{model_dir.name}/hero.png"
+        assert "hero" not in documentation
+
+
+def test_model_readme_contract_accepts_missing_optional_hero(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("![Fixture Model model hero](hero.png)\n\n", "")
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+
+    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+    assert "hero" not in documentation
 
 
 def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_placeholders() -> None:
@@ -112,6 +123,30 @@ def test_model_readme_contract_rejects_wrong_hero_dimensions(tmp_path: Path) -> 
     (model_dir / "hero.png").write_bytes(_png(600, 240))
 
     with pytest.raises(ValidationError, match="must be 1200x480"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize("filename", ("README.md", "hero.png"))
+def test_model_readme_contract_rejects_symlinked_documentation_asset(tmp_path: Path, filename: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    readme = tmp_path / "README.md"
+    hero = tmp_path / "hero.png"
+    readme.write_text(_readme(_overview()), encoding="utf-8")
+    hero.write_bytes(_png())
+    (model_dir / "README.md").symlink_to(readme)
+    (model_dir / "hero.png").symlink_to(hero)
+    linked_asset = model_dir / filename
+    linked_asset.unlink()
+    linked_asset.symlink_to(tmp_path / filename)
+    other_asset = model_dir / ({"README.md": "hero.png", "hero.png": "README.md"}[filename])
+    other_asset.unlink()
+    if other_asset.name == "README.md":
+        other_asset.write_text(_readme(_overview()), encoding="utf-8")
+    else:
+        other_asset.write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="regular file, not a symlink"):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
@@ -285,6 +320,27 @@ def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, head
     "heading", ("> ### Setup", "- ### Setup", "1. ### Setup", "- > ### Setup", "> Unexpected\n> ---"),
 )
 def test_model_readme_contract_rejects_headings_in_markdown_containers(tmp_path: Path, heading: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    with pytest.raises(ValidationError, match="H2 sections must be"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "- item\n\n    ### Setup",
+        "1. item\n\n    ## Setup",
+        "- item\n\n    - nested item\n\n      #### Setup",
+    ),
+)
+def test_model_readme_contract_rejects_headings_on_list_continuation_lines(
+    tmp_path: Path, heading: str,
+) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")

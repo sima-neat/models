@@ -1,7 +1,5 @@
 # ResNet-50
 
-![ResNet-50 model hero](hero.png)
-
 ## Overview
 
 ResNet-50 is an ImageNet-1k image classifier based on the pinned ONNX Community

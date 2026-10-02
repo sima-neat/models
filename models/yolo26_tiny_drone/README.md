@@ -1,7 +1,5 @@
 # YOLO26n-P2 Tiny Drone INT8 QAT
 
-![YOLO26n-P2 Tiny Drone INT8 QAT model hero](hero.png)
-
 ## Overview
 
 YOLO26n-P2 Tiny Drone is a one-class object detector optimized for small drones

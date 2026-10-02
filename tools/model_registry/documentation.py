@@ -30,6 +30,7 @@ _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
 _CONTAINER_PREFIX_RE = re.compile(r"^ {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)")
+_LIST_ITEM_RE = re.compile(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)")
 _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[|<))"
@@ -274,6 +275,27 @@ def _strip_markdown_containers(line: str) -> tuple[str, bool]:
     return line, nested
 
 
+def _column_width(text: str) -> int:
+    column = 0
+    for character in text:
+        column = column + (4 - column % 4) if character == "\t" else column + 1
+    return column
+
+
+def _leading_columns(line: str) -> int:
+    return _column_width(line[:len(line) - len(line.lstrip(" \t"))])
+
+
+def _strip_columns(line: str, columns: int) -> str:
+    offset = 0
+    column = 0
+    while offset < len(line) and column < columns and line[offset] in " \t":
+        character = line[offset]
+        column = column + (4 - column % 4) if character == "\t" else column + 1
+        offset += 1
+    return " " * max(0, column - columns) + line[offset:]
+
+
 def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
     has_invalid_heading = False
@@ -281,13 +303,24 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
     fence_length = 0
     previous_is_paragraph_text = False
     current_section = None
+    list_indents: list[int] = []
     for index, line in enumerate(lines):
+        if line.strip():
+            indentation = _leading_columns(line)
+            while list_indents and indentation < list_indents[-1]:
+                list_indents.pop()
+        container_line = _strip_columns(line, list_indents[-1]) if list_indents else line
+        if list_item := _LIST_ITEM_RE.match(container_line):
+            base_indent = list_indents[-1] if list_indents else 0
+            content_indent = base_indent + _column_width(container_line[:list_item.end()])
+            if not list_indents or content_indent > list_indents[-1]:
+                list_indents.append(content_indent)
         if fence_character is not None:
-            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", line):
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", container_line):
                 fence_character = None
             previous_is_paragraph_text = False
             continue
-        fence = _FENCE_OPEN_RE.fullmatch(line)
+        fence = _FENCE_OPEN_RE.fullmatch(container_line)
         if fence is not None:
             marker, info = fence.groups()
             if marker[0] == "~" or "`" not in info:
@@ -295,27 +328,31 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 previous_is_paragraph_text = False
                 continue
-        if _RAW_HTML_BLOCK_RE.match(line):
+        if _RAW_HTML_BLOCK_RE.match(container_line):
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        nested_line, nested = _strip_markdown_containers(line)
+        nested_line, nested = _strip_markdown_containers(container_line)
         if nested and (
             _ATX_HEADING_RE.fullmatch(nested_line) or _SETEXT_HEADING_RE.fullmatch(nested_line)
         ):
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        if _SETEXT_HEADING_RE.fullmatch(line) and previous_is_paragraph_text:
+        if _SETEXT_HEADING_RE.fullmatch(container_line) and previous_is_paragraph_text:
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        if match := _H2_RE.fullmatch(line):
+        if match := _H2_RE.fullmatch(container_line):
+            if list_indents:
+                has_invalid_heading = True
+                previous_is_paragraph_text = False
+                continue
             current_section = match.group(1)
             sections.append((index, current_section))
             previous_is_paragraph_text = False
             continue
-        if heading := _ATX_HEADING_RE.fullmatch(line):
+        if heading := _ATX_HEADING_RE.fullmatch(container_line):
             level = len(heading.group(1))
             heading_text = re.sub(r"(?:^#+$|[ \t]+#+[ \t]*$)", "", heading.group(2) or "").strip()
             if not (index == 0 and level == 1) and not (
@@ -324,15 +361,18 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
-        stripped = line.strip()
+        stripped = container_line.strip()
         previous_is_paragraph_text = bool(stripped) and not (
-            _is_indented_code(line) or _PARAGRAPH_EXCLUDED_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
+            _is_indented_code(container_line) or _PARAGRAPH_EXCLUDED_RE.match(container_line)
+            or _THEMATIC_BREAK_RE.fullmatch(container_line)
         )
     return sections, has_invalid_heading
 
 
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
     hero = model_dir / HERO_FILENAME
+    if hero.is_symlink():
+        raise ValidationError(f"model hero image must be a regular file, not a symlink: {hero}")
     try:
         payload = hero.read_bytes()
     except OSError as exc:
@@ -358,6 +398,8 @@ def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str
 
 def load_model_documentation(model_dir: Path, display_name: str, *, repository: Path) -> dict[str, Any]:
     readme = model_dir / "README.md"
+    if readme.is_symlink():
+        raise ValidationError(f"model README must be a regular file, not a symlink: {readme}")
     try:
         payload = readme.read_bytes()
     except OSError as exc:
@@ -374,12 +416,20 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     lines = markdown.splitlines()
     if not lines or lines[0] != f"# {display_name}":
         raise ValidationError(f"model README H1 must exactly match display_name {display_name!r}: {readme}")
-    hero = _load_hero(model_dir, display_name, repository)
-    expected_hero = f"![{hero['alt_text']}]({hero['markdown_path']})"
-    if len(lines) < 5 or lines[1] != "" or lines[2] != expected_hero or lines[3] != "" or lines[4] != "## Overview":
-        raise ValidationError(
-            f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
+    hero_path = model_dir / HERO_FILENAME
+    hero = _load_hero(model_dir, display_name, repository) if hero_path.exists() or hero_path.is_symlink() else None
+    if hero is None:
+        valid_preamble = len(lines) >= 3 and lines[1] == "" and lines[2] == "## Overview"
+        expected_preamble = "H1, blank line, and ## Overview"
+    else:
+        expected_hero = f"![{hero['alt_text']}]({hero['markdown_path']})"
+        valid_preamble = (
+            len(lines) >= 5 and lines[1] == "" and lines[2] == expected_hero
+            and lines[3] == "" and lines[4] == "## Overview"
         )
+        expected_preamble = f"H1, blank line, {expected_hero}, blank line, and ## Overview"
+    if not valid_preamble:
+        raise ValidationError(f"model README must begin with {expected_preamble}: {readme}")
 
     sections, has_invalid_heading = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
@@ -413,12 +463,14 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         source_path = readme.relative_to(repository).as_posix()
     except ValueError as exc:
         raise ValidationError(f"model README must be inside the repository: {readme}") from exc
-    return {
+    documentation = {
         "format": "markdown",
         "overview_markdown": overview,
         "readme_sha256": hashlib.sha256(payload).hexdigest(),
         "size_bytes": len(payload),
         "source_path": source_path,
         "path": readme,
-        "hero": hero,
     }
+    if hero is not None:
+        documentation["hero"] = hero
+    return documentation

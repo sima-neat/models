@@ -8,10 +8,10 @@ lifecycle behavior in `tools/model_registry`.
 ## Model README requirements
 
 Every top-level registry entry under `models/<model_id>` must contain a
-`README.md` and a `hero.png`. The README begins with the following structure:
+`README.md`. The README begins with the following structure:
 
 1. `# <display name>`
-2. `![<display name> model hero](hero.png)`
+2. An optional `![<display name> model hero](hero.png)`
 3. `## Overview`
 4. `## Usage`
 5. `## Model interface`
@@ -64,16 +64,17 @@ Nested documentation such as training or QAT guides may use a structure suited
 to that workflow, but the top-level README should link to it from the relevant
 standard section.
 
-The hero must be a 1200x480 PNG no larger than 2 MiB. The registry's strict PNG
-profile permits `IHDR`, optional `PLTE`, `IDAT`, `IEND`, and optional validated
-`tIME` or `tRNS` ancillary chunks. Keep it legible in light and dark themes,
-avoid embedding essential instructions in the pixels, and use the exact
-accessible Markdown alt text shown above. The registry publishes the image as
-a checksum-bound Vulcan artifact alongside the README; do not use a remote
-image URL or reference an image outside the model directory.
+When supplied, the hero must be a regular (non-symlinked) 1200x480 PNG no
+larger than 2 MiB. The registry's strict PNG profile permits `IHDR`, optional
+`PLTE`, `IDAT`, `IEND`, and optional validated `tIME` or `tRNS` ancillary
+chunks. Keep it legible in light and dark themes, avoid embedding essential
+instructions in the pixels, and use the exact accessible Markdown alt text
+shown above. The registry publishes the image as a checksum-bound Vulcan
+artifact alongside the README; do not use a placeholder, remote image URL, or
+an image outside the model directory.
 
 When changing model behavior, interfaces, supported builds, qualification
 evidence, installation steps, or redistribution terms, update the owning
-README and hero image in the same change. A README- or hero-only edit is
+README and any existing hero image in the same change. A README- or hero-only edit is
 documentation or catalog metadata; it must not change compilation, validation,
 benchmark, or artifact fingerprints.
