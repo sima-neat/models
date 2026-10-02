@@ -254,12 +254,14 @@ async function api(path) {
 
 function catalogCacheKey() {
   const repo = state.repository;
-  const categories = Object.entries(categoryFilters()).filter(([, value]) => value).sort();
-  const search = elements.search.value.trim();
   const history = elements["history-filter"].checked ? "history" : "latest";
   const branch = (state.preferredBranch ?? elements["branch-filter"].value) || "all";
-  const compiler = elements["compiler-filter"].value || "any";
-  return `sima-neat-model-catalog:v2:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  // Search, categories, and compiler filter a branch snapshot locally.
+  const branchSnapshot = history === "latest" && branch !== "all";
+  const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
+  const search = branchSnapshot ? "" : elements.search.value.trim();
+  const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
+  return `sima-neat-model-catalog:v3:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -536,6 +538,10 @@ function buildIdentity(run) {
 
 function catalogMode() {
   return state.catalogMode === "models";
+}
+
+function branchSnapshotMode() {
+  return Boolean(elements["branch-filter"].value) && !elements["history-filter"].checked;
 }
 
 function buildProfileId(build) {
@@ -1519,7 +1525,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   const historical = elements["history-filter"].checked || !branch;
   query.set("status", "completed");
   query.set("run_type", "model_compile");
-  if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
+  if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
   if (branch) query.set("git_ref", `refs/heads/${branch}`);
   if (historical) {
     if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
@@ -1663,6 +1669,7 @@ elements.search.addEventListener("input", () => {
   renderRuns();
   writeSearchUrl();
   clearTimeout(searchTimer);
+  if (branchSnapshotMode()) return;
   searchTimer = setTimeout(() => loadRuns({ branch: state.preferredBranch }).catch((error) => showToast(error.message, true)), 250);
 });
 elements["branch-filter"].addEventListener("change", async () => {
@@ -1695,7 +1702,7 @@ elements["branch-filter"].addEventListener("change", async () => {
 });
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterDisclosure();
-  if (state.branchRuns.length && !elements["history-filter"].checked) {
+  if (branchSnapshotMode() && catalogMode()) {
     state.models = branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
     state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
     renderRuns();
@@ -1722,6 +1729,10 @@ Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].ad
   state.categorySelection[elementId] = elements[elementId].value;
   writeCategoryFilterUrl();
   updateFilterDisclosure();
+  if (branchSnapshotMode()) {
+    renderRuns();
+    return;
+  }
   try {
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {

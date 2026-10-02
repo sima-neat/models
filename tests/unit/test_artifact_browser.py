@@ -183,6 +183,17 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "state.runs[0]?.id" not in script
 
 
+def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+
+    assert 'const branchSnapshot = history === "latest" && branch !== "all"' in script
+    assert 'const categories = branchSnapshot ? [] :' in script
+    assert 'const search = branchSnapshot ? "" :' in script
+    assert 'const compiler = branchSnapshot ? "any" :' in script
+    assert 'if (branchSnapshotMode()) return;' in script
+    assert 'if (branchSnapshotMode()) {\n    renderRuns();\n    return;\n  }' in script
+
+
 def test_cached_build_history_preserves_run_mode() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
@@ -329,7 +340,7 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
     assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
     assert 'query.set("run_type", "model_compile")' in script
-    assert 'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
+    assert 'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
     assert 'link.get("history") === "1"' in script
     assert 'url.searchParams.set("history", "1")' in script
     assert 'elements["history-filter"].checked = false' in script
@@ -735,7 +746,9 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
 def test_branch_cards_use_only_coherent_branch_runs_and_matching_packages() -> None:
     script = r"""
 import assert from 'node:assert/strict';
-import {allPages, branchModels} from './artifact-browser/branch-builds.js';
+import {readFileSync} from 'node:fs';
+const source = readFileSync('./artifact-browser/branch-builds.js', 'utf8');
+const {allPages, branchModels} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01T12:00:00Z') => ({
   id, run_type: 'model_compile', status: 'completed',
@@ -766,6 +779,10 @@ assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-
 assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
 assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
                  ['old-backbone', 'old-transformer']);
+const sameCompilerOld = [run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
+                         run('same-old-transformer', 'rf_detr_small', 'transformer', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
+assert.deepEqual(branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
+                 ['backbone', 'transformer']);
 assert.deepEqual(branchModels([], packages, catalog), []);
 assert.deepEqual(branchModels([{...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_benchmark'}], [], catalog), []);
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
@@ -783,6 +800,6 @@ assert.equal(calls.length, 2);
 assert.match(calls[1], /cursor=page-2/);
 """
     subprocess.run(
-        ["node", "--experimental-default-type=module", "--input-type=module", "-e", script],
+        ["node", "--input-type=module", "-e", script],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
