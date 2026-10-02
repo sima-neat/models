@@ -185,6 +185,7 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
         nestedListFence: renderMarkdown('- - ```bash\\n    echo ready\\n    ````'),
         continuationFence: renderMarkdown('- step\\n\\n    ```bash\\n\\n    ## configure\\n    echo ready\\n    ```'),
         endedContainer: renderMarkdown('> ~~~text\\n## Unexpected\\n~~~'),
+        listIndentedCode: renderMarkdown('-     echo one \\\\\\n      two'),
       }));
     """
     result = subprocess.run(
@@ -218,6 +219,9 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
         '<ul><li>step</li></ul>\n<pre><code class="language-bash">\n## configure\necho ready</code></pre>'
     )
     assert "<h3>Unexpected</h3>" in rendered["endedContainer"]
+    assert rendered["listIndentedCode"] == (
+        '<ul><li><pre><code>echo one \\\ntwo</code></pre></li></ul>'
+    )
 
 
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:

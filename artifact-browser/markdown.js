@@ -137,6 +137,19 @@ function stripIndentedCode(line) {
   return column >= 4 ? line.slice(offset) : null;
 }
 
+function parseListItem(line) {
+  const match = /^( {0,3})((?:[-*+])|(\d+)[.)])([ \t]+)(.*)$/.exec(line);
+  if (!match) return null;
+  const markerWidth = columnWidth(match[1] + match[2]);
+  const paddingWidth = columnWidth(match[1] + match[2] + match[4]) - markerWidth;
+  const effectivePadding = paddingWidth <= 4 ? paddingWidth : 1;
+  return {
+    ordered: Boolean(match[3]),
+    contentIndent: markerWidth + effectivePadding,
+    content: " ".repeat(paddingWidth - effectivePadding) + match[5],
+  };
+}
+
 export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null, resolveLink = null } = {}) {
   let lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
@@ -214,6 +227,28 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     }
     const list = /^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(line);
     if (list) {
+      const parsedList = parseListItem(line);
+      const firstCodeLine = parsedList ? stripIndentedCode(parsedList.content) : null;
+      if (firstCodeLine !== null) {
+        const code = [firstCodeLine];
+        listContinuationIndent = parsedList.contentIndent;
+        index += 1;
+        while (index < lines.length) {
+          if (!lines[index].trim()) {
+            code.push("");
+            index += 1;
+            continue;
+          }
+          if (leadingColumns(lines[index]) < listContinuationIndent) break;
+          const content = stripIndentedCode(stripColumns(lines[index], listContinuationIndent));
+          if (content === null) break;
+          code.push(content);
+          index += 1;
+        }
+        while (code.at(-1) === "") code.pop();
+        output.push(`<${parsedList.ordered ? "ol" : "ul"}><li><pre><code>${escapeHtml(code.join("\n"))}</code></pre></li></${parsedList.ordered ? "ol" : "ul"}>`);
+        continue;
+      }
       const ordered = Boolean(list[2]);
       const items = [];
       while (index < lines.length) {

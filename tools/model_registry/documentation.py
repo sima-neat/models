@@ -31,7 +31,7 @@ _SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
 _CONTAINER_PREFIX_RE = re.compile(r"^ {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)")
-_LIST_ITEM_RE = re.compile(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)")
+_LIST_ITEM_RE = re.compile(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+|$)")
 _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+](?:\s+|$)|\d+[.)](?:\s+|$)|```|~~~|#|>\s?|\||!\[|<))"
@@ -284,7 +284,7 @@ def _markdown_container_stack(line: str) -> tuple[str, list[tuple[str, int]]]:
             line = line[match.end():]
             continue
         if match := _LIST_ITEM_RE.match(line):
-            indent = _column_width(line[:match.end()])
+            indent = _column_width(line[:match.end()]) + (not match.group(2))
             containers.append(("list", indent))
             line = line[match.end():]
             continue
@@ -363,7 +363,10 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
         container_line = _strip_columns(line, list_indents[-1]) if list_indents else line
         if list_item := _LIST_ITEM_RE.match(container_line):
             base_indent = list_indents[-1] if list_indents else 0
-            content_indent = base_indent + _column_width(container_line[:list_item.end()])
+            content_indent = (
+                base_indent + _column_width(container_line[:list_item.end()])
+                + (not list_item.group(2))
+            )
             if not list_indents or content_indent > list_indents[-1]:
                 list_indents.append(content_indent)
         nested_line, nested = _strip_markdown_containers(container_line)
@@ -405,7 +408,8 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             level = len(heading.group(1))
             heading_text = re.sub(r"(?:^#+$|[ \t]+#+[ \t]*$)", "", heading.group(2) or "").strip()
             if not (index == 0 and level == 1) and not (
-                level == 3 and current_section == "Reproducing the artifact" and heading_text
+                not list_indents and level == 3
+                and current_section == "Reproducing the artifact" and heading_text
             ):
                 has_invalid_heading = True
             previous_is_paragraph_text = False
