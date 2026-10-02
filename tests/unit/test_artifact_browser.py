@@ -177,6 +177,7 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
         tilde: renderMarkdown('~~~~bash\\n## Setup\\necho <ready>\\n~~~~'),
         longBacktick: renderMarkdown('````python\\nprint("ready")\\n````'),
         heading: renderMarkdown('   ### Conversion'),
+        closedHeading: renderMarkdown('### Conversion ###'),
         indented: renderMarkdown('    first-command\\n\\tsecond-command\\n\\n    printf "<ready>"\\nnext'),
         blockquoteFence: renderMarkdown('> ```bash\\n> ### configure\\n> echo ready\\n> ````'),
         blockquoteLiteral: renderMarkdown('> ```bash\\n> > output.txt\\n> ````'),
@@ -200,6 +201,7 @@ def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
     assert rendered["tilde"] == '<pre><code class="language-bash">## Setup\necho &lt;ready&gt;</code></pre>'
     assert rendered["longBacktick"] == '<pre><code class="language-python">print(&quot;ready&quot;)</code></pre>'
     assert rendered["heading"] == "<h4>Conversion</h4>"
+    assert rendered["closedHeading"] == "<h4>Conversion</h4>"
     assert rendered["indented"] == (
         "<pre><code>first-command\nsecond-command\n\nprintf &quot;&lt;ready&gt;&quot;</code></pre>\n"
         "<p>next</p>"

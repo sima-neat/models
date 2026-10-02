@@ -32,6 +32,14 @@ _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:
 _PARAGRAPH_EXCLUDED_RE = re.compile(r"^ {0,3}(?:[-+*][ \t]+|\d{1,9}[.)][ \t]+|>|#{1,6}(?:[ \t]+|$))")
 _LIST_ITEM_RE = re.compile(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+|$)")
 _RAW_HTML_BLOCK_RE = re.compile(r"^ {0,3}<")
+_AUTOLINK_RE = re.compile(
+    r"^ {0,3}<(?:"
+    r"[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*"
+    r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+    r")>[ \t]*$"
+)
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?: {0,3}\[[^]\n]+\]:|\s*(?:[-*+](?:\s+|$)|\d+[.)](?:\s+|$)|```|~~~|#|>\s?|\||!\[|<))"
 )
@@ -392,7 +400,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 _, fence_containers = _markdown_container_stack(container_line)
                 previous_is_paragraph_text = False
                 continue
-        if _RAW_HTML_BLOCK_RE.match(markdown_line):
+        if _RAW_HTML_BLOCK_RE.match(markdown_line) and not _AUTOLINK_RE.fullmatch(markdown_line):
             has_invalid_heading = True
             previous_is_paragraph_text = False
             continue

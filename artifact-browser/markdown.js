@@ -206,7 +206,8 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     const heading = /^ {0,3}(#{2,4})\s+(.+)$/.exec(line);
     if (heading) {
       const level = heading[1].length + 1;
-      output.push(`<h${level}>${inlineMarkdown(heading[2], resolveLink)}</h${level}>`);
+      const headingText = heading[2].replace(/[ \t]+#+[ \t]*$/, "").trim();
+      output.push(`<h${level}>${inlineMarkdown(headingText, resolveLink)}</h${level}>`);
       index += 1;
       continue;
     }
