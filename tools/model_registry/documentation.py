@@ -53,6 +53,11 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     overview = "\n".join(lines[overview_start:overview_end]).strip()
     if not overview:
         raise ValidationError(f"model README Overview must not be empty: {readme}")
+    paragraphs = [paragraph for paragraph in re.split(r"\n\s*\n", overview) if paragraph.strip()]
+    if not 1 <= len(paragraphs) <= 2:
+        raise ValidationError(
+            f"model README Overview must contain one or two prose paragraphs, found {len(paragraphs)}: {readme}"
+        )
     word_count = len(re.findall(r"\S+", overview))
     if not 50 <= word_count <= 120:
         raise ValidationError(f"model README Overview must contain 50 to 120 words, found {word_count}: {readme}")

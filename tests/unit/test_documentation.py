@@ -40,6 +40,7 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
         (_readme(_overview()).replace("## Usage", "## How to use"), "H2 sections must be"),
         (_readme(_overview(49)), "50 to 120 words"),
         (_readme(_overview(121)), "50 to 120 words"),
+        (_readme("\n\n".join((_overview(20), _overview(20), _overview(20)))), "one or two prose paragraphs"),
         (_readme("- " + _overview()), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
