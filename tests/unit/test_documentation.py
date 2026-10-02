@@ -106,6 +106,7 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(49) + "\n\n+"), "prose paragraphs only"),
         (_readme(_overview(49) + "\n\n1."), "prose paragraphs only"),
         (_readme(_overview(45) + " ![five alt words are not prose](hero.png)"), "prose paragraphs only"),
+        (_readme(_overview(49) + " ![diagram]"), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
 )
