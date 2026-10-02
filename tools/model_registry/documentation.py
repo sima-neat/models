@@ -45,7 +45,7 @@ _OVERVIEW_FORBIDDEN_RE = re.compile(
 )
 _IMAGE_TOKEN_RE = re.compile(r"(?<!\\)(?:\\\\)*!\[[^]\n]*\]")
 _INLINE_HTML_RE = re.compile(
-    r"(?<!\\)(?:\\\\)*(?:<!--|<\?|<![A-Z]|<!\[CDATA\[|</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]|/?>))"
+    r"(?<!\\)(?:\\\\)*(?:<!--|<\?|<![A-Z]|<!\[CDATA\[|</?[A-Za-z][A-Za-z0-9-]*(?:\s|/?>))"
 )
 _INLINE_HTML_HEADING_RE = re.compile(r"(?<!\\)(?:\\\\)*</?h[1-6](?:[ \t]|/?>)", re.IGNORECASE)
 
@@ -557,9 +557,10 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     if (
         any(
             _is_indented_code(line) or _OVERVIEW_FORBIDDEN_RE.match(line)
-            or _IMAGE_TOKEN_RE.search(line) or _INLINE_HTML_RE.search(line)
+            or _IMAGE_TOKEN_RE.search(line)
             for line in overview_lines
         )
+        or _INLINE_HTML_RE.search(overview)
         or _is_markdown_table(overview_lines)
         or _is_setext_heading(overview_lines)
         or any(_THEMATIC_BREAK_RE.fullmatch(line) for line in overview_lines)

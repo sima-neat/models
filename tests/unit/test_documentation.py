@@ -118,6 +118,7 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(45) + r" \\![five alt words are not prose](hero.png)"), "prose paragraphs only"),
         (_readme(_overview(49) + " <!-- maintainer note -->"), "prose paragraphs only"),
         (_readme(_overview(49) + " <h3>Internal</h3>"), "prose paragraphs only"),
+        (_readme(_overview(49) + " <h3\n class=x>Internal"), "prose paragraphs only"),
         (_readme(_overview(49) + r" \\<!--note-->"), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
     ],
@@ -177,6 +178,16 @@ def test_model_readme_contract_accepts_escaped_html_syntax_in_overview(tmp_path:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     (model_dir / "README.md").write_text(_readme(_overview(49) + r" \<!--note-->"), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_escaped_multiline_html_syntax_in_overview(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    overview = _overview(48) + r" \<h3" + "\n class=x>Internal"
+    (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
     load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
