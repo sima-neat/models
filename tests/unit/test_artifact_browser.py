@@ -167,6 +167,30 @@ def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit()
     assert rendered["external"] is None
 
 
+def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
+    script = """
+      import {readFileSync} from 'node:fs';
+      const moduleSource = readFileSync('./artifact-browser/markdown.js', 'utf8');
+      const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(moduleSource).toString('base64');
+      const {renderMarkdown} = await import(moduleUrl);
+      console.log(JSON.stringify({
+        tilde: renderMarkdown('~~~~bash\\n## Setup\\necho <ready>\\n~~~~'),
+        longBacktick: renderMarkdown('````python\\nprint("ready")\\n````'),
+      }));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+
+    assert rendered["tilde"] == '<pre><code class="language-bash">## Setup\necho &lt;ready&gt;</code></pre>'
+    assert rendered["longBacktick"] == '<pre><code class="language-python">print(&quot;ready&quot;)</code></pre>'
+
+
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
     workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     build = workflow["jobs"]["build"]

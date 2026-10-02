@@ -56,6 +56,25 @@ function isTableDivider(line, columns) {
   return cells.length === columns && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
+function parseFence(line) {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match || (match[1][0] === "`" && match[2].includes("`"))) return null;
+  const languageCandidate = match[2].trim().split(/\s+/, 1)[0];
+  return {
+    character: match[1][0],
+    length: match[1].length,
+    language: /^[A-Za-z0-9_-]+$/.test(languageCandidate) ? languageCandidate : "",
+  };
+}
+
+function closesFence(line, fence) {
+  const match = /^ {0,3}([`~]+)[ \t]*$/.exec(line);
+  return Boolean(match
+    && match[1][0] === fence.character
+    && [...match[1]].every((character) => character === fence.character)
+    && match[1].length >= fence.length);
+}
+
 export function renderMarkdown(markdown, { stripTitle = false, resolveImage = null, resolveLink = null } = {}) {
   let lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   if (stripTitle && /^#\s+/.test(lines[0] || "")) lines = lines.slice(1);
@@ -73,13 +92,13 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
       index += 1;
       continue;
     }
-    const fence = /^```([A-Za-z0-9_-]*)\s*$/.exec(line);
+    const fence = parseFence(line);
     if (fence) {
       const code = [];
       index += 1;
-      while (index < lines.length && !/^```\s*$/.test(lines[index])) code.push(lines[index++]);
+      while (index < lines.length && !closesFence(lines[index], fence)) code.push(lines[index++]);
       if (index < lines.length) index += 1;
-      const language = fence[1] ? ` class="language-${escapeHtml(fence[1])}"` : "";
+      const language = fence.language ? ` class="language-${escapeHtml(fence.language)}"` : "";
       output.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
@@ -121,7 +140,8 @@ export function renderMarkdown(markdown, { stripTitle = false, resolveImage = nu
     const paragraph = [line.trim()];
     index += 1;
     while (index < lines.length && lines[index].trim()
-      && !/^(?:#{2,4}\s+|```|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
+      && !parseFence(lines[index])
+      && !/^(?:#{2,4}\s+|!\[|\s*(?:[-*+] |\d+[.)] ))/.test(lines[index])) {
       if (lines[index].includes("|") && index + 1 < lines.length
         && isTableDivider(lines[index + 1], tableRow(lines[index]).length)) break;
       paragraph.push(lines[index].trim());

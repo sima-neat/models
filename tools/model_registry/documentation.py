@@ -24,8 +24,9 @@ REQUIRED_SECTIONS = (
     "Reproducing the artifact",
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
+_ATX_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-_SETEXT_H2_RE = re.compile(r"^ {0,3}-+[ \t]*$")
+_SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _THEMATIC_BREAK_RE = re.compile(r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$")
 _OVERVIEW_FORBIDDEN_RE = re.compile(
     r"^(?:(?: {4}|\t)|\s*(?:[-*+]\s+|\d+[.)]\s+|```|~~~|#|>\s?|\||!\[)|\s*<[^>]+>)"
@@ -252,10 +253,11 @@ def _is_setext_heading(lines: list[str]) -> bool:
 
 def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
-    has_setext_h2 = False
+    has_invalid_heading = False
     fence_character = None
     fence_length = 0
     previous_is_paragraph_text = False
+    current_section = None
     for index, line in enumerate(lines):
         if fence_character is not None:
             if re.fullmatch(rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*", line):
@@ -270,19 +272,28 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
                 fence_length = len(marker)
                 previous_is_paragraph_text = False
                 continue
-        if _SETEXT_H2_RE.fullmatch(line) and previous_is_paragraph_text:
-            has_setext_h2 = True
+        if _SETEXT_HEADING_RE.fullmatch(line) and previous_is_paragraph_text:
+            has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
         if match := _H2_RE.fullmatch(line):
-            sections.append((index, match.group(1)))
+            current_section = match.group(1)
+            sections.append((index, current_section))
+            previous_is_paragraph_text = False
+            continue
+        if heading := _ATX_HEADING_RE.fullmatch(line):
+            level = len(heading.group(1))
+            if not (index == 0 and level == 1) and not (
+                level == 3 and current_section == "Reproducing the artifact"
+            ):
+                has_invalid_heading = True
             previous_is_paragraph_text = False
             continue
         stripped = line.strip()
         previous_is_paragraph_text = bool(stripped) and not (
             _OVERVIEW_FORBIDDEN_RE.match(line) or _THEMATIC_BREAK_RE.fullmatch(line)
         )
-    return sections, has_setext_h2
+    return sections, has_invalid_heading
 
 
 def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str, Any]:
@@ -335,9 +346,9 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
             f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
         )
 
-    sections, has_setext_h2 = _markdown_h2_sections(lines)
+    sections, has_invalid_heading = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
-    if names != REQUIRED_SECTIONS or has_setext_h2:
+    if names != REQUIRED_SECTIONS or has_invalid_heading:
         raise ValidationError(
             f"model README H2 sections must be {', '.join(REQUIRED_SECTIONS)} in order: {readme}"
         )
