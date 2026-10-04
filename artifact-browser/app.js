@@ -2,6 +2,7 @@ import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { allPages, branchModels } from "./branch-builds.js";
+import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
@@ -60,6 +61,10 @@ const state = {
   preferredBranch: null,
   urlBranch: false,
   detailCache: new Map(),
+  historicalCatalogModels: new Map(),
+  documentationCache: new Map(),
+  expandedDocumentationModelId: null,
+  documentationRequestId: 0,
   comparisonCache: new Map(),
   compareSelection: new Map(),
   activeProfileByModel: new Map(),
@@ -250,6 +255,22 @@ async function api(path) {
     throw error;
   }
   return payload;
+}
+
+async function apiText(path) {
+  const response = await fetch(`${state.apiBase}${path}`, {
+    headers: { Accept: "text/markdown" },
+    mode: "cors",
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    let message = `Registry request failed (${response.status})`;
+    try { message = JSON.parse(body).error?.message || message; } catch { /* The error body may be plain text. */ }
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
 }
 
 function catalogCacheKey() {
@@ -629,6 +650,7 @@ function filteredRuns() {
 function modelSearchDocument(model) {
   return [
     model.model_id, model.display_name, model.description, model.maturity, model.license,
+    model.documentation?.overview_markdown,
     taxonomyLabel("model_types", model.model_type),
     taxonomyLabel("architectures", model.architecture_id),
     taxonomyLabel("architecture_paradigms", model.architecture_paradigm),
@@ -928,8 +950,14 @@ function showEmptyDetail() {
 }
 
 async function selectRun(runId, { updateUrl = true } = {}) {
-  state.selectedId = runId;
   const catalogRun = state.runs.find((run) => run.id === runId);
+  const previousRun = state.runs.find((run) => run.id === state.selectedId)
+    || state.detailCache.get(state.selectedId)?.summary?.run;
+  if (previousRun?.metadata?.model_id !== catalogRun?.metadata?.model_id) {
+    state.expandedDocumentationModelId = null;
+    state.documentationRequestId += 1;
+  }
+  state.selectedId = runId;
   if (catalogRun?.metadata?.model_id) {
     const modelId = catalogRun.metadata.model_id;
     const profile = catalogRun.metadata.build_profile_id || catalogRun.metadata.variant_id || "default";
@@ -973,6 +1001,7 @@ async function selectRun(runId, { updateUrl = true } = {}) {
       && currentPackage.run_id !== requestedPackageId) {
       detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
     }
+    if (state.catalogMode === "runs") await loadHistoricalCatalogModel(detail.summary.run);
     if (state.selectedId === runId) {
       const linkedBranch = new URLSearchParams(location.search).get("branch");
       if (linkedBranch && branchName(detail.summary.run.git_ref) !== linkedBranch) {
@@ -1219,7 +1248,97 @@ function modelPackArtifacts(artifacts) {
 
 function catalogModelForRun(run) {
   const modelId = run.metadata?.model_id;
-  return state.models.find((model) => model.model_id === modelId) || null;
+  const key = `${run.git_ref || ""}:${run.commit_sha || ""}:${modelId || ""}`;
+  const historical = state.historicalCatalogModels.get(key);
+  return historical?.model_id ? historical : state.models.find((model) => model.model_id === modelId) || null;
+}
+
+async function loadHistoricalCatalogModel(run) {
+  const modelId = run.metadata?.model_id;
+  if (!modelId || !/^refs\/heads\/.+/.test(run.git_ref || "") || !/^[0-9a-f]{40}$/.test(run.commit_sha || "")) return null;
+  const key = `${run.git_ref}:${run.commit_sha}:${modelId}`;
+  if (state.historicalCatalogModels.has(key)) return state.historicalCatalogModels.get(key);
+  const repo = state.repository;
+  try {
+    const query = new URLSearchParams({ git_ref: run.git_ref });
+    const payload = await api(
+      `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/${encodeURIComponent(run.commit_sha)}?${query}`,
+    );
+    const definition = (payload.catalog?.document?.models || []).find((model) => (model.model_id || model.id) === modelId);
+    const model = definition ? { ...definition, model_id: definition.model_id || definition.id } : null;
+    state.historicalCatalogModels.set(key, model);
+    return model;
+  } catch {
+    state.historicalCatalogModels.set(key, null);
+    return null;
+  }
+}
+
+function documentationHeroUrl(documentation) {
+  const hero = documentation?.hero;
+  if (!hero?.artifact_name || !hero?.artifact_sha256 || !documentation?.run_id) return null;
+  return `${state.apiBase}/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(hero.artifact_name)}/content`;
+}
+
+function documentationPanel(model) {
+  const documentation = model?.documentation;
+  if (!documentation?.overview_markdown || !documentation?.run_id || !documentation?.artifact_sha256) return "";
+  const expanded = state.expandedDocumentationModelId === model.model_id;
+  const cacheKey = `${documentation.run_id}:${documentation.artifact_sha256}`;
+  const fullMarkdown = state.documentationCache.get(cacheKey);
+  const heroUrl = documentationHeroUrl(documentation);
+  const resolveImage = (source) => source === documentation.hero?.markdown_path ? heroUrl : null;
+  const resolveLink = (source) => resolveDocumentationLink(documentation, source);
+  const overviewHero = heroUrl
+    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
+    : "";
+  const body = expanded && fullMarkdown
+    ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage, resolveLink })
+    : `${overviewHero}${renderMarkdown(documentation.overview_markdown, { resolveLink })}`;
+  const label = expanded ? "Show overview only" : "Read full model card";
+  return `<section class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title">
+    <div class="detail-section-title"><h3 id="model-documentation-title">Model card</h3>${expanded ? `<button class="documentation-collapse" type="button" data-documentation-toggle aria-expanded="true" aria-controls="model-documentation-body">${label}</button>` : ""}</div>
+    <div id="model-documentation-body" class="model-documentation-body">${body}</div>
+    <div class="documentation-disclosure${expanded ? " expanded" : ""}">
+      <button type="button" data-documentation-toggle aria-expanded="${expanded}" aria-controls="model-documentation-body">${label}<span aria-hidden="true">${expanded ? "↑" : "↓"}</span></button>
+    </div>
+  </section>`;
+}
+
+async function toggleDocumentation(button) {
+  const detail = state.detailCache.get(state.selectedId);
+  const model = detail ? catalogModelForRun(detail.summary.run) : null;
+  const documentation = model?.documentation;
+  if (!model || !documentation) return;
+  if (state.expandedDocumentationModelId === model.model_id) {
+    state.expandedDocumentationModelId = null;
+    renderDetail(detail);
+    elements["detail-pane"].querySelector("[data-documentation-toggle]")?.focus();
+    return;
+  }
+  const cacheKey = `${documentation.run_id}:${documentation.artifact_sha256}`;
+  const requestId = ++state.documentationRequestId;
+  button.disabled = true;
+  button.textContent = "Loading model card…";
+  try {
+    if (!state.documentationCache.has(cacheKey)) {
+      const markdown = await apiText(`/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(documentation.artifact_name || "readme")}/content`);
+      const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(markdown)))]
+        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      if (digest !== documentation.artifact_sha256) throw new Error("The model card checksum did not match the catalog.");
+      state.documentationCache.set(cacheKey, markdown);
+    }
+    if (requestId !== state.documentationRequestId || state.selectedId !== detail.summary.run.id) return;
+    state.expandedDocumentationModelId = model.model_id;
+    renderDetail(detail);
+    elements["detail-pane"].querySelector(".documentation-collapse")?.focus();
+  } catch (error) {
+    if (requestId === state.documentationRequestId) {
+      button.disabled = false;
+      button.textContent = "Read full model card";
+      showToast(error.message, true);
+    }
+  }
 }
 
 function fullPackageForRun(run) {
@@ -1315,6 +1434,8 @@ function renderDetail(detail) {
     <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${fullPackage ? `<button class="artifact-download-shortcut" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}" aria-label="Download full package" data-tooltip="Download full package">${icons.download}</button>` : primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download-variant="${run.id}" data-run-id="${run.id}" aria-label="Download individual components" data-tooltip="Download individual components">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
     ${detailBuildSwitcher(run)}
     <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
+
+    ${documentationPanel(catalogModel)}
 
     <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
       ${artifacts.length ? artifacts.map((artifact) => `<dl class="artifact-metadata">
@@ -1803,6 +1924,11 @@ elements["compare-dialog"].addEventListener("click", (event) => {
   if (event.target === elements["compare-dialog"]) elements["compare-dialog"].close();
 });
 elements["detail-pane"].addEventListener("click", (event) => {
+  const documentationToggle = event.target.closest("[data-documentation-toggle]");
+  if (documentationToggle) {
+    toggleDocumentation(documentationToggle);
+    return;
+  }
   const variant = event.target.closest("[data-detail-profile-id]:not([data-detail-component-id])");
   if (variant) {
     const build = selectedCatalogBuild(variant.dataset.detailModelId, variant.dataset.detailProfileId);

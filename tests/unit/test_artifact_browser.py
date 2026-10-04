@@ -24,6 +24,7 @@ def test_artifact_browser_assets_exist() -> None:
         "benchmark-adapters.js",
         "branch-builds.js",
         "downloads.js",
+        "markdown.js",
         "styles.css",
         "config.js",
         "favicon.svg",
@@ -101,10 +102,128 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
     assert "process.env.GITHUB_SHA" in assemble
-    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "styles", "config"):
+    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config"):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble
+
+
+def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
+
+    assert "documentation?.overview_markdown" in script
+    assert 'headers: { Accept: "text/markdown" }' in script
+    assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
+    assert 'crypto.subtle.digest("SHA-256"' in script
+    assert "state.documentationCache.set(cacheKey, markdown)" in script
+    assert 'aria-expanded="${expanded}"' in script
+    assert "Read full model card" in script
+    assert "Show overview only" in script
+    assert "documentationHeroUrl" in script
+    assert "documentation.hero?.markdown_path" in script
+    assert "linear-gradient(to bottom, transparent" in styles
+    assert ".model-card-hero" in styles
+    assert "SAFE_LINK" in renderer
+    assert "escapeHtml" in renderer
+    assert "resolveImage" in renderer
+    assert "resolveDocumentationLink" in renderer
+    assert 'loading="lazy"' in renderer
+    assert "export function renderMarkdown" in renderer
+
+
+def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit() -> None:
+    script = """
+      import {readFileSync} from 'node:fs';
+      const moduleSource = readFileSync('./artifact-browser/markdown.js', 'utf8');
+      const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(moduleSource).toString('base64');
+      const {renderMarkdown, resolveDocumentationLink} = await import(moduleUrl);
+      const documentation = {
+        source_commit: 'a'.repeat(40),
+        source_path: 'models/ssd_mobilenet_v3/README.md',
+      };
+      const resolveLink = (source) => resolveDocumentationLink(documentation, source);
+      const markdown = '[QAT](qat/README.md) [section](#usage) [unsafe](javascript:alert(1))';
+      console.log(JSON.stringify({
+        html: renderMarkdown(markdown, {resolveLink}),
+        traversal: resolveLink('../../../../outside.md'),
+        external: resolveLink('//example.invalid/steal'),
+      }));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+    source_url = "https://github.com/sima-neat/models/blob/" + "a" * 40
+    assert f'{source_url}/models/ssd_mobilenet_v3/qat/README.md' in rendered["html"]
+    assert f'{source_url}/models/ssd_mobilenet_v3/README.md#usage' in rendered["html"]
+    assert "javascript:" not in rendered["html"]
+    assert rendered["traversal"] is None
+    assert rendered["external"] is None
+
+
+def test_model_card_markdown_renders_every_validator_supported_fence() -> None:
+    script = """
+      import {readFileSync} from 'node:fs';
+      const moduleSource = readFileSync('./artifact-browser/markdown.js', 'utf8');
+      const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(moduleSource).toString('base64');
+      const {renderMarkdown} = await import(moduleUrl);
+      console.log(JSON.stringify({
+        tilde: renderMarkdown('~~~~bash\\n## Setup\\necho <ready>\\n~~~~'),
+        longBacktick: renderMarkdown('````python\\nprint("ready")\\n````'),
+        heading: renderMarkdown('   ### Conversion'),
+        closedHeading: renderMarkdown('### Conversion ###'),
+        indented: renderMarkdown('    first-command\\n\\tsecond-command\\n\\n    printf "<ready>"\\nnext'),
+        blockquoteFence: renderMarkdown('> ```bash\\n> ### configure\\n> echo ready\\n> ````'),
+        blockquoteLiteral: renderMarkdown('> ```bash\\n> > output.txt\\n> ````'),
+        listFence: renderMarkdown('- ```bash\\n  ### configure\\n  echo ready\\n  ````'),
+        mixedFence: renderMarkdown('- > ```bash\\n  > echo ready\\n  > ````'),
+        nestedListFence: renderMarkdown('- - ```bash\\n    echo ready\\n    ````'),
+        continuationFence: renderMarkdown('- step\\n\\n    ```bash\\n\\n    ## configure\\n    echo ready\\n    ```'),
+        endedContainer: renderMarkdown('> ~~~text\\n## Unexpected\\n~~~'),
+        listIndentedCode: renderMarkdown('-     echo one \\\\\\n      two'),
+      }));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+
+    assert rendered["tilde"] == '<pre><code class="language-bash">## Setup\necho &lt;ready&gt;</code></pre>'
+    assert rendered["longBacktick"] == '<pre><code class="language-python">print(&quot;ready&quot;)</code></pre>'
+    assert rendered["heading"] == "<h4>Conversion</h4>"
+    assert rendered["closedHeading"] == "<h4>Conversion</h4>"
+    assert rendered["indented"] == (
+        "<pre><code>first-command\nsecond-command\n\nprintf &quot;&lt;ready&gt;&quot;</code></pre>\n"
+        "<p>next</p>"
+    )
+    assert rendered["blockquoteFence"] == (
+        '<pre><code class="language-bash">### configure\necho ready</code></pre>'
+    )
+    assert rendered["blockquoteLiteral"] == (
+        '<pre><code class="language-bash">&gt; output.txt</code></pre>'
+    )
+    assert rendered["listFence"] == (
+        '<pre><code class="language-bash">### configure\necho ready</code></pre>'
+    )
+    assert rendered["mixedFence"] == '<pre><code class="language-bash">echo ready</code></pre>'
+    assert rendered["nestedListFence"] == '<pre><code class="language-bash">echo ready</code></pre>'
+    assert rendered["continuationFence"] == (
+        '<ul><li>step</li></ul>\n<pre><code class="language-bash">\n## configure\necho ready</code></pre>'
+    )
+    assert "<h3>Unexpected</h3>" in rendered["endedContainer"]
+    assert rendered["listIndentedCode"] == (
+        '<ul><li><pre><code>echo one \\\ntwo</code></pre></li></ul>'
+    )
 
 
 def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
@@ -232,6 +351,18 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "navigationId === state.navigationId && state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in script
     assert "state.detailCache.get(runId)?.summary?.run" in script
+
+
+def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+
+    assert "historicalCatalogModels: new Map()" in script
+    assert "async function loadHistoricalCatalogModel(run)" in script
+    assert "/catalogs/${encodeURIComponent(run.commit_sha)}?${query}" in script
+    assert "payload.catalog?.document?.models" in script
+    assert 'state.catalogMode === "runs"' in select_run
+    assert "await loadHistoricalCatalogModel(detail.summary.run)" in select_run
 
 
 def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:

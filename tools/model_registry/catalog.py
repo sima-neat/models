@@ -41,7 +41,7 @@ CALIBRATION_COMPILE_INPUT_PATHS = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-_IGNORED_MODEL_BUILD_NAMES = {"README.md"}
+_IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 3
@@ -50,6 +50,19 @@ BENCHMARK_FINGERPRINT_SCHEMA = 3
 def _canonical_sha256(value: Any) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+def _documentation_metadata(root: Path, catalog: dict[str, dict[str, Any]]) -> dict[str, dict[str, str | None]]:
+    metadata: dict[str, dict[str, str | None]] = {}
+    for model_id in sorted(catalog):
+        metadata[model_id] = {}
+        for name in ("README.md", "hero.png"):
+            path = root / "models" / model_id / name
+            try:
+                metadata[model_id][name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                metadata[model_id][name] = None
+    return metadata
 
 
 def _integer_constant(path: Path, name: str) -> int:
@@ -719,9 +732,11 @@ def semantic_change_plan(
     base_compile_schema = None
     base_validation_schema = None
     base_benchmark_schema = None
+    base_documentation: dict[str, dict[str, str | None]] = {}
     try:
         with _revision_tree(root, base) as base_root:
             base_catalog = discover_catalog(base_root)
+            base_documentation = _documentation_metadata(base_root, base_catalog)
             base_taxonomy_sha = taxonomy_sha256(load_taxonomy(base_root / TAXONOMY_RELATIVE_PATH))
             base_compile_schema = _integer_constant(
                 base_root / "tools" / "model_registry" / "catalog.py", "COMPILE_FINGERPRINT_SCHEMA"
@@ -827,6 +842,7 @@ def semantic_change_plan(
 
     metadata_changed = fallback_reason is not None or (
         publication_metadata(base_catalog) != publication_metadata(head_catalog)
+        or base_documentation != _documentation_metadata(root, head_catalog)
     )
     return {
         "include": compile_include,
