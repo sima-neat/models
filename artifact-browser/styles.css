@@ -464,14 +464,16 @@ details pre { max-height: 320px; overflow: auto; margin: 17px 0 0; padding: 17px
 
 .download-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: clamp(20px, 4vw, 32px); border: 1px solid var(--line); background: var(--surface-raised); color: var(--ink); box-shadow: 0 28px 90px rgba(20, 28, 34, .28); }
 .download-dialog::backdrop { background: rgba(16, 22, 27, .58); }
-.download-dialog h2 { margin: 8px 0 14px; font-size: 26px; font-weight: 500; }
+.download-dialog h2 { margin: 0 0 12px; font-size: 1.625rem; font-weight: 500; line-height: 1.2; }
 .download-dialog p { overflow-wrap: anywhere; }
 #download-description, .download-note { color: var(--ink-soft); line-height: 1.6; }
-.download-note { font-size: 13px; }
-.download-package-info { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); gap: 8px 16px; margin: 20px 0; padding: 16px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 92%, var(--blue) 8%); font-size: 14px; }
-.download-package-info dt { color: var(--ink-soft); }
+.download-note { font-size: .875rem; }
+.download-package-info { display: grid; grid-template-columns: minmax(108px, 128px) minmax(0, 1fr); margin: 20px 0; overflow: hidden; border: 1px solid var(--line); font-size: .875rem; line-height: 1.5; }
+.download-package-info dt, .download-package-info dd { padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.download-package-info dt { border-right: 1px solid var(--line); color: var(--ink); background: var(--surface); font-weight: 600; }
 .download-package-info dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-.download-package-info code { font: inherit; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+.download-package-info > :nth-last-child(-n + 2) { border-bottom: 0; }
+.download-package-info code { font: inherit; font-variant-numeric: tabular-nums; }
 .download-list { list-style: none; margin: 24px 0; padding: 0; }
 .download-list li { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }
 .download-list li:last-child { border-bottom: 1px solid var(--line); }

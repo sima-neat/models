@@ -638,6 +638,22 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert ".artifact-download-shortcut:focus-visible" in styles
 
 
+def test_package_download_dialog_uses_one_consistent_label_value_grid() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="download-kicker"' not in html
+    assert '"download-kicker"' not in script
+    assert '<dt>File name</dt>' in script
+    assert '<dt>Attribution</dt>' in script
+    assert 'Attribution: ${license.attribution}' not in script
+    assert ".download-package-info dt, .download-package-info dd" in styles
+    assert ".download-package-info dt { border-right: 1px solid var(--line)" in styles
+    assert ".download-package-info code { font: inherit" in styles
+    assert 'font-family: "IBM Plex Mono"' not in styles.split(".download-package-info code", 1)[1].split("}", 1)[0]
+
+
 def test_only_model_packs_are_presented_as_artifacts() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 

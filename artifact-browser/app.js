@@ -87,7 +87,7 @@ const elements = Object.fromEntries(
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
     "compare-button", "compare-label", "compare-count", "compare-dialog", "compare-close", "compare-content",
     "compare-title", "compare-description",
-    "download-dialog", "download-kicker", "download-title", "download-description", "download-package-info",
+    "download-dialog", "download-title", "download-description", "download-package-info",
     "download-list", "download-confirm", "download-cancel", "download-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
@@ -1483,9 +1483,8 @@ function errorPanel(message, title = "Registry unavailable", { closable = false 
 let pendingDownloads = null;
 let downloadRequest = 0;
 
-function resetDownloadDialog({ kicker, title, description, confirmLabel }) {
+function resetDownloadDialog({ title, description, confirmLabel }) {
   pendingDownloads = null;
-  elements["download-kicker"].textContent = kicker;
   elements["download-title"].textContent = title;
   elements["download-description"].textContent = description;
   elements["download-list"].innerHTML = "";
@@ -1503,7 +1502,6 @@ async function downloadVariant(runId) {
   const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
-    kicker: "Model variant",
     title: "Download components",
     description: "Checking the selected variant’s components…",
     confirmLabel: "Download all files",
@@ -1533,7 +1531,6 @@ async function downloadPackage(runId) {
   const request = ++downloadRequest;
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
-    kicker: "Full package",
     title: "Download model package",
     description: "Checking the package manifest and download metadata…",
     confirmLabel: "Download ZIP",
@@ -1564,17 +1561,18 @@ async function downloadPackage(runId) {
       ? `${license.spdx || "License"} · redistribution ${license.redistribution}`
       : license.spdx || "Not recorded";
     const componentLabel = `${components.length} ${components.length === 1 ? "component" : "components"}`;
-    elements["download-description"].textContent = `${profile} is packaged as one verified ZIP. Confirm to start the download.`;
+    elements["download-description"].textContent = `${profile} is packaged as one verified ZIP.`;
     elements["download-package-info"].hidden = false;
     elements["download-package-info"].innerHTML = `
       <dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd>
       <dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)}</dd>
       <dt>ZIP size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
       <dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd>
-      <dt>License</dt><dd>${escapeHtml(redistribution)}</dd>`;
+      <dt>License</dt><dd>${escapeHtml(redistribution)}</dd>
+      ${license.attribution ? `<dt>Attribution</dt><dd>${escapeHtml(license.attribution)}</dd>` : ""}`;
     const note = elements["download-dialog"].querySelector(".download-note");
-    note.hidden = !license.attribution;
-    note.textContent = license.attribution ? `Attribution: ${license.attribution}` : "";
+    note.hidden = true;
+    note.textContent = "";
     elements["download-list"].hidden = true;
     elements["download-confirm"].disabled = false;
   } catch (error) {
