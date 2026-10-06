@@ -70,7 +70,7 @@ sequence; follow it before you submit anything.
 Follow these guides in order:
 
 1. [Define the model contract](adding-a-model.md) — define the model directory,
-   components, immutable sources, build profiles, packages, and test declarations.
+   components, immutable sources, build profiles, packages, and validation and benchmark entries.
 2. [Qualify locally](local-development.md) — install the
    contributor tools, compile and test every supported component/profile pair, and retain the
    required local evidence.

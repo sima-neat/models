@@ -206,9 +206,9 @@ class requests and approvals](runner-class-requests.md).
 ## 7. Define composition and retrieval packages
 
 A one-component product uses a `single` composition naming its component and
-entrypoint. A product with several components uses a separately versioned
-declarative composition file to describe connections and product-level
-behavior.
+entrypoint. A product with several components uses a `declarative` composition
+whose `components`, `connections`, `inputs`, and `outputs` are written inline
+in `model.yaml`; see [Compositions and packages](metadata-schema.md#compositions-and-packages).
 
 Then declare one or more packages. A package selects:
 

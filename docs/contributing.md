@@ -119,8 +119,8 @@ Vulcan runner.
 For a model change, interpret a successful pull-request workflow as confirmation
 that:
 
-- the complete catalog, taxonomy, accuracy configuration, performance
-  configuration, and declarative compositions are structurally valid;
+- the complete catalog, taxonomy, conversion sources, validation and benchmark
+  entries, and declarative compositions are structurally valid;
 - the repository-wide Model Compiler dependency resolves;
 - the comparison base and changed models were identified; and
 - the resulting supported component/profile matrix is deterministic.

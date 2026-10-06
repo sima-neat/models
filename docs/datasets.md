@@ -44,7 +44,7 @@ Dataset Registry checks Artifactory credentials in this order:
 5. anonymous access when the artifact permits it.
 
 Prefer a credential supplied by the approved local secret-management flow.
-Never paste a token into `model.yaml`, a correctness file, a pull-request log,
+Never paste a token into `model.yaml`, a model script, a pull-request log,
 or a command that will be retained in shell history. If you use `~/.netrc`,
 restrict it to the current user:
 
@@ -78,10 +78,10 @@ or bypass a checksum failure.
 
 ## Use the dataset through the model contract
 
-`model.yaml` declares calibration data, while an executable correctness file
-declares the data used for accuracy evaluation. Both declarations identify the
-same registered bytes with an ID, variant, SHA-256, and byte size. The
-correctness declaration additionally defines loaders and splits.
+`model.yaml` declares calibration data in `calibrations` and accuracy data in a
+`validation` entry. Both declarations identify the same registered bytes with
+an ID, variant, SHA-256, and byte size. The validation entry additionally
+defines loaders and splits.
 
 During local work, use Model Registry to resolve inputs for the selected
 component/profile pair:

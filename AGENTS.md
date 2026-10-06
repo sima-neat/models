@@ -2,7 +2,7 @@
 
 This repository is the source of truth for model definitions, reproducible
 compilation, validation, and publication. Keep model metadata declarative,
-model-specific preparation inside the owning model directory, and shared
+model-specific code in the owning model's `scripts/` directory, and shared
 lifecycle behavior in `tools/model_registry`.
 
 ## Model README requirements

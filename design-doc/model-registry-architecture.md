@@ -16,7 +16,7 @@ by URI, byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
-| Model-owned `scripts/compile.py` | Developer-facing local compile entry point. Reads one declared YAML variant and emits one MPK. |
+| Model-owned `scripts/compile.py` | Developer-facing local compile entry point. Reads its build profile from `model.yaml` and emits one MPK per compiled component. |
 | DevKit `benchmarker` | Developer-facing local performance entry point for the exact compiled MPK. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, matrix inspection, and MPK checks. CI uses the full internal command surface for packaging, provenance, and publication. |
 | GitHub Actions | Selects changed models, invokes lifecycle commands, and reports status. Untrusted pull requests use validation only. |

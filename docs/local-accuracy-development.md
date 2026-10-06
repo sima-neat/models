@@ -92,7 +92,7 @@ Every JSON report records:
 - reference and candidate top-k accuracy, agreement, and deltas.
 
 A `sampled_accuracy_smoke` result is a regression signal, not definitive model
-accuracy. Use the qualification profile on demand before release. A config with
+accuracy. Use the qualification profile on demand before release. An entry with
 `status: provisional` may be used for engineering feedback but must not be used
 as release evidence.
 
