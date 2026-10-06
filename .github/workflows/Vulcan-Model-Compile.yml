@@ -902,7 +902,7 @@ jobs:
           import certifi
 
           payload = {
-              "ref": "develop",
+              "ref": os.environ["GITHUB_REF_NAME"],
               "inputs": {
                   "environment": os.environ["BENCHMARK_ENVIRONMENT"],
                   "source_run_id": os.environ["GITHUB_RUN_ID"],
@@ -1256,7 +1256,7 @@ jobs:
         run: |
           set -euo pipefail
           gh workflow run Vulcan-Model-Benchmarking.yml \
-            --ref develop \
+            --ref "$GITHUB_REF_NAME" \
             -f environment=staging \
             -f source_run_id= \
             -f source_sha="$GITHUB_SHA" \

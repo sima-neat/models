@@ -77,6 +77,10 @@ them.
 
 ## CI and registry publication
 
+Each published compilation dispatches its benchmark on the branch it was built
+from, so the benchmark workflow and `model-registry` come from the same branch
+as the build. A benchmark run only accepts builds from its own branch.
+
 CI verifies the dispatched component set and compiled archive digests, installs
 the pinned Core package, then invokes each model's script once per component.
 `model-registry import-core-benchmark` validates the raw Core report and packages

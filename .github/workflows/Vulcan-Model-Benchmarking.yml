@@ -55,7 +55,7 @@ jobs:
     name: Stage ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) benchmark input
     needs: resolve-dispatched-benchmark-config
     if: >-
-      github.ref == 'refs/heads/develop' &&
+      inputs.source_branch == github.ref_name &&
       inputs.environment == 'staging' &&
       inputs.source_sha != '' && inputs.source_branch != '' &&
       inputs.model_id != '' && inputs.build_profile_id != '' &&
@@ -252,12 +252,12 @@ jobs:
 
   resolve-dispatched-benchmark-runner:
     name: Resolve dispatched benchmark DevKit runner
-    if: github.ref == 'refs/heads/develop' && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
 
   resolve-dispatched-benchmark-config:
     name: Resolve dispatched benchmark Vulcan config
-    if: github.ref == 'refs/heads/develop' && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
     permissions:
       contents: read
       id-token: write
@@ -269,7 +269,7 @@ jobs:
   benchmark-dispatched-model:
     name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner, resolve-dispatched-benchmark-config]
-    if: github.ref == 'refs/heads/develop' && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
     environment: ${{ inputs.environment }}
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
@@ -460,7 +460,7 @@ jobs:
     needs: [benchmark-dispatched-model, resolve-dispatched-benchmark-config]
     if: >-
       always() &&
-      github.ref == 'refs/heads/develop' &&
+      inputs.source_branch == github.ref_name &&
       needs.benchmark-dispatched-model.result == 'success' &&
       needs.resolve-dispatched-benchmark-config.result == 'success'
     runs-on: ubuntu-latest

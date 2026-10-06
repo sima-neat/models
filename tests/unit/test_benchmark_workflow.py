@@ -36,7 +36,7 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert stage["environment"] == "${{ inputs.environment }}"
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
-    assert "github.ref == 'refs/heads/develop'" in stage["if"]
+    assert "inputs.source_branch == github.ref_name" in stage["if"]
     assert "inputs.operation" not in stage["if"]
     verify = next(step for step in stage["steps"] if step.get("name") == "Verify the source run and compiled artifact")
     assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
@@ -108,7 +108,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     steps = benchmark["steps"]
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
-    assert "github.ref == 'refs/heads/develop'" in resolver["if"]
+    assert "inputs.source_branch == github.ref_name" in resolver["if"]
     assert benchmark["needs"] == [
         "stage-dispatched-benchmark",
         "resolve-dispatched-benchmark-runner",
@@ -274,3 +274,19 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
     assert "fetch-accuracy-dataset" in cache_script
     assert '--cache-dir "$DATASET_ROOT/artifacts"' in cache_script
     assert "coco" not in cache_script.lower()
+
+
+def test_dispatched_benchmark_runs_only_on_its_source_branch() -> None:
+    workflow = yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    gated = [
+        "stage-dispatched-benchmark",
+        "resolve-dispatched-benchmark-runner",
+        "resolve-dispatched-benchmark-config",
+        "benchmark-dispatched-model",
+        "publish-dispatched-benchmark",
+    ]
+
+    for name in gated:
+        condition = workflow["jobs"][name]["if"]
+        assert "inputs.source_branch == github.ref_name" in condition, name
+        assert "refs/heads/develop" not in condition, name

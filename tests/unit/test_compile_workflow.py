@@ -388,7 +388,7 @@ def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() ->
     assert dispatch["strategy"]["matrix"] == "${{ fromJSON(needs.select.outputs.benchmark_matrix) }}"
     step = dispatch["steps"][0]
     assert "gh workflow run Vulcan-Model-Benchmarking.yml" in step["run"]
-    assert '--ref develop' in step["run"]
+    assert '--ref "$GITHUB_REF_NAME"' in step["run"]
     assert "-f source_run_id=" in step["run"]
     assert '-f source_branch="$GITHUB_REF_NAME"' in step["run"]
 
@@ -640,7 +640,7 @@ def test_published_compile_dispatches_one_grouped_benchmark_after_handoff() -> N
     assert '"source_run_id": os.environ["GITHUB_RUN_ID"]' in dispatch["run"]
     assert '"source_sha": os.environ["GITHUB_SHA"]' in dispatch["run"]
     assert '"source_branch": os.environ["GITHUB_REF_NAME"]' in dispatch["run"]
-    assert '"ref": "develop"' in dispatch["run"]
+    assert '"ref": os.environ["GITHUB_REF_NAME"]' in dispatch["run"]
     assert '"model_id": os.environ["BENCHMARK_MODEL_ID"]' in dispatch["run"]
     assert '"build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"]' in dispatch["run"]
     dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
