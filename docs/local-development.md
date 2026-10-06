@@ -70,8 +70,10 @@ model-registry validate models/<model-id>
 ```
 
 This checks the JSON Schema, taxonomy references and compatibility, immutable
-source policy, matching directory and model IDs, component/profile references, and every
-referenced recipe, surgery hook, and test file. Fix the first reported field
+source policy, matching directory and model IDs, component/profile references, unique
+`validation` and `benchmark` entry IDs, and every referenced recipe and surgery hook,
+plus `scripts/convert.py` and `scripts/requirements-convert.txt` when `conversion`
+is declared. Fix the first reported field
 paths in `model.yaml`; do not weaken a declaration just to pass validation.
 
 Validate the complete catalog before submitting:
@@ -368,6 +370,7 @@ request, and submission guidance.
 | Unknown or incompatible taxonomy ID | Select an ID from the canonical taxonomy or propose a reviewed taxonomy change. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
 | Source host or URL rejected | Use a full-commit Hugging Face resource, an approved GitHub release asset, or another approved checksum-verified upstream host. |
-| Referenced file does not exist | Keep recipe, surgery, and test paths relative to and inside the model directory. |
+| Referenced file does not exist | Keep recipe and surgery paths under the model's `scripts/`; a declared `conversion` also needs `scripts/convert.py` and `scripts/requirements-convert.txt`. |
+| `duplicate validation entry ids` or `duplicate benchmark entry ids` | Give each entry in that section its own ID; model scripts look entries up by ID. |
 | Build missing from the matrix | Check the component binding `status`, requested IDs, and changed path. |
 | Unexpected MPK count | Clean the output directory. A normal invocation emits one archive; a grouped invocation emits exactly its declared component set. |

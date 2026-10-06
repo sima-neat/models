@@ -292,13 +292,70 @@ def test_model_owned_validation_entry_needs_no_engine() -> None:
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_conversion_sources_are_validated() -> None:
-    model = load_model(FIXTURES / "fixture_model")
+def _model_with_conversion(tmp_path: Path) -> tuple[Path, dict]:
+    directory = tmp_path / "fixture_model"
+    shutil.copytree(FIXTURES / "fixture_model", directory)
+    for relative in ("scripts/convert.py", "scripts/requirements-convert.txt"):
+        (directory / relative).write_text("", encoding="utf-8")
+    model = load_model(directory)
     model["conversion"] = {"default": {"source": copy.deepcopy(model["components"][0]["source"])}}
-    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-    model["conversion"]["default"]["source"]["uri"] = "https://unapproved.example/model.pth"
+    return directory, model
+
+
+def test_conversion_sources_are_validated(tmp_path: Path) -> None:
+    directory, model = _model_with_conversion(tmp_path)
+    validate_model(directory, model, SCHEMA)
     model["conversion"]["default"]["config"] = "convert.yaml"
     with pytest.raises(ValidationError, match="conversion"):
+        validate_model(directory, model, SCHEMA)
+
+
+def test_conversion_sources_follow_source_policy(tmp_path: Path) -> None:
+    directory, model = _model_with_conversion(tmp_path)
+    model["conversion"]["default"]["source"]["uri"] = "https://unapproved.example/model.pth"
+    with pytest.raises(ValidationError, match="source policy.*not approved"):
+        validate_model(directory, model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "paths", "expected"),
+    [
+        ("model.safetensors", ["model.safetensors", "model.safetensors"], "contains duplicate paths"),
+        ("missing.safetensors", ["model.safetensors"], "entrypoint is not a declared file"),
+    ],
+)
+def test_conversion_file_sets_are_checked(tmp_path: Path, entrypoint: str, paths: list[str], expected: str) -> None:
+    directory, model = _model_with_conversion(tmp_path)
+    member = {key: value for key, value in model["components"][0]["source"].items() if key != "type"}
+    model["conversion"]["default"]["source"] = {
+        "type": "file_set",
+        "entrypoint": entrypoint,
+        "files": [{**member, "path": path} for path in paths],
+    }
+    with pytest.raises(ValidationError, match=f"conversion 'default' source {expected}"):
+        validate_model(directory, model, SCHEMA)
+
+
+@pytest.mark.parametrize("missing", ["scripts/convert.py", "scripts/requirements-convert.txt"])
+def test_declared_conversion_requires_its_workflow_files(tmp_path: Path, missing: str) -> None:
+    directory, model = _model_with_conversion(tmp_path)
+    (directory / missing).unlink()
+    with pytest.raises(ValidationError, match=f"referenced file does not exist inside model directory: {missing}"):
+        validate_model(directory, model, SCHEMA)
+
+
+@pytest.mark.parametrize("stage", ["validation", "benchmark"])
+def test_stage_entry_ids_must_be_unique(stage: str) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    first = _benchmark_entry() if stage == "benchmark" else {
+        "id": "owned",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+    }
+    second = {**copy.deepcopy(first), "build_profiles": ["fixture_bf16"]}
+    model["build_profiles"].append({**copy.deepcopy(model["build_profiles"][0]), "id": "fixture_bf16"})
+    model[stage] = [first, second]
+    with pytest.raises(ValidationError, match=f"duplicate {stage} entry ids: {first['id']}"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 

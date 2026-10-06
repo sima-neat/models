@@ -41,7 +41,29 @@ match the model directory. See [Model taxonomy](model-taxonomy.md) for the
 sanctioned taxonomy values.
 
 `upstream` records human-reviewable provenance. Downloadable inputs belong in
-a component or resource `source`, where exact bytes are pinned.
+a `conversion`, component, or resource `source`, where exact bytes are pinned.
+
+## Conversion
+
+`conversion` is optional. It names the upstream checkpoints that
+`scripts/convert.py` exports to ONNX; each entry holds one `source`:
+
+```yaml
+conversion:
+  default:
+    source:
+      type: file
+      uri: https://github.com/owner/repo/releases/download/v1.0/checkpoint.pth
+      sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      size_bytes: 123456
+```
+
+Conversion sources follow the same source policy and file-set rules as
+component sources. A model that declares `conversion` must also provide
+`scripts/convert.py` and `scripts/requirements-convert.txt`, which the
+**Vulcan Model Convert** workflow runs in an isolated Python environment for the
+selected entry. The workflow publishes `model.onnx` and prints the source pin
+to copy into the component `source` after surgery and compiler validation.
 
 ## Components and source sets
 
@@ -303,8 +325,9 @@ benchmark:
     metrics: [latency_avg_ms, throughput_fps]
 ```
 
-Component entries qualify one MPK. Package entries qualify the composed
-product. A validation entry with `engine: model_registry` runs the shared
+Entry IDs are unique within `validation` and within `benchmark`; model
+scripts look up their settings by ID. Component entries qualify one MPK.
+Package entries qualify the composed product. A validation entry with `engine: model_registry` runs the shared
 accuracy evaluator, and one with `engine: model_recipe` declares the numerical
 fidelity report a grouped recipe writes. An entry without `engine` holds
 settings that only the model's own scripts read. `model-registry validate`

@@ -19,6 +19,8 @@ SCRIPTS_DIR = "scripts"
 # A model folder holds its manifest, its documentation, and model-owned code in scripts/.
 MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR}
 STAGES = ("validation", "benchmark")
+# Vulcan-Model-Convert.yml runs these files for a model that declares `conversion`.
+CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-convert.txt")
 
 
 def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
@@ -29,6 +31,16 @@ def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
             raise ValidationError(f"duplicate {kind} ids: {item_id}")
         indexed[item_id] = item
     return indexed
+
+
+def _check_file_set(directory: Path, source: dict[str, Any], label: str) -> None:
+    if source["type"] != "file_set":
+        return
+    member_paths = [member["path"] for member in source["files"]]
+    if len(member_paths) != len(set(member_paths)):
+        raise ValidationError(f"{directory}: {label} source contains duplicate paths")
+    if source["entrypoint"] not in set(member_paths):
+        raise ValidationError(f"{directory}: {label} source entrypoint is not a declared file")
 
 
 def component_for(model: dict[str, Any], component_id: str) -> dict[str, Any]:
@@ -302,6 +314,8 @@ def validate_model(
         for calibration in model["calibrations"]:
             if calibration["status"] == "ready" and "source" in calibration:
                 source_members(calibration["source"])
+        for conversion in model.get("conversion", {}).values():
+            source_members(conversion["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
         raise ValidationError(f"{directory}: source policy: {exc}") from exc
 
@@ -312,16 +326,11 @@ def validate_model(
     compositions = _by_id(model["compositions"], "composition")
     packages = _by_id(model["packages"], "package")
 
+    for conversion_id, conversion in model.get("conversion", {}).items():
+        _check_file_set(directory, conversion["source"], f"conversion {conversion_id!r}")
+
     for component_id, component in components.items():
-        source = component["source"]
-        if source["type"] == "file_set":
-            member_paths = [member["path"] for member in source["files"]]
-            if len(member_paths) != len(set(member_paths)):
-                raise ValidationError(f"{directory}: component {component_id!r} source contains duplicate paths")
-            if source["entrypoint"] not in set(member_paths):
-                raise ValidationError(
-                    f"{directory}: component {component_id!r} source entrypoint is not a declared file"
-                )
+        _check_file_set(directory, component["source"], f"component {component_id!r}")
 
         dependency_ids = set(component.get("depends_on", ()))
         unknown_dependencies = dependency_ids - set(components)
@@ -564,12 +573,15 @@ def validate_model(
         for component in model["components"]
         if component["surgery"]["type"] == "python"
     )
+    if model.get("conversion"):
+        referenced_paths.extend(CONVERSION_FILES)
     for relative in referenced_paths:
         candidate = (directory / relative).resolve()
         if not candidate.is_relative_to(directory) or not candidate.is_file():
             raise ValidationError(f"{directory}: referenced file does not exist inside model directory: {relative}")
 
     for stage in STAGES:
+        _by_id(model[stage], f"{stage} entry")
         coverage_seen: set[tuple[str, str, str]] = set()
         for entry in model[stage]:
             scope = entry["scope"]
