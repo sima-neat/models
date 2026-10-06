@@ -151,6 +151,9 @@ def test_catalog_progress_is_initialized_then_updated_per_invocation() -> None:
     assert "needs.select.outputs.validation_count == '0'" in progress["if"]
     assert "--compiled-dir _compiled" in progress["run"]
     assert "catalog_snapshot_conflict" in progress["run"]
+    assert "for attempt in 1 2 3 4 5 6 7 8; do" in progress["run"]
+    assert "(( attempt == 8 ))" in progress["run"]
+    assert 'sleep "$(( delay + RANDOM % 5 ))"' in progress["run"]
 
 
 @pytest.mark.parametrize(

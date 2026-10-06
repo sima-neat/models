@@ -959,7 +959,7 @@ jobs:
         run: |
           set -euo pipefail
           failure="$RUNNER_TEMP/catalog-publication-error"
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             if model-registry publish-catalog --repository . --compiled-dir _compiled \
               --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
               --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
@@ -969,11 +969,13 @@ jobs:
               --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA" 2>"$failure"; then
               exit 0
             fi
-            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 5 )); then
+            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 8 )); then
               cat "$failure" >&2
               exit 1
             fi
-            sleep "$(( attempt * 2 ))"
+            # Concurrent publishers retry at different, growing intervals.
+            delay=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))
+            sleep "$(( delay + RANDOM % 5 ))"
           done
 
   assemble-packages:

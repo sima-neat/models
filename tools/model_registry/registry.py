@@ -727,6 +727,25 @@ def publish_catalog(
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     read = read_request or _public_registry_json
     read_base_url = read_api_url.rstrip("/")
+    documentation_receipts = None
+    if bucket is not None:
+        if not environment:
+            raise ValidationError("environment is required when publishing model documentation")
+        documentation_receipts = publish_model_documentation(
+            repository=repository,
+            api_url=api_url,
+            aws_region=aws_region,
+            bucket=bucket,
+            kms_key_id=kms_key_id,
+            environment=environment,
+            branch=branch,
+            git_sha=git_sha,
+            github_run_url=github_run_url,
+            request=request,
+            artifact_store=artifact_store,
+        )
+    # Read the catalog last so another publisher has the least time to replace it
+    # before the compare-and-swap POST below.
     previous: JsonObject | None = None
     target_catalog: JsonObject | None = None
     for source_branch in [branch, *( [base_branch] if base_branch and base_branch != branch else [])]:
@@ -747,23 +766,6 @@ def publish_catalog(
         except RegistryPublicationError as exc:
             if "HTTP 404 catalog_not_found" not in str(exc):
                 raise
-    documentation_receipts = None
-    if bucket is not None:
-        if not environment:
-            raise ValidationError("environment is required when publishing model documentation")
-        documentation_receipts = publish_model_documentation(
-            repository=repository,
-            api_url=api_url,
-            aws_region=aws_region,
-            bucket=bucket,
-            kms_key_id=kms_key_id,
-            environment=environment,
-            branch=branch,
-            git_sha=git_sha,
-            github_run_url=github_run_url,
-            request=request,
-            artifact_store=artifact_store,
-        )
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,

@@ -979,6 +979,34 @@ def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monk
     assert calls[0][3] != calls[1][3]
 
 
+def test_publish_catalog_reads_current_catalog_after_documentation(monkeypatch) -> None:
+    events: list[str] = []
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": {"models": []}}
+    monkeypatch.setattr(
+        "model_registry.registry.publish_model_documentation",
+        lambda **kwargs: events.append("documentation") or {},
+    )
+    monkeypatch.setattr(
+        "model_registry.registry.build_catalog_snapshot",
+        lambda **kwargs: events.append("build") or {"models": []},
+    )
+
+    publish_catalog(
+        repository=ROOT,
+        api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid",
+        aws_region="us-west-2",
+        branch="develop",
+        git_sha="a" * 40,
+        bucket="artifacts",
+        environment="staging",
+        request=lambda method, *args: events.append(method) or {"stored": True},
+        read_request=lambda _: events.append("read current") or {"catalog": target_catalog},
+    )
+
+    assert events == ["documentation", "read current", "build", "POST"]
+
+
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
     source_archive = next(dist.glob("resnet_50/modalix_bf16/model/*_mpk.tar.gz"))
