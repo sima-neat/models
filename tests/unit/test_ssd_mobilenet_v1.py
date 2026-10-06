@@ -17,18 +17,19 @@ from onnx import TensorProto, helper, numpy_helper
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "ssd_mobilenet_v1"
+SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def load_module(name: str) -> ModuleType:
-    path = MODEL_DIR / f"{name}.py"
+    path = SCRIPTS_DIR / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"ssd_mobilenet_v1_{name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(MODEL_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(str(MODEL_DIR))
+        sys.path.remove(str(SCRIPTS_DIR))
     return module
 
 
@@ -267,7 +268,7 @@ def test_quantization_quality_gate_rejects_regression() -> None:
 
 
 def test_recipe_preserves_quantization_and_public_io_policy() -> None:
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert "with_activation_quantization" in source
     assert "with_weight_quantization" in source
     assert "quantization_mla" not in source

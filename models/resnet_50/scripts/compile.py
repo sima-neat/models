@@ -26,7 +26,7 @@ from model_registry.accuracy import load_calibration_samples
 from sima_utils.data.data_generator import DataGenerator
 
 LOG = logging.getLogger("resnet_50.compile")
-MODEL_DIR = Path(__file__).resolve().parent
+MODEL_DIR = Path(__file__).resolve().parents[1]
 
 
 def _variant(variant_id: str) -> dict[str, Any]:

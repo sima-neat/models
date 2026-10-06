@@ -1299,13 +1299,12 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: build_fingerprint does not match semantic compile inputs")
         accuracy_path = result_path.parent / "accuracy.json"
         fidelity_path = result_path.parent / "fidelity.json"
-        fidelity_config = find_recipe_fidelity_config(
+        configured_fidelity = find_recipe_fidelity_config(
             root / "models" / model_id,
             model,
             build_profile_id=build_profile_id,
             component_id=component_id,
         )
-        configured_fidelity = fidelity_config[1] if fidelity_config is not None else None
         if configured_fidelity is not None:
             owns_fidelity = configured_fidelity["result_component"] == component_id
             if owns_fidelity != fidelity_path.is_file():

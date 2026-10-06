@@ -17,10 +17,11 @@ from onnx import TensorProto, helper, numpy_helper
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "ssd_mobilenet_v3"
+SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def load_module(name: str) -> ModuleType:
-    path = MODEL_DIR / f"{name}.py"
+    path = SCRIPTS_DIR / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"ssd_mobilenet_v3_{name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -29,11 +30,11 @@ def load_module(name: str) -> ModuleType:
         "surgery": ("contract", "source_bundle", "onnx_audit"),
     }.get(name, ())
     previous_dependencies = {dependency: sys.modules.pop(dependency, None) for dependency in local_dependencies}
-    sys.path.insert(0, str(MODEL_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(str(MODEL_DIR))
+        sys.path.remove(str(SCRIPTS_DIR))
         for dependency, previous in previous_dependencies.items():
             sys.modules.pop(dependency, None)
             if previous is not None:
@@ -42,16 +43,16 @@ def load_module(name: str) -> ModuleType:
 
 
 def load_qat_module(name: str) -> ModuleType:
-    path = MODEL_DIR / "qat" / f"{name}.py"
+    path = SCRIPTS_DIR / "qat" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"ssd_mobilenet_v3_qat_{name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     previous_contract = sys.modules.pop("contract", None)
-    sys.path.insert(0, str(MODEL_DIR / "qat"))
+    sys.path.insert(0, str(SCRIPTS_DIR / "qat"))
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(str(MODEL_DIR / "qat"))
+        sys.path.remove(str(SCRIPTS_DIR / "qat"))
         sys.modules.pop("contract", None)
         if previous_contract is not None:
             sys.modules["contract"] = previous_contract
@@ -298,7 +299,7 @@ def test_torchvision_qat_contract_uses_six_anchors_on_every_level() -> None:
 
 
 def test_qat_environment_is_python310_and_fully_pinned() -> None:
-    qat_dir = MODEL_DIR / "qat"
+    qat_dir = SCRIPTS_DIR / "qat"
     direct = {
         line.strip().lower()
         for line in (qat_dir / "requirements.in").read_text(encoding="utf-8").splitlines()
@@ -569,7 +570,7 @@ def test_quantization_validation_selects_executor_explicitly() -> None:
 
 
 def test_recipe_preserves_quantization_and_public_io_policy() -> None:
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert "with_activation_quantization" in source
     assert "with_weight_quantization" in source
     assert "with_smooth_quant" not in source

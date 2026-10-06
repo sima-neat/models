@@ -16,14 +16,14 @@ by URI, byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
-| Model-owned `compile.py` | Developer-facing local compile entry point. Reads one declared YAML variant and emits one MPK. |
+| Model-owned `scripts/compile.py` | Developer-facing local compile entry point. Reads one declared YAML variant and emits one MPK. |
 | DevKit `benchmarker` | Developer-facing local performance entry point for the exact compiled MPK. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, matrix inspection, and MPK checks. CI uses the full internal command surface for packaging, provenance, and publication. |
 | GitHub Actions | Selects changed models, invokes lifecycle commands, and reports status. Untrusted pull requests use validation only. |
 | Vulcan | Creates ephemeral, pinned Model Compiler runners and provides staging artifact storage and registry APIs. |
 | Model Compiler runner | Verifies inputs, prepares and compiles one declared variant, and emits checksummed result manifests. |
 | Kerrigan/Fleet Manager | Selects eligible Modalix DevKits, owns leases, schedules tests, and propagates cancellation. |
-| DevKit agent | Downloads verified runtime artifacts, runs correctness/performance tests, and reports structured results. |
+| DevKit agent | Downloads verified runtime artifacts, runs validation and benchmarks, and reports structured results. |
 | S3/object storage | Stores immutable source cache entries, compiled artifacts, logs, and result manifests. |
 | Artifact-registry API | Ingests provenance and results using authenticated, idempotent requests. Workflows never receive PostgreSQL credentials. |
 
@@ -38,7 +38,7 @@ schemas/                 Versioned model and result JSON Schemas
 taxonomies/              Versioned sanctioned model categories and display labels
 tools/model_registry/    Shared host-side CLI and lifecycle implementation
 tools/runtime/           Shared ARM64/Neat device-side runners
-models/<model-id>/       Declarative metadata and genuinely model-specific assets
+models/<model-id>/       model.yaml, README.md, and model-specific code in scripts/
 tests/                   Schema fixtures, unit tests, and contract tests
 ```
 
@@ -49,7 +49,7 @@ and cannot be expressed as shared parameters. The recipe's product is one
 directly consumable `*_mpk.tar.gz`, not an ONNX or compiler intermediate.
 Accuracy sampling, preprocessing interpretation, host executors, metrics, and
 report generation are owned by `model-registry evaluate`; model directories
-provide only schema-validated correctness YAML.
+provide only schema-validated `validation` entries in `model.yaml`.
 
 The canonical product name is **Model Registry**. Code and paths use
 `model-registry` or `model_registry`. The word `modelzoo` is used only when
@@ -58,7 +58,7 @@ documenting compatibility with an existing external CLI or legacy service.
 Model authors install the non-publishing `model-registry` command through
 `sima-cli`; its installer resolves the Model Compiler environment and installs
 alongside it without replacing compiler-owned dependencies. Local model
-execution remains `compile.py` followed by `benchmarker`. Registry packaging
+execution remains `scripts/compile.py` followed by `benchmarker`. Registry packaging
 and publication remain automation-only operations and are absent from the
 contributor command surface.
 

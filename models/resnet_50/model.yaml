@@ -104,7 +104,7 @@ components:
         k: 5
   surgery:
     type: none
-  recipe: compile.py
+  recipe: scripts/compile.py
 resources: []
 calibrations:
 - id: default
@@ -160,22 +160,91 @@ packages:
   - modalix_bf16
   - modalix_int8
   composition: default
-tests:
-  correctness:
-  - id: imagenet_top5_smoke
-    config: tests/correctness.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_int8
-  performance:
-  - id: modalix_latency
-    config: tests/performance.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_bf16
-    - modalix_int8
+validation:
+- id: imagenet_top5_smoke
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_int8
+  engine: model_registry
+  status: provisional
+  task: image_classification
+  dataset:
+    id: imagenet-2012
+    variant: mini
+    sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
+    size_bytes: 356052889
+    loader:
+      type: image_classification_tar
+      image_suffixes:
+      - .webp
+      - .webp.bak
+    splits:
+      calibration:
+        prefix: cal
+        samples: 500
+        label_strategy: none
+      validation:
+        prefix: val
+        samples: 5000
+        classes: 1000
+        label_strategy: lexicographic_parent_directory
+  profiles:
+    regular:
+      report_scope: sampled_accuracy_smoke
+      samples: 500
+      sampling: deterministic_evenly_spaced
+      workers: auto
+    qualification:
+      report_scope: full_mini_accuracy
+      samples: all
+      sampling: deterministic_evenly_spaced
+      workers: auto
+      cadence: weekly_or_on_demand_before_release
+  executors:
+    reference:
+      type: onnxruntime
+      artifact: source
+      input_layout: NCHW
+    candidate:
+      type: afe_sima
+      artifact: compiled_component
+      input_layout: NHWC
+      use_jax: true
+  metrics:
+  - type: top_k_accuracy
+    k: 1
+  - type: top_k_accuracy
+    k: 5
+  - type: top1_agreement
+  reporting:
+    required_fields:
+    - dataset.evaluated_samples
+    - dataset.available_samples
+    - dataset.sampling.selection_sha256
+    - evaluation.profile
+    - evaluation.status
+    - model.variant_id
+  notes:
+  - The mini split is an accuracy proxy, not the full 50000-image ImageNet validation benchmark.
+  - The current archive has known calibration/validation overlap; reports remain provisional until it is replaced.
+  - One manifest-listed WebP uses a .webp.bak suffix, which is included by the declared loader.
+benchmark:
+- id: modalix_latency
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_bf16
+  - modalix_int8
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics:
+  - latency_avg_ms
+  - throughput_fps
+  - avg_power_watts
+  - energy_joules
+  - energy_per_inference_joules
 maturity: experimental

@@ -8,15 +8,17 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import load_accuracy_config, validate_accuracy_model_contract
+from .accuracy_config import validate_accuracy_model_contract
 from .errors import SourcePolicyError, ValidationError
-from .fidelity_config import load_recipe_fidelity_config
-from .performance_config import load_performance_config
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
 MODEL_FILE = "model.yaml"
 SCHEMA_RELATIVE_PATH = Path("schemas/model.schema.json")
+SCRIPTS_DIR = "scripts"
+# A model folder holds its manifest, its documentation, and model-owned code in scripts/.
+MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR}
+STAGES = ("validation", "benchmark")
 
 
 def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
@@ -142,22 +144,23 @@ def _error_path(error: Any) -> str:
     return _format_path(parts)
 
 
+def composition_document(declaration: dict[str, Any]) -> dict[str, Any]:
+    """Return a declarative composition as the standalone document packages ship."""
+    return {key: value for key, value in declaration.items() if key not in {"id", "type"}}
+
+
 def _load_declarative_composition(
     directory: Path,
     declaration: dict[str, Any],
     components: dict[str, dict[str, Any]],
     schema_directory: Path,
 ) -> set[str]:
-    path = (directory / declaration["file"]).resolve()
-    if not path.is_relative_to(directory) or not path.is_file():
-        raise ValidationError(
-            f"{directory}: referenced file does not exist inside model directory: {declaration['file']}"
-        )
+    path = f"{directory}: composition {declaration['id']!r}"
+    document = composition_document(declaration)
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
         schema = json.loads((schema_directory / "composition-v1.schema.json").read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"{path}: could not load declarative composition: {exc}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{path}: could not load the composition schema: {exc}") from exc
     errors = sorted(
         Draft202012Validator(schema).iter_errors(document),
         key=lambda item: tuple(str(part) for part in item.absolute_path),
@@ -165,10 +168,8 @@ def _load_declarative_composition(
     if errors:
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{path}: {details}")
-    if declaration["schema_version"] != document["schema_version"]:
-        raise ValidationError(f"{path}: schema_version does not match its model.yaml declaration")
 
-    instances = _by_id(document["components"], f"component instance in {path.name}")
+    instances = _by_id(document["components"], f"component instance in composition {declaration['id']}")
     ports: dict[str, tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]] = {}
     for instance_id, instance in instances.items():
         component_id = instance["component"]
@@ -556,98 +557,110 @@ def validate_model(
                     f"{', '.join(unavailable)}"
                 )
 
-    referenced_paths = [case["config"] for group in model["tests"].values() for case in group]
-    referenced_paths.extend(component["recipe"] for component in model["components"])
+    _check_folder_layout(directory)
+    referenced_paths = [component["recipe"] for component in model["components"]]
     referenced_paths.extend(
         component["surgery"]["entrypoint"].split(":", 1)[0]
         for component in model["components"]
         if component["surgery"]["type"] == "python"
-    )
-    referenced_paths.extend(
-        composition["file"] for composition in model["compositions"] if composition["type"] == "declarative"
     )
     for relative in referenced_paths:
         candidate = (directory / relative).resolve()
         if not candidate.is_relative_to(directory) or not candidate.is_file():
             raise ValidationError(f"{directory}: referenced file does not exist inside model directory: {relative}")
 
-    for test_kind, cases in model["tests"].items():
-        test_coverage: set[tuple[str, str, str]] = set()
-        for case in cases:
-            scope = case["scope"]
+    for stage in STAGES:
+        coverage_seen: set[tuple[str, str, str]] = set()
+        for entry in model[stage]:
+            scope = entry["scope"]
             reference_ids = components if scope["type"] == "component" else packages
             reference_field = scope["type"]
             scoped_id = scope[reference_field]
             if scoped_id not in reference_ids:
                 raise ValidationError(
-                    f"{directory}: {test_kind} test {case['id']!r} references unknown {reference_field} "
+                    f"{directory}: {stage} entry {entry['id']!r} references unknown {reference_field} "
                     f"{scoped_id!r}"
                 )
-            unknown_profiles = set(case["build_profiles"]) - set(profiles)
+            unknown_profiles = set(entry["build_profiles"]) - set(profiles)
             if unknown_profiles:
                 raise ValidationError(
-                    f"{directory}: {test_kind} test {case['id']!r} references unknown build profiles: "
+                    f"{directory}: {stage} entry {entry['id']!r} references unknown build profiles: "
                     f"{', '.join(sorted(unknown_profiles))}"
                 )
-            for profile_id in case["build_profiles"]:
+            for profile_id in entry["build_profiles"]:
                 coverage = (scope["type"], scoped_id, profile_id)
-                if coverage in test_coverage:
+                if coverage in coverage_seen:
                     raise ValidationError(
-                        f"{directory}: more than one {test_kind} test covers "
+                        f"{directory}: more than one {stage} entry covers "
                         f"{scope['type']} {scoped_id!r} in build profile {profile_id!r}"
                     )
-                test_coverage.add(coverage)
+                coverage_seen.add(coverage)
                 if scope["type"] == "component":
                     bindings = {item["id"]: item for item in profiles[profile_id]["components"]}
                     binding = bindings.get(scoped_id)
                     if binding is None or binding.get("status", "supported") == "unsupported":
                         raise ValidationError(
-                            f"{directory}: {test_kind} test {case['id']!r} targets unavailable component "
+                            f"{directory}: {stage} entry {entry['id']!r} targets unavailable component "
                             f"{scoped_id!r} in build profile {profile_id!r}"
                         )
                 elif profile_id not in packages[scoped_id]["build_profiles"]:
                     raise ValidationError(
-                        f"{directory}: {test_kind} test {case['id']!r} targets package {scoped_id!r} "
+                        f"{directory}: {stage} entry {entry['id']!r} targets package {scoped_id!r} "
                         f"outside its build profiles"
                     )
 
-    for case in model["tests"]["correctness"]:
-        candidate = (directory / case["config"]).resolve()
-        try:
-            raw = yaml.safe_load(candidate.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise ValidationError(f"{candidate}: could not inspect correctness YAML: {exc}") from exc
-        if isinstance(raw, dict) and raw.get("engine") == "model_registry":
-            config = load_accuracy_config(candidate)
-            validate_accuracy_model_contract(model, config, candidate, case)
-        elif isinstance(raw, dict) and raw.get("engine") == "model_recipe":
-            if case["scope"]["type"] != "package":
-                raise ValidationError(f"{candidate}: model_recipe correctness requires package scope")
-            config = load_recipe_fidelity_config(
-                candidate,
-                schema_file.parent / "recipe-fidelity-v1.schema.json",
+    for entry in model["validation"]:
+        engine = entry.get("engine")
+        if engine == "model_registry":
+            validate_accuracy_model_contract(model, entry, directory)
+        if engine != "model_recipe":
+            continue
+        label = f"{directory}: validation {entry['id']!r}"
+        if entry["scope"]["type"] != "package":
+            raise ValidationError(f"{label}: model_recipe validation requires package scope")
+        package = packages[entry["scope"]["package"]]
+        result_component = entry["result_component"]
+        if result_component not in package["components"]:
+            raise ValidationError(f"{label}: result_component {result_component!r} is not in the tested package")
+        output_names = {
+            output["name"]
+            for entrypoint in components[result_component]["interface"]["entrypoints"]
+            for output in entrypoint["outputs"]
+        }
+        unknown_outputs = set(entry["outputs"]) - output_names
+        if unknown_outputs:
+            raise ValidationError(
+                f"{label}: fidelity outputs are not exposed by {result_component!r}: "
+                f"{', '.join(sorted(unknown_outputs))}"
             )
-            package = packages[case["scope"]["package"]]
-            result_component = config["result_component"]
-            if result_component not in package["components"]:
-                raise ValidationError(
-                    f"{candidate}: result_component {result_component!r} is not in the tested package"
-                )
-            output_names = {
-                output["name"]
-                for entrypoint in components[result_component]["interface"]["entrypoints"]
-                for output in entrypoint["outputs"]
-            }
-            unknown_outputs = set(config["outputs"]) - output_names
-            if unknown_outputs:
-                raise ValidationError(
-                    f"{candidate}: fidelity outputs are not exposed by {result_component!r}: "
-                    f"{', '.join(sorted(unknown_outputs))}"
-                )
 
-    performance_schema = schema_file.parent / "performance-config-v1.schema.json"
-    for case in model["tests"]["performance"]:
-        load_performance_config(directory / case["config"], performance_schema)
+    for entry in model["benchmark"]:
+        metric_names = {metric if isinstance(metric, str) else metric["name"] for metric in entry["metrics"]}
+        missing = set(entry.get("required_metrics", ())) - metric_names
+        if missing:
+            raise ValidationError(
+                f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
+                f"{', '.join(sorted(missing))}"
+            )
+
+
+def _only_python_caches(path: Path) -> bool:
+    """True for a directory git left behind holding only ignored bytecode caches."""
+    files = (item for item in path.rglob("*") if item.is_file()) if path.is_dir() else None
+    return files is not None and all("__pycache__" in item.relative_to(path).parts for item in files)
+
+
+def _check_folder_layout(directory: Path) -> None:
+    unexpected = sorted(
+        entry.name
+        for entry in directory.iterdir()
+        if entry.name not in MODEL_FOLDER_ENTRIES and not entry.name.startswith(".") and not _only_python_caches(entry)
+    )
+    if unexpected:
+        raise ValidationError(
+            f"{directory}: unexpected model folder entries: {', '.join(unexpected)}; "
+            f"keep model code in {SCRIPTS_DIR}/ and stage settings in {MODEL_FILE}"
+        )
 
 
 def load_and_validate_model(

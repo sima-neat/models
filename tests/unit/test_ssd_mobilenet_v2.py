@@ -18,19 +18,20 @@ from onnx import TensorProto, helper, numpy_helper
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "ssd_mobilenet_v2"
+SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def load_module(name: str) -> ModuleType:
-    path = MODEL_DIR / f"{name}.py"
+    path = SCRIPTS_DIR / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"ssd_mobilenet_v2_{name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     shadowed = {dependency: sys.modules.pop(dependency, None) for dependency in ("calibration", "surgery")}
-    sys.path.insert(0, str(MODEL_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(str(MODEL_DIR))
+        sys.path.remove(str(SCRIPTS_DIR))
         for dependency, previous in shadowed.items():
             if previous is None:
                 sys.modules.pop(dependency, None)
@@ -333,8 +334,8 @@ def test_quantization_validation_executes_all_32_held_out_samples(monkeypatch: p
 
 
 def test_first_qualification_thresholds_are_committed_from_vulcan_evidence() -> None:
-    specification = yaml.safe_load((MODEL_DIR / "tests" / "correctness.yaml").read_text(encoding="utf-8"))
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    specification = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["validation"][0]
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert specification["compiler_raw_head_thresholds"] == {
         "int8": {
             "minimum_cosine_similarity": 0.98,
@@ -349,7 +350,7 @@ def test_first_qualification_thresholds_are_committed_from_vulcan_evidence() -> 
 
 
 def test_recipe_preserves_quantization_and_public_io_policy() -> None:
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert "with_activation_quantization" in source
     assert "with_weight_quantization" in source
     assert "quantization_mla" not in source

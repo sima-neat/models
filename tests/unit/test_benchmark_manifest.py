@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset(tmp_path: Path, monkeypatch) -> None:
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
-    model["tests"]["performance"] = model["tests"]["performance"][:1]
+    model["benchmark"] = model["benchmark"][:1]
     monkeypatch.setattr(benchmark_manifest, "load_and_validate_model", lambda *args: model)
     output_root = tmp_path / "rf_detr_small" / "modalix_int8_bf16"
     outputs = []
@@ -53,7 +53,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
 
     validate_benchmark_components(*args, ["backbone"])
     for components in (["transformer"], ["backbone", "transformer"], ["backbone", "backbone"], []):
-        with pytest.raises(ValidationError, match="declared performance tests"):
+        with pytest.raises(ValidationError, match="declared benchmark entries"):
             validate_benchmark_components(*args, components)
     (output_root / "transformer" / "transformer_mpk.tar.gz").unlink()
     with pytest.raises(ValidationError, match="MPK does not exist"):
@@ -125,7 +125,7 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["path"].endswith(f"/{model_id}/{build_profile_id}/{component_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
-    assert manifest["script"] == str(ROOT / "models" / model_id / "tests" / "benchmark.py")
+    assert manifest["script"] == str(ROOT / "models" / model_id / "scripts" / "benchmark.py")
     assert "build" not in manifest["runtime"]["devkit"]
     assert "benchmark" not in manifest
     assert "model_options" not in manifest

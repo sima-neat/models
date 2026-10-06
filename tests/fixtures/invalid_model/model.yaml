@@ -31,7 +31,7 @@ components:
     preprocessing: {pipeline: []}
     postprocessing: {pipeline: []}
     surgery: {type: none}
-    recipe: compile.py
+    recipe: scripts/compile.py
 resources: []
 calibrations: []
 build_profiles:
@@ -47,5 +47,6 @@ packages:
     resources: []
     build_profiles: [fixture]
     composition: default
-tests: {correctness: [], performance: []}
+validation: []
+benchmark: []
 maturity: experimental

@@ -1,18 +1,17 @@
 """Export RF-DETR and smoke-check ONNX against the original PyTorch model."""
 
 import argparse
-import json
 import types
 from copy import deepcopy
 from pathlib import Path
 
-import jsonschema
 import numpy as np
 import onnx
-import yaml
 from model_registry.fetch import Fetcher
-from model_registry.model import find_schema
+from model_registry.model import load_and_validate_model
 from PIL import Image
+
+MODEL_DIR = Path(__file__).resolve().parents[1]
 
 INTERFACE = {"input": [1, 3, 512, 512], "dets": [1, 300, 4], "labels": [1, 300, 91]}
 OUTPUTS = ("dets", "labels")
@@ -143,13 +142,13 @@ def convert(source, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path(__file__).with_suffix(".yaml"))
+    parser.add_argument("--conversion", default="default", help="conversion entry in model.yaml")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    source = yaml.safe_load(args.config.read_text())["source"]
-    schema = json.loads(find_schema(Path(__file__).parent).read_text())
-    jsonschema.validate(source, {"$ref": "#/$defs/source", "$defs": schema["$defs"]})
-    path, *_ = Fetcher().fetch_source(source)
+    conversions = load_and_validate_model(MODEL_DIR).get("conversion", {})
+    if args.conversion not in conversions:
+        parser.error(f"unknown conversion {args.conversion!r}; model.yaml declares: {', '.join(sorted(conversions))}")
+    path, *_ = Fetcher().fetch_source(conversions[args.conversion]["source"])
     convert(path, args.output_dir.resolve())
 
 

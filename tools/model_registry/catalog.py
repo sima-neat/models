@@ -10,12 +10,10 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import yaml
-
 from .artifact_metadata import validate_artifact_metadata
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
-from .model import compile_invocations_for, effective_runner_class, load_and_validate_model
+from .model import SCRIPTS_DIR, compile_invocations_for, effective_runner_class, load_and_validate_model
 from .taxonomy import TAXONOMY_RELATIVE_PATH, load_taxonomy, taxonomy_sha256
 
 GLOBAL_COMPILE_INPUT_PATHS = (
@@ -33,7 +31,6 @@ MODEL_COMPILE_INPUT_PATHS = {
 }
 
 CALIBRATION_COMPILE_INPUT_PATHS = (
-    "schemas/accuracy.schema.json",
     "tools/model_registry/accuracy.py",
     "tools/model_registry/accuracy_config.py",
     "tools/model_registry/model.py",
@@ -42,6 +39,8 @@ CALIBRATION_COMPILE_INPUT_PATHS = (
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
+# Board-stage scripts run after compilation; the benchmark fingerprint owns them.
+BENCHMARK_SCRIPT = f"{SCRIPTS_DIR}/benchmark.py"
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 3
@@ -232,33 +231,19 @@ def _component_build_input_files(
         elif prefix in model_prefixes:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
-    # Model-local executable helpers are compile inputs. Declarative metadata,
-    # test configuration, documentation, and model.yaml are represented by the
-    # semantic projection or by their own stage fingerprint instead.
+    # Model code in scripts/ is a compile input, except board-stage scripts. Stage
+    # settings in model.yaml are covered by the semantic projection instead.
     candidates.extend(
         item
-        for item in model_dir.rglob("*")
+        for item in (model_dir / SCRIPTS_DIR).rglob("*")
         if item.is_file()
         and item.suffix in {".py", ".sh"}
-        and "tests" not in item.relative_to(model_dir).parts
+        and item.relative_to(model_dir).as_posix() != BENCHMARK_SCRIPT
     )
     profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
     binding = next(item for item in profile["components"] if item["id"] == component["id"])
     if binding.get("calibration") is not None:
         candidates.extend(root / relative for relative in CALIBRATION_COMPILE_INPUT_PATHS)
-        for case in model["tests"]["correctness"]:
-            if profile_id not in case["build_profiles"]:
-                continue
-            scope = case["scope"]
-            if scope != {"type": "component", "component": component["id"]}:
-                continue
-            config_path = root / "models" / model_id / case["config"]
-            try:
-                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-                raise ValidationError(f"could not read calibration config {config_path}: {exc}") from exc
-            if isinstance(config, dict) and config.get("engine") == "model_registry":
-                candidates.append(config_path)
     missing = sorted(path for path in candidates if not path.is_file())
     if missing:
         raise ValidationError(f"model compile input not found: {missing[0]}")
@@ -285,6 +270,28 @@ def _calibration_projection(model: dict[str, Any], binding: dict[str, Any]) -> d
         return next(item for item in model["calibrations"] if item["id"] == calibration_id)
     except StopIteration as exc:  # Kept fail-closed even when called without full catalog validation.
         raise ValidationError(f"unknown calibration {calibration_id!r}") from exc
+
+
+def _compile_consumed_validation(
+    model: dict[str, Any], profile: dict[str, Any], component_ids: list[str], *, include_recipe_fidelity: bool
+) -> list[dict[str, Any]]:
+    """Validation entries a compile recipe reads: calibration accuracy settings and recipe fidelity."""
+    bindings = {item["id"]: item for item in profile["components"]}
+    consumed = []
+    for entry in model["validation"]:
+        if profile["id"] not in entry["build_profiles"]:
+            continue
+        component_id = entry["scope"].get("component")
+        calibrated = (
+            entry.get("engine") == "model_registry"
+            and component_id in component_ids
+            and bindings[component_id].get("calibration") is not None
+        )
+        recipe_fidelity = entry.get("engine") == "model_recipe" and entry["scope"]["type"] == "package"
+        if calibrated or (include_recipe_fidelity and recipe_fidelity):
+            # Selection already depends on scope and profiles; hash only what the recipe reads.
+            consumed.append({key: value for key, value in entry.items() if key not in {"scope", "build_profiles"}})
+    return consumed
 
 
 def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
@@ -344,6 +351,7 @@ def component_build_fingerprint(
             "compatibility": profile.get("compatibility", {}),
             "component": _binding_compile_projection(model, component, binding),
         },
+        "validation": _compile_consumed_validation(model, profile, [component_id], include_recipe_fidelity=False),
         "compiler_version": compiler,
     }
     digest.update(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -397,6 +405,7 @@ def compile_invocation_fingerprint(
             "target": profile["target"],
             "compatibility": profile.get("compatibility", {}),
         },
+        "validation": _compile_consumed_validation(model, profile, component_ids, include_recipe_fidelity=True),
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -405,16 +414,6 @@ def compile_invocation_fingerprint(
         for component_id in component_ids
         for path in _component_build_input_files(root, model, components[component_id], profile_id)
     }
-    for case in model["tests"]["correctness"]:
-        if profile_id not in case["build_profiles"] or case["scope"].get("type") != "package":
-            continue
-        config_path = root / "models" / model_id / case["config"]
-        try:
-            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-            raise ValidationError(f"could not read compile-consumed correctness config {config_path}: {exc}") from exc
-        if isinstance(config, dict) and config.get("engine") == "model_recipe":
-            input_files.add(config_path)
     _hash_files(digest, root, input_files)
     return digest.hexdigest()
 
@@ -450,32 +449,14 @@ def validation_fingerprint(
     compiled = compile_fingerprint or component_build_fingerprint(
         root, model_id, component_id, profile_id, compiler_version
     )
-    cases = [
-        case
-        for case in model["tests"]["correctness"]
-        if _test_case_applies(model, case, profile_id, component_id)
-    ]
-    documents = []
-    uses_registry_evaluator = False
-    for case in sorted(cases, key=lambda item: item["id"]):
-        config_path = root / "models" / model_id / case["config"]
-        try:
-            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-            raise ValidationError(f"could not read correctness config {config_path}: {exc}") from exc
-        uses_registry_evaluator = uses_registry_evaluator or (
-            isinstance(config, dict) and config.get("engine") == "model_registry"
-        )
-        documents.append({"case": case, "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest()})
+    entries = sorted(
+        (entry for entry in model["validation"] if _test_case_applies(model, entry, profile_id, component_id)),
+        key=lambda item: item["id"],
+    )
     evaluator_files = {}
-    if uses_registry_evaluator:
-        for relative in (
-            "schemas/accuracy.schema.json",
-            "tools/model_registry/accuracy.py",
-            "tools/model_registry/accuracy_config.py",
-        ):
-            path = root / relative
-            evaluator_files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if any(entry.get("engine") == "model_registry" for entry in entries):
+        for relative in ("tools/model_registry/accuracy.py", "tools/model_registry/accuracy_config.py"):
+            evaluator_files[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
     return _canonical_sha256(
         {
             "schema": VALIDATION_FINGERPRINT_SCHEMA,
@@ -484,7 +465,7 @@ def validation_fingerprint(
             "component_id": component_id,
             "compile_fingerprint": compiled,
             "compiled_artifact_sha256": artifact_sha256,
-            "correctness": documents,
+            "validation": entries,
             "evaluator_files": evaluator_files,
         }
     )
@@ -505,15 +486,11 @@ def benchmark_fingerprint(
     compiled = compile_fingerprint or component_build_fingerprint(
         root, model_id, component_id, profile_id, compiler_version
     )
-    cases = [
-        case
-        for case in model["tests"]["performance"]
-        if _test_case_applies(model, case, profile_id, component_id)
-    ]
-    documents = []
-    for case in sorted(cases, key=lambda item: item["id"]):
-        config_path = root / "models" / model_id / case["config"]
-        documents.append({"case": case, "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest()})
+    entries = sorted(
+        (entry for entry in model["benchmark"] if _test_case_applies(model, entry, profile_id, component_id)),
+        key=lambda item: item["id"],
+    )
+    script = root / "models" / model_id / BENCHMARK_SCRIPT
     return _canonical_sha256(
         {
             "schema": BENCHMARK_FINGERPRINT_SCHEMA,
@@ -522,11 +499,8 @@ def benchmark_fingerprint(
             "component_id": component_id,
             "compile_fingerprint": compiled,
             "compiled_artifact_sha256": artifact_sha256,
-            "performance": documents,
-            "script_sha256": (
-                hashlib.sha256((root / "models" / model_id / "tests" / "benchmark.py").read_bytes()).hexdigest()
-                if (root / "models" / model_id / "tests" / "benchmark.py").is_file() else None
-            ),
+            "benchmark": entries,
+            "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else None,
             "tooling_sha256": {
                 path: hashlib.sha256((root / path).read_bytes()).hexdigest()
                 if (root / path).is_file() else None
@@ -648,7 +622,7 @@ def build_matrix(
                         for component_id in invocation_component_ids
                         if any(
                             _test_case_applies(model, case, profile["id"], component_id)
-                            for case in model["tests"]["correctness"]
+                            for case in model["validation"]
                         )
                     }
                     benchmark_fingerprints = {
@@ -659,7 +633,7 @@ def build_matrix(
                         for component_id in invocation_component_ids
                         if any(
                             _test_case_applies(model, case, profile["id"], component_id)
-                            for case in model["tests"]["performance"]
+                            for case in model["benchmark"]
                         )
                     }
                 first_component_id = invocation_component_ids[0]
@@ -669,7 +643,7 @@ def build_matrix(
                     if any(
                         case["scope"] == {"type": "component", "component": component_id}
                         and profile["id"] in case["build_profiles"]
-                        for case in model["tests"]["performance"]
+                        for case in model["benchmark"]
                     )
                 ]
                 entry: dict[str, Any] = {

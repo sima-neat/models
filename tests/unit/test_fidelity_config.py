@@ -5,14 +5,18 @@ from pathlib import Path
 
 import pytest
 from model_registry.errors import ValidationError
-from model_registry.fidelity_config import (
-    load_recipe_fidelity_config,
-    validate_recipe_fidelity_result,
-)
+from model_registry.fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
+from model_registry.model import load_and_validate_model
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "models" / "rf_detr_small" / "tests" / "correctness.yaml"
-SCHEMA_PATH = ROOT / "schemas" / "recipe-fidelity-v1.schema.json"
+MODEL_DIR = ROOT / "models" / "rf_detr_small"
+
+
+def _config() -> dict:
+    model = load_and_validate_model(MODEL_DIR)
+    return find_recipe_fidelity_config(
+        MODEL_DIR, model, build_profile_id="modalix_int8_bf16", component_id="transformer"
+    )
 
 
 def _report(config: dict) -> dict:
@@ -37,13 +41,13 @@ def _report(config: dict) -> dict:
 
 
 def test_fidelity_result_matches_its_declared_contract() -> None:
-    config = load_recipe_fidelity_config(CONFIG_PATH, SCHEMA_PATH)
+    config = _config()
 
     validate_recipe_fidelity_result(config, _report(config), "fidelity.json")
 
 
 def test_diagnostic_fidelity_accepts_low_similarity() -> None:
-    config = load_recipe_fidelity_config(CONFIG_PATH, SCHEMA_PATH)
+    config = _config()
     report = copy.deepcopy(_report(config))
     report["metrics"][0]["cosine_similarity"] = 0.1
 
@@ -53,7 +57,7 @@ def test_diagnostic_fidelity_accepts_low_similarity() -> None:
 
 
 def test_fidelity_result_still_requires_the_declared_samples() -> None:
-    config = load_recipe_fidelity_config(CONFIG_PATH, SCHEMA_PATH)
+    config = _config()
     report = _report(config)
     report["samples"] -= 1
 

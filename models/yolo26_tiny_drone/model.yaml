@@ -148,7 +148,7 @@ components:
         nms_iou_threshold: 0.6
   surgery:
     type: none
-  recipe: compile.py
+  recipe: scripts/compile.py
 resources: []
 calibrations:
 - id: default
@@ -191,21 +191,44 @@ packages:
   build_profiles:
   - modalix_int8_tessellation_mla
   composition: default
-tests:
-  correctness:
-  - id: multiuav_tiny_drone_accuracy
-    config: tests/correctness.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_int8_tessellation_mla
-  performance:
-  - id: modalix_tracker_latency
-    config: tests/performance.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_int8_tessellation_mla
+validation:
+- id: multiuav_tiny_drone_accuracy
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_int8_tessellation_mla
+  status: qualified_reference
+  dataset_sha256: 2747596e19c2b0f47882610de1129f28f0d434250bd2338d3e73ac69f5a3a6aa
+  validation_tiny_ground_truth_count: 197828
+  metrics:
+  - name: qat_ap50
+    minimum: 0.3
+    measured: 0.9649116197101038
+  - name: qat_tiny_recall50
+    minimum: 0.5
+    measured: 0.9810037001839982
+  - name: ap50_drop
+    maximum: 0.02
+    measured: 0.0001795978578725821
+  - name: tiny_recall50_drop
+    maximum: 0.05
+    measured: -0.0031694199001152112
+  note: Metrics are from the sequence-safe held-out MultiUAV split recorded by the qualified epoch-7 export.
+benchmark:
+- id: modalix_tracker_latency
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_int8_tessellation_mla
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics:
+  - latency_avg_ms
+  - throughput_fps
+  - avg_power_watts
+  - energy_joules
+  - energy_per_inference_joules
 maturity: staging

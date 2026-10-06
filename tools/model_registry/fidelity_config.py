@@ -1,34 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-from jsonschema import Draft202012Validator
-
 from .errors import ValidationError
-
-
-def load_recipe_fidelity_config(path: str | Path, schema_path: str | Path) -> dict[str, Any]:
-    config_path = Path(path).expanduser().resolve()
-    schema_file = Path(schema_path).expanduser().resolve()
-    try:
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        schema = json.loads(schema_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"{config_path}: could not load recipe fidelity configuration: {exc}") from exc
-    errors = sorted(
-        Draft202012Validator(schema).iter_errors(config),
-        key=lambda error: tuple(str(part) for part in error.absolute_path),
-    )
-    if errors:
-        details = "; ".join(
-            f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
-            for error in errors
-        )
-        raise ValidationError(f"{config_path}: {details}")
-    return config
 
 
 def validate_recipe_fidelity_result(
@@ -62,32 +37,24 @@ def find_recipe_fidelity_config(
     *,
     build_profile_id: str,
     component_id: str,
-) -> tuple[Path, dict[str, Any]] | None:
+) -> dict[str, Any] | None:
     directory = Path(model_dir).expanduser().resolve()
     packages = {package["id"]: package for package in model["packages"]}
     matches = []
-    for case in model["tests"]["correctness"]:
-        if build_profile_id not in case["build_profiles"]:
+    for entry in model["validation"]:
+        if entry.get("engine") != "model_recipe" or build_profile_id not in entry["build_profiles"]:
             continue
-        scope = case["scope"]
+        scope = entry["scope"]
         applies = scope == {"type": "component", "component": component_id}
         if scope["type"] == "package":
             applies = component_id in packages[scope["package"]]["components"]
-        if not applies:
-            continue
-        path = (directory / case["config"]).resolve()
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-            raise ValidationError(f"{path}: could not inspect correctness YAML: {exc}") from exc
-        if isinstance(raw, dict) and raw.get("engine") == "model_recipe":
-            matches.append(path)
+        if applies:
+            matches.append(entry)
     if not matches:
         return None
     if len(matches) != 1:
         raise ValidationError(
-            f"{directory}: expected exactly one model-recipe correctness test for "
+            f"{directory}: expected exactly one model_recipe validation entry for "
             f"{build_profile_id}/{component_id}"
         )
-    schema = directory.parents[1] / "schemas" / "recipe-fidelity-v1.schema.json"
-    return matches[0], load_recipe_fidelity_config(matches[0], schema)
+    return matches[0]

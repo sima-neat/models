@@ -24,6 +24,30 @@ upstream:
   repository: https://github.com/roboflow/rf-detr
   revision: 9b009fa928d6218320439803d1da01869a85c072
   model_card: https://huggingface.co/Roboflow/rf-detr-small
+conversion:
+  default:
+    source:
+      type: file
+      uri: https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth
+      sha256: d81979a9213a2109345158ce9232668df4c1ae52e9b8db3f2ec0a8cbad959b33
+      size_bytes: 386045550
+  hf:
+    source:
+      type: file_set
+      entrypoint: model.safetensors
+      files:
+      - path: model.safetensors
+        uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/model.safetensors
+        sha256: 2bfab2fa5f5fcc4870e756c8dc8d2d5acca3a68ffcc0f7e84972661873eb5a1d
+        size_bytes: 128504496
+      - path: config.json
+        uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/config.json
+        sha256: cbc9ccde8860c7587c0672cd4df1e9ae2ee93112fef853283435e95dd7e0a595
+        size_bytes: 5771
+      - path: preprocessor_config.json
+        uri: hf://models/Roboflow/rf-detr-small@3bdc465063270f99769da5a1b4c00c68bd2d439d/preprocessor_config.json
+        sha256: dba1fb5bb4d70d94b3495b7bcb1f881bc61d42c73433fcec13be34c523550a0b
+        size_bytes: 442
 components:
 - id: backbone
   role: feature_extractor
@@ -78,9 +102,9 @@ components:
     pipeline: []
   surgery:
     type: python
-    entrypoint: surgery.py:prepare_model
+    entrypoint: scripts/surgery.py:prepare_model
     parameters: {partition: backbone}
-  recipe: compile.py
+  recipe: scripts/compile.py
 - id: transformer
   role: detection_head
   source: *source
@@ -118,9 +142,9 @@ components:
     pipeline: []
   surgery:
     type: python
-    entrypoint: surgery.py:prepare_model
+    entrypoint: scripts/surgery.py:prepare_model
     parameters: {partition: transformer}
-  recipe: compile.py
+  recipe: scripts/compile.py
   depends_on:
   - backbone
 resources: []
@@ -154,7 +178,26 @@ compositions:
 - id: default
   type: declarative
   schema_version: 1
-  file: composition.yaml
+  components:
+  - {id: backbone, component: backbone, entrypoint: default}
+  - {id: transformer, component: transformer, entrypoint: default}
+  connections:
+  - from: {component: backbone, output: backbone_features}
+    to: {component: transformer, input: backbone_features}
+  inputs:
+  - name: input
+    to: {component: backbone, input: input}
+  - name: proposals
+    to: {component: transformer, input: proposals}
+  outputs:
+  - name: proposal_scores
+    from: {component: backbone, output: proposal_scores}
+  - name: proposal_boxes
+    from: {component: backbone, output: proposal_boxes}
+  - name: dets
+    from: {component: transformer, output: dets}
+  - name: labels
+    from: {component: transformer, output: labels}
 packages:
 - id: default
   default: true
@@ -163,19 +206,39 @@ packages:
   build_profiles: [modalix_int8_bf16]
   composition: default
   maturity: experimental
-tests:
-  correctness:
-  - id: full_pipeline_fidelity
-    config: tests/correctness.yaml
-    scope: {type: package, package: default}
-    build_profiles: [modalix_int8_bf16]
-  performance:
-  - id: backbone_modalix
-    config: tests/performance.yaml
-    scope: {type: component, component: backbone}
-    build_profiles: [modalix_int8_bf16]
-  - id: transformer_modalix
-    config: tests/performance.yaml
-    scope: {type: component, component: transformer}
-    build_profiles: [modalix_int8_bf16]
+validation:
+- id: full_pipeline_fidelity
+  scope: {type: package, package: default}
+  build_profiles: [modalix_int8_bf16]
+  engine: model_recipe
+  status: diagnostic
+  result_component: transformer
+  dataset:
+    id: coco-2017
+    variant: mini
+    sha256: abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78
+    size_bytes: 462182592
+  selection:
+    method: seeded_random_without_replacement
+    seed: 42
+    offset: 50
+    samples: 50
+  outputs: [dets, labels]
+benchmark:
+- id: backbone_modalix
+  scope: {type: component, component: backbone}
+  build_profiles: [modalix_int8_bf16]
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
+- id: transformer_modalix
+  scope: {type: component, component: transformer}
+  build_profiles: [modalix_int8_bf16]
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
 maturity: experimental

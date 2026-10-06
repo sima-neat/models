@@ -1,5 +1,5 @@
 name: Vulcan Model Convert
-run-name: Convert ${{ inputs.model }} (${{ inputs.config }})
+run-name: Convert ${{ inputs.model }} (${{ inputs.conversion }})
 on:
   workflow_dispatch:
     inputs:
@@ -7,9 +7,9 @@ on:
         description: Model directory ID
         required: true
         type: string
-      config:
-        description: Model-local configuration
-        default: convert.yaml
+      conversion:
+        description: Conversion entry in the model's model.yaml
+        default: default
         type: string
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
       id-token: write
     env:
       MODEL_ID: ${{ inputs.model }}
-      CONVERT_CONFIG: ${{ inputs.config }}
+      CONVERSION: ${{ inputs.conversion }}
       EXPORT_VENV: /mnt/nvme/model-export-${{ github.run_id }}-${{ github.run_attempt }}-venv
       EXPORT_DIR: /mnt/nvme/model-export-${{ github.run_id }}-${{ github.run_attempt }}
       PIP_CACHE_DIR: /mnt/nvme/pip-cache
@@ -42,23 +42,23 @@ jobs:
       - name: Validate model selection
         run: |
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9_]*$ ]]
-          [[ "$CONVERT_CONFIG" =~ ^convert(-[a-z0-9]+)?\.yaml$ ]]
-          test -f "models/$MODEL_ID/$CONVERT_CONFIG"
+          [[ "$CONVERSION" =~ ^[a-z][a-z0-9_]*$ ]]
+          test -f "models/$MODEL_ID/scripts/convert.py"
       - uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/requirements-convert.txt', inputs.model)) }}
+          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert.txt', inputs.model)) }}
       - name: Create export environment and install dependencies
         run: |
           mkdir -p "$TMPDIR"
           python3.12 -E -s -m venv "$EXPORT_VENV"
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" .
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" \
-            --only-binary=:all: -r "models/$MODEL_ID/requirements-convert.txt"
+            --only-binary=:all: -r "models/$MODEL_ID/scripts/requirements-convert.txt"
       - name: Convert and smoke-test
         run: |
-          "$EXPORT_VENV/bin/python" -E -s "models/$MODEL_ID/convert.py" \
-            --config "models/$MODEL_ID/$CONVERT_CONFIG" --output-dir "$EXPORT_DIR"
+          "$EXPORT_VENV/bin/python" -E -s "models/$MODEL_ID/scripts/convert.py" \
+            --conversion "$CONVERSION" --output-dir "$EXPORT_DIR"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-west-2
@@ -72,7 +72,7 @@ jobs:
           aws s3api put-object --bucket sima-neat-artifacts-staging --key "$key" --body "$model" \
             --if-none-match '*' --server-side-encryption aws:kms --ssekms-key-id alias/sima-neat-artifacts-staging \
             --checksum-sha256 "$(openssl dgst -sha256 -binary "$model" | base64 -w0)" \
-            --metadata "git-sha=$GITHUB_SHA,config=$CONVERT_CONFIG"
+            --metadata "git-sha=$GITHUB_SHA,config=$CONVERSION"
           uri="https://artifacts.stg.neat.sima.ai/$key"
           curl --fail --silent --show-error "$uri" -o "$RUNNER_TEMP/downloaded.onnx"
           echo "$sha  $RUNNER_TEMP/downloaded.onnx" | sha256sum --check

@@ -37,15 +37,16 @@ identifier.
 ```text
 models/<model-id>/
   README.md
-  model.yaml
-  compile.py                  # one recipe, optionally shared by a compile group
-  export.py                   # only for an upstream checkpoint source
-  composition.yaml           # multi-component products only
-  surgery.py                  # only for model-specific preparation
-  tests/
-    correctness.yaml
-    performance.yaml
+  model.yaml                  # the only configuration file: every stage reads its section
+  scripts/
+    compile.py                # one recipe, optionally shared by a compile group
+    benchmark.py              # Core benchmark for a compiled MPK on a DevKit
+    export.py                 # only for an upstream checkpoint source
+    surgery.py                # only for model-specific preparation
 ```
+
+Model-specific settings, such as validation thresholds or a multi-component
+composition, go into `model.yaml`, not separate YAML files.
 
 The README records upstream context, unusual compiler decisions, local
 qualification notes, and known limitations. Requirements that tooling needs to
@@ -82,7 +83,7 @@ If the model has only one component, `--component` may be omitted.
 
 When upstream publishes a checkpoint instead of ONNX, declare the checkpoint
 and its pinned exporter package as one file set. CI fetches and verifies both.
-The model-local `export.py` converts the local checkpoint to ONNX; it must not
+The model's `scripts/export.py` converts the local checkpoint to ONNX; it must not
 download an undeclared model. The compiler runner must already provide the
 exporter's dependencies. CI installs the verified exporter package without
 resolving dependencies from the network. Generated ONNX files remain temporary.
@@ -159,14 +160,14 @@ runner class. The recipe runs once and writes one MPK per component plus
 `compile-outputs.json`. Declare any verified source-set Python package and the
 imports CI must check under `python_packages`; CI never discovers dependencies
 from filenames. The manifest maps each component to its MPK and records derived
-graph hashes and the one declared correctness result.
+graph hashes and the one declared validation result.
 CI accepts the bundle only when every declared output is present and its hash
 matches. Existing models do not need this field. When the group needs
 calibration data, put its single calibration reference on the first listed
 component; CI resolves that verified input once for the shared recipe.
 
-For model-owned numerical comparison, declare a package-scoped correctness
-test with `engine: model_recipe`, write `fidelity.json` next to its owning MPK,
+For model-owned numerical comparison, declare a package-scoped `validation`
+entry with `engine: model_recipe`, write `fidelity.json` next to its owning MPK,
 name that component with `result_component`, and reference the report from the
 grouped output manifest. Numerical fidelity is diagnostic, not task accuracy;
 CI checks report integrity and dataset identity, not similarity thresholds.
@@ -181,7 +182,7 @@ A component binding proven incompatible may be retained as
 Each component recipe has this interface:
 
 ```text
-compile.py --model <verified-entrypoint> --output-dir <new-directory> \
+scripts/compile.py --model <verified-entrypoint> --output-dir <new-directory> \
   --build-profile <profile-id> --component <component-id>
 ```
 
@@ -193,7 +194,7 @@ publication behavior belongs in `tools/`, not model code.
 A grouped recipe uses this interface instead:
 
 ```text
-compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
+scripts/compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
   --correctness-dataset <verified-correctness-dataset> \
   --output-dir <new-directory> --build-profile <profile-id> \
   --compile-invocation <invocation-id>
@@ -220,17 +221,17 @@ Exactly one package is `default: true`. Trusted assembly places the intact MPKs
 and resources into one deterministic archive, so a user can retrieve and
 extract the complete product without downloading each artifact separately.
 
-## 8. Scope the tests
+## 8. Scope validation and benchmarks
 
-Every correctness and performance test states which build profiles it applies
-to and whether it exercises a component or a package. Use component scope for
-one compiled unit and package scope for an end-to-end composed product. Keep
-test configuration inside the model directory and make missing qualification
-work visible.
+Every `validation` and `benchmark` entry in `model.yaml` states which build
+profiles it applies to and whether it exercises a component or a package. Use
+component scope for one compiled unit and package scope for an end-to-end
+composed product. Keep the settings in the entry itself and make missing
+qualification work visible.
 
-For executable accuracy tests, follow [Local accuracy
-development](local-accuracy-development.md). For device performance tests,
-follow [Synthetic model benchmarking](benchmarking.md).
+For executable accuracy validation, follow [Local accuracy
+development](local-accuracy-development.md). For DevKit benchmarks, follow
+[Synthetic model benchmarking](benchmarking.md).
 
 ## 9. Validate the contract
 

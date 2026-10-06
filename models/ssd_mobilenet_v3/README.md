@@ -81,7 +81,7 @@ weights use symmetric axis-0 per-output-channel INT8 fake quantization. No
 post-hoc weight floor, SmoothQuant, bias correction, BF16 fallback, INT16, or
 mixed-precision escape is applied.
 
-Follow [`qat/README.md`](qat/README.md) for the reproducible Python 3.10
+Follow [`scripts/qat/README.md`](scripts/qat/README.md) for the reproducible Python 3.10
 environment, full `train2017` training command, frozen-observer requirements,
 export contract, and provenance checks. Diagnostic `--smoke` checkpoints are
 explicitly ineligible for publication.

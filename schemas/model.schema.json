@@ -7,7 +7,7 @@
   "required": [
     "schema_version", "id", "display_name", "description", "model_type", "tasks",
     "modalities", "architecture", "owners", "license", "upstream", "components", "resources",
-    "calibrations", "build_profiles", "compositions", "packages", "tests", "maturity"
+    "calibrations", "build_profiles", "compositions", "packages", "validation", "benchmark", "maturity"
   ],
   "properties": {
     "schema_version": {"const": 2},
@@ -31,7 +31,15 @@
     "build_profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildProfile"}},
     "compositions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/composition"}},
     "packages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/package"}},
-    "tests": {"$ref": "#/$defs/tests"},
+    "conversion": {
+      "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["source"],
+        "properties": {"source": {"$ref": "#/$defs/source"}}
+      }
+    },
+    "validation": {"type": "array", "items": {"$ref": "#/$defs/validationEntry"}},
+    "benchmark": {"type": "array", "items": {"$ref": "#/$defs/benchmarkEntry"}},
     "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
   },
   "$defs": {
@@ -181,7 +189,7 @@
           "type": "object", "additionalProperties": false, "required": ["type", "entrypoint", "parameters"],
           "properties": {
             "type": {"const": "python"},
-            "entrypoint": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"},
+            "entrypoint": {"type": "string", "pattern": "^scripts/[A-Za-z0-9_./-]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"},
             "parameters": {"type": "object"}
           }
         }
@@ -194,7 +202,7 @@
         "id": {"$ref": "#/$defs/id"}, "role": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/source"},
         "interface": {"$ref": "#/$defs/interface"}, "preprocessing": {"$ref": "#/$defs/pipeline"},
         "postprocessing": {"$ref": "#/$defs/pipeline"}, "surgery": {"$ref": "#/$defs/surgery"},
-        "recipe": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py$"},
+        "recipe": {"type": "string", "pattern": "^scripts/[A-Za-z0-9_./-]+\\.py$"},
         "depends_on": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
       }
     },
@@ -293,10 +301,13 @@
           }
         },
         {
-          "type": "object", "additionalProperties": false, "required": ["id", "type", "schema_version", "file"],
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "type", "schema_version", "components", "connections", "inputs", "outputs"],
           "properties": {
             "id": {"$ref": "#/$defs/id"}, "type": {"const": "declarative"},
-            "schema_version": {"type": "integer", "minimum": 1}, "file": {"$ref": "#/$defs/relativePath"}
+            "schema_version": {"type": "integer", "minimum": 1},
+            "components": {"type": "array"}, "connections": {"type": "array"},
+            "inputs": {"type": "array"}, "outputs": {"type": "array"}
           }
         }
       ]
@@ -325,21 +336,159 @@
         }
       ]
     },
-    "testCase": {
-      "type": "object", "additionalProperties": false, "required": ["id", "config", "scope", "build_profiles"],
+    "stageEntryId": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "stageBuildProfiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+    "validationEntry": {
+      "oneOf": [
+        {"$ref": "#/$defs/accuracyValidation"},
+        {"$ref": "#/$defs/recipeFidelityValidation"},
+        {"$ref": "#/$defs/modelOwnedValidation"}
+      ]
+    },
+    "modelOwnedValidation": {
+      "description": "Validation settings owned and read by the model's own scripts; no shared engine runs them.",
+      "type": "object", "required": ["id", "scope", "build_profiles"], "not": {"required": ["engine"]},
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
-        "config": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.ya?ml$"},
-        "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
+        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"}
       }
     },
-    "tests": {
-      "type": "object", "additionalProperties": false, "required": ["correctness", "performance"],
+    "accuracyValidation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "scope", "build_profiles", "engine", "status", "task", "dataset", "profiles", "executors", "metrics"],
       "properties": {
-        "correctness": {"type": "array", "items": {"$ref": "#/$defs/testCase"}},
-        "performance": {"type": "array", "items": {"$ref": "#/$defs/testCase"}}
+        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
+        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
+        "engine": {"const": "model_registry"},
+        "status": {"enum": ["ready", "provisional", "pending"]},
+        "task": {"const": "image_classification"},
+        "dataset": {"$ref": "#/$defs/accuracyDataset"},
+        "profiles": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/accuracyProfile"}},
+        "executors": {
+          "type": "object", "additionalProperties": false, "required": ["reference", "candidate"],
+          "properties": {"reference": {"$ref": "#/$defs/accuracyExecutor"}, "candidate": {"$ref": "#/$defs/accuracyExecutor"}}
+        },
+        "metrics": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/accuracyMetric"}},
+        "reporting": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"required_fields": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}
+        },
+        "notes": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
+    },
+    "accuracySplit": {
+      "type": "object", "additionalProperties": false, "required": ["prefix", "samples"],
+      "properties": {
+        "prefix": {"type": "string", "minLength": 1}, "samples": {"type": "integer", "minimum": 1},
+        "classes": {"type": "integer", "minimum": 1},
+        "label_strategy": {"enum": ["none", "lexicographic_parent_directory"]}
+      }
+    },
+    "accuracyDataset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "variant", "sha256", "size_bytes", "loader", "splits"],
+      "properties": {
+        "id": {"$ref": "#/$defs/datasetId"}, "variant": {"$ref": "#/$defs/datasetId"},
+        "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1},
+        "loader": {
+          "type": "object", "additionalProperties": false, "required": ["type", "image_suffixes"],
+          "properties": {
+            "type": {"const": "image_classification_tar"},
+            "image_suffixes": {
+              "type": "array", "minItems": 1, "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^\\.[A-Za-z0-9.]+$"}
+            }
+          }
+        },
+        "splits": {
+          "type": "object", "additionalProperties": false, "required": ["calibration", "validation"],
+          "properties": {"calibration": {"$ref": "#/$defs/accuracySplit"}, "validation": {"$ref": "#/$defs/accuracySplit"}}
+        }
+      }
+    },
+    "accuracyProfile": {
+      "type": "object", "additionalProperties": false, "required": ["report_scope", "samples", "sampling", "workers"],
+      "properties": {
+        "report_scope": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "samples": {"oneOf": [{"type": "integer", "minimum": 1}, {"const": "all"}]},
+        "sampling": {"enum": ["deterministic_evenly_spaced"]},
+        "workers": {"oneOf": [{"type": "integer", "minimum": 1}, {"const": "auto"}]},
+        "cadence": {"type": "string", "minLength": 1}
+      }
+    },
+    "accuracyExecutor": {
+      "type": "object", "additionalProperties": false, "required": ["type", "artifact", "input_layout"],
+      "properties": {
+        "type": {"enum": ["onnxruntime", "afe_sima"]}, "artifact": {"enum": ["source", "compiled_component"]},
+        "input_layout": {"enum": ["NCHW", "NHWC"]}, "use_jax": {"type": "boolean"}
+      }
+    },
+    "accuracyMetric": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "k"],
+          "properties": {"type": {"const": "top_k_accuracy"}, "k": {"type": "integer", "minimum": 1}}
+        },
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "top1_agreement"}}}
+      ]
+    },
+    "recipeFidelityValidation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "scope", "build_profiles", "engine", "status", "result_component", "dataset", "selection", "outputs"],
+      "properties": {
+        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
+        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
+        "engine": {"const": "model_recipe"},
+        "status": {"enum": ["diagnostic", "provisional", "ready"]},
+        "result_component": {"$ref": "#/$defs/id"},
+        "dataset": {
+          "type": "object", "additionalProperties": false, "required": ["id", "variant", "sha256", "size_bytes"],
+          "properties": {
+            "id": {"$ref": "#/$defs/datasetId"}, "variant": {"$ref": "#/$defs/datasetId"},
+            "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1}
+          }
+        },
+        "selection": {
+          "type": "object", "additionalProperties": false, "required": ["method", "seed", "offset", "samples"],
+          "properties": {
+            "method": {"const": "seeded_random_without_replacement"},
+            "seed": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0},
+            "samples": {"type": "integer", "minimum": 1}
+          }
+        },
+        "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "benchmarkEntry": {
+      "type": "object", "additionalProperties": false, "required": ["id", "scope", "build_profiles", "status", "metrics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
+        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
+        "status": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "reason": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "metrics": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {
+                "type": "object", "additionalProperties": false, "required": ["name"],
+                "properties": {"name": {"type": "string", "minLength": 1}}
+              }
+            ]
+          }
+        },
+        "required_metrics": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "note": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"pattern": "^pending"}}, "required": ["status"]},
+          "then": {"anyOf": [{"required": ["reason"]}, {"required": ["note"]}]}
+        }
+      ]
     }
   }
 }

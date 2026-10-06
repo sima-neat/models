@@ -1,8 +1,8 @@
 # Local accuracy development
 
 Accuracy measurement is a shared Model Registry capability. Model directories
-declare datasets, profiles, preprocessing through `model.yaml`, executors, and
-metrics in a correctness YAML file with `engine: model_registry`; they must not
+declare datasets, profiles, preprocessing, executors, and metrics in a
+`validation` entry of `model.yaml` with `engine: model_registry`; they must not
 carry a model-specific evaluation loop.
 
 ## Environment
@@ -39,16 +39,16 @@ dataset_json="$(python -m model_registry fetch-accuracy-dataset models/resnet_50
 dataset_path="$(jq -r .path <<<"$dataset_json")"
 ```
 
-Accuracy dataset resolution is independent of calibration. The correctness
-test entry in `model.yaml` scopes evaluation to named build profiles. ResNet-50
+Accuracy dataset resolution is independent of calibration. The `validation`
+entry in `model.yaml` scopes evaluation to named build profiles. ResNet-50
 currently measures INT8 only, so BF16 resolution
 returns `kind: none` and CI skips its accuracy step.
 
 Compile the component/profile pair. Compilation consumes calibration samples declared by the
-correctness YAML but does not contain accuracy logic:
+validation entry but does not contain accuracy logic:
 
 ```bash
-python models/resnet_50/compile.py \
+python models/resnet_50/scripts/compile.py \
   --model "$source_path" \
   --dataset "$dataset_path" \
   --build-profile modalix_int8 \
@@ -114,7 +114,7 @@ publishes the report on the same Vulcan compile run as three forms of evidence:
 The model browser reads the test-result summary and always displays the
 evaluated sample count and provisional or qualification status beside the accuracy
 numbers. A missing `accuracy.json` remains valid for component/profile pairs without an
-executable dataset-backed correctness specification.
+executable dataset-backed validation entry.
 
 The browser requests `GET /v1/runs/<compile-run-id>/accuracy/latest`. Vulcan
 returns the latest schema-versioned accuracy summary, its test-result identity,
@@ -126,21 +126,20 @@ the complete configured validation split is labeled qualification and is used
 for final accuracy reporting. The status help control in the browser explains
 the coverage represented by each label.
 
-## Adding an executable correctness specification
+## Adding an executable accuracy validation entry
 
-Add a correctness case to `model.yaml`, then create its YAML with:
+Add a `validation` entry to `model.yaml` with:
 
 - `engine: model_registry` and `task: image_classification`;
-- an explicit `build_profiles` list matching the scoped correctness case;
+- an explicit `build_profiles` list and component `scope`;
 - immutable dataset identity and archive loader/split definitions;
 - regular and qualification profiles;
 - ONNX Runtime reference and AFE `.sima` candidate executors;
 - allowlisted metric definitions.
 
-`model-registry validate` validates executable correctness YAML against
-`schemas/accuracy.schema.json`. Preprocessing is read from `model.yaml` and is
-restricted to allowlisted operations. Arbitrary Python entrypoints are not
-executed from accuracy YAML.
+`model-registry validate` checks the entry against `schemas/model.schema.json`.
+Preprocessing is read from the component in `model.yaml` and is restricted to
+allowlisted operations. The entry cannot name a Python entrypoint to execute.
 
 Run the local contract checks before submitting changes:
 

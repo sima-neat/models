@@ -79,7 +79,7 @@ source_json="$(model-registry fetch models/resnet_50 --component model --json)"
 verified_model="$(python -c 'import json,sys; print(json.load(sys.stdin)["path"])' \
   <<<"$source_json")"
 dataset="$(dataset-registry resolve imagenet-2012 --variant mini | python -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
-python models/resnet_50/compile.py \
+python models/resnet_50/scripts/compile.py \
   --model "$verified_model" \
   --dataset "$dataset" \
   --output-dir /tmp/resnet50-int8 \

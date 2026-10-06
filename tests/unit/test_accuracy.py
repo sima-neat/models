@@ -28,25 +28,25 @@ MODEL_DIR = ROOT / "models" / "resnet_50"
 
 def test_resnet_accuracy_config_is_executable_and_schema_valid() -> None:
     model = load_and_validate_model(MODEL_DIR)
-    path, config = select_accuracy_config(MODEL_DIR, model)
+    config = select_accuracy_config(MODEL_DIR, model)
 
-    assert path == MODEL_DIR / "tests" / "correctness.yaml"
+    assert config is model["validation"][0]
     assert config["engine"] == "model_registry"
     assert config["status"] == "provisional"
-    assert model["tests"]["correctness"][0]["build_profiles"] == ["modalix_int8"]
+    assert config["build_profiles"] == ["modalix_int8"]
     assert config["profiles"]["regular"]["samples"] == 500
     assert config["profiles"]["qualification"]["samples"] == "all"
 
 
 def test_static_accuracy_contract_rejects_unsupported_model_operation() -> None:
     model = load_and_validate_model(MODEL_DIR)
-    path, config = select_accuracy_config(MODEL_DIR, model)
+    config = select_accuracy_config(MODEL_DIR, model)
     model["components"][0]["preprocessing"]["pipeline"].append(
         {"op": "run_arbitrary_python", "parameters": {}}
     )
 
     with pytest.raises(ValidationError, match="unsupported preprocessing operation"):
-        validate_accuracy_model_contract(model, config, path, model["tests"]["correctness"][0])
+        validate_accuracy_model_contract(model, config, MODEL_DIR)
 
 
 def test_evaluator_rejects_profile_outside_accuracy_scope(tmp_path: Path) -> None:

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model, load_model, validate_model
-from model_registry.performance_config import load_performance_config
 from model_registry.taxonomy import load_taxonomy, validate_model_categorization
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -143,7 +143,7 @@ def test_compile_invocation_rejects_unsupported_component() -> None:
 @pytest.mark.parametrize(
     ("change", "expected"),
     [
-        (lambda model: model["components"][1].update({"recipe": "other.py"}), "share one recipe"),
+        (lambda model: model["components"][1].update({"recipe": "scripts/other.py"}), "share one recipe"),
         (
             lambda model: model["components"][1]["source"].update({"sha256": "b" * 64}),
             "share one source content identity",
@@ -208,7 +208,22 @@ def test_declarative_composition_validates_ports_and_package_contents() -> None:
     second["id"] = "second_model"
     model["components"].append(second)
     model["build_profiles"][0]["components"].append({"id": "second_model", "parameters": {}})
-    model["compositions"] = [{"id": "pipeline", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}]
+    model["compositions"] = [
+        {
+            "id": "pipeline",
+            "type": "declarative",
+            "schema_version": 1,
+            "components": [
+                {"id": "first", "component": "model", "entrypoint": "default"},
+                {"id": "second", "component": "second_model", "entrypoint": "default"},
+            ],
+            "connections": [
+                {"from": {"component": "first", "output": "output"}, "to": {"component": "second", "input": "input"}}
+            ],
+            "inputs": [{"name": "input", "to": {"component": "first", "input": "input"}}],
+            "outputs": [{"name": "output", "from": {"component": "second", "output": "output"}}],
+        }
+    ]
     model["packages"][0]["components"] = ["model", "second_model"]
     model["packages"][0]["composition"] = "pipeline"
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
@@ -225,43 +240,80 @@ def test_unapproved_https_host_is_a_validation_error() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_missing_model_local_test_config_fails() -> None:
+def test_missing_recipe_script_fails() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["tests"]["correctness"] = [
-        {
-            "id": "missing",
-            "config": "tests/missing.yaml",
-            "scope": {"type": "component", "component": "model"},
-            "build_profiles": ["fixture"],
-        }
-    ]
+    model["components"][0]["recipe"] = "scripts/missing.py"
     with pytest.raises(ValidationError, match="referenced file does not exist"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_performance_configuration_is_validated_during_catalog_validation() -> None:
+def test_recipe_must_live_in_scripts() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["tests"]["performance"] = [
-        {
-            "id": "latency",
-            "config": "invalid-performance.yaml",
-            "scope": {"type": "component", "component": "model"},
-            "build_profiles": ["fixture"],
-        }
-    ]
+    model["components"][0]["recipe"] = "compile.py"
+    with pytest.raises(ValidationError, match="recipe"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def _benchmark_entry(**settings) -> dict:
+    return {
+        "id": "latency",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+        "status": "provisional",
+        "metrics": ["latency_avg_ms"],
+        **settings,
+    }
+
+
+def test_benchmark_settings_are_validated() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["benchmark"] = [_benchmark_entry(unsupported_setting=True)]
     with pytest.raises(ValidationError, match="unsupported_setting.*unexpected"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_required_performance_metrics_must_be_declared(tmp_path: Path) -> None:
-    path = tmp_path / "performance.yaml"
-    path.write_text(
-        "schema_version: 1\nstatus: provisional\nmetrics: [latency_avg_ms]\nrequired_metrics: [avg_power_watts]\n",
-        encoding="utf-8",
-    )
-
+def test_required_benchmark_metrics_must_be_declared() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["benchmark"] = [_benchmark_entry(required_metrics=["avg_power_watts"])]
     with pytest.raises(ValidationError, match="required_metrics are not declared"):
-        load_performance_config(path, ROOT / "schemas" / "performance-config-v1.schema.json")
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_model_owned_validation_entry_needs_no_engine() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["validation"] = [
+        {
+            "id": "owned",
+            "scope": {"type": "component", "component": "model"},
+            "build_profiles": ["fixture"],
+            "thresholds": {"minimum_cosine_similarity": 0.98},
+        }
+    ]
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_conversion_sources_are_validated() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["conversion"] = {"default": {"source": copy.deepcopy(model["components"][0]["source"])}}
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+    model["conversion"]["default"]["source"]["uri"] = "https://unapproved.example/model.pth"
+    model["conversion"]["default"]["config"] = "convert.yaml"
+    with pytest.raises(ValidationError, match="conversion"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize("entry", ["tests", "compile.py", "convert.yaml"])
+def test_legacy_model_folder_entries_are_rejected(tmp_path: Path, entry: str) -> None:
+    directory = tmp_path / "fixture_model"
+    shutil.copytree(FIXTURES / "fixture_model", directory)
+    target = directory / entry
+    if entry == "tests":
+        target.mkdir()
+        (target / "correctness.yaml").write_text("", encoding="utf-8")
+    else:
+        target.write_text("", encoding="utf-8")
+    with pytest.raises(ValidationError, match=f"unexpected model folder entries: {entry}.*scripts/"):
+        load_and_validate_model(directory, SCHEMA, TAXONOMY)
 
 
 def test_yaml_uses_safe_loader(tmp_path: Path) -> None:

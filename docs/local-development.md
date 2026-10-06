@@ -22,7 +22,7 @@ request:
 4. Compile the component with the selected build profile in the pinned Model Compiler environment.
 5. Validate the generated MPK.
 6. Run the declared dataset-backed accuracy evaluation when it applies.
-7. Run the declared performance test on a compatible Modalix DevKit.
+7. Run the declared benchmark on a compatible Modalix DevKit.
 8. Review the machine-readable results and retain the results and logs outside the
    repository.
 
@@ -134,8 +134,10 @@ For revision comparisons, selection is based on semantic stage fingerprints,
 not broad path buckets. Display metadata and taxonomy-label changes still
 validate the complete catalog but select no compilation. Compiler identity and
 shared compile inputs affect every relevant compile fingerprint; model-local
-recipe and surgery inputs affect only their invocation. Correctness and
-performance configuration have independent fingerprints.
+recipe and surgery inputs affect only their invocation. The `validation` and
+`benchmark` sections of `model.yaml` have independent fingerprints, except that
+validation settings a recipe reads (calibration accuracy and package numerical
+fidelity) are also compile inputs.
 
 ## Compile locally from `model.yaml`
 
@@ -153,14 +155,14 @@ Compilation is intentionally model-owned; `model-registry` does not provide a
 public compile command. Use the model recipe directly:
 
 ```text
-compile.py --model <verified-entrypoint> --output-dir <new-directory> \
+scripts/compile.py --model <verified-entrypoint> --output-dir <new-directory> \
   --build-profile <profile-id> --component <component-id>
 ```
 
 For a grouped matrix entry, invoke its shared recipe once:
 
 ```text
-compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
+scripts/compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
   --correctness-dataset <verified-correctness-dataset> \
   --output-dir <new-directory> --build-profile <profile-id> \
   --compile-invocation <invocation-id>
@@ -231,7 +233,7 @@ In the pinned Model Compiler environment:
        ;;
    esac
 
-   python models/<model-id>/compile.py \
+   python models/<model-id>/scripts/compile.py \
      --model "$source_path" \
      --output-dir <new-output-directory> \
      --build-profile <profile-id> \
@@ -289,7 +291,7 @@ sufficient for model submission.
 
 ## Measure declared accuracy locally
 
-If correctness uses `engine: model_registry`, evaluate the saved `.sima`
+If a `validation` entry uses `engine: model_registry`, evaluate the saved `.sima`
 candidate before benchmarking. For `engine: model_recipe`, pass the separately
 resolved correctness dataset to the grouped recipe; the recipe compares the
 full candidate pipeline and emits the declared numerical fidelity report.
@@ -307,8 +309,8 @@ model-registry fetch-accuracy-dataset models/<model-id> \
 
 ## Benchmark locally on a Modalix DevKit
 
-Benchmark the exact MPK produced above using the performance declaration in
-`models/<model-id>/tests/performance.yaml`. The benchmark measures the compiled
+Benchmark the exact MPK produced above using its `benchmark` entry in
+`models/<model-id>/model.yaml`. The benchmark measures the compiled
 model route with deterministic synthetic inputs; it does not establish model
 accuracy or measure application preprocessing and postprocessing.
 
@@ -318,12 +320,12 @@ For each qualified component/profile pair, follow this shorter sequence.
 
 ### Run on the DevKit and retain evidence
 
-Copy the exact compiled MPK and the model’s `tests/benchmark.py` to the DevKit.
+Copy the exact compiled MPK and the model’s `scripts/benchmark.py` to the DevKit.
 Use the Core package selected in `deps/manifest.json`, then run:
 
 ```bash
 source ~/pyneat/bin/activate
-python models/resnet_50/tests/benchmark.py \
+python models/resnet_50/scripts/benchmark.py \
   /workspace/resnet_50_mpk.tar.gz /workspace/core-benchmark.json \
   2>&1 | tee /workspace/benchmark.log
 ```

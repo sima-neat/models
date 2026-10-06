@@ -54,7 +54,7 @@ components:
     pipeline: []
   surgery:
     type: none
-  recipe: compile.py
+  recipe: scripts/compile.py
 resources: []
 calibrations: []
 build_profiles:
@@ -77,7 +77,6 @@ packages:
   build_profiles:
   - fixture
   composition: default
-tests:
-  correctness: []
-  performance: []
+validation: []
+benchmark: []
 maturity: experimental

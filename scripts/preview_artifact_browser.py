@@ -166,7 +166,7 @@ def _accuracy_result(index: int) -> dict | None:
             "evaluated_samples": 500,
             "available_samples": 5000,
         },
-        "evaluation": {"profile": "regular", "status": "provisional", "config": "tests/correctness.yaml"},
+        "evaluation": {"profile": "regular", "status": "provisional", "config": "imagenet_top5_smoke"},
         "execution": {"workers": 6, "samples_per_second": 2.589, "elapsed_seconds": 193.09},
         "metrics": {
             "candidate": {"top1_accuracy": 0.762, "top5_accuracy": 0.934},

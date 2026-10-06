@@ -19,7 +19,7 @@ from model_registry.source import SourceSpec
 from output_labels import restore_public_output_labels
 from quantized_snapshot import materialize_snapshot
 
-MODEL_DIR = Path(__file__).resolve().parent
+MODEL_DIR = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = MODEL_DIR.parents[1]
 TRAINING_DIR = REPOSITORY_ROOT / "training" / "yolo26_tiny_drone"
 sys.path.insert(0, str(TRAINING_DIR))

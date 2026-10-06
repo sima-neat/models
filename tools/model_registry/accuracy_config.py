@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from typing import Any
 
-import yaml
-from jsonschema import Draft202012Validator
-
 from .errors import ValidationError
 
-ACCURACY_SCHEMA_RELATIVE_PATH = Path("schemas/accuracy.schema.json")
 PREPROCESSING_PARAMETERS = {
     "decode_image": {"color_space"},
     "resize": {"shortest_edge", "resample"},
@@ -25,58 +19,6 @@ POSTPROCESSING_PARAMETERS = {
 }
 
 
-def find_accuracy_schema(config_path: str | Path, schema_path: str | Path | None = None) -> Path:
-    if schema_path is not None:
-        candidate = Path(schema_path).expanduser().resolve()
-        if not candidate.is_file():
-            raise ValidationError(f"accuracy schema not found: {candidate}")
-        return candidate
-
-    configured_root = os.environ.get("MODEL_REGISTRY_ROOT", "").strip()
-    candidates = []
-    if configured_root:
-        candidates.append(Path(configured_root).expanduser().resolve() / ACCURACY_SCHEMA_RELATIVE_PATH)
-
-    path = Path(config_path).expanduser().resolve()
-    candidates.extend(parent / ACCURACY_SCHEMA_RELATIVE_PATH for parent in (path.parent, *path.parents))
-    candidates.extend(parent / ACCURACY_SCHEMA_RELATIVE_PATH for parent in (Path.cwd(), *Path.cwd().parents))
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise ValidationError(
-        f"{path}: could not locate {ACCURACY_SCHEMA_RELATIVE_PATH}; "
-        "run inside the repository or set MODEL_REGISTRY_ROOT"
-    )
-
-
-def load_accuracy_config(path: str | Path, schema_path: str | Path | None = None) -> dict[str, Any]:
-    config_path = Path(path).expanduser().resolve()
-    try:
-        value = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise ValidationError(f"{config_path}: could not load accuracy YAML: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ValidationError(f"{config_path}: expected a YAML object")
-    if value.get("engine") != "model_registry":
-        raise ValidationError(f"{config_path}: engine must be 'model_registry'")
-
-    schema_file = find_accuracy_schema(config_path, schema_path)
-    try:
-        schema = json.loads(schema_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"{schema_file}: could not load accuracy schema: {exc}") from exc
-    errors = sorted(
-        Draft202012Validator(schema).iter_errors(value),
-        key=lambda item: tuple(str(part) for part in item.absolute_path),
-    )
-    if errors:
-        details = "; ".join(
-            f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}" for error in errors
-        )
-        raise ValidationError(f"{config_path}: {details}")
-    return value
-
-
 def select_accuracy_config(
     model_dir: str | Path,
     model: dict[str, Any],
@@ -84,30 +26,22 @@ def select_accuracy_config(
     *,
     build_profile_id: str | None = None,
     component_id: str | None = None,
-) -> tuple[Path, dict[str, Any]]:
+) -> dict[str, Any]:
+    """Return the model_registry validation entry selected by ID or by build coordinates."""
     directory = Path(model_dir).expanduser().resolve()
-    cases = model["tests"]["correctness"]
-    if test_id is None:
-        selected = find_accuracy_config(
-            directory,
-            model,
-            build_profile_id=build_profile_id,
-            component_id=component_id,
+    if test_id is not None:
+        matches = [entry for entry in model["validation"] if entry["id"] == test_id]
+        if len(matches) != 1 or matches[0].get("engine") != "model_registry":
+            raise ValidationError(f"{directory}: expected exactly one model_registry validation entry {test_id!r}")
+        return matches[0]
+    selected = find_accuracy_config(directory, model, build_profile_id=build_profile_id, component_id=component_id)
+    if selected is None and (build_profile_id is not None or component_id is not None):
+        selected = find_accuracy_config(directory, model)
+    if selected is None:
+        raise ValidationError(
+            f"{directory}: expected exactly one model_registry validation entry; pass --test-id explicitly"
         )
-        if selected is None and (build_profile_id is not None or component_id is not None):
-            selected = find_accuracy_config(directory, model)
-        if selected is None:
-            raise ValidationError(
-                f"{directory}: expected exactly one executable correctness test; pass --test-id explicitly"
-            )
-        return selected
-    else:
-        matches = [case for case in cases if case["id"] == test_id]
-        if len(matches) != 1:
-            raise ValidationError(f"{directory}: expected exactly one correctness test named {test_id!r}")
-        selected = matches[0]
-    path = (directory / selected["config"]).resolve()
-    return path, load_accuracy_config(path)
+    return selected
 
 
 def find_accuracy_config(
@@ -116,45 +50,37 @@ def find_accuracy_config(
     *,
     build_profile_id: str | None = None,
     component_id: str | None = None,
-) -> tuple[Path, dict[str, Any]] | None:
+) -> dict[str, Any] | None:
     directory = Path(model_dir).expanduser().resolve()
-    executable = []
-    for case in model["tests"]["correctness"]:
-        if build_profile_id is not None and build_profile_id not in case["build_profiles"]:
-            continue
-        if component_id is not None and case["scope"] != {"type": "component", "component": component_id}:
-            continue
-        path = directory / case["config"]
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise ValidationError(f"{path}: could not inspect accuracy YAML: {exc}") from exc
-        if isinstance(raw, dict) and raw.get("engine") == "model_registry":
-            executable.append(case)
+    executable = [
+        entry
+        for entry in model["validation"]
+        if entry.get("engine") == "model_registry"
+        and (build_profile_id is None or build_profile_id in entry["build_profiles"])
+        and (component_id is None or entry["scope"] == {"type": "component", "component": component_id})
+    ]
     if not executable:
         return None
     if len(executable) != 1:
         scope = f" for {build_profile_id or '*'}/{component_id or '*'}"
-        raise ValidationError(f"{directory}: expected exactly one executable correctness test{scope}")
-    path = (directory / executable[0]["config"]).resolve()
-    return path, load_accuracy_config(path)
+        raise ValidationError(f"{directory}: expected exactly one model_registry validation entry{scope}")
+    return executable[0]
 
 
 def validate_accuracy_model_contract(
     model: dict[str, Any],
     config: dict[str, Any],
-    config_path: str | Path,
-    test_case: dict[str, Any],
+    model_dir: str | Path,
 ) -> None:
-    path = Path(config_path).expanduser().resolve()
-    scope = test_case["scope"]
+    label = f"{Path(model_dir).expanduser().resolve()}: validation {config['id']!r}"
+    scope = config["scope"]
     if scope["type"] != "component":
-        raise ValidationError(f"{path}: image_classification evaluation requires component scope")
+        raise ValidationError(f"{label}: image_classification evaluation requires component scope")
     component = next(item for item in model["components"] if item["id"] == scope["component"])
     entrypoint = component["interface"]["entrypoints"][0]
     inputs = entrypoint["inputs"]
     if len(inputs) != 1 or inputs[0].get("layout") != "NCHW":
-        raise ValidationError(f"{path}: image_classification evaluation requires one NCHW model input")
+        raise ValidationError(f"{label}: image_classification evaluation requires one NCHW model input")
 
     for section, supported in (
         ("preprocessing", PREPROCESSING_PARAMETERS),
@@ -163,11 +89,11 @@ def validate_accuracy_model_contract(
         for index, stage in enumerate(component[section]["pipeline"]):
             operation = stage["op"]
             if operation not in supported:
-                raise ValidationError(f"{path}: unsupported {section} operation {operation!r}")
+                raise ValidationError(f"{label}: unsupported {section} operation {operation!r}")
             missing = supported[operation] - set(stage["parameters"])
             if missing:
                 raise ValidationError(
-                    f"{path}: {section}.pipeline[{index}] {operation!r} missing parameters: "
+                    f"{label}: {section}.pipeline[{index}] {operation!r} missing parameters: "
                     f"{', '.join(sorted(missing))}"
                 )
 
@@ -179,11 +105,11 @@ def validate_accuracy_model_contract(
     for role, values in expected.items():
         actual = tuple(executors[role][key] for key in ("type", "artifact", "input_layout"))
         if actual != values:
-            raise ValidationError(f"{path}: unsupported {role} executor contract: {actual}")
+            raise ValidationError(f"{label}: unsupported {role} executor contract: {actual}")
 
     classes = int(config["dataset"]["splits"]["validation"]["classes"])
     top_k = {int(metric["k"]) for metric in config["metrics"] if metric["type"] == "top_k_accuracy"}
     if 1 not in top_k:
-        raise ValidationError(f"{path}: metrics must include top_k_accuracy with k: 1")
+        raise ValidationError(f"{label}: metrics must include top_k_accuracy with k: 1")
     if max(top_k) > classes:
-        raise ValidationError(f"{path}: top-k metric exceeds configured class count {classes}")
+        raise ValidationError(f"{label}: top-k metric exceeds configured class count {classes}")

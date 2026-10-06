@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quantize and compile one pinned SSD-MobileNet V2 Modalix variant."""
+"""Quantize and compile one pinned SSD-MobileNet V1 Modalix variant."""
 
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ from calibration import (
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import Fetcher
 from model_registry.source import SourceSpec
-from surgery import EXPECTED_CONVOLUTION_COUNT, INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_model
+from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_model
 
-LOG = logging.getLogger("ssd_mobilenet_v2.compile")
-MODEL_DIR = Path(__file__).resolve().parent
+LOG = logging.getLogger("ssd_mobilenet_v1.compile")
+MODEL_DIR = Path(__file__).resolve().parents[1]
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 PUBLIC_INPUT_SIZE = int(np.prod(INPUT_SHAPE)) * np.dtype(np.float32).itemsize
 PUBLIC_OUTPUT_SIZES = [int(np.prod(shape)) * np.dtype(np.float32).itemsize for _, shape in OUTPUTS]
@@ -38,13 +38,13 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
-        raise ValueError(f"expected exactly one SSD-MobileNet V2 variant named {variant_id!r}")
+        raise ValueError(f"expected exactly one SSD-MobileNet V1 variant named {variant_id!r}")
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == "model")
     variant = {**profile, "parameters": binding["parameters"]}
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
-        raise ValueError("SSD-MobileNet V2 supports only declared Modalix INT8 and BF16 variants")
+        raise ValueError("SSD-MobileNet V1 supports only declared Modalix INT8 and BF16 variants")
     expected_quantization = (
         ("asymmetric_per_tensor_8bit", "symmetric_per_channel_8bit")
         if parameters["precision"] == "int8"
@@ -64,7 +64,7 @@ def calibration_source() -> SourceSpec:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
     if calibration.get("status") != "ready":
-        raise ValueError("SSD-MobileNet V2 requires pinned representative calibration data")
+        raise ValueError("SSD-MobileNet V1 requires pinned representative calibration data")
     return SourceSpec.from_mapping(calibration["source"])
 
 
@@ -113,10 +113,8 @@ def audit_quantized_model(path: Path, precision: str) -> dict[str, Any]:
     except (KeyError, TypeError) as exc:
         raise RuntimeError(f"quantized SSD serialization has no layer topology: {path}") from exc
     convolutions = [layer for layer in layers if str(layer.get("class_name", "")).startswith("MLA_0/ConvAddActivation")]
-    if len(convolutions) != EXPECTED_CONVOLUTION_COUNT:
-        raise RuntimeError(
-            f"expected {EXPECTED_CONVOLUTION_COUNT} quantized SSD MLA convolutions, found {len(convolutions)}"
-        )
+    if len(convolutions) != 47:
+        raise RuntimeError(f"expected 47 quantized SSD MLA convolutions, found {len(convolutions)}")
     expected_scalar_type = 6 if precision == "int8" else 13
     scalar_types = {layer.get("config", {}).get("conv_attrs.input_type", {}).get("value") for layer in convolutions}
     statuses = {layer.get("config", {}).get("_status") for layer in convolutions}
@@ -143,21 +141,6 @@ def audit_quantized_model(path: Path, precision: str) -> dict[str, Any]:
     }
 
 
-def _normalize_validation_output(value: np.ndarray, name: str, expected_shape: tuple[int, ...]) -> np.ndarray:
-    array = np.asarray(value, dtype=np.float64)
-    batch, channels, height, width = expected_shape
-    if array.shape == expected_shape:
-        return array.transpose(0, 2, 3, 1)
-    if array.shape == (batch, height, width, channels):
-        return array
-    if array.shape == (batch, width, channels, height):
-        # AFE can expose compiler outputs as NWCH. SSD levels are square, so
-        # this is shape-identical to NHCW; this permutation follows the AFE
-        # raw-head ordering established by the existing SSD decoder.
-        return array.transpose(0, 3, 1, 2)
-    raise RuntimeError(f"validation output {name} has unsupported shape {array.shape}; expected {expected_shape}")
-
-
 def quantization_quality_report(
     reference_samples: list[list[np.ndarray]], candidate_samples: list[list[np.ndarray]]
 ) -> dict[str, Any]:
@@ -166,7 +149,8 @@ def quantization_quality_report(
             "quantization validation requires the same non-zero number of floating and quantized samples"
         )
     accumulators = [
-        {"dot": 0.0, "reference_energy": 0.0, "candidate_energy": 0.0, "error_energy": 0.0, "mae": 0.0} for _ in OUTPUTS
+        {"dot": 0.0, "reference_energy": 0.0, "candidate_energy": 0.0, "error_energy": 0.0, "mae": 0.0}
+        for _ in OUTPUTS
     ]
     element_counts = [0] * len(OUTPUTS)
     maximum_errors = [0.0] * len(OUTPUTS)
@@ -181,8 +165,13 @@ def quantization_quality_report(
         for output_index, ((name, expected_shape), reference, candidate) in enumerate(
             zip(OUTPUTS, reference_outputs, candidate_outputs, strict=True)
         ):
-            reference_array = _normalize_validation_output(reference, name, expected_shape)
-            candidate_array = _normalize_validation_output(candidate, name, expected_shape)
+            reference_array = np.asarray(reference, dtype=np.float64)
+            candidate_array = np.asarray(candidate, dtype=np.float64)
+            if reference_array.shape != candidate_array.shape or reference_array.size != int(np.prod(expected_shape)):
+                raise RuntimeError(
+                    f"validation output {name} shape mismatch: floating={reference_array.shape}, "
+                    f"quantized={candidate_array.shape}, expected_elements={int(np.prod(expected_shape))}"
+                )
             if not np.isfinite(reference_array).all() or not np.isfinite(candidate_array).all():
                 raise RuntimeError(f"validation output {name} contains non-finite values")
             difference = candidate_array - reference_array
@@ -235,7 +224,8 @@ def validate_quantization(loaded: Any, quantized: Any, validation: np.ndarray, I
 
 
 def enforce_quantization_quality(report: dict[str, Any], precision: str) -> dict[str, Any]:
-    specification = yaml.safe_load((MODEL_DIR / "tests" / "correctness.yaml").read_text(encoding="utf-8"))
+    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    specification = next(entry for entry in metadata["validation"] if entry["id"] == "coco_val2017_quantization")
     try:
         thresholds = specification["compiler_raw_head_thresholds"][precision]
         minimum_cosine = float(thresholds["minimum_cosine_similarity"])
@@ -363,8 +353,8 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     calibration_path = resolve_calibration_path()
     calibration, validation = validate_dataset(calibration_path)
     output_dir.mkdir(parents=True, exist_ok=False)
-    with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v2-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
-        prepared = prepare_model(source, Path(temporary) / "ssd_mobilenet_v2_heads.onnx")
+    with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v1-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        prepared = prepare_model(source, Path(temporary) / "ssd_mobilenet_v1_heads.onnx")
         importer = ImporterParams(
             format=ModelFormat.onnx,
             file_paths=[str(prepared)],
@@ -387,7 +377,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
             .with_requantization_mode(RequantizationMode.sima)
             .with_calibration(CalibrationMethod.from_str("mse"))
         )
-        model_name = f"ssd_mobilenet_v2_{variant_id}"
+        model_name = f"ssd_mobilenet_v1_{variant_id}"
         quantized = loaded.quantize(
             calibration_data=calibration_data,
             quantization_config=quantization,
@@ -410,7 +400,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
         raise RuntimeError(f"expected one SSD MPK, found {len(archives)} in {output_dir}")
     report = audit_mpk(archives[0], variant_id)
     report.update(quantized_report)
-    (output_dir / "ssd-mobilenet-v2-audit.json").write_text(
+    (output_dir / "ssd-mobilenet-v1-audit.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

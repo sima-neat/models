@@ -10,8 +10,7 @@ from .catalog import build_matrix
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
-from .model import load_and_validate_model
-from .performance_config import load_performance_config
+from .model import SCRIPTS_DIR, load_and_validate_model
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
@@ -81,7 +80,7 @@ def validate_benchmark_components(
             component_ids=invocation["component_ids"],
         )
     if not component_ids or component_ids != invocation["benchmark_component_ids"]:
-        raise ValidationError("dispatched benchmark components do not match the declared performance tests")
+        raise ValidationError("dispatched benchmark components do not match the declared benchmark entries")
 
 
 def load_component_performance_config(
@@ -89,16 +88,15 @@ def load_component_performance_config(
 ) -> dict[str, Any]:
     model_dir = root / "models" / model_id
     model = load_and_validate_model(model_dir, root / "schemas" / "model.schema.json")
-    cases = [
-        case
-        for case in model["tests"]["performance"]
-        if case["scope"] == {"type": "component", "component": component_id}
-        and build_profile_id in case["build_profiles"]
+    entries = [
+        entry
+        for entry in model["benchmark"]
+        if entry["scope"] == {"type": "component", "component": component_id}
+        and build_profile_id in entry["build_profiles"]
     ]
-    if len(cases) != 1:
-        raise ValidationError(f"expected exactly one performance test for {model_id}/{build_profile_id}/{component_id}")
-    path = model_dir / cases[0]["config"]
-    return load_performance_config(path, root / "schemas" / "performance-config-v1.schema.json")
+    if len(entries) != 1:
+        raise ValidationError(f"expected exactly one benchmark entry for {model_id}/{build_profile_id}/{component_id}")
+    return entries[0]
 
 
 def make_benchmark_manifest(
@@ -150,7 +148,7 @@ def make_benchmark_manifest(
 
     runtime = resolve_benchmark_runtime(root)
     load_component_performance_config(root, model_id, component_id, build_profile_id)
-    script = root / "models" / model_id / "tests" / "benchmark.py"
+    script = root / "models" / model_id / SCRIPTS_DIR / "benchmark.py"
     if not script.is_file():
         raise ValidationError(f"model benchmark script is missing: {script}")
     actual_sha256, _ = sha256_file(component_dir / archive)

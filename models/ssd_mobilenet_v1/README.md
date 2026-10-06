@@ -48,7 +48,7 @@ Every compiler run executes the floating and quantized raw-head models on 32
 held-out, category-balanced COCO samples. The audit records per-head cosine
 similarity, normalized RMSE, mean absolute error, and maximum absolute error;
 the calibration and validation image IDs are disjoint. Precision-specific
-acceptance thresholds in `tests/correctness.yaml` gate compilation.
+acceptance thresholds in the `validation` entry of `model.yaml` gate compilation.
 
 Independent structural checks verify all 47 MLA convolutions, the expected
 INT8 or BF16 compute representation, one MLA ELF, no shared objects or A65
@@ -86,7 +86,7 @@ checks exact shapes, dtypes, IDs, finite ranges, and split disjointness.
 Regenerate the asset from the repository root with:
 
 ```bash
-python models/ssd_mobilenet_v1/calibration.py \
+python models/ssd_mobilenet_v1/scripts/calibration.py \
   --annotations instances_val2017.json \
   --images val2017 \
   --output ssd_mobilenet_v1_coco_val2017_calibration128_validation32_v1.npz

@@ -472,8 +472,7 @@ def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
             "size_bytes": 0,
         }
     else:
-        _, config = selected
-        dataset = config["dataset"]
+        dataset = selected["dataset"]
         path = resolve_dataset(dataset, None, args.cache_dir)
         result = {
             "kind": "dataset",

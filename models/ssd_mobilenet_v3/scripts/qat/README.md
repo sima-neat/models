@@ -24,7 +24,7 @@ Use either an SDK 2.0 QAT wheel:
 
 ```bash
 SIMA_QAT_WHEEL=/path/to/swml_qat.whl \
-  models/ssd_mobilenet_v3/qat/bootstrap.sh
+  models/ssd_mobilenet_v3/scripts/qat/bootstrap.sh
 ```
 
 or an existing SDK installation without copying its proprietary source into
@@ -32,7 +32,7 @@ the repository:
 
 ```bash
 SIMA_QAT_SITE_PACKAGES=/path/to/sdk/site-packages \
-  models/ssd_mobilenet_v3/qat/bootstrap.sh
+  models/ssd_mobilenet_v3/scripts/qat/bootstrap.sh
 ```
 
 The bootstrap also requires `swml-qat==1.0.0.dev0+develop.20`. Direct and
@@ -41,9 +41,9 @@ transitive public dependencies are pinned in `requirements.in` and
 minor version:
 
 ```bash
-uv pip compile models/ssd_mobilenet_v3/qat/requirements.in \
+uv pip compile models/ssd_mobilenet_v3/scripts/qat/requirements.in \
   --python-version 3.10 \
-  --output-file models/ssd_mobilenet_v3/qat/requirements.lock
+  --output-file models/ssd_mobilenet_v3/scripts/qat/requirements.lock
 ```
 
 ## Training
@@ -62,7 +62,7 @@ Run the qualification schedule in full FP32 computation. Fake quantization
 simulates per-tensor INT8 activations and per-output-channel INT8 weights:
 
 ```bash
-.venv-qat/bin/python models/ssd_mobilenet_v3/qat/train.py \
+.venv-qat/bin/python models/ssd_mobilenet_v3/scripts/qat/train.py \
   --coco-root "$COCO_ROOT" \
   --output-dir build/ssd-mobilenet-v3-qat \
   --epochs 1 \
@@ -84,7 +84,7 @@ observers with an explicit optimizer restart. The original checkpoint digest
 and new schedule are recorded in the exported lineage:
 
 ```bash
-.venv-qat/bin/python models/ssd_mobilenet_v3/qat/train.py \
+.venv-qat/bin/python models/ssd_mobilenet_v3/scripts/qat/train.py \
   --coco-root "$COCO_ROOT" \
   --output-dir build/ssd-mobilenet-v3-qat-refined \
   --resume build/ssd-mobilenet-v3-qat/checkpoint-latest.pt \
@@ -106,7 +106,7 @@ unless `--allow-smoke` is explicitly supplied.
 ## Export and qualification
 
 ```bash
-.venv-qat/bin/python models/ssd_mobilenet_v3/qat/export.py \
+.venv-qat/bin/python models/ssd_mobilenet_v3/scripts/qat/export.py \
   --checkpoint build/ssd-mobilenet-v3-qat/checkpoint-latest.pt \
   --output-dir build/ssd-mobilenet-v3-source
 ```

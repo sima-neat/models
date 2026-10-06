@@ -279,10 +279,8 @@ def load_calibration_samples(
     import numpy as np
 
     model = load_and_validate_model(model_dir)
-    config_path, config = select_accuracy_config(model_dir, model, test_id)
-    relative_config = config_path.relative_to(Path(model_dir).expanduser().resolve()).as_posix()
-    test_case = next(case for case in model["tests"]["correctness"] if case["config"] == relative_config)
-    component = next(item for item in model["components"] if item["id"] == test_case["scope"]["component"])
+    config = select_accuracy_config(model_dir, model, test_id)
+    component = next(item for item in model["components"] if item["id"] == config["scope"]["component"])
     entrypoint = component["interface"]["entrypoints"][0]
     dataset = resolve_dataset(config["dataset"], dataset_path)
     records = index_split(dataset, config["dataset"], "calibration")
@@ -424,7 +422,7 @@ def evaluate_accuracy(
     started = time.perf_counter()
     directory = Path(model_dir).expanduser().resolve()
     model = load_and_validate_model(directory)
-    config_path, config = select_accuracy_config(
+    config = select_accuracy_config(
         directory,
         model,
         test_id,
@@ -444,12 +442,10 @@ def evaluate_accuracy(
     if build_profile["target"] != "modalix":
         raise AccuracyError(f"build profile {build_profile_id!r} does not target Modalix")
 
-    relative_config = config_path.relative_to(directory).as_posix()
-    test_case = next(case for case in model["tests"]["correctness"] if case["config"] == relative_config)
-    if build_profile_id not in test_case["build_profiles"]:
-        raise AccuracyError(f"accuracy test {config_path} does not apply to build profile {build_profile_id!r}")
-    if test_case["scope"] != {"type": "component", "component": component_id}:
-        raise AccuracyError(f"accuracy test {config_path} does not target component {component_id!r}")
+    if build_profile_id not in config["build_profiles"]:
+        raise AccuracyError(f"validation {config['id']!r} does not apply to build profile {build_profile_id!r}")
+    if config["scope"] != {"type": "component", "component": component_id}:
+        raise AccuracyError(f"validation {config['id']!r} does not target component {component_id!r}")
     component = next(item for item in model["components"] if item["id"] == component_id)
     entrypoint = component["interface"]["entrypoints"][0]
 
@@ -590,7 +586,7 @@ def evaluate_accuracy(
             },
         },
         "evaluation": {
-            "config": str(config_path.relative_to(directory)),
+            "config": config["id"],
             "profile": profile_name,
             "status": config["status"],
         },

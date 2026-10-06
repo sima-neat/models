@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 from model_registry.catalog import (
+    _compile_consumed_validation,
     benchmark_fingerprint,
     build_matrix,
     compile_invocation_fingerprint,
@@ -21,12 +23,12 @@ from model_registry.catalog import (
 )
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
+from model_registry.model import load_and_validate_model
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot, publish_catalog
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
 SCHEMA = ROOT / "schemas" / "model.schema.json"
-PERFORMANCE_SCHEMA = ROOT / "schemas" / "performance-config-v1.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
 COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
@@ -48,7 +50,8 @@ def _write_model(repository: Path, model_id: str, *, declared_id: str | None = N
     model = yaml.safe_load((FIXTURE / "model.yaml").read_text(encoding="utf-8"))
     model["id"] = declared_id or model_id
     (model_dir / "model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
-    (model_dir / "compile.py").write_text("# fixture\n", encoding="utf-8")
+    (model_dir / "scripts").mkdir()
+    (model_dir / "scripts" / "compile.py").write_text("# fixture\n", encoding="utf-8")
 
 
 def _declare_grouped_invocation(model: dict) -> None:
@@ -80,12 +83,6 @@ def _initialize_repository(repository: Path) -> str:
 def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
     (tmp_path / "schemas" / "model.schema.json").write_text(SCHEMA.read_text(encoding="utf-8"), encoding="utf-8")
-    (tmp_path / "schemas" / "performance-config-v1.schema.json").write_text(
-        PERFORMANCE_SCHEMA.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    (tmp_path / "schemas" / "recipe-fidelity-v1.schema.json").write_text(
-        (ROOT / "schemas" / "recipe-fidelity-v1.schema.json").read_text(encoding="utf-8"), encoding="utf-8"
-    )
     (tmp_path / "taxonomies").mkdir()
     (tmp_path / "taxonomies" / "model-taxonomy.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
@@ -112,7 +109,7 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     assert [entry["model_id"] for entry in matrix["include"]] == ["alpha", "bravo"]
     assert "compiler_label" not in matrix["include"][0]
     assert "compiler_version" not in matrix["include"][0]
-    assert matrix["include"][0]["recipe"] == "compile.py"
+    assert matrix["include"][0]["recipe"] == "scripts/compile.py"
     assert matrix["include"][0]["requested_runner_class"] == "default"
     assert matrix["include"][0]["compile_invocation_id"] == "model"
     assert matrix["include"][0]["component_ids"] == ["model"]
@@ -125,7 +122,7 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     ("path", "expected"),
     [
         ("models/alpha/model.yaml", ["alpha"]),
-        ("models/alpha/compile.py", ["alpha"]),
+        ("models/alpha/scripts/compile.py", ["alpha"]),
         ("models/deleted/model.yaml", []),
         ("design-doc/model-registry-architecture.md", []),
     ],
@@ -370,7 +367,7 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(cat
     manifest = catalog_repository / "deps" / "manifest.json"
     first = _fingerprint(catalog_repository, "alpha", "2.1.3")
 
-    (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
+    (catalog_repository / "models" / "alpha" / "scripts" / "compile.py").write_text("# changed\n", encoding="utf-8")
     model_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert model_changed != first
 
@@ -409,7 +406,6 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     for relative in (
-        "schemas/accuracy.schema.json",
         "tools/model_registry/accuracy.py",
         "tools/model_registry/artifact_metadata.py",
         "tools/model_registry/accuracy_config.py",
@@ -465,37 +461,56 @@ def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     _declare_grouped_invocation(model)
-    model["tests"]["correctness"] = [{
+    model["validation"] = [{
         "id": "recipe_fidelity",
-        "config": "tests/correctness.yaml",
         "scope": {"type": "package", "package": "default"},
         "build_profiles": ["fixture"],
+        "engine": "model_recipe",
+        "status": "diagnostic",
+        "result_component": "model",
+        "dataset": {"id": "fixture-data", "variant": "mini", "sha256": "d" * 64, "size_bytes": 1},
+        "selection": {"method": "seeded_random_without_replacement", "seed": 1, "offset": 0, "samples": 1},
+        "outputs": ["output"],
     }]
-    tests_dir = manifest.parent / "tests"
-    tests_dir.mkdir()
-    correctness = tests_dir / "correctness.yaml"
-    correctness.write_text(
-        "schema_version: 1\nengine: model_recipe\nstatus: diagnostic\n"
-        "result_component: model\n"
-        "dataset:\n  id: fixture-data\n  variant: mini\n  sha256: " + "d" * 64 + "\n  size_bytes: 1\n"
-        "selection:\n  method: seeded_random_without_replacement\n  seed: 1\n  offset: 0\n  samples: 1\n"
-        "outputs: [output]\n",
-        encoding="utf-8",
-    )
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     first = compile_invocation_fingerprint(catalog_repository, "alpha", "combined", "fixture", "2.1.3")
 
-    correctness.write_text(
-        correctness.read_text(encoding="utf-8").replace("samples: 1", "samples: 2"),
-        encoding="utf-8",
-    )
+    model["validation"][0]["selection"]["samples"] = 2
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert compile_invocation_fingerprint(
         catalog_repository, "alpha", "combined", "fixture", "2.1.3"
     ) != first
 
+
+def _consumed_ids(model: dict, profile: dict, components: list[str], *, include_recipe_fidelity: bool) -> list[str]:
+    consumed = _compile_consumed_validation(model, profile, components, include_recipe_fidelity=include_recipe_fidelity)
+    assert all("scope" not in entry and "build_profiles" not in entry for entry in consumed)
+    return [entry["id"] for entry in consumed]
+
+
+def test_compile_consumes_only_calibration_accuracy_and_recipe_fidelity_settings() -> None:
+    resnet = load_and_validate_model(ROOT / "models" / "resnet_50", SCHEMA)
+    profiles = {profile["id"]: profile for profile in resnet["build_profiles"]}
+    assert _consumed_ids(resnet, profiles["modalix_int8"], ["model"], include_recipe_fidelity=False) == [
+        "imagenet_top5_smoke"
+    ]
+    assert _consumed_ids(resnet, profiles["modalix_bf16"], ["model"], include_recipe_fidelity=False) == []
+
+    rf_detr = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    profile = rf_detr["build_profiles"][0]
+    assert _consumed_ids(rf_detr, profile, ["backbone", "transformer"], include_recipe_fidelity=True) == [
+        "full_pipeline_fidelity"
+    ]
+    assert _consumed_ids(rf_detr, profile, ["backbone"], include_recipe_fidelity=False) == []
+
+    ssd = load_and_validate_model(ROOT / "models" / "ssd_mobilenet_v1", SCHEMA)
+    for profile in ssd["build_profiles"]:
+        assert _consumed_ids(ssd, profile, ["model"], include_recipe_fidelity=True) == []
+
+
 def test_build_fingerprint_includes_model_local_recipe_helpers(catalog_repository: Path) -> None:
-    helper = catalog_repository / "models" / "alpha" / "calibration.py"
+    helper = catalog_repository / "models" / "alpha" / "scripts" / "calibration.py"
     helper.write_text("# calibration helper\n", encoding="utf-8")
     first = _fingerprint(catalog_repository, "alpha", "2.1.3")
 
@@ -551,105 +566,76 @@ def test_build_fingerprint_ignores_non_transforming_registry_tooling_changes(
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
 
 
-def test_build_fingerprint_ignores_model_documentation_and_non_benchmark_tests(catalog_repository: Path) -> None:
+def test_build_fingerprint_ignores_model_documentation_and_board_stage_scripts(catalog_repository: Path) -> None:
     first = _fingerprint(catalog_repository, "alpha", "2.1.3")
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "README.md").write_text("documentation only\n", encoding="utf-8")
     (model_dir / "hero.png").write_bytes(b"documentation image only")
-    (model_dir / "tests").mkdir()
-    (model_dir / "tests" / "correctness.yaml").write_text("samples: 100\n", encoding="utf-8")
+    (model_dir / "scripts" / "benchmark.py").write_text("report = model.benchmark()\n", encoding="utf-8")
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
 
 
-def test_benchmark_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    (model_dir / "tests").mkdir()
-    benchmark = model_dir / "tests" / "performance.yaml"
-    benchmark.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: initial metric profile\n",
-        encoding="utf-8",
-    )
-    manifest = model_dir / "model.yaml"
+def _declare_benchmark(manifest: Path, note: str) -> None:
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["tests"]["performance"] = [
+    model["benchmark"] = [
         {
             "id": "latency",
-            "config": "tests/performance.yaml",
             "scope": {"type": "component", "component": "model"},
             "build_profiles": ["fixture"],
+            "status": "qualified_reference",
+            "metrics": ["latency_avg_ms"],
+            "note": note,
         }
     ]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
+def test_benchmark_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    manifest = model_dir / "model.yaml"
+    _declare_benchmark(manifest, "initial metric profile")
     compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
     benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
 
-    benchmark.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: revised metric profile\n",
-        encoding="utf-8",
-    )
+    _declare_benchmark(manifest, "revised metric profile")
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == validation_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
     before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    (model_dir / "tests/benchmark.py").write_text("report = model.benchmark()\n")
+    (model_dir / "scripts" / "benchmark.py").write_text("report = model.benchmark()\n")
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
 
 
-
-def test_correctness_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    (model_dir / "tests").mkdir()
-    correctness = model_dir / "tests" / "correctness.yaml"
-    correctness.write_text("schema_version: 1\nstatus: diagnostic\n", encoding="utf-8")
-    manifest = model_dir / "model.yaml"
+def test_validation_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["tests"]["correctness"] = [
+    model["validation"] = [
         {
             "id": "fidelity",
-            "config": "tests/correctness.yaml",
             "scope": {"type": "component", "component": "model"},
             "build_profiles": ["fixture"],
+            "status": "diagnostic",
         }
     ]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
     validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
 
-    correctness.write_text("schema_version: 1\nstatus: provisional\n", encoding="utf-8")
+    model["validation"][0]["status"] = "provisional"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == benchmark_before
     assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != validation_before
 
 
 def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    (model_dir / "tests").mkdir()
-    benchmark = model_dir / "tests" / "performance.yaml"
-    benchmark.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: initial metric profile\n",
-        encoding="utf-8",
-    )
-    manifest = model_dir / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["tests"]["performance"] = [
-        {
-            "id": "latency",
-            "config": "tests/performance.yaml",
-            "scope": {"type": "component", "component": "model"},
-            "build_profiles": ["fixture"],
-        }
-    ]
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    benchmark.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: revised metric profile\n",
-        encoding="utf-8",
-    )
+    _declare_benchmark(catalog_repository / "models" / "alpha" / "model.yaml", "revised metric profile")
 
     matrix = build_matrix(
         discover_catalog(catalog_repository),
@@ -738,7 +724,7 @@ def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) 
 
 def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repository: Path) -> None:
     base = _initialize_repository(catalog_repository)
-    (catalog_repository / "models" / "alpha" / "compile.py").write_text("# changed\n", encoding="utf-8")
+    (catalog_repository / "models" / "alpha" / "scripts" / "compile.py").write_text("# changed\n", encoding="utf-8")
     head = _commit(catalog_repository, "recipe")
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
@@ -748,7 +734,8 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
 
 
 @pytest.mark.parametrize("changed_input", [
-    "models/alpha/tests/performance.yaml",
+    "models/alpha/model.yaml",
+    "models/alpha/scripts/benchmark.py",
     ".github/workflows/Vulcan-Model-Benchmarking.yml",
     "tools/model_registry/core_benchmark.py",
     "tools/model_registry/benchmark_publication.py",
@@ -756,35 +743,19 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
     "schemas/performance-result-v5.schema.json",
 ])
 def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    (model_dir / "tests").mkdir()
-    benchmark = model_dir / "tests" / "performance.yaml"
-    benchmark.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: initial metric profile\n",
-        encoding="utf-8",
-    )
-    manifest = model_dir / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["tests"]["performance"] = [{
-        "id": "latency",
-        "config": "tests/performance.yaml",
-        "scope": {"type": "component", "component": "model"},
-        "build_profiles": ["fixture"],
-    }]
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    _declare_benchmark(manifest, "initial metric profile")
     changed_file = catalog_repository / changed_input
-    if changed_file != benchmark:
+    if changed_file != manifest:
         changed_file.parent.mkdir(parents=True, exist_ok=True)
         changed_file.write_text("initial tooling\n", encoding="utf-8")
     base = _initialize_repository(catalog_repository)
     unchanged = semantic_change_plan(catalog_repository, base, base, compiler_version=COMPILER_VERSION)
     assert unchanged["benchmark_include"] == []
-    changed_file.write_text(
-        "schema_version: 1\nstatus: qualified_reference\nmetrics: [latency_avg_ms]\n"
-        "note: revised metric profile\n",
-        encoding="utf-8",
-    )
+    if changed_file == manifest:
+        _declare_benchmark(manifest, "revised metric profile")
+    else:
+        changed_file.write_text("revised tooling\n", encoding="utf-8")
     head = _commit(catalog_repository, "benchmark")
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
@@ -796,21 +767,18 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
 
 
 def test_semantic_plan_selects_validation_without_compile(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    (model_dir / "tests").mkdir()
-    correctness = model_dir / "tests" / "correctness.yaml"
-    correctness.write_text("schema_version: 1\nstatus: diagnostic\n", encoding="utf-8")
-    manifest = model_dir / "model.yaml"
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["tests"]["correctness"] = [{
+    model["validation"] = [{
         "id": "fidelity",
-        "config": "tests/correctness.yaml",
         "scope": {"type": "component", "component": "model"},
         "build_profiles": ["fixture"],
+        "status": "diagnostic",
     }]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     base = _initialize_repository(catalog_repository)
-    correctness.write_text("schema_version: 1\nstatus: provisional\n", encoding="utf-8")
+    model["validation"][0]["status"] = "provisional"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     head = _commit(catalog_repository, "validation")
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
@@ -823,9 +791,7 @@ def test_semantic_plan_selects_validation_without_compile(catalog_repository: Pa
 
 def test_semantic_plan_reports_removed_invocation_without_rebuild(catalog_repository: Path) -> None:
     base = _initialize_repository(catalog_repository)
-    for path in (catalog_repository / "models" / "bravo").iterdir():
-        path.unlink()
-    (catalog_repository / "models" / "bravo").rmdir()
+    shutil.rmtree(catalog_repository / "models" / "bravo")
     head = _commit(catalog_repository, "remove model")
 
     plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)

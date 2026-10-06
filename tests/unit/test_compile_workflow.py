@@ -450,7 +450,7 @@ def test_manual_dispatch_keeps_explicit_model_profile_and_component_selection() 
 
 
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
-    recipe = ROOT / "models" / "resnet_50" / "compile.py"
+    recipe = ROOT / "models" / "resnet_50" / "scripts" / "compile.py"
     tree = ast.parse(recipe.read_text(encoding="utf-8"))
     option_strings = {
         value.value

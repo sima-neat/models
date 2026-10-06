@@ -8,7 +8,7 @@ import onnx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("rf_detr_convert", ROOT / "models/rf_detr_small/convert.py")
+SPEC = importlib.util.spec_from_file_location("rf_detr_convert", ROOT / "models/rf_detr_small/scripts/convert.py")
 converter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(converter)
 

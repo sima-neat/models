@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repository_root="$(cd "$script_dir/../../.." && pwd)"
+repository_root="$(cd "$script_dir/../../../.." && pwd)"
 venv_path="${QAT_VENV_PATH:-$repository_root/.venv-qat}"
 tools_path="${QAT_TOOLS_PATH:-$repository_root/.qat-tools}"
 uv_path="${UV_BIN:-}"

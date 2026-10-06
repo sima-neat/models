@@ -77,13 +77,13 @@ RF-DETR is distributed under Apache-2.0.
 
 ### Conversion
 
-`convert.yaml` pins the checkpoint, and `requirements-convert.txt` pins the
-export dependencies. With Python 3.12 on Linux ARM64, run:
+The `conversion.default` entry in `model.yaml` pins the checkpoint, and
+`scripts/requirements-convert.txt` pins the export dependencies. With Python 3.12 on Linux ARM64, run:
 
 ```bash
 python3.12 -E -s -m venv /tmp/rfdetr-export-venv
-/tmp/rfdetr-export-venv/bin/python -E -s -m pip --isolated install . -r models/rf_detr_small/requirements-convert.txt
-/tmp/rfdetr-export-venv/bin/python -E -s models/rf_detr_small/convert.py --output-dir /tmp/rfdetr-export
+/tmp/rfdetr-export-venv/bin/python -E -s -m pip --isolated install . -r models/rf_detr_small/scripts/requirements-convert.txt
+/tmp/rfdetr-export-venv/bin/python -E -s models/rf_detr_small/scripts/convert.py --output-dir /tmp/rfdetr-export
 ```
 
 To publish a conversion, manually run **Vulcan Model Convert** with model
@@ -118,7 +118,7 @@ resolved_coco_archive="$(jq -er 'select(.kind == "dataset") | .path' \
 test -f "$verified_model"
 test -e "$resolved_coco_archive"
 
-python models/rf_detr_small/compile.py \
+python models/rf_detr_small/scripts/compile.py \
   --model "$verified_model" \
   --dataset "$resolved_coco_archive" \
   --correctness-dataset "$resolved_coco_archive" \

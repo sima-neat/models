@@ -12,13 +12,25 @@ how the pieces compose, and publish one or more downloadable packages.
 
 ```text
 model
+├── conversion ───── optional named upstream sources for scripts/convert.py
 ├── components ───── independently compiled ONNX units
 ├── resources ────── packaged non-compiled files
 ├── calibrations ─── reusable compile-time data
 ├── build_profiles ─ target-wide settings plus component bindings
 ├── compositions ─── how component entrypoints form an application
 ├── packages ─────── what a user downloads
-└── tests ─────────── qualification scoped to a component or package
+├── validation ───── compile-host checks scoped to a component or package
+└── benchmark ────── DevKit performance measurements scoped to a component
+```
+
+`model.yaml` is the model's only configuration file. Every stage reads its own
+section, and model-owned code lives in `scripts/` beside it:
+
+```text
+models/<model-id>/
+  model.yaml
+  README.md
+  scripts/      compile.py, benchmark.py, and any model-specific helpers
 ```
 
 ## Product identity and provenance
@@ -57,7 +69,7 @@ components:
     preprocessing: {pipeline: []}
     postprocessing: {pipeline: []}
     surgery: {type: none}
-    recipe: compile.py
+    recipe: scripts/compile.py
 ```
 
 A source may be one `file` or a `file_set`. Use a file set when one recipe input
@@ -132,7 +144,7 @@ calibrations:
 ```
 
 Calibration prepares quantization ranges; it is not an accuracy measurement.
-Correctness tests separately compare model outputs against declared evidence.
+Validation entries separately compare model outputs against declared evidence.
 See [Datasets for local model development](datasets.md).
 
 ## Build profiles
@@ -168,7 +180,7 @@ compile_invocations:
 
 One invocation runs the shared recipe once and must emit a schema-v2
 `compile-outputs.json` with one MPK path for every listed component, derived
-graph hashes, and one correctness result. `python_packages` explicitly names
+graph hashes, and one validation result. `python_packages` explicitly names
 verified file-set members and imports needed by the recipe; CI does not infer
 them from filenames. Grouped
 components must share their source content, recipe, and effective runner class.
@@ -178,12 +190,12 @@ may use `status: unsupported` with a reason; untested work is not unsupported.
 If the invocation needs calibration data, its first component selects the one
 shared calibration input that CI passes to the recipe.
 
-A grouped recipe with `engine: model_recipe` correctness writes one
+A grouped recipe with an `engine: model_recipe` validation entry writes one
 `fidelity.json` beside its owning component MPK. The report follows
 `schemas/numerical-fidelity-v1.schema.json` and records numerical agreement for
-the full composed pipeline. Its correctness configuration names that owner with
+the full composed pipeline. The validation entry names that owner with
 `result_component` and declares the output metrics. CI validates the report
-against that configuration before publishing any component. Numerical metrics
+against that entry before publishing any component. Numerical metrics
 are diagnostic and do not gate compilation or publication. Execution failures,
 invalid reports, and incomplete component sets still fail validation.
 
@@ -228,10 +240,27 @@ compositions:
     entrypoint: default
 ```
 
-A multi-component product uses `type: declarative` and points at a separately
-versioned model-local composition document. Keeping that document versioned
-independently lets orchestration evolve without changing the model contract
-for unrelated fields.
+A multi-component product uses `type: declarative` and declares its graph
+inline. Packaging writes the graph into the package as
+`composition/composition.yaml`, validated against
+`schemas/composition-v1.schema.json`:
+
+```yaml
+compositions:
+  - id: pipeline
+    type: declarative
+    schema_version: 1
+    components:
+      - {id: encoder, component: encoder, entrypoint: default}
+      - {id: decoder, component: decoder, entrypoint: default}
+    connections:
+      - from: {component: encoder, output: state}
+        to: {component: decoder, input: state}
+    inputs:
+      - {name: audio, to: {component: encoder, input: input}}
+    outputs:
+      - {name: text, from: {component: decoder, output: tokens}}
+```
 
 A package is the retrieval unit visible to users:
 
@@ -253,31 +282,34 @@ declarative composition document when one is used.
 The embedded manifest is validated against
 [`package-manifest-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest-v1.schema.json).
 
-## Scoped tests
+## Validation and benchmark entries
 
-Correctness and performance cases declare both their scope and applicable
-build profiles:
+`validation` entries are checks the compile workflow runs on the compile host.
+`benchmark` entries are measurements taken on a Modalix DevKit. Each entry
+declares its scope and applicable build profiles, followed by its settings:
 
 ```yaml
-tests:
-  correctness:
-    - id: encoder_accuracy
-      config: tests/encoder-correctness.yaml
-      scope: {type: component, component: encoder}
-      build_profiles: [modalix_int8]
-  performance:
-    - id: end_to_end_latency
-      config: tests/pipeline-performance.yaml
-      scope: {type: package, package: default}
-      build_profiles: [modalix_int8]
+validation:
+  - id: encoder_accuracy
+    scope: {type: component, component: encoder}
+    build_profiles: [modalix_int8]
+    engine: model_registry
+    # accuracy settings; see Local accuracy development
+benchmark:
+  - id: encoder_latency
+    scope: {type: component, component: encoder}
+    build_profiles: [modalix_int8]
+    status: provisional
+    metrics: [latency_avg_ms, throughput_fps]
 ```
 
-Component tests qualify one MPK. Package tests qualify the composed product.
-The scope makes clear which artifact and interface the test exercises.
-Performance files are validated against
-[`performance-config-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-config-v1.schema.json)
-during catalog validation, including benchmark mode, sample counts, geometry,
-model-option value shapes, metrics, and unknown fields.
+Component entries qualify one MPK. Package entries qualify the composed
+product. A validation entry with `engine: model_registry` runs the shared
+accuracy evaluator, and one with `engine: model_recipe` declares the numerical
+fidelity report a grouped recipe writes. An entry without `engine` holds
+settings that only the model's own scripts read. `model-registry validate`
+checks every entry's settings, including unknown fields and that
+`required_metrics` are declared in `metrics`.
 
 ## Validation
 

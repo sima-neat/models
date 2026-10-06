@@ -200,7 +200,7 @@ components:
         owner: neat
   surgery:
     type: python
-    entrypoint: surgery.py:prepare_model
+    entrypoint: scripts/surgery.py:prepare_model
     parameters:
       source_input: FeatureExtractor/MobilenetV2/MobilenetV2/input:0
       input_name: images
@@ -211,7 +211,7 @@ components:
       - 300
       operation: rename_and_reorder_existing_graph_values
       output_order: loc[0..5],confidence[0..5]
-  recipe: compile.py
+  recipe: scripts/compile.py
 resources: []
 calibrations:
 - id: default
@@ -264,23 +264,48 @@ packages:
   - modalix_int8
   - modalix_bf16
   composition: default
-tests:
-  correctness:
-  - id: coco_val2017_quantization
-    config: tests/correctness.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_int8
-    - modalix_bf16
-  performance:
-  - id: modalix_latency
-    config: tests/performance.yaml
-    scope:
-      type: component
-      component: model
-    build_profiles:
-    - modalix_int8
-    - modalix_bf16
+validation:
+- id: coco_val2017_quantization
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_int8
+  - modalix_bf16
+  status: pending_hardware_qualification
+  reference: onnx_fp32_raw_heads
+  dataset: coco_val2017
+  calibration_samples: 128
+  validation_samples: 32
+  split: category_balanced_and_disjoint
+  metrics:
+  - raw_head_cosine_similarity
+  - raw_head_normalized_root_mean_square_error
+  - decoded_detection_recall_at_0_5_iou
+  - decoded_detection_mean_matched_iou
+  compiler_raw_head_thresholds:
+    int8:
+      minimum_cosine_similarity: 0.98
+      maximum_normalized_root_mean_square_error: 0.2
+    bf16:
+      minimum_cosine_similarity: 0.999
+      maximum_normalized_root_mean_square_error: 0.05
+  note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.
+benchmark:
+- id: modalix_latency
+  scope:
+    type: component
+    component: model
+  build_profiles:
+  - modalix_int8
+  - modalix_bf16
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics:
+  - latency_avg_ms
+  - throughput_fps
+  - avg_power_watts
+  - energy_joules
+  - energy_per_inference_joules
 maturity: experimental

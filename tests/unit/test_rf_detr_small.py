@@ -15,18 +15,19 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "rf_detr_small"
+SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def load_module(name: str) -> ModuleType:
-    path = MODEL_DIR / f"{name}.py"
+    path = SCRIPTS_DIR / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"rf_detr_small_{name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(MODEL_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(str(MODEL_DIR))
+        sys.path.remove(str(SCRIPTS_DIR))
     return module
 
 
@@ -161,7 +162,7 @@ def test_surgery_moves_box_decode_before_topk() -> None:
 
 
 def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--compile-invocation", required=True)' in source
     assert 'parser.add_argument("--correctness-dataset", type=Path, required=True)' in source
@@ -189,7 +190,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
 
 
 def test_surgery_simplifies_only_the_transformer_partition() -> None:
-    source = (MODEL_DIR / "surgery.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "surgery.py").read_text(encoding="utf-8")
 
     assert "transformer, valid = simplify(" in source
     assert "full, valid = simplify(" not in source
@@ -198,8 +199,8 @@ def test_surgery_simplifies_only_the_transformer_partition() -> None:
 def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     invocation = model["build_profiles"][0]["compile_invocations"][0]
-    correctness = model["tests"]["correctness"][0]
-    performance = yaml.safe_load((MODEL_DIR / "tests" / "performance.yaml").read_text(encoding="utf-8"))
+    correctness = model["validation"][0]
+    benchmarks = model["benchmark"]
 
     assert invocation["components"] == ["backbone", "transformer"]
     assert "python_packages" not in invocation
@@ -209,4 +210,7 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_samples"] == 50
     assert correctness["scope"] == {"type": "package", "package": "default"}
-    assert performance["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"]
+    assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "transformer"]
+    assert all(
+        entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks
+    )

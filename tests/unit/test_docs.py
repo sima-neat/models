@@ -160,7 +160,7 @@ def test_local_guide_covers_the_complete_local_qualification_loop() -> None:
         "compile.py --model <verified-entrypoint>",
         "model-registry verify-mpk",
         "Benchmark locally on a Modalix DevKit",
-        "python models/resnet_50/tests/benchmark.py",
+        "python models/resnet_50/scripts/benchmark.py",
         "core-benchmark.json",
         "Finish the local review",
     ):

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import yaml
 from jsonschema import Draft202012Validator
 
 from .errors import ValidationError
 from .fetch import Fetcher, sha256_file
-from .model import load_and_validate_model
+from .model import composition_document, load_and_validate_model
 from .source import source_identity
 
 
@@ -129,12 +131,13 @@ def assemble_package(
         )
 
     composition = compositions[package["composition"]]
-    composition_files: list[tuple[str, Path]] = []
+    composition_files: list[tuple[str, bytes]] = []
     if composition["type"] == "single":
         packaged_composition = composition
     else:
-        composition_path = f"composition/{Path(composition['file']).name}"
-        composition_files.append((composition_path, model_dir / composition["file"]))
+        composition_path = "composition/composition.yaml"
+        composition_bytes = yaml.safe_dump(composition_document(composition), sort_keys=False).encode()
+        composition_files.append((composition_path, composition_bytes))
         packaged_composition = {
             "id": composition["id"],
             "type": composition["type"],
@@ -179,10 +182,19 @@ def assemble_package(
             resource_entry["license"] = resource["license"]
         resource_entries.append(resource_entry)
 
-    installed_files = [
-        {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
-        for name, path in sorted((*component_files, *resource_files, *composition_files))
-    ]
+    installed_files = sorted(
+        [
+            *(
+                {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
+                for name, path in (*component_files, *resource_files)
+            ),
+            *(
+                {"path": name, "sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
+                for name, payload in composition_files
+            ),
+        ],
+        key=lambda item: item["path"],
+    )
     manifest = {
         "schema_version": 1,
         "model_id": model_id,
@@ -216,8 +228,10 @@ def assemble_package(
     try:
         with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
             _add_bytes(archive, f"{prefix}manifest.json", manifest_bytes)
-            for name, path in sorted((*component_files, *resource_files, *composition_files)):
+            for name, path in sorted((*component_files, *resource_files)):
                 _add_file(archive, f"{prefix}{name}", path)
+            for name, payload in composition_files:
+                _add_bytes(archive, f"{prefix}{name}", payload)
         temporary.replace(bundle_path)
     finally:
         temporary.unlink(missing_ok=True)

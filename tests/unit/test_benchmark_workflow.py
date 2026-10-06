@@ -168,7 +168,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "NEAT_VERSION" not in install["run"]
     assert 'sima-cli neat install --env production --type minimal "$target"' in install["run"]
     assert '["neat_core"]["install_target"]' in install["run"]
-    assert '"models/$MODEL_ID/tests/benchmark.py"' not in execute["run"]
+    assert '"models/$MODEL_ID/scripts/benchmark.py"' not in execute["run"]
     assert "report = model.benchmark()" in execute["run"]
     assert "PYBENCH" in execute["run"]
     assert "import-core-benchmark" in execute["run"]
@@ -261,7 +261,7 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
         step.get("run", "") for step in steps[credentials:] if isinstance(step, dict)
     )
     assert "pip install _source" not in credentialed_runs
-    assert '"models/$MODEL_ID/tests/benchmark.py"' not in credentialed_runs
+    assert '"models/$MODEL_ID/scripts/benchmark.py"' not in credentialed_runs
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
     assert "--download-only" in install_script

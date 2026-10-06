@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 from model_registry import package as package_module
 from model_registry.errors import ValidationError
 from model_registry.package import assemble_available_packages, assemble_package
@@ -162,13 +163,59 @@ def test_package_manifest_preserves_resource_specific_license(
     assert result["manifest"]["resources"][0]["license"] == resource_license
 
 
+def _declarative_composition() -> dict:
+    return {
+        "id": "default",
+        "type": "declarative",
+        "schema_version": 1,
+        "components": [{"id": "only", "component": "model", "entrypoint": "default"}],
+        "connections": [],
+        "inputs": [{"name": "input", "to": {"component": "only", "input": "input"}}],
+        "outputs": [{"name": "output", "from": {"component": "only", "output": "output"}}],
+    }
+
+
+def test_package_ships_inline_declarative_composition_as_a_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = copy.deepcopy(
+        package_module.load_and_validate_model(ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json")
+    )
+    model["compositions"] = [_declarative_composition()]
+    monkeypatch.setattr(package_module, "load_and_validate_model", lambda *args: model)
+
+    result = assemble_package(
+        repository=ROOT,
+        compiled_dir=_compiled_component(tmp_path),
+        output_dir=tmp_path / "packages",
+        model_id="resnet_50",
+        build_profile_id="modalix_bf16",
+        package_id="default",
+    )
+
+    bundle = tmp_path / "packages" / "resnet_50" / "modalix_bf16" / "packages" / "default" / result["archive"]
+    with zipfile.ZipFile(bundle) as stream:
+        payload = stream.read("resnet_50/composition/composition.yaml")
+    expected = {key: value for key, value in _declarative_composition().items() if key not in {"id", "type"}}
+    assert yaml.safe_load(payload) == expected
+    assert result["manifest"]["composition"] == {
+        "id": "default",
+        "type": "declarative",
+        "schema_version": 1,
+        "path": "composition/composition.yaml",
+    }
+    assert {
+        "path": "composition/composition.yaml",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    } in result["manifest"]["files"]
+
+
 def test_package_rejects_resource_path_that_collides_with_declarative_composition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model, _ = _model_with_resource(monkeypatch, tmp_path, "composition/composition.yaml")
-    model["compositions"] = [
-        {"id": "default", "type": "declarative", "schema_version": 1, "file": "composition.yaml"}
-    ]
+    model["compositions"] = [_declarative_composition()]
 
     with pytest.raises(
         ValidationError,

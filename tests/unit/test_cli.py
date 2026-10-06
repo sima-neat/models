@@ -268,7 +268,7 @@ def test_matrix_emits_workflow_json(capsys) -> None:
     assert result == 0
     output = capsys.readouterr().out
     assert '"model_id":"resnet_50"' in output
-    assert '"recipe":"compile.py"' in output
+    assert '"recipe":"scripts/compile.py"' in output
 
 
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:

@@ -10,8 +10,8 @@ import pytest
 import yaml
 from model_registry.model import load_and_validate_model
 
-from models.yolo26_tiny_drone.output_labels import restore_public_output_labels
-from models.yolo26_tiny_drone.quantized_snapshot import (
+from models.yolo26_tiny_drone.scripts.output_labels import restore_public_output_labels
+from models.yolo26_tiny_drone.scripts.quantized_snapshot import (
     EXPECTED_CALIBRATION_TENSOR_SHA256,
     EXPECTED_ONNX_SHA256,
     MODEL_FILES,
@@ -22,6 +22,7 @@ from models.yolo26_tiny_drone.quantized_snapshot import (
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models" / "yolo26_tiny_drone"
+SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
@@ -53,7 +54,7 @@ def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
 
 
 def test_registry_recipe_reuses_strict_training_compiler_contract() -> None:
-    source = (MODEL_DIR / "compile.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     option_strings = {
         value.value
@@ -110,7 +111,7 @@ def test_modelsdk_output_labels_refuse_to_overwrite_an_abi_change() -> None:
 
 
 def test_registry_accuracy_gates_match_qualified_export() -> None:
-    accuracy = yaml.safe_load((MODEL_DIR / "tests" / "correctness.yaml").read_text(encoding="utf-8"))
+    accuracy = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["validation"][0]
     metrics = {item["name"]: item for item in accuracy["metrics"]}
 
     assert accuracy["status"] == "qualified_reference"
@@ -122,7 +123,7 @@ def test_registry_accuracy_gates_match_qualified_export() -> None:
 
 
 def test_calibration_archive_builder_is_deterministic_and_fail_closed() -> None:
-    source = (MODEL_DIR / "calibration.py").read_text(encoding="utf-8")
+    source = (SCRIPTS_DIR / "calibration.py").read_text(encoding="utf-8")
     ast.parse(source)
 
     assert "EXPECTED_IMAGES = 128" in source

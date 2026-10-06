@@ -45,7 +45,7 @@ from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BOXES, FEATURES, INPUT, OUTPUTS, PROPOSALS, SCORES, prepare_model, validate_float_split
 
-MODEL_DIR = Path(__file__).resolve().parent
+MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_small"
 INVOCATION_ID = "rf_detr"
 PROFILE_ID = "modalix_int8_bf16"
@@ -404,7 +404,8 @@ def compile_model(
     bindings = {binding["id"]: binding["parameters"] for binding in profile["components"]}
     calibration_samples = int(bindings["backbone"]["calibration_samples"])
     transformer_samples = int(bindings["transformer"]["calibration_samples"])
-    fidelity_config = yaml.safe_load((MODEL_DIR / "tests" / "correctness.yaml").read_text(encoding="utf-8"))
+    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    fidelity_config = next(entry for entry in metadata["validation"] if entry["id"] == "full_pipeline_fidelity")
     selection = fidelity_config["selection"]
     if transformer_samples != calibration_samples:
         raise ValueError("backbone and transformer must use the same calibration sample count")

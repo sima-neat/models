@@ -93,7 +93,7 @@ checks exact shapes, dtypes, IDs, finite ranges, and split disjointness.
 Regenerate the shared asset from the repository root with:
 
 ```bash
-python models/ssd_mobilenet_v2/calibration.py \
+python models/ssd_mobilenet_v2/scripts/calibration.py \
   --annotations instances_val2017.json \
   --images val2017 \
   --output ssd_mobilenet_v1_coco_val2017_calibration128_validation32_v1.npz
