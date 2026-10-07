@@ -45,7 +45,8 @@ used during compilation and fidelity validation.
 ## Available builds
 
 The registry declares one `modalix_int8_bf16` build profile. It compiles the
-backbone with INT8 quantization and the transformer with BF16 quantization. The
+backbone with INT8 quantization and regular bias correction, and the
+transformer with BF16 quantization. Both use histogram MSE calibration. The
 grouped `rf_detr` invocation emits separate `backbone` and `transformer` MPK
 archives plus their shared compile manifest.
 
