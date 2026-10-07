@@ -199,6 +199,53 @@ def test_surgery_bypasses_identities_and_unused_stacked_layers() -> None:
     assert [(node.op_type, list(node.input)) for node in result.graph.node] == [("Relu", ["b"]), ("Relu", ["a"])]
 
 
+def _attention_block(factor: float) -> onnx.ModelProto:
+    rng = np.random.RandomState(0)
+    prefix = "/backbone/layer.0/attention"
+    return _model(
+        [
+            onnx.helper.make_node("MatMul", ["x", "wq"], ["q_linear"], name=f"{prefix}/q/MatMul"),
+            onnx.helper.make_node("Add", ["bq", "q_linear"], ["q_biased"], name=f"{prefix}/q/Add"),
+            onnx.helper.make_node("Reshape", ["q_biased", "heads"], ["q_heads"], name=f"{prefix}/q/Reshape"),
+            onnx.helper.make_node("Transpose", ["q_heads"], ["q"], name=f"{prefix}/q/Transpose", perm=[0, 2, 1, 3]),
+            onnx.helper.make_node("Reshape", ["x", "heads"], ["k_heads"], name=f"{prefix}/k/Reshape"),
+            onnx.helper.make_node("Transpose", ["k_heads"], ["k"], name=f"{prefix}/k/Transpose", perm=[0, 2, 3, 1]),
+            onnx.helper.make_node("MatMul", ["q", "k"], ["scores"], name=f"{prefix}/MatMul"),
+            onnx.helper.make_node("Mul", ["scores", "scale"], ["scaled"], name=f"{prefix}/Mul"),
+            onnx.helper.make_node("Softmax", ["scaled"], ["y"], name=f"{prefix}/Softmax", axis=-1),
+        ],
+        [_value("x", [1, 4, 8])],
+        [_value("y", [1, 2, 4, 4])],
+        [
+            onnx.numpy_helper.from_array(rng.standard_normal((8, 8)).astype(np.float32), "wq"),
+            onnx.numpy_helper.from_array(rng.standard_normal(8).astype(np.float32), "bq"),
+            onnx.numpy_helper.from_array(np.array([1, 4, 2, 4], dtype=np.int64), "heads"),
+            onnx.numpy_helper.from_array(np.array(factor, dtype=np.float32), "scale"),
+        ],
+    )
+
+
+def test_surgery_folds_the_backbone_score_scale_into_q() -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_module("surgery")
+    model = _attention_block(0.125)
+    x = np.random.RandomState(1).standard_normal((1, 4, 8)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"x": x})[0]
+
+    result = surgery._fold_backbone_score_scale(model, 1)
+
+    assert "Mul" not in {node.op_type for node in result.graph.node}
+    np.testing.assert_array_equal(ReferenceEvaluator(result).run(None, {"x": x})[0], expected)
+
+
+def test_surgery_folds_only_power_of_two_score_scales() -> None:
+    surgery = load_module("surgery")
+
+    with pytest.raises(ValueError, match="power-of-two scale"):
+        surgery._fold_backbone_score_scale(_attention_block(0.1), 1)
+
+
 def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 

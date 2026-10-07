@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -288,6 +289,42 @@ def _optimize_window_attention(model: onnx.ModelProto) -> onnx.ModelProto:
     return _finish(model)
 
 
+def _fold_backbone_score_scale(model: onnx.ModelProto, expected: int) -> onnx.ModelProto:
+    """Scale the Q projection instead of every [windows, heads, tokens, tokens] attention score."""
+    _, constants, producers, users = _index(model)
+    initializers = {value.name: value for value in model.graph.initializer}
+    folded = 0
+    for softmax in model.graph.node:
+        if softmax.op_type != "Softmax" or "/backbone/" not in softmax.name:
+            continue
+        scale = _producer(producers, softmax.input[0], "Mul")
+        _require(_next(users, scale, "Softmax") is softmax, "private score scale")
+        scores, factor = scale.input if _scalar(constants, scale.input[1]) is not None else scale.input[::-1]
+        value = _scalar(constants, factor)
+        # A power of two changes only float exponents, so the folded graph is exact.
+        _require(value is not None and value > 0 and math.frexp(value)[0] == 0.5, f"power-of-two scale at {scale.name}")
+        qk = _producer(producers, scores, "MatMul")
+        _require(_next(users, qk, "Mul") is scale, "private attention scores")
+        # Q = Transpose(Reshape(Add(bias, MatMul(hidden, weight)))).
+        transpose = _producer(producers, qk.input[0], "Transpose")
+        reshape = _producer(producers, transpose.input[0], "Reshape")
+        add = _producer(producers, reshape.input[0], "Add")
+        bias = next((name for name in add.input if name in initializers), None)
+        projection = _producer(producers, next(name for name in add.input if name != bias), "MatMul")
+        weight = projection.input[1]
+        for node, consumer in ((transpose, qk), (reshape, transpose), (add, reshape), (projection, add)):
+            _require(_next(users, node, consumer.op_type) is consumer, f"private Q path at {node.name}")
+        for name in (weight, bias):
+            _require(name in initializers and len(users[name]) == 1, f"private Q parameter at {projection.name}")
+            array = numpy_helper.to_array(initializers[name])
+            _require(array.dtype == np.float32, f"float32 Q parameter {name}")
+            initializers[name].CopyFrom(numpy_helper.from_array(array * np.float32(value), name))
+        softmax.input[0] = scores
+        folded += 1
+    _require(folded == expected, f"expected {expected} backbone attention blocks, found {folded}")
+    return _finish(model)
+
+
 def _optimize_decoder_attention(model: onnx.ModelProto) -> onnx.ModelProto:
     """Keep self-attention/head merge/projection in NCHW; leave deformable attention alone."""
     model = onnx.shape_inference.infer_shapes(model)
@@ -455,7 +492,7 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     onnx.checker.check_model(transformer)
     onnx.save(transformer, transformer_path)
 
-    backbone = _optimize_window_attention(onnx.load(backbone_path))
+    backbone = _fold_backbone_score_scale(_optimize_window_attention(onnx.load(backbone_path)), 12)
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)

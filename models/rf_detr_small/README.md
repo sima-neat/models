@@ -103,8 +103,11 @@ measure model accuracy.
 masks, a scatter that overwrites every proposal, and decoder outputs kept only
 for training losses. It then rewrites the attention layout: the nine backbone
 window blocks run in head/window order, and the three decoder self-attention
-blocks run in NCHW with a 1x1 Conv projection. The rewrites leave the
-interfaces unchanged and fail on an unexpected export.
+blocks run in NCHW with a 1x1 Conv projection. In all twelve backbone blocks,
+it folds the 1/8 attention scale into the Q projection weights instead of
+multiplying every attention score; a power-of-two scale keeps the float graph
+exact. The rewrites leave the interfaces unchanged and fail on an unexpected
+export.
 
 The recipe sorts the COCO 2017 mini image names and shuffles them with the
 declared seed. It uses the first 50 images for calibration and the next 50 for
