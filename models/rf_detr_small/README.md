@@ -63,13 +63,13 @@ and publishes one benchmark result for each component.
 
 ## Source and license
 
-The source is derived from the official RF-DETR Small checkpoint and the 1.9.4
-exporter. Normal compilation consumes the pinned ONNX and does not install the
-exporter dependencies.
+The source is the RF-DETR Small checkpoint on Hugging Face, exported to ONNX
+with `transformers` 5.16.1. Normal compilation consumes the pinned ONNX and does
+not install the exporter dependencies.
 
 - [RF-DETR repository](https://github.com/roboflow/rf-detr/tree/9b009fa928d6218320439803d1da01869a85c072)
 - [RF-DETR Small model card](https://huggingface.co/Roboflow/rf-detr-small)
-- [RF-DETR 1.9.4 exporter](https://pypi.org/project/rfdetr/1.9.4/)
+- [Pinned checkpoint revision](https://huggingface.co/Roboflow/rf-detr-small/tree/3bdc465063270f99769da5a1b4c00c68bd2d439d)
 
 RF-DETR is distributed under Apache-2.0.
 
@@ -77,8 +77,10 @@ RF-DETR is distributed under Apache-2.0.
 
 ### Conversion
 
-The `conversion.default` entry in `model.yaml` pins the checkpoint, and
-`scripts/requirements-convert.txt` pins the export dependencies. With Python 3.12 on Linux ARM64, run:
+The `conversion.default` entry in `model.yaml` pins the three Hugging Face
+checkpoint files, and `scripts/requirements-convert.txt` pins the export
+dependencies. `convert.py` exports through `transformers` and folds constants
+with onnxsim, so surgery starts from a static graph. With Python 3.12 on Linux ARM64, run:
 
 ```bash
 python3.12 -E -s -m venv /tmp/rfdetr-export-venv
@@ -87,17 +89,21 @@ python3.12 -E -s -m venv /tmp/rfdetr-export-venv
 ```
 
 To publish a conversion, manually run **Vulcan Model Convert** with model
-`rf_detr_small`. The workflow validates ONNX, compares one synthetic input with
-PyTorch, and uploads `model.onnx`. Copy the printed source pin into `model.yaml`
+`rf_detr_small`. The workflow validates ONNX, compares a synthetic input with
+PyTorch, and uploads `model.onnx`. The comparison first checks the 1,024
+proposal scores; when two tied scores swap order, it tries the next seed,
+because a swap pairs decoder queries with different boxes. Copy the printed source pin into `model.yaml`
 only after surgery and compiler validation. The smoke comparison does not
 measure model accuracy.
 
 ### Calibration and compilation
 
-`surgery.py` rewrites the attention layout before calibration: the nine
-backbone window blocks run in head/window order, and the three decoder
-self-attention blocks run in NCHW with a 1x1 Conv projection. Both rewrites
-leave the interfaces unchanged and fail on an unexpected export.
+`surgery.py` removes export no-ops before calibration: constant all-false
+masks, a scatter that overwrites every proposal, and decoder outputs kept only
+for training losses. It then rewrites the attention layout: the nine backbone
+window blocks run in head/window order, and the three decoder self-attention
+blocks run in NCHW with a 1x1 Conv projection. The rewrites leave the
+interfaces unchanged and fail on an unexpected export.
 
 The recipe sorts the COCO 2017 mini image names and shuffles them with the
 declared seed. It uses the first 50 images for calibration and the next 50 for
