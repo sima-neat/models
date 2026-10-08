@@ -114,7 +114,9 @@ jobs:
             tests/unit/test_artifact_browser.py \
             tests/unit/test_ssd_mobilenet_v3.py \
             tests/unit/test_rf_detr_small_conversion.py \
-            tests/unit/test_rf_detr_small.py
+            tests/unit/test_rf_detr_small.py \
+            tests/unit/test_rf_detr_nano_conversion.py \
+            tests/unit/test_rf_detr_nano.py
 
       - name: Build wheel and Vulcan metadata
         run: scripts/build_model_registry_vulcan_package.sh
