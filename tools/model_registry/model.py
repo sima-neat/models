@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import validate_accuracy_model_contract
+from .accuracy_config import DEVKIT_ACCURACY_ENGINE, validate_accuracy_model_contract
 from .errors import SourcePolicyError, ValidationError
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
@@ -21,6 +21,9 @@ MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR}
 STAGES = ("validation", "benchmark")
 # Vulcan-Model-Convert.yml runs these files for a model that declares `conversion`.
 CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-convert.txt")
+# A devkit_script validation entry runs this script on the DevKit after the benchmark.
+ACCURACY_SCRIPT = f"{SCRIPTS_DIR}/accuracy.py"
+ACCURACY_REQUIREMENTS = f"{SCRIPTS_DIR}/requirements-accuracy.txt"
 
 
 def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
@@ -575,6 +578,8 @@ def validate_model(
     )
     if model.get("conversion"):
         referenced_paths.extend(CONVERSION_FILES)
+    if any(entry.get("engine") == DEVKIT_ACCURACY_ENGINE for entry in model["validation"]):
+        referenced_paths.append(ACCURACY_SCRIPT)
     for relative in referenced_paths:
         candidate = (directory / relative).resolve()
         if not candidate.is_relative_to(directory) or not candidate.is_file():
@@ -582,7 +587,8 @@ def validate_model(
 
     for stage in STAGES:
         _by_id(model[stage], f"{stage} entry")
-        coverage_seen: set[tuple[str, str, str]] = set()
+        # Validation engines measure different evidence, so each may cover the same scope once.
+        coverage_seen: set[tuple[str | None, str, str, str]] = set()
         for entry in model[stage]:
             scope = entry["scope"]
             reference_ids = components if scope["type"] == "component" else packages
@@ -600,7 +606,7 @@ def validate_model(
                     f"{', '.join(sorted(unknown_profiles))}"
                 )
             for profile_id in entry["build_profiles"]:
-                coverage = (scope["type"], scoped_id, profile_id)
+                coverage = (entry.get("engine"), scope["type"], scoped_id, profile_id)
                 if coverage in coverage_seen:
                     raise ValidationError(
                         f"{directory}: more than one {stage} entry covers "
@@ -621,10 +627,13 @@ def validate_model(
                         f"outside its build profiles"
                     )
 
+    devkit_profiles: set[str] = set()
     for entry in model["validation"]:
         engine = entry.get("engine")
         if engine == "model_registry":
             validate_accuracy_model_contract(model, entry, directory)
+        if engine == DEVKIT_ACCURACY_ENGINE:
+            _validate_devkit_accuracy(entry, packages, model["benchmark"], directory, devkit_profiles)
         if engine != "model_recipe":
             continue
         label = f"{directory}: validation {entry['id']!r}"
@@ -654,6 +663,44 @@ def validate_model(
                 f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
                 f"{', '.join(sorted(missing))}"
             )
+
+
+def _validate_devkit_accuracy(
+    entry: dict[str, Any],
+    packages: dict[str, dict[str, Any]],
+    benchmarks: list[dict[str, Any]],
+    directory: Path,
+    seen_profiles: set[str],
+) -> None:
+    label = f"{directory}: validation {entry['id']!r}"
+    scope = entry["scope"]
+    scoped = packages[scope["package"]]["components"] if scope["type"] == "package" else [scope["component"]]
+    if entry["result_component"] not in scoped:
+        raise ValidationError(f"{label}: result_component {entry['result_component']!r} is not in its scope")
+    # The accuracy step runs the MPKs the benchmark job just measured, so each one must be benchmarked.
+    benchmarked = {
+        (benchmark["scope"].get("component"), profile_id)
+        for benchmark in benchmarks
+        for profile_id in benchmark["build_profiles"]
+    }
+    unbenchmarked = sorted(
+        f"{component_id}/{profile_id}"
+        for component_id in scoped
+        for profile_id in entry["build_profiles"]
+        if (component_id, profile_id) not in benchmarked
+    )
+    if unbenchmarked:
+        raise ValidationError(f"{label}: needs a component benchmark entry for {', '.join(unbenchmarked)}")
+    missing = set(entry.get("required_metrics", ())) - set(entry["metrics"])
+    if missing:
+        raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")
+    # The benchmark job runs scripts/accuracy.py once per build profile.
+    repeated = seen_profiles & set(entry["build_profiles"])
+    if repeated:
+        raise ValidationError(
+            f"{label}: more than one {DEVKIT_ACCURACY_ENGINE} entry covers build profile {sorted(repeated)[0]!r}"
+        )
+    seen_profiles.update(entry["build_profiles"])
 
 
 def _only_python_caches(path: Path) -> bool:

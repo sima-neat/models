@@ -306,8 +306,9 @@ The embedded manifest is validated against
 
 ## Validation and benchmark entries
 
-`validation` entries are checks the compile workflow runs on the compile host.
-`benchmark` entries are measurements taken on a Modalix DevKit. Each entry
+`validation` entries are checks the compile workflow runs on the compile host,
+except `engine: devkit_script` accuracy, which runs on the DevKit after the
+benchmark. `benchmark` entries are measurements taken on a Modalix DevKit. Each entry
 declares its scope and applicable build profiles, followed by its settings:
 
 ```yaml
@@ -329,7 +330,10 @@ Entry IDs are unique within `validation` and within `benchmark`; model
 scripts look up their settings by ID. Component entries qualify one MPK.
 Package entries qualify the composed product. A validation entry with `engine: model_registry` runs the shared
 accuracy evaluator, and one with `engine: model_recipe` declares the numerical
-fidelity report a grouped recipe writes. An entry without `engine` holds
+fidelity report a grouped recipe writes. One with `engine: devkit_script` runs
+the model's `scripts/accuracy.py` on the benchmarked MPKs; see
+[Accuracy on the DevKit](local-accuracy-development.md#accuracy-on-the-devkit).
+An entry without `engine` holds
 settings that only the model's own scripts read. `model-registry validate`
 checks every entry's settings, including unknown fields and that
 `required_metrics` are declared in `metrics`.

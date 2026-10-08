@@ -343,6 +343,7 @@
       "oneOf": [
         {"$ref": "#/$defs/accuracyValidation"},
         {"$ref": "#/$defs/recipeFidelityValidation"},
+        {"$ref": "#/$defs/devkitAccuracyValidation"},
         {"$ref": "#/$defs/modelOwnedValidation"}
       ]
     },
@@ -459,6 +460,30 @@
         },
         "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       }
+    },
+    "devkitAccuracyValidation": {
+      "description": "Task accuracy measured by the model's scripts/accuracy.py with its compiled MPKs on a DevKit, in the benchmark job.",
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "scope", "build_profiles", "engine", "status", "result_component", "dataset", "metrics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
+        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
+        "engine": {"const": "devkit_script"},
+        "status": {"enum": ["ready", "provisional"]},
+        "result_component": {"$ref": "#/$defs/id"},
+        "dataset": {
+          "type": "object", "additionalProperties": false, "required": ["id", "variant", "sha256", "size_bytes"],
+          "properties": {
+            "id": {"$ref": "#/$defs/datasetId"}, "variant": {"$ref": "#/$defs/datasetId"},
+            "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1}
+          }
+        },
+        "metrics": {"$ref": "#/$defs/accuracyMetricNames"},
+        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"}
+      }
+    },
+    "accuracyMetricNames": {
+      "type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
     },
     "benchmarkEntry": {
       "type": "object", "additionalProperties": false, "required": ["id", "scope", "build_profiles", "status", "metrics"],

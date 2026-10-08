@@ -87,7 +87,9 @@ the pinned Core package, then invokes each model's script once per component.
 it with compilation identity, script digest, source revision, runner build, and
 actual Core/Internals package versions. The CI metadata step loads the same MPK
 with default options to inspect its workload; it does not run inference. The
-importer never executes or times a model.
+importer never executes or times a model. A model with a `devkit_script`
+validation entry then measures its task accuracy with the same MPKs; see
+[Accuracy on the DevKit](local-accuracy-development.md#accuracy-on-the-devkit).
 
 Model authors do not publish benchmark results directly.
 The board has no registry publication credentials. A separate hosted job validates

@@ -19,6 +19,7 @@ from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
+from .accuracy_result import publish_accuracy_result
 from .artifact import validate_compile_outputs, verify_mpk
 from .catalog import (
     benchmark_fingerprint,
@@ -1035,43 +1036,6 @@ def _accuracy_result(
     return report
 
 
-def _accuracy_measurements(report: JsonObject, fingerprint: str) -> list[JsonObject]:
-    metric_fields = (
-        ("candidate", "top1_accuracy", "model.accuracy.candidate.top1", "higher"),
-        ("candidate", "top5_accuracy", "model.accuracy.candidate.top5", "higher"),
-        ("reference", "top1_accuracy", "model.accuracy.reference.top1", "higher"),
-        ("reference", "top5_accuracy", "model.accuracy.reference.top5", "higher"),
-        ("comparison", "top1_agreement", "model.accuracy.top1_agreement", "higher"),
-        ("comparison", "top1_delta", "model.accuracy.top1_delta", "higher"),
-        ("comparison", "top5_delta", "model.accuracy.top5_delta", "higher"),
-    )
-    dataset = report["dataset"]
-    dimensions = {
-        "model_id": report["model"]["id"],
-        "build_profile_id": report["model"]["build_profile_id"],
-        "component_id": report["model"]["component_id"],
-        "dataset_id": dataset["id"],
-        "dataset_variant": dataset["variant"],
-        "dataset_split": dataset["split"],
-        "evaluation_profile": report["evaluation"]["profile"],
-        "report_scope": report["report_scope"],
-        "evaluation_status": report["evaluation"]["status"],
-    }
-    return [
-        {
-            "measurement_key": f"{fingerprint}-{group}-{field}",
-            "name": name,
-            "unit": "ratio",
-            "value": report["metrics"][group][field],
-            "direction": direction,
-            "sample_count": dataset["evaluated_samples"],
-            "aggregation": "mean",
-            "dimensions": dimensions,
-        }
-        for group, field, name, direction in metric_fields
-    ]
-
-
 def _fidelity_result(
     path: Path,
     schema_path: Path,
@@ -1566,66 +1530,18 @@ def publish_compilations(
                 f"models/{branch_key}/{commit_tag}/{model_id}/{build_profile_id}/{component_id}/accuracy/"
                 f"{accuracy_fingerprint}/accuracy-result-v{accuracy['schema_version']}.json"
             )
-            accuracy_stored = store.ensure_native_sha256(
-                accuracy_path,
-                accuracy_key,
-                accuracy_sha,
-                media_type="application/json",
+            accuracy_publication = publish_accuracy_result(
+                client,
+                store,
+                bucket=bucket,
+                run_id=run_id,
+                path=accuracy_path,
+                report=accuracy,
+                sha256=accuracy_sha,
+                fingerprint=accuracy_fingerprint,
+                object_key=accuracy_key,
+                stable_key=stable_key,
             )
-            accuracy_artifact = client.request(
-                "PUT",
-                f"/v1/runs/{run_id}/artifacts/accuracy-result",
-                {
-                    "artifact_type": "accuracy-result",
-                    "s3_bucket": bucket,
-                    "s3_key": accuracy_stored.key,
-                    "s3_version_id": accuracy_stored.version_id,
-                    "sha256": accuracy_stored.sha256,
-                    "size_bytes": accuracy_stored.size_bytes,
-                    "media_type": "application/json",
-                    "retention_class": "branch",
-                    "metadata": {
-                        "model_id": model_id,
-                        "build_profile_id": build_profile_id,
-                        "component_id": component_id,
-                        "dataset_id": accuracy["dataset"]["id"],
-                        "dataset_variant": accuracy["dataset"]["variant"],
-                        "dataset_split": accuracy["dataset"]["split"],
-                        "evaluated_samples": accuracy["dataset"]["evaluated_samples"],
-                        "available_samples": accuracy["dataset"]["available_samples"],
-                        "evaluation_profile": accuracy["evaluation"]["profile"],
-                        "evaluation_status": accuracy["evaluation"]["status"],
-                        "report_scope": accuracy["report_scope"],
-                        "candidate_top1_accuracy": accuracy["metrics"]["candidate"]["top1_accuracy"],
-                        "candidate_top5_accuracy": accuracy["metrics"]["candidate"]["top5_accuracy"],
-                    },
-                },
-                f"{stable_key}-accuracy-artifact",
-            )
-            accuracy_test: JsonObject = {
-                "status": "passed",
-                "version": str(accuracy["schema_version"]),
-                "summary": accuracy,
-            }
-            if accuracy_artifact.get("artifact_id"):
-                accuracy_test["report_artifact_id"] = accuracy_artifact["artifact_id"]
-            client.request(
-                "PUT",
-                f"/v1/runs/{run_id}/test-results/accuracy/{accuracy['report_scope']}",
-                accuracy_test,
-                f"{stable_key}-accuracy-test-result",
-            )
-            client.request(
-                "POST",
-                f"/v1/runs/{run_id}/measurements/batch",
-                {"measurements": _accuracy_measurements(accuracy, accuracy_fingerprint)},
-                f"{stable_key}-accuracy-measurements",
-            )
-            accuracy_publication = {
-                "s3_key": accuracy_stored.key,
-                "result_fingerprint": accuracy_fingerprint,
-                "evaluated_samples": accuracy["dataset"]["evaluated_samples"],
-            }
         fidelity_evidence = compilation["fidelity"]
         fidelity_publication = None
         if fidelity_evidence is not None:

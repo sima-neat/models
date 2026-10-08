@@ -741,6 +741,9 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
     "tools/model_registry/benchmark_publication.py",
     "tools/model_registry/benchmark_manifest.py",
     "schemas/performance-result-v5.schema.json",
+    "tools/model_registry/accuracy_result.py",
+    "schemas/accuracy-result-v2.schema.json",
+    "scripts/run_model_accuracy.sh",
 ])
 def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
@@ -787,6 +790,40 @@ def test_semantic_plan_selects_validation_without_compile(catalog_repository: Pa
     assert [(item["model_id"], item["component_id"]) for item in plan["validation_include"]] == [
         ("alpha", "model")
     ]
+
+
+def _declare_devkit_accuracy(manifest: Path, status: str) -> None:
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["validation"] = [{
+        "id": "devkit_accuracy",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+        "engine": "devkit_script",
+        "status": status,
+        "result_component": "model",
+        "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
+        "metrics": ["score"],
+    }]
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
+def test_devkit_accuracy_is_measured_with_the_benchmark(catalog_repository: Path) -> None:
+    model_dir = catalog_repository / "models" / "alpha"
+    _declare_benchmark(model_dir / "model.yaml", "accuracy runs on these MPKs")
+    _declare_devkit_accuracy(model_dir / "model.yaml", "provisional")
+    (model_dir / "scripts" / "accuracy.py").write_text("score = 0.5\n", encoding="utf-8")
+    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
+    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+
+    _declare_devkit_accuracy(model_dir / "model.yaml", "ready")
+    after_entry = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
+    (model_dir / "scripts" / "accuracy.py").write_text("score = 0.6\n", encoding="utf-8")
+
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
+    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == validation_before
+    assert after_entry != benchmark_before
+    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != after_entry
 
 
 def test_semantic_plan_reports_removed_invocation_without_rebuild(catalog_repository: Path) -> None:

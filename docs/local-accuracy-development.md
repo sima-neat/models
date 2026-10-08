@@ -3,7 +3,9 @@
 Accuracy measurement is a shared Model Registry capability. Model directories
 declare datasets, profiles, preprocessing, executors, and metrics in a
 `validation` entry of `model.yaml` with `engine: model_registry`; they must not
-carry a model-specific evaluation loop.
+carry a model-specific evaluation loop. The one exception is
+[accuracy on the DevKit](#accuracy-on-the-devkit), for task metrics the shared
+evaluator cannot compute.
 
 ## Environment
 
@@ -149,3 +151,67 @@ PYTHONPATH="$PWD/tools" MODEL_REGISTRY_ROOT="$PWD" \
 PYTHONPATH="$PWD/tools" MODEL_REGISTRY_ROOT="$PWD" \
   pytest -q tests/unit/test_accuracy.py tests/unit/test_cli.py
 ```
+
+## Accuracy on the DevKit
+
+Use this when a model's task metric needs its own decoding and scoring, such as
+COCO mAP for a detector whose pipeline spans several MPKs. The model's
+`scripts/accuracy.py` runs the benchmarked MPKs on the DevKit with PyNeat right
+after the benchmark, so the published accuracy and performance describe the
+same archives.
+
+Declare it as a `validation` entry with `engine: devkit_script`:
+
+```yaml
+validation:
+  - id: coco_accuracy
+    scope: {type: package, package: default}
+    build_profiles: [modalix_int8_bf16]
+    engine: devkit_script
+    status: ready
+    result_component: transformer
+    dataset: {id: coco-2017, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
+    metrics: [coco_map, coco_ap50, coco_ap75]
+    required_metrics: [coco_map]
+```
+
+A build profile has at most one such entry. Every component in its scope must
+be benchmarked, and `result_component` names the component whose benchmark run
+carries the result. Optional `scripts/requirements-accuracy.txt` pins extra
+wheels; they install beside PyNeat's environment, not into it.
+
+`scripts/accuracy.py` receives `--mpk <component>=<path>` for each scoped
+component, `--dataset <extracted archive>`, and `--output <file>`. It writes:
+
+```json
+{
+  "core_version": "3.0.0",
+  "dataset": {"split": "val2017", "evaluated_samples": 5000, "available_samples": 5000},
+  "metrics": {"coco_map": {"value": 0.469, "unit": "ratio", "direction": "higher"}},
+  "details": {"inference_seconds": 187.7}
+}
+```
+
+Metric names must be declared in the entry's `metrics`. CI wraps the output
+with the model, MPK digests, dataset, and source revision as an
+[`accuracy-result-v2`](https://github.com/sima-neat/models/blob/develop/schemas/accuracy-result-v2.schema.json)
+document. A missing or mismatched result blocks the benchmark publication. The
+result is published on the result component's benchmark run as an
+`accuracy-result` artifact, an `accuracy/<entry-id>` test result, and one
+`model.accuracy.<metric>` measurement per metric. The model browser shows one
+tile per metric.
+
+To run it on a board, benchmark each scoped component first so that
+`<benchmark-root>/<component>/performance-test.json` exists, then run from the
+repository root:
+
+```bash
+REGISTRY_PYTHON=<registry venv python> \
+  scripts/run_model_accuracy.sh models/<model-id> <build-profile> <benchmark-root> <output-dir>
+```
+
+The script extracts the dataset under `/media/nvme/neat-tests/` and removes
+that scratch directory when it exits; set `WORK_DIR` to use another location.
+
+For a quicker check, run the script directly with `--limit <images>`. A
+limited run evaluates a seeded sample and shows as provisional.

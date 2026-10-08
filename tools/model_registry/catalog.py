@@ -10,10 +10,18 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .accuracy_config import DEVKIT_ACCURACY_ENGINE
 from .artifact_metadata import validate_artifact_metadata
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
-from .model import SCRIPTS_DIR, compile_invocations_for, effective_runner_class, load_and_validate_model
+from .model import (
+    ACCURACY_REQUIREMENTS,
+    ACCURACY_SCRIPT,
+    SCRIPTS_DIR,
+    compile_invocations_for,
+    effective_runner_class,
+    load_and_validate_model,
+)
 from .taxonomy import TAXONOMY_RELATIVE_PATH, load_taxonomy, taxonomy_sha256
 
 GLOBAL_COMPILE_INPUT_PATHS = (
@@ -41,6 +49,7 @@ _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
 # Board-stage scripts run after compilation; the benchmark fingerprint owns them.
 BENCHMARK_SCRIPT = f"{SCRIPTS_DIR}/benchmark.py"
+BOARD_STAGE_SCRIPTS = {BENCHMARK_SCRIPT, ACCURACY_SCRIPT}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 3
@@ -238,7 +247,7 @@ def _component_build_input_files(
         for item in (model_dir / SCRIPTS_DIR).rglob("*")
         if item.is_file()
         and item.suffix in {".py", ".sh"}
-        and item.relative_to(model_dir).as_posix() != BENCHMARK_SCRIPT
+        and item.relative_to(model_dir).as_posix() not in BOARD_STAGE_SCRIPTS
     )
     profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
     binding = next(item for item in profile["components"] if item["id"] == component["id"])
@@ -434,6 +443,20 @@ def _test_case_applies(model: dict[str, Any], case: dict[str, Any], profile_id: 
     )
 
 
+def _compile_stage_validation(model: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validation entries evaluated with the compilation; DevKit accuracy runs with the benchmark instead."""
+    return [entry for entry in model["validation"] if entry.get("engine") != DEVKIT_ACCURACY_ENGINE]
+
+
+def _devkit_accuracy_entries(model: dict[str, Any]) -> list[dict[str, Any]]:
+    return [entry for entry in model["validation"] if entry.get("engine") == DEVKIT_ACCURACY_ENGINE]
+
+
+def _benchmark_stage_cases(model: dict[str, Any]) -> list[dict[str, Any]]:
+    """Benchmark entries plus DevKit accuracy entries, which the benchmark job also runs."""
+    return [*model["benchmark"], *_devkit_accuracy_entries(model)]
+
+
 def validation_fingerprint(
     repository: str | Path,
     model_id: str,
@@ -450,7 +473,11 @@ def validation_fingerprint(
         root, model_id, component_id, profile_id, compiler_version
     )
     entries = sorted(
-        (entry for entry in model["validation"] if _test_case_applies(model, entry, profile_id, component_id)),
+        (
+            entry
+            for entry in _compile_stage_validation(model)
+            if _test_case_applies(model, entry, profile_id, component_id)
+        ),
         key=lambda item: item["id"],
     )
     evaluator_files = {}
@@ -490,7 +517,21 @@ def benchmark_fingerprint(
         (entry for entry in model["benchmark"] if _test_case_applies(model, entry, profile_id, component_id)),
         key=lambda item: item["id"],
     )
-    script = root / "models" / model_id / BENCHMARK_SCRIPT
+    accuracy = sorted(
+        (
+            entry
+            for entry in _devkit_accuracy_entries(model)
+            if _test_case_applies(model, entry, profile_id, component_id)
+        ),
+        key=lambda item: item["id"],
+    )
+    model_dir = root / "models" / model_id
+    script = model_dir / BENCHMARK_SCRIPT
+    accuracy_files = {
+        relative: hashlib.sha256((model_dir / relative).read_bytes()).hexdigest()
+        for relative in (ACCURACY_SCRIPT, ACCURACY_REQUIREMENTS)
+        if accuracy and (model_dir / relative).is_file()
+    }
     return _canonical_sha256(
         {
             "schema": BENCHMARK_FINGERPRINT_SCHEMA,
@@ -501,6 +542,8 @@ def benchmark_fingerprint(
             "compiled_artifact_sha256": artifact_sha256,
             "benchmark": entries,
             "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else None,
+            "accuracy": accuracy,
+            "accuracy_files_sha256": accuracy_files,
             "tooling_sha256": {
                 path: hashlib.sha256((root / path).read_bytes()).hexdigest()
                 if (root / path).is_file() else None
@@ -510,6 +553,9 @@ def benchmark_fingerprint(
                     "tools/model_registry/benchmark_publication.py",
                     "tools/model_registry/benchmark_manifest.py",
                     "schemas/performance-result-v5.schema.json",
+                    "tools/model_registry/accuracy_result.py",
+                    "schemas/accuracy-result-v2.schema.json",
+                    "scripts/run_model_accuracy.sh",
                 )
             },
             "runtime": resolve_benchmark_runtime(root),
@@ -622,7 +668,7 @@ def build_matrix(
                         for component_id in invocation_component_ids
                         if any(
                             _test_case_applies(model, case, profile["id"], component_id)
-                            for case in model["validation"]
+                            for case in _compile_stage_validation(model)
                         )
                     }
                     benchmark_fingerprints = {
@@ -633,7 +679,7 @@ def build_matrix(
                         for component_id in invocation_component_ids
                         if any(
                             _test_case_applies(model, case, profile["id"], component_id)
-                            for case in model["benchmark"]
+                            for case in _benchmark_stage_cases(model)
                         )
                     }
                 first_component_id = invocation_component_ids[0]

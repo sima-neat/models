@@ -176,6 +176,42 @@ def _accuracy_result(index: int) -> dict | None:
     }
 
 
+def _benchmark_run_id(index: int) -> str:
+    return f"9bd7b220-478f-4d5f-a02f-5fca756305{index:02x}"
+
+
+def _devkit_accuracy_result(index: int) -> dict | None:
+    """Schema-2 accuracy measured on the DevKit and published on the benchmark run."""
+    model_id, variant_id, component_id, _, _, _ = PREVIEW_RUNS[index]
+    if model_id != "detr_resnet50":
+        return None
+    return {
+        "schema_version": 2,
+        "model": {
+            "id": model_id,
+            "build_profile_id": variant_id,
+            "component_id": component_id,
+            "package_id": None,
+            "artifacts": {component_id: "4f1e5a9c7d3b2e8f6a0c1d9e7b5a3f2c4e6d8b0a1c3e5f7a9b2d4c6e8f0a1b3c"},
+        },
+        "validation": {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"},
+        "dataset": {
+            "id": "coco-2017",
+            "variant": "mini",
+            "split": "val2017",
+            "sha256": "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78",
+            "evaluated_samples": 5000,
+            "available_samples": 5000,
+        },
+        "metrics": {
+            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher"},
+            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher"},
+            "coco_ap75": {"value": 0.5017, "unit": "ratio", "direction": "higher"},
+        },
+        "execution": {"core_version": "3.0.0", "script_sha256": "c" * 64, "models_commit": "a" * 40},
+    }
+
+
 class PreviewHandler(SimpleHTTPRequestHandler):
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode()
@@ -274,6 +310,22 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             parts = path.strip("/").split("/")
             requested_run_id = parts[2] if len(parts) >= 3 else ""
             index = _run_index(requested_run_id)
+            benchmark_index = next(
+                (item for item in range(len(PREVIEW_RUNS)) if _benchmark_run_id(item) == requested_run_id), None
+            )
+            if benchmark_index is not None and parts[3:] == ["test-results"]:
+                accuracy = _devkit_accuracy_result(benchmark_index)
+                test_results = [{"suite": "performance", "name": "model-synthetic", "status": "passed"}]
+                if accuracy:
+                    test_results.append({
+                        "suite": "accuracy",
+                        "name": accuracy["validation"]["id"],
+                        "status": "passed",
+                        "version": "2",
+                        "summary": accuracy,
+                    })
+                self._json({"run_id": requested_run_id, "test_results": test_results})
+                return
         else:
             index = None
         if index is not None and len(parts) == 3:
@@ -358,7 +410,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             return
         if index is not None and len(parts) == 5 and parts[3:] == ["benchmarks", "latest"]:
             self._json({
-                "benchmark_run": {"id": f"9bd7b220-478f-4d5f-a02f-5fca756305{index:02x}"},
+                "benchmark_run": {"id": _benchmark_run_id(index)},
                 "result": _benchmark_result(index),
                 "result_artifact_url": "/fixtures/performance-result-v4.json",
             })

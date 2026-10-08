@@ -292,6 +292,75 @@ def test_model_owned_validation_entry_needs_no_engine() -> None:
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
+def _devkit_accuracy_entry(**settings) -> dict:
+    return {
+        "id": "devkit_accuracy",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+        "engine": "devkit_script",
+        "status": "ready",
+        "result_component": "model",
+        "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
+        "metrics": ["score"],
+        **settings,
+    }
+
+
+def _model_with_accuracy_script(tmp_path: Path) -> tuple[Path, dict]:
+    directory = tmp_path / "fixture_model"
+    shutil.copytree(FIXTURES / "fixture_model", directory)
+    (directory / "scripts" / "accuracy.py").write_text("score = 1.0\n", encoding="utf-8")
+    model = load_model(directory)
+    model["benchmark"] = [_benchmark_entry()]
+    return directory, model
+
+
+def test_devkit_accuracy_requires_its_script() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["validation"] = [_devkit_accuracy_entry()]
+    with pytest.raises(ValidationError, match="referenced file does not exist.*accuracy.py"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def test_devkit_accuracy_requires_its_components_to_be_benchmarked(tmp_path: Path) -> None:
+    directory, model = _model_with_accuracy_script(tmp_path)
+    model["benchmark"] = []
+    model["validation"] = [_devkit_accuracy_entry()]
+    with pytest.raises(ValidationError, match="needs a component benchmark entry for model/fixture"):
+        validate_model(directory, model, SCHEMA)
+
+
+def test_devkit_accuracy_may_share_scope_with_another_engine(tmp_path: Path) -> None:
+    directory, model = _model_with_accuracy_script(tmp_path)
+    model["validation"] = [
+        _devkit_accuracy_entry(),
+        {"id": "owned", "scope": {"type": "component", "component": "model"}, "build_profiles": ["fixture"]},
+    ]
+    validate_model(directory, model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        ([_devkit_accuracy_entry(result_component="second_model")], "result_component 'second_model'"),
+        ([_devkit_accuracy_entry(required_metrics=["missing"])], "required_metrics are not declared"),
+        ([_devkit_accuracy_entry(metrics=["Score"])], "not valid under any of the given schemas"),
+        (
+            [
+                _devkit_accuracy_entry(),
+                _devkit_accuracy_entry(id="second", scope={"type": "package", "package": "default"}),
+            ],
+            "more than one devkit_script entry covers build profile 'fixture'",
+        ),
+    ],
+)
+def test_devkit_accuracy_entry_is_validated(tmp_path: Path, entries: list[dict], expected: str) -> None:
+    directory, model = _model_with_accuracy_script(tmp_path)
+    model["validation"] = entries
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(directory, model, SCHEMA)
+
+
 def _model_with_conversion(tmp_path: Path) -> tuple[Path, dict]:
     directory = tmp_path / "fixture_model"
     shutil.copytree(FIXTURES / "fixture_model", directory)
