@@ -47,9 +47,9 @@ components:
   role: feature_extractor
   source: &source
     type: file
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/065fa96c52731a25e0ca481a98be90a3d4fb28943984b724bc3eee17e475847a/37610414373-1/model.onnx
-    sha256: 065fa96c52731a25e0ca481a98be90a3d4fb28943984b724bc3eee17e475847a
-    size_bytes: 114476199
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_nano/5eda9c1defd4dd2bf2f8c5ccd72cc3f4a16d2f50a242e1229416df445a1e54a3/37736659788-1/model.onnx
+    sha256: 5eda9c1defd4dd2bf2f8c5ccd72cc3f4a16d2f50a242e1229416df445a1e54a3
+    size_bytes: 107862815
   interface:
     format: onnx
     opset: 17
