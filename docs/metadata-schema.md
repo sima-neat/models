@@ -227,7 +227,7 @@ The repository compiler version remains pinned centrally in
 A component binding may also declare `artifact_suffix` outside `parameters`.
 It uses the identifier syntax and controls the browser download filename:
 `<model_id>_<artifact_suffix>_mpk.tar.gz`. Include the component name in the suffix
-when useful. For example, RF-DETR uses `backbone_int8_mse` and `transformer_bf16` under
+when useful. For example, RF-DETR uses `backbone_int8_mse_bcr` and `transformer_bf16` under
 one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
 precision. The complete download basename must fit within 255 characters.
 Omitting or removing the suffix preserves the original download filename.

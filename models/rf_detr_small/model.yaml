@@ -21,8 +21,8 @@ license:
   redistribution: allowed
   attribution: RF-DETR Small is distributed by Roboflow under Apache-2.0.
 upstream:
-  repository: https://github.com/roboflow/rf-detr
-  revision: 9b009fa928d6218320439803d1da01869a85c072
+  repository: https://huggingface.co/Roboflow/rf-detr-small
+  revision: 3bdc465063270f99769da5a1b4c00c68bd2d439d
   model_card: https://huggingface.co/Roboflow/rf-detr-small
 conversion:
   default:
@@ -78,7 +78,7 @@ components:
         layout: NLC
         description: Decoded box for each proposal.
     shape_profiles: []
-  preprocessing: &image_preprocessing
+  preprocessing:
     pipeline:
     - op: decode_image
       parameters: {color_space: RGB}
@@ -97,7 +97,7 @@ components:
   surgery:
     type: python
     entrypoint: scripts/surgery.py:prepare_model
-    parameters: {partition: backbone}
+    parameters: {}
   recipe: scripts/compile.py
 - id: transformer
   role: detection_head
@@ -137,7 +137,7 @@ components:
   surgery:
     type: python
     entrypoint: scripts/surgery.py:prepare_model
-    parameters: {partition: transformer}
+    parameters: {}
   recipe: scripts/compile.py
   depends_on:
   - backbone
@@ -155,15 +155,17 @@ build_profiles:
   target: modalix
   components:
   - id: backbone
-    artifact_suffix: backbone_int8_mse
+    artifact_suffix: backbone_int8_mse_bcr
     calibration: coco_images
     parameters:
       precision: int8
+      calibration_bins: 2048
       calibration_samples: 50
   - id: transformer
     artifact_suffix: transformer_bf16
     parameters:
       precision: bf16
+      calibration_bins: 2048
       calibration_samples: 50
   compile_invocations:
   - id: rf_detr

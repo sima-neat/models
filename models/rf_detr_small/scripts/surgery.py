@@ -10,18 +10,30 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper
 
+IMAGE_SIZE = 512
+# The backbone emits one feature-map cell per 16x16 patch, and the encoder scores one proposal per cell.
+FEATURE_SIZE = IMAGE_SIZE // 16
+PROPOSAL_COUNT = FEATURE_SIZE * FEATURE_SIZE
+QUERY_COUNT = 300
+CLASS_COUNT = 91
+BACKBONE_BLOCKS = 12
+WINDOW_BLOCKS = 9
+DECODER_LAYERS = 3
+
 INPUT = "input"
 FEATURES = "backbone_features"
 SCORES = "proposal_scores"
 BOXES = "proposal_boxes"
 PROPOSALS = "proposals"
-OUTPUTS = ["dets", "labels"]
+INPUT_SHAPE = [1, 3, IMAGE_SIZE, IMAGE_SIZE]
+OUTPUT_SHAPES = {"dets": [1, QUERY_COUNT, 4], "labels": [1, QUERY_COUNT, CLASS_COUNT]}
+OUTPUTS = list(OUTPUT_SHAPES)
 
 BOUNDARY_SHAPES = {
-    FEATURES: [1, 256, 32, 32],
-    SCORES: [1, 1024],
-    BOXES: [1, 1024, 4],
-    PROPOSALS: [1, 300, 4],
+    FEATURES: [1, 256, FEATURE_SIZE, FEATURE_SIZE],
+    SCORES: [1, PROPOSAL_COUNT],
+    BOXES: [1, PROPOSAL_COUNT, 4],
+    PROPOSALS: [1, QUERY_COUNT, 4],
 }
 
 
@@ -32,10 +44,9 @@ def _shape(value: onnx.ValueInfoProto) -> list[int]:
 def _validate_source(model: onnx.ModelProto) -> None:
     inputs = {value.name: _shape(value) for value in model.graph.input}
     outputs = {value.name: _shape(value) for value in model.graph.output}
-    if inputs != {INPUT: [1, 3, 512, 512]}:
+    if inputs != {INPUT: INPUT_SHAPE}:
         raise ValueError(f"unexpected RF-DETR input interface: {inputs}")
-    expected_outputs = {"dets": [1, 300, 4], "labels": [1, 300, 91]}
-    if outputs != expected_outputs:
+    if outputs != OUTPUT_SHAPES:
         raise ValueError(f"unexpected RF-DETR output interface: {outputs}")
 
 
@@ -147,7 +158,7 @@ def _require_folded(model: onnx.ModelProto) -> None:
     _require(not unfolded, f"source still has {unfolded} nodes; fold it with onnxsim first")
 
 
-def _remove_noop_masks(model: onnx.ModelProto, expected: dict[str, int]) -> onnx.ModelProto:
+def _remove_noop_masks(model: onnx.ModelProto, expected_counts: dict[str, int]) -> onnx.ModelProto:
     """Where(all-False constant, X, Y) is Y, and a ScatterND that overwrites every row is its updates."""
     model = onnx.shape_inference.infer_shapes(model)
     shapes, constants, producers, users = _index(model)
@@ -172,11 +183,11 @@ def _remove_noop_masks(model: onnx.ModelProto, expected: dict[str, int]) -> onnx
             )
             _replace_uses(model, node.output[0], updates)
             counts[node.op_type] += 1
-    _require(dict(counts) == expected, f"expected no-op masks {expected}, found {dict(counts)}")
+    _require(dict(counts) == expected_counts, f"expected no-op masks {expected_counts}, found {dict(counts)}")
     return _finish(model)
 
 
-def _remove_identities(model: onnx.ModelProto, expected: dict[str, int]) -> onnx.ModelProto:
+def _remove_identities(model: onnx.ModelProto, expected_counts: dict[str, int]) -> onnx.ModelProto:
     """Bypass same-type Casts, same-shape Expands, and Gathers that read one slice of a singleton stack.
 
     The decoder stacks every layer's final LayerNorm for auxiliary losses and keeps only the last one,
@@ -215,7 +226,7 @@ def _remove_identities(model: onnx.ModelProto, expected: dict[str, int]) -> onnx
             _require(shapes.get(source) == shapes.get(node.output[0]), f"identity changes shape at {node.name}")
             _replace_uses(model, node.output[0], source)
             counts[node.op_type] += 1
-    _require(dict(counts) == expected, f"expected identities {expected}, found {dict(counts)}")
+    _require(dict(counts) == expected_counts, f"expected identities {expected_counts}, found {dict(counts)}")
     return _finish(model)
 
 
@@ -245,7 +256,7 @@ def _cut_points(model: onnx.ModelProto) -> dict[str, str]:
     return {features[0]: FEATURES, scores.output[0]: SCORES, gather.input[0]: BOXES, gather.output[0]: PROPOSALS}
 
 
-def _optimize_window_attention(model: onnx.ModelProto) -> onnx.ModelProto:
+def _optimize_window_attention(model: onnx.ModelProto, blocks: int) -> onnx.ModelProto:
     """Commute identical window/head permutations through unmasked attention."""
     model = onnx.shape_inference.infer_shapes(model)
     shapes, constants, producers, users = _index(model)
@@ -285,11 +296,11 @@ def _optimize_window_attention(model: onnx.ModelProto) -> onnx.ModelProto:
             del attribute.ints[:]
             attribute.ints.extend(new)
         rewritten += 1
-    _require(rewritten == 9, f"expected 9 window blocks, found {rewritten}")
+    _require(rewritten == blocks, f"expected {blocks} window blocks, found {rewritten}")
     return _finish(model)
 
 
-def _fold_backbone_score_scale(model: onnx.ModelProto, expected: int) -> onnx.ModelProto:
+def _fold_backbone_score_scale(model: onnx.ModelProto, blocks: int) -> onnx.ModelProto:
     """Scale the Q projection instead of every [windows, heads, tokens, tokens] attention score."""
     _, constants, producers, users = _index(model)
     initializers = {value.name: value for value in model.graph.initializer}
@@ -321,11 +332,11 @@ def _fold_backbone_score_scale(model: onnx.ModelProto, expected: int) -> onnx.Mo
             initializers[name].CopyFrom(numpy_helper.from_array(array * np.float32(value), name))
         softmax.input[0] = scores
         folded += 1
-    _require(folded == expected, f"expected {expected} backbone attention blocks, found {folded}")
+    _require(folded == blocks, f"expected {blocks} backbone attention blocks, found {folded}")
     return _finish(model)
 
 
-def _optimize_decoder_attention(model: onnx.ModelProto) -> onnx.ModelProto:
+def _optimize_decoder_attention(model: onnx.ModelProto, layers: int) -> onnx.ModelProto:
     """Keep self-attention/head merge/projection in NCHW; leave deformable attention alone."""
     model = onnx.shape_inference.infer_shapes(model)
     shapes, constants, producers, users = _index(model)
@@ -437,7 +448,7 @@ def _optimize_decoder_attention(model: onnx.ModelProto) -> onnx.ModelProto:
         # Insert at the original output Reshape, after all Q/K/V and bias producers.
         replacements[restore.output[0]] = nodes
         removed.update(n.output[0] for n in (qk, scale, softmax, pv, merge, *flattening, projection, restore))
-    _require(len(replacements) == 3, f"expected 3 decoder self-attention blocks, found {len(replacements)}")
+    _require(len(replacements) == layers, f"expected {layers} decoder self-attention blocks, found {len(replacements)}")
     nodes = []
     for original in model.graph.node:
         nodes.extend(replacements.get(original.output[0], []))
@@ -446,6 +457,11 @@ def _optimize_decoder_attention(model: onnx.ModelProto) -> onnx.ModelProto:
     del model.graph.node[:]
     model.graph.node.extend(nodes)
     return _finish(model)
+
+
+def graph_paths(output_dir: Path) -> tuple[Path, Path, Path]:
+    """Return where prepare_model writes the full, backbone, and transformer graphs."""
+    return tuple(output_dir / f"rf_detr_small_{part}.onnx" for part in ("full", "backbone", "transformer"))
 
 
 def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
@@ -467,9 +483,7 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     full.ir_version = 8
     onnx.checker.check_model(full)
 
-    full_path = output_dir / "rf_detr_small_full.onnx"
-    backbone_path = output_dir / "rf_detr_small_backbone.onnx"
-    transformer_path = output_dir / "rf_detr_small_transformer.onnx"
+    full_path, backbone_path, transformer_path = graph_paths(output_dir)
     onnx.save(full, full_path)
     onnx.utils.extract_model(str(full_path), str(backbone_path), [INPUT], [FEATURES, SCORES, BOXES])
     onnx.utils.extract_model(str(full_path), str(transformer_path), [FEATURES, PROPOSALS], OUTPUTS)
@@ -487,12 +501,13 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
         raise RuntimeError("RF-DETR transformer simplification failed validation")
     # onnxsim turns the singleton feature-level axis of the reference points into a Gather.
     transformer = _remove_identities(transformer, {"Gather": 1})
-    transformer = _optimize_decoder_attention(transformer)
+    transformer = _optimize_decoder_attention(transformer, DECODER_LAYERS)
     transformer.ir_version = 8
     onnx.checker.check_model(transformer)
     onnx.save(transformer, transformer_path)
 
-    backbone = _fold_backbone_score_scale(_optimize_window_attention(onnx.load(backbone_path)), 12)
+    backbone = _optimize_window_attention(onnx.load(backbone_path), WINDOW_BLOCKS)
+    backbone = _fold_backbone_score_scale(backbone, BACKBONE_BLOCKS)
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)

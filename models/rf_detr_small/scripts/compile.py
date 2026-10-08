@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import multiprocessing
 import os
 import shutil
@@ -20,7 +21,7 @@ import onnxruntime as ort
 import yaml
 from afe.apis.defines import (
     BiasCorrectionType,
-    CalibrationMethod,
+    HistogramMSEMethod,
     InputName,
     RequantizationMode,
     bfloat16_scheme,
@@ -43,7 +44,20 @@ from calibration import (
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
-from surgery import BOXES, FEATURES, INPUT, OUTPUTS, PROPOSALS, SCORES, prepare_model, validate_float_split
+from surgery import (
+    BOUNDARY_SHAPES,
+    BOXES,
+    FEATURES,
+    INPUT,
+    INPUT_SHAPE,
+    OUTPUT_SHAPES,
+    OUTPUTS,
+    PROPOSALS,
+    SCORES,
+    graph_paths,
+    prepare_model,
+    validate_float_split,
+)
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_small"
@@ -51,14 +65,20 @@ INVOCATION_ID = "rf_detr"
 PROFILE_ID = "modalix_int8_bf16"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
+
+def _float32_bytes(shape: list[int]) -> int:
+    return math.prod(shape) * 4
+
+
+# MPK manifests record each public tensor's size in bytes.
 COMPONENT_INTERFACES = {
     "backbone": {
-        "inputs": {INPUT: 1 * 3 * 512 * 512 * 4},
-        "outputs": [1 * 256 * 32 * 32 * 4, 1 * 1024 * 4, 1 * 1024 * 4 * 4],
+        "inputs": {INPUT: _float32_bytes(INPUT_SHAPE)},
+        "outputs": [_float32_bytes(BOUNDARY_SHAPES[name]) for name in (FEATURES, SCORES, BOXES)],
     },
     "transformer": {
-        "inputs": {FEATURES: 1 * 256 * 32 * 32 * 4, PROPOSALS: 1 * 300 * 4 * 4},
-        "outputs": [1 * 300 * 4 * 4, 1 * 300 * 91 * 4],
+        "inputs": {name: _float32_bytes(BOUNDARY_SHAPES[name]) for name in (FEATURES, PROPOSALS)},
+        "outputs": [_float32_bytes(OUTPUT_SHAPES[name]) for name in OUTPUTS],
     },
 }
 
@@ -68,7 +88,7 @@ def _profile() -> dict[str, Any]:
     return next(profile for profile in model["build_profiles"] if profile["id"] == PROFILE_ID)
 
 
-def _quantization(precision: str) -> Any:
+def _quantization(precision: str, calibration_bins: int) -> Any:
     if precision == "int8":
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
         weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
@@ -80,8 +100,8 @@ def _quantization(precision: str) -> Any:
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
         .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(CalibrationMethod.from_str("mse"))
-        # INT8 bias correction measured +0.1 COCO mAP on the backbone; BF16 needs none.
+        .with_calibration(HistogramMSEMethod(calibration_bins))
+        # INT8 bias correction measured +0.1 COCO mAP on the RF-DETR Small backbone; BF16 needs none.
         .with_bias_correction(BiasCorrectionType.REGULAR if precision == "int8" else BiasCorrectionType.NONE)
         .with_channel_equalization(False)
         .with_smooth_quant(False)
@@ -95,6 +115,7 @@ def _quantize_component(
     temporary_dir: Path,
     name: str,
     precision: str,
+    calibration_bins: int,
     inputs: dict[str, np.ndarray],
     input_shapes: dict[str, tuple[int, ...]],
     output_names: list[str],
@@ -108,7 +129,7 @@ def _quantize_component(
     )
     quantized = loaded.quantize(
         calibration_data=data,
-        quantization_config=_quantization(precision),
+        quantization_config=_quantization(precision, calibration_bins),
         model_name=name,
         log_level=logging.INFO,
     )
@@ -306,6 +327,7 @@ def _compile_backbone(
     evaluation_names: tuple[str, ...],
     temporary_dir: Path,
     precision: str,
+    calibration_bins: int,
 ) -> None:
     calibration_images = load_images(dataset, calibration_names)
     backbone, build_dir = _quantize_component(
@@ -313,8 +335,9 @@ def _compile_backbone(
         temporary_dir,
         f"{MODEL_ID}_backbone_{PROFILE_ID}",
         precision,
+        calibration_bins,
         {INPUT: calibration_images},
-        {INPUT: (1, 3, 512, 512)},
+        {INPUT: tuple(INPUT_SHAPE)},
         [FEATURES, SCORES, BOXES],
     )
     _compile_component(backbone, build_dir, "backbone", precision)
@@ -335,6 +358,7 @@ def _compile_transformer(
     graph: Path,
     temporary_dir: Path,
     precision: str,
+    calibration_bins: int,
     fidelity_config: dict[str, Any],
 ) -> None:
     with np.load(temporary_dir / "backbone_outputs.npz") as boundaries:
@@ -349,8 +373,9 @@ def _compile_transformer(
             temporary_dir,
             f"{MODEL_ID}_transformer_{PROFILE_ID}",
             precision,
+            calibration_bins,
             {FEATURES: calibration_features, PROPOSALS: calibration_proposals},
-            {FEATURES: (1, 256, 32, 32), PROPOSALS: (1, 300, 4)},
+            {name: tuple(BOUNDARY_SHAPES[name]) for name in (FEATURES, PROPOSALS)},
             OUTPUTS,
         )
         _compile_component(transformer, build_dir, "transformer", precision)
@@ -424,11 +449,9 @@ def compile_model(
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     temporary_root = os.environ.get("RUNNER_TEMP")
-    with tempfile.TemporaryDirectory(prefix="rf-detr-small-", dir=temporary_root) as temporary:
+    with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=temporary_root) as temporary:
         temporary_dir = Path(temporary)
-        graphs_dir = temporary_dir / "graphs"
-        backbone_graph = graphs_dir / "rf_detr_small_backbone.onnx"
-        transformer_graph = graphs_dir / "rf_detr_small_transformer.onnx"
+        _, backbone_graph, transformer_graph = graph_paths(temporary_dir / "graphs")
         _run_phase(
             "RF-DETR graph preparation",
             _prepare_graphs_and_reference,
@@ -450,6 +473,7 @@ def compile_model(
             evaluation_names,
             temporary_dir,
             str(bindings["backbone"]["precision"]),
+            int(bindings["backbone"]["calibration_bins"]),
         )
         _run_phase(
             "RF-DETR transformer compilation and fidelity",
@@ -457,6 +481,7 @@ def compile_model(
             transformer_graph,
             temporary_dir,
             str(bindings["transformer"]["precision"]),
+            int(bindings["transformer"]["calibration_bins"]),
             fidelity_config,
         )
         backbone_archive_source = _component_archive(temporary_dir, "backbone")

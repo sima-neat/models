@@ -46,9 +46,10 @@ used during compilation and fidelity validation.
 
 The registry declares one `modalix_int8_bf16` build profile. It compiles the
 backbone with INT8 quantization and regular bias correction, and the
-transformer with BF16 quantization. Both use histogram MSE calibration. The
-grouped `rf_detr` invocation emits separate `backbone` and `transformer` MPK
-archives plus their shared compile manifest.
+transformer with BF16 quantization. Both use histogram MSE calibration with
+2,048 bins, set by `calibration_bins` in `model.yaml`. The grouped `rf_detr`
+invocation emits separate `backbone` and `transformer` MPK archives plus their
+shared compile manifest.
 
 ## Quality and performance
 
@@ -68,7 +69,7 @@ The source is the RF-DETR Small checkpoint on Hugging Face, exported to ONNX
 with `transformers` 5.16.1. Normal compilation consumes the pinned ONNX and does
 not install the exporter dependencies.
 
-- [RF-DETR repository](https://github.com/roboflow/rf-detr/tree/9b009fa928d6218320439803d1da01869a85c072)
+- [RF-DETR source repository](https://github.com/roboflow/rf-detr/tree/9b009fa928d6218320439803d1da01869a85c072), for background; conversion uses the Hugging Face checkpoint
 - [RF-DETR Small model card](https://huggingface.co/Roboflow/rf-detr-small)
 - [Pinned checkpoint revision](https://huggingface.co/Roboflow/rf-detr-small/tree/3bdc465063270f99769da5a1b4c00c68bd2d439d)
 
