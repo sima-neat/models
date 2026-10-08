@@ -148,9 +148,9 @@ def make_benchmark_manifest(
 
     runtime = resolve_benchmark_runtime(root)
     load_component_performance_config(root, model_id, component_id, build_profile_id)
-    script = root / "models" / model_id / SCRIPTS_DIR / "benchmark.py"
+    script = root / "models" / model_id / SCRIPTS_DIR / "performance.py"
     if not script.is_file():
-        raise ValidationError(f"model benchmark script is missing: {script}")
+        raise ValidationError(f"model performance script is missing: {script}")
     actual_sha256, _ = sha256_file(component_dir / archive)
     if actual_sha256 != sha256:
         raise ValidationError("compiled artifact digest does not match the benchmark input")

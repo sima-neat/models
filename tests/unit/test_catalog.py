@@ -571,7 +571,7 @@ def test_build_fingerprint_ignores_model_documentation_and_board_stage_scripts(c
     model_dir = catalog_repository / "models" / "alpha"
     (model_dir / "README.md").write_text("documentation only\n", encoding="utf-8")
     (model_dir / "hero.png").write_bytes(b"documentation image only")
-    (model_dir / "scripts" / "benchmark.py").write_text("report = model.benchmark()\n", encoding="utf-8")
+    (model_dir / "scripts" / "performance.py").write_text("report = model.benchmark()\n", encoding="utf-8")
 
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
 
@@ -605,7 +605,7 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
     assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == validation_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
     before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    (model_dir / "scripts" / "benchmark.py").write_text("report = model.benchmark()\n")
+    (model_dir / "scripts" / "performance.py").write_text("report = model.benchmark()\n")
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
 
@@ -735,7 +735,7 @@ def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repositor
 
 @pytest.mark.parametrize("changed_input", [
     "models/alpha/model.yaml",
-    "models/alpha/scripts/benchmark.py",
+    "models/alpha/scripts/performance.py",
     ".github/workflows/Vulcan-Model-Benchmarking.yml",
     "tools/model_registry/core_benchmark.py",
     "tools/model_registry/benchmark_publication.py",

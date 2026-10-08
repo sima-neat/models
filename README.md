@@ -17,7 +17,7 @@ selection, MPK validation, checksumming, and publication remain shared.
 `model-registry` is an author-safe `sima-cli` package for local validation,
 verified input handling, variant inspection, and MPK checks. It is not a direct
 registry publishing client. Model authors compile with the model-owned
-`scripts/compile.py` and run each model’s `scripts/benchmark.py` on the DevKit; CI keeps
+`scripts/compile.py` and run each model’s `scripts/performance.py` on the DevKit; CI keeps
 the separate packaging and publication command surface.
 
 ## Local setup

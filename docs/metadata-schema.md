@@ -30,7 +30,7 @@ section, and model-owned code lives in `scripts/` beside it:
 models/<model-id>/
   model.yaml
   README.md
-  scripts/      compile.py, benchmark.py, and any model-specific helpers
+  scripts/      compile.py, performance.py, and any model-specific helpers
 ```
 
 ## Product identity and provenance

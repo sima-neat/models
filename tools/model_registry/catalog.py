@@ -48,8 +48,8 @@ _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
 # Board-stage scripts run after compilation; the benchmark fingerprint owns them.
-BENCHMARK_SCRIPT = f"{SCRIPTS_DIR}/benchmark.py"
-BOARD_STAGE_SCRIPTS = {BENCHMARK_SCRIPT, ACCURACY_SCRIPT}
+PERFORMANCE_SCRIPT = f"{SCRIPTS_DIR}/performance.py"
+BOARD_STAGE_SCRIPTS = {PERFORMANCE_SCRIPT, ACCURACY_SCRIPT}
 COMPILE_FINGERPRINT_SCHEMA = 3
 VALIDATION_FINGERPRINT_SCHEMA = 1
 BENCHMARK_FINGERPRINT_SCHEMA = 3
@@ -526,7 +526,7 @@ def benchmark_fingerprint(
         key=lambda item: item["id"],
     )
     model_dir = root / "models" / model_id
-    script = model_dir / BENCHMARK_SCRIPT
+    script = model_dir / PERFORMANCE_SCRIPT
     accuracy_files = {
         relative: hashlib.sha256((model_dir / relative).read_bytes()).hexdigest()
         for relative in (ACCURACY_SCRIPT, ACCURACY_REQUIREMENTS)
