@@ -10,6 +10,6 @@
     "version": "3.0.0"
   },
   "neat-core": {
-    "install_target": "core@release-3.0.0-prep"
+    "install_target": "core@develop"
   }
 }
