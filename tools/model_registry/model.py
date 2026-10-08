@@ -633,7 +633,7 @@ def validate_model(
         if engine == "model_registry":
             validate_accuracy_model_contract(model, entry, directory)
         if engine == DEVKIT_ACCURACY_ENGINE:
-            _validate_devkit_accuracy(entry, packages, model["benchmark"], directory, devkit_profiles)
+            _validate_devkit_accuracy(entry, packages, profiles, model["benchmark"], directory, devkit_profiles)
         if engine != "model_recipe":
             continue
         label = f"{directory}: validation {entry['id']!r}"
@@ -668,6 +668,7 @@ def validate_model(
 def _validate_devkit_accuracy(
     entry: dict[str, Any],
     packages: dict[str, dict[str, Any]],
+    profiles: dict[str, dict[str, Any]],
     benchmarks: list[dict[str, Any]],
     directory: Path,
     seen_profiles: set[str],
@@ -691,6 +692,17 @@ def _validate_devkit_accuracy(
     )
     if unbenchmarked:
         raise ValidationError(f"{label}: needs a component benchmark entry for {', '.join(unbenchmarked)}")
+    # CI benchmarks each compile invocation in its own job, and every job of the profile runs the accuracy step.
+    for profile_id in entry["build_profiles"]:
+        for invocation in compile_invocations_for(profiles[profile_id]):
+            members = set(invocation["components"])
+            benchmarked_here = any((component_id, profile_id) in benchmarked for component_id in members)
+            if benchmarked_here and not set(scoped) <= members:
+                raise ValidationError(
+                    f"{label}: compile invocation {invocation['id']!r} in build profile {profile_id!r} is "
+                    f"benchmarked without all of {', '.join(scoped)}; DevKit accuracy needs its components "
+                    "compiled in one invocation and benchmarked by no other"
+                )
     missing = set(entry.get("required_metrics", ())) - set(entry["metrics"])
     if missing:
         raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")

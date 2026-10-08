@@ -361,6 +361,15 @@ def test_devkit_accuracy_entry_is_validated(tmp_path: Path, entries: list[dict],
         validate_model(directory, model, SCHEMA)
 
 
+def test_devkit_accuracy_package_must_be_compiled_in_one_invocation() -> None:
+    directory = ROOT / "models" / "rf_detr_small"
+    model = load_model(directory)
+    # Without grouping, each component compiles and benchmarks in its own job, which lacks the other MPK.
+    del model["build_profiles"][0]["compile_invocations"]
+    with pytest.raises(ValidationError, match="compile invocation 'backbone' .* benchmarked without all of"):
+        validate_model(directory, model, SCHEMA)
+
+
 def _model_with_conversion(tmp_path: Path) -> tuple[Path, dict]:
     directory = tmp_path / "fixture_model"
     shutil.copytree(FIXTURES / "fixture_model", directory)
