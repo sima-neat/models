@@ -756,6 +756,8 @@ def test_devkit_accuracy_is_read_from_the_benchmark_run_and_rendered_per_metric(
     assert "Object.entries(report.metrics || {})" in script
     assert 'coco_map: "mAP 50–95"' in script
     assert "ACCURACY_METRIC_LABELS[name] || name" in script
+    # Units come from the published result, so the formatted value is escaped before insertion.
+    assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
     assert '"engine": "devkit_script"' in preview
     assert '"suite": "accuracy"' in preview
 

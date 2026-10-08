@@ -1210,7 +1210,7 @@ function accuracyMetricValue(metric) {
 function accuracyMetricTiles(report) {
   return Object.entries(report.metrics || {}).map(([name, metric], index) => {
     const reference = Number.isFinite(metric?.reference) ? `Reference ${accuracyMetricValue({ ...metric, value: metric.reference })}` : "";
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${accuracyMetricValue(metric)}</strong><small>${escapeHtml(reference)}</small></div>`;
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(reference)}</small></div>`;
   }).join("");
 }
 
