@@ -6,9 +6,9 @@ RF-DETR Small is a COCO object detector that accepts a normalized 512×512 RGB
 image and produces 300 boxes with 91 class scores. The Modalix package splits
 inference into independently deployable backbone and transformer components.
 Applications must select the 300 highest-scoring backbone proposals and gather
-their boxes on the A65 before invoking the transformer. Published fidelity
-measurements diagnose the compiled tensor pipeline but do not constitute
-detection-accuracy qualification.
+their boxes on the A65 before invoking the transformer. Detection accuracy is
+qualified by COCO mAP measured on a Modalix DevKit over the full COCO 2017
+validation split.
 
 ## Usage
 
@@ -61,6 +61,20 @@ detections, so fidelity does not gate publication.
 The benchmark script measures each MPK separately with three trials of 1,000
 samples. CI runs the backbone and transformer sequentially on one Modalix board
 and publishes one benchmark result for each component.
+
+On the same board and MPKs, `scripts/accuracy.py` then measures COCO detection
+accuracy on all 5,000 val2017 images. The current build scores mAP 50–95
+0.469, AP50 0.654, and AP75 0.502. The `coco_accuracy` result is published on
+the transformer's benchmark run, and the model browser shows it with the build.
+
+The script resizes each image to 512×512 with bilinear sampling and applies
+ImageNet normalization, runs the backbone, the CPU proposal bridge, and the
+transformer, and keeps the 300 highest-scoring box and class pairs with a score
+of at least 0.001. Boxes are clipped to the image, as in RF-DETR's current
+postprocessor. Roboflow added that clipping in
+[rf-detr#1168](https://github.com/roboflow/rf-detr/pull/1168); clipping can
+only raise IoU with a ground-truth box, so mAP reported by earlier upstream
+releases is not directly comparable.
 
 ## Source and license
 
@@ -153,3 +167,24 @@ calibrates the transformer, and writes:
 
 The published ONNX is retained for reuse. Partition graphs, intermediate
 tensors, generated models, and reports must remain outside Git.
+
+### DevKit accuracy
+
+The `coco_accuracy` validation entry declares the COCO 2017 `mini` dataset
+archive and the published metrics. On a Modalix DevKit, benchmark both
+components first so that `backbone/performance-test.json` and
+`transformer/performance-test.json` exist under one benchmark directory. Then
+run from the repository root, setting `REGISTRY_PYTHON` when `python3` cannot
+import `model_registry`:
+
+```bash
+benchmark_root=/media/nvme/neat-tests/rf-detr-benchmark
+scripts/run_model_accuracy.sh models/rf_detr_small modalix_int8_bf16 \
+  "$benchmark_root" /media/nvme/neat-tests/rf-detr-accuracy
+```
+
+The script installs `scripts/requirements-accuracy.txt` beside PyNeat's
+environment, extracts the archive under `/media/nvme/neat-tests/`, and removes
+both when it exits. See
+[Accuracy on the DevKit](../../docs/local-accuracy-development.md#accuracy-on-the-devkit)
+for the result format and publication.
