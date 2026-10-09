@@ -729,6 +729,53 @@ def test_directly_invoked_scripts_exist_and_are_executable() -> None:
         assert os.access(path, os.X_OK), f"{script} is not executable"
 
 
+FAKE_REGISTRY_PYTHON = """#!/usr/bin/env bash
+if [[ "$1" == "-m" && "$2" == "model_registry" ]]; then
+  case "$3" in
+    matrix) echo '{"include": [{"compile_invocation_id": "model", "component_ids": ["model"]}]}' ;;
+    fetch) echo '{"path": "/sources/model.onnx"}' ;;
+    fetch-calibration | fetch-fidelity-dataset) echo '{"path": "/datasets/coco"}' ;;
+  esac
+  exit 0
+fi
+exec python3 "$@"
+"""
+
+# Like the RF-DETR and YOLO recipes, refuse an output directory that already exists.
+STRICT_RECIPE = """import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", type=Path, required=True)
+args, _ = parser.parse_known_args()
+if args.output_dir.exists():
+    raise FileExistsError(f"output directory already exists: {args.output_dir}")
+args.output_dir.mkdir(parents=True)
+(args.output_dir / "compile-outputs.json").write_text("{}")
+"""
+
+
+def test_compile_runner_leaves_the_output_directory_to_the_recipe(tmp_path: Path) -> None:
+    model_dir = tmp_path / "repository" / "models" / "alpha"
+    (model_dir / "scripts").mkdir(parents=True)
+    (model_dir / "scripts" / "compile.py").write_text(STRICT_RECIPE, encoding="utf-8")
+    python = tmp_path / "python"
+    python.write_text(FAKE_REGISTRY_PYTHON, encoding="utf-8")
+    python.chmod(0o755)
+    output_root = tmp_path / "output"
+    stale = output_root / "alpha" / "fixture" / "stale.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}", encoding="utf-8")
+
+    subprocess.run(
+        [ROOT / "scripts" / "run_model_compilation.sh", model_dir, "fixture", "model", output_root],
+        check=True,
+        env={**os.environ, "MODEL_COMPILER_PYTHON": str(python), "MODEL_REGISTRY_CACHE_DIR": str(tmp_path / "cache")},
+    )
+
+    assert sorted(path.name for path in stale.parent.iterdir()) == ["compile-outputs.json", "compile-timing.json"]
+
+
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
     recipe = ROOT / "models" / "resnet_50" / "scripts" / "compile.py"
     tree = ast.parse(recipe.read_text(encoding="utf-8"))

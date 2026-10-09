@@ -77,8 +77,9 @@ if [[ -n "$DATASET" ]]; then
   dataset_args+=(--fidelity-dataset "$DATASET")
 fi
 
+# compile.py creates the output directory; some recipes refuse one that already exists.
 rm -rf "$PROFILE_OUTPUT_DIR"
-mkdir -p "$PROFILE_OUTPUT_DIR"
+mkdir -p "$(dirname "$PROFILE_OUTPUT_DIR")"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$PYTHON" "$MODEL_DIR/scripts/compile.py" \
   --model "$source_path" \
@@ -86,6 +87,10 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --build-profile "$BUILD_PROFILE_ID" \
   --compile-invocation "$COMPILE_INVOCATION_ID" \
   "${dataset_args[@]}"
+if [[ ! -d "$PROFILE_OUTPUT_DIR" ]]; then
+  echo "$MODEL_DIR/scripts/compile.py wrote no output directory $PROFILE_OUTPUT_DIR" >&2
+  exit 1
+fi
 printf '{"scope": "compile_recipe", "started_at": "%s", "finished_at": "%s"}\n' \
   "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_OUTPUT_DIR/compile-timing.json"
 
