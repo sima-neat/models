@@ -1,4 +1,3 @@
-schema_version: 2
 id: fixture_model
 display_name: Fixture Model
 description: Minimal valid schema fixture.

@@ -173,7 +173,7 @@ def _load_declarative_composition(
     path = f"{directory}: composition {declaration['id']!r}"
     document = composition_document(declaration)
     try:
-        schema = json.loads((schema_directory / "composition-v1.schema.json").read_text(encoding="utf-8"))
+        schema = json.loads((schema_directory / "composition.schema.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(f"{path}: could not load the composition schema: {exc}") from exc
     errors = sorted(
@@ -469,25 +469,11 @@ def validate_model(
 
         for invocation_id, invocation in invocations.items():
             grouped_components = [components[component_id] for component_id in invocation["components"]]
-            recipes = {component["recipe"] for component in grouped_components}
-            if len(recipes) != 1:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
-                    "components must share one recipe"
-                )
             source_identities = {source_identity(component["source"]) for component in grouped_components}
             if len(source_identities) != 1:
                 raise ValidationError(
                     f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
                     "components must share one source content identity"
-                )
-            source = grouped_components[0]["source"]
-            source_paths = {path for path, _ in source_members(source)}
-            package_paths = {package["path"] for package in invocation.get("python_packages", ())}
-            if package_paths - source_paths:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
-                    "python packages must be declared members of the shared source"
                 )
             runner_classes = {
                 effective_runner_class(profile, bindings[component_id])
@@ -567,6 +553,15 @@ def validate_model(
                 raise ValidationError(
                     f"{directory}: package {package_id!r} is incomplete for build profile {profile_id!r}: "
                     f"{', '.join(unavailable)}"
+                )
+            # Each compile invocation publishes the packages it completes.
+            if not any(
+                set(package["components"]) <= set(invocation["components"])
+                for invocation in compile_invocations_for(profiles[profile_id])
+            ):
+                raise ValidationError(
+                    f"{directory}: package {package_id!r} must compile {', '.join(package['components'])} "
+                    f"in one compile invocation of build profile {profile_id!r}"
                 )
 
     _check_folder_layout(directory)

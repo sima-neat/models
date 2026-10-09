@@ -1,7 +1,7 @@
 # Datasets for local model development
 
-Model development is not complete without the data used to calibrate and test
-the model. A model contribution must resolve the same registered dataset
+Model development is not complete without the data used to calibrate and
+measure the model. A model contribution must resolve the same registered dataset
 identity locally that trusted automation will use later. Do not replace it with
 an untracked directory, a convenient download, or a private archive whose
 contents cannot be reproduced.
@@ -11,14 +11,14 @@ The responsibilities are split across two repositories:
 | Repository | Owns |
 | --- | --- |
 | `sima-neat/dataset` | Dataset IDs and variants, Artifactory source locations, governance, deterministic preparation, and immutable publication policy. |
-| `sima-neat/models` | The exact dataset ID, variant, archive SHA-256 and size, split layout, model preprocessing, evaluation profiles, and metrics used by a model. |
+| `sima-neat/models` | The exact dataset ID, variant, archive SHA-256, and size a model uses, plus the model's preprocessing, sample selection, and metrics. |
 
 Dataset payloads belong in approved data storage, not Git. Model repositories
 contain only the contract needed to resolve and verify those bytes.
 
 ## Set up Artifactory access first
 
-Local calibration and accuracy work requires read access to the SiMa
+Local calibration, fidelity, and accuracy work requires read access to the SiMa
 Artifactory host at `artifacts.eng.sima.ai`. Before starting model work:
 
 1. Connect to the SiMa private network or VPN.
@@ -78,28 +78,32 @@ or bypass a checksum failure.
 
 ## Use the dataset through the model contract
 
-`model.yaml` declares calibration data in `calibrations` and accuracy data in a
-`validation` entry. Both declarations identify the same registered bytes with
-an ID, variant, SHA-256, and byte size. The validation entry additionally
-defines loaders and splits.
+`model.yaml` names registered data in three places, each with a dataset ID,
+variant, SHA-256, and byte size:
 
-During local work, use Model Registry to resolve inputs for the selected
-component/profile pair:
+| Declaration | Used by | Resolved with |
+| --- | --- | --- |
+| a `calibrations` entry with a `dataset` | `compile.py --dataset` | `model-registry fetch-calibration` |
+| a `fidelity` entry | `compile.py --fidelity-dataset` | `model-registry fetch-fidelity-dataset` |
+| an `accuracy` entry with `engine: devkit_script` | `accuracy.py --dataset` | `scripts/run_model_accuracy.sh` |
+
+Resolve the compile inputs for one component of a build:
 
 ```bash
 calibration_json="$(model-registry fetch-calibration \
   models/<model-id> --build-profile <profile-id> --component <component-id> --json)"
-accuracy_json="$(model-registry fetch-accuracy-dataset \
+fidelity_json="$(model-registry fetch-fidelity-dataset \
   models/<model-id> --build-profile <profile-id> --component <component-id> --json)"
 ```
 
-Those commands delegate registered dataset resolution to Dataset Registry and
-then verify the exact SHA-256 and size committed with the model. Pass the
-returned calibration path to the model-owned recipe as `--dataset`. Use the
-accuracy path with `model-registry evaluate`. Follow
-[Qualify locally](local-development.md) for the complete command
-sequence and [Local accuracy development](local-accuracy-development.md) for
-loader, split, profile, and result semantics.
+These commands delegate registered dataset resolution to Dataset Registry and
+then check the SHA-256 and size committed with the model.
+`scripts/run_model_compilation.sh` runs both and passes the paths to the
+recipe. On a DevKit, `scripts/run_model_accuracy.sh` resolves the accuracy
+dataset into a shared cache and extracts it for `accuracy.py`. Follow [Qualify
+locally](local-development.md) for the complete command sequence and
+[Accuracy and fidelity](local-accuracy-development.md) for the entry
+contracts.
 
 ## Introduce a dataset or variant that does not exist
 
@@ -175,11 +179,11 @@ before referencing it from a model.
 
 ### 6. Bind the reviewed dataset to the model
 
-Add the exact dataset ID, variant, archive SHA-256, size, loader, splits, and
-profiles to the model declarations. Then run the full required local workflow:
-resolve the registered archive, compile every submitted supported component/profile pair,
-complete applicable accuracy evaluation, verify the MPK, and benchmark that
-exact MPK on a compatible Modalix DevKit.
+Add the exact dataset ID, variant, archive SHA-256, and size to the
+calibration, fidelity, or accuracy declaration that uses it. Then run the full
+required local workflow: resolve the registered archive, compile every
+submitted build, verify its MPKs, and run its declared performance and
+accuracy stages on a compatible Modalix DevKit.
 
 ## Troubleshooting access
 

@@ -1,42 +1,50 @@
-# Synthetic model benchmarking
+# DevKit performance
 
-Each model owns `scripts/performance.py`. The script loads the compiled MPK through
-`pyneat.Model` and calls Core's benchmark API. Core owns synthetic inputs,
-warmup, latency and throughput measurement, power telemetry, and runner lifetime.
-There is no shared benchmark executor or model-specific timing loop.
+The performance stage measures each compiled component on a Modalix DevKit.
+Each model owns `scripts/performance.py`, which loads one MPK with
+`pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
+inputs, warmup, latency and throughput measurement, power telemetry, and runner
+lifetime. There is no shared benchmark executor and no model-specific timing
+loop.
 
-## Install on a DevKit
+## Set up a DevKit
 
-Use the Core install target in `deps/manifest.json`. CI verifies Platform 3.0.0
-before installing the `develop` package. The scripts use
-the existing `BenchmarkReport` fields; no Core extension is required.
-
-```bash
-sima-cli neat install --env production '<neat-core.install_target>'
-source ~/pyneat/bin/activate
-python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
-```
-
-## Run a model
-
-Run the model's own script on the DevKit, supplying its MPK and output report:
+The DevKit must run the platform version that `deps/manifest.json` pins, and
+the stage uses the Core package named by `neat-core.install_target` in that
+file. CI checks the platform version, then installs Core with:
 
 ```bash
-python models/resnet_50/scripts/performance.py \
-  /workspace/resnet_50_mpk.tar.gz /workspace/core-benchmark.json
+sima-cli neat install --env production --type minimal '<neat-core.install_target>'
+~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
 ```
 
-Every script follows the same pattern:
+The scripts use the existing `BenchmarkReport` fields; no Core extension is
+required.
+
+## The performance script
+
+`scripts/performance.py` takes `--mpk <archive>` and `--output <report>`:
+
+```bash
+~/pyneat/bin/python models/resnet_50/scripts/performance.py \
+  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/core-benchmark.json
+```
+
+Every model's script follows the same pattern:
 
 ```python
+import argparse
 import json
-import sys
 
 import pyneat
 
-model = pyneat.Model(sys.argv[1])
-report = model.benchmark()
-with open(sys.argv[2], "w", encoding="utf-8") as output:
+parser = argparse.ArgumentParser()
+parser.add_argument("--mpk", required=True)
+parser.add_argument("--output", required=True)
+args = parser.parse_args()
+
+report = pyneat.Model(args.mpk).benchmark()
+with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
         "core_version": pyneat.__version__,
         "latency_ms": report.latency_ms,
@@ -46,60 +54,66 @@ with open(sys.argv[2], "w", encoding="utf-8") as output:
     }, output, allow_nan=False)
 ```
 
-A failed call exits unsuccessfully. Preserve the log; a missing report is not a
-successful benchmark. Keep model archives and results outside Git.
+A failed call exits unsuccessfully. Keep the log: a missing report is not a
+successful benchmark. Keep archives and results outside Git.
+
+The script runs once for each component that a `benchmark` entry covers in the
+build profile. RF-DETR's backbone and transformer therefore produce separate
+results; their numbers are not a measured combined pipeline.
 
 ## Workload and measurements
 
-The workload is the default route selected by Core from the MPK, using Core's
-synthetic input and benchmark defaults. The raw report contains measurements.
-CI records the input shapes, batch size, preprocessing, postprocessing, and default
-sample configuration separately in its manifest using Core's model-inspection API.
-Model scripts must use these default model and benchmark options.
-RF-DETR's backbone and transformer each produce a separate result. Their numbers
-are not a measured combined pipeline.
+The workload is the default route Core selects from the MPK, with Core's
+synthetic inputs and default benchmark options. Model scripts must use those
+defaults. CI records the input shapes, batch size, preprocessing,
+postprocessing, and sample count separately, using Core's model-inspection API;
+that step loads the MPK but runs no inference.
 
-This changes the previous YOLO workload, which explicitly configured image
-preprocessing and BoxDecode. Default-MPK results are a new baseline and must not
-be treated as equivalent to those historical fused-pipeline measurements.
+Default-MPK results are a baseline of their own. Do not compare them with
+historical YOLO measurements that configured image preprocessing and
+BoxDecode explicitly.
 
 Core reports mean latency, throughput in logical inferences per second, average
-power, and total energy. The registry derives energy per logical inference by
-dividing total energy by the default sample count times the inspected compiled
-batch size. Missing power remains unavailable.
-RF-DETR still requires measured power and energy per inference for publication.
+power, and total energy. The registry derives energy per inference by dividing
+total energy by the sample count times the compiled batch size. Missing power
+stays unavailable. A `benchmark` entry's `required_metrics` must be present for
+publication; RF-DETR requires average power and energy per inference.
 
-Percentiles, initialization timings, peak MLA memory, and temperature traces are
-not exported by this Core API. New registry results mark those metrics unavailable;
-they are not copied from old results or estimated. Historical reports retain their
-original fields. Adding these measurements belongs in Core before Models consumes
-them.
+Percentiles, initialization timings, peak MLA memory, and temperature traces
+are not exported by this Core API. Results mark those metrics unavailable
+rather than estimating them or copying them from old results. Adding them
+belongs in Core before Models consumes them.
 
 ## CI and registry publication
 
-Each published compilation dispatches its benchmark on the branch it was built
-from, so the benchmark workflow and `model-registry` come from the same branch
-as the build. A benchmark run only accepts builds from its own branch.
+Model authors do not publish benchmark results directly. After a build
+compiles and publishes, the compile workflow starts **Vulcan Model
+Benchmarking** on the same branch for each build whose performance or accuracy
+stage key has no completed run. The DevKit has no publication credentials.
 
-CI verifies the dispatched component set and compiled archive digests, installs
-the pinned Core package, then invokes each model's script once per component.
-`model-registry import-core-benchmark` validates the raw Core report and packages
-it with compilation identity, script digest, source revision, runner build, and
-actual Core/Internals package versions. The CI metadata step loads the same MPK
-with default options to inspect its workload; it does not run inference. The
-importer never executes or times a model. A model with a `devkit_script`
-validation entry then measures its task accuracy with the same MPKs; see
-[Accuracy on the DevKit](local-accuracy-development.md#accuracy-on-the-devkit).
+On the DevKit, `scripts/run_model_performance.sh` handles each component:
 
-Model authors do not publish benchmark results directly.
-The board has no registry publication credentials. A separate hosted job validates
-the result set and publishes each schema-v5 report and log as a benchmark child
-of its immutable compilation. The script's JSON export is embedded unchanged in that
-result. Failures retain the available workflow evidence and are not published as
-successful measurements.
+1. `make-benchmark-manifest` writes `performance-test.json` with the
+   compilation's identity.
+2. `performance.py` writes `core-benchmark.json` and `benchmark.log`.
+3. The workload is recorded in the manifest.
+4. `import-core-benchmark` checks the report and writes
+   `performance-result.json`, following
+   [`performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result.schema.json)
+   (`schema_version` 5). It records the compilation identity, the script
+   digest, the source revision, and the actual Core and platform versions. It
+   never runs or times a model.
 
-The registry UI reads schemas 1–5, displays measured values with their units,
-marks absent metrics unavailable, and labels workloads in details and comparisons.
-A script or runtime dependency change invalidates benchmark fingerprints without
-forcing model recompilation. CI can restore the existing immutable MPKs for the
-new benchmark run.
+A separate hosted job validates the result set and publishes each result as a
+`model_benchmark` run under the component's compile run. The run records the
+performance stage key and carries a `performance-result` artifact, the
+benchmark log, a `performance/model-synthetic` test result, and the
+measurements. The model browser reads performance results with
+`schema_version` 1 through 5, shows measured values with their units, and marks
+absent metrics unavailable. A failure keeps its workflow evidence and is not
+published as a successful measurement.
+
+Because the performance stage has its own key, editing `performance.py`, a
+`benchmark` entry, or the DevKit runtime pin remeasures performance from the
+published MPKs without recompiling. See [what a change
+reruns](adding-a-model.md#9-know-what-a-change-reruns).

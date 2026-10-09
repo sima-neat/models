@@ -130,10 +130,6 @@ def taxonomy_sha256(taxonomy: dict[str, Any]) -> str:
 
 
 def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any]) -> dict[str, Any]:
-    schema_version = model.get("schema_version")
-    if schema_version != 2:
-        raise ValidationError("model schema_version 2 is required; taxonomy categorization is mandatory")
-
     model_type = model["model_type"]
     if model_type not in taxonomy["model_types"]:
         raise ValidationError(f"model_type references unknown taxonomy ID {model_type!r}")

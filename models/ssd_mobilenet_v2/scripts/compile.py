@@ -23,8 +23,6 @@ from calibration import (
     validate_dataset,
 )
 from model_registry.dependencies import resolve_model_compiler
-from model_registry.fetch import Fetcher
-from model_registry.source import SourceSpec
 from surgery import EXPECTED_CONVOLUTION_COUNT, INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_model
 
 LOG = logging.getLogger("ssd_mobilenet_v2.compile")
@@ -58,25 +56,6 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     if parameters.get("calibration_samples") != len(CALIBRATION_IMAGE_IDS):
         raise ValueError(f"SSD variants require exactly {len(CALIBRATION_IMAGE_IDS)} calibration samples")
     return variant
-
-
-def calibration_source() -> SourceSpec:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
-    if calibration.get("status") != "ready":
-        raise ValueError("SSD-MobileNet V2 requires pinned representative calibration data")
-    return SourceSpec.from_mapping(calibration["source"])
-
-
-def resolve_calibration_path() -> Path:
-    override = os.environ.get("CALIBRATION_PATH", "").strip()
-    if override:
-        path = Path(override).expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"calibration snapshot does not exist: {path}")
-        return path
-    path, _cache_hit = Fetcher().fetch(calibration_source())
-    return path
 
 
 def _safe_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -340,7 +319,7 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
     }
 
 
-def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
+def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     variant = variant_config(variant_id)
     precision = str(variant["parameters"]["precision"])
 
@@ -361,7 +340,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     from afe.load.importers.general_importer import ImporterParams, ModelFormat
     from sima_utils.data.data_generator import DataGenerator
 
-    calibration_path = resolve_calibration_path()
     calibration, validation = validate_dataset(calibration_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v2-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
@@ -423,16 +401,18 @@ def main() -> int:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--component", required=True)
+    parser.add_argument("--compile-invocation", required=True)
+    parser.add_argument("--dataset", type=Path, required=True, help="verified calibration snapshot")
     args = parser.parse_args()
-    if args.component != "model":
-        parser.error(f"unsupported component: {args.component}")
+    if args.compile_invocation != "model":
+        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile)
+    output_dir = args.output_dir.expanduser().resolve() / "model"
+    archive = compile_model(source, output_dir, args.build_profile, args.dataset.expanduser().resolve())
     LOG.info("Compiled MPK: %s", archive)
     return 0
 

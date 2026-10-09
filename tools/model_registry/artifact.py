@@ -26,22 +26,19 @@ def validate_compile_outputs(
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(f"{manifest_file}: could not load compile outputs: {exc}") from exc
 
-    version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-    fields = {"schema_version", "model_id", "build_profile_id", "compile_invocation_id", "outputs"}
-    if version == 2:
+    # A grouped invocation compiles several components from one derived graph set, so it must also
+    # record each component's derived graph and the invocation's correctness result.
+    grouped = len(component_ids) > 1
+    fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
+    if grouped:
         fields.update({"derived_graphs", "correctness"})
     if not isinstance(manifest, dict) or set(manifest) != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {
-        "schema_version": version,
         "model_id": model_id,
         "build_profile_id": build_profile_id,
         "compile_invocation_id": compile_invocation_id,
     }
-    if version not in {1, 2}:
-        raise ValidationError(f"{manifest_file}: unsupported schema_version {version!r}")
-    if len(component_ids) > 1 and version != 2:
-        raise ValidationError(f"{manifest_file}: grouped compile outputs require schema_version 2")
     for field, expected in identity.items():
         if manifest.get(field) != expected:
             raise ValidationError(f"{manifest_file}: {field} must be {expected!r}, found {manifest.get(field)!r}")
@@ -95,7 +92,7 @@ def validate_compile_outputs(
         raise ValidationError(f"{manifest_file}: output tree contains undeclared MPK archives")
 
     result = {**identity, "outputs": resolved}
-    if version == 2:
+    if grouped:
         graphs = manifest["derived_graphs"]
         if not isinstance(graphs, list) or len(graphs) != len(component_ids):
             raise ValidationError(f"{manifest_file}: derived_graphs must cover every component")
@@ -145,6 +142,39 @@ def validate_compile_outputs(
     return result
 
 
+def record_compile_outputs(
+    output_root: str | Path,
+    *,
+    model_id: str,
+    build_profile_id: str,
+    compile_invocation_id: str,
+    component_ids: list[str],
+) -> Path:
+    """Write compile-outputs.json for a recipe that wrote one MPK per component directory and no manifest."""
+    root = Path(output_root).expanduser().resolve()
+    outputs = []
+    for component_id in component_ids:
+        archives = sorted((root / component_id).glob("*_mpk.tar.gz"))
+        if len(archives) != 1:
+            raise ValidationError(f"expected one MPK in {root / component_id}, found {len(archives)}")
+        outputs.append({
+            "component_id": component_id,
+            "mpk_path": f"{component_id}/{archives[0].name}",
+            "mpk_sha256": sha256_file(archives[0])[0],
+        })
+    manifest = root / "compile-outputs.json"
+    manifest.write_text(
+        json.dumps({
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "compile_invocation_id": compile_invocation_id,
+            "outputs": outputs,
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def verify_mpk(
     output_dir: str | Path,
     *,
@@ -179,7 +209,6 @@ def verify_mpk(
         "archive": archive.name,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "provenance": provenance or {},
-        "schema_version": 1,
         "sha256": digest,
         "size_bytes": size,
         "status": "success",

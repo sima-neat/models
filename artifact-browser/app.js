@@ -257,6 +257,25 @@ async function api(path) {
   return payload;
 }
 
+// DevKit accuracy is its own registry run, keyed by the accuracy key the catalog records on the
+// build that reports the result.
+async function devkitAccuracy(accuracyKey) {
+  if (!accuracyKey) return null;
+  const repo = state.repository;
+  const query = new URLSearchParams({ run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1" });
+  try {
+    const { run } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`);
+    return await api(`/v1/runs/${run.id}/accuracy/latest`);
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
+function catalogBuildForRun(runId) {
+  return state.models.flatMap((model) => model.builds || []).find((build) => build.run_id === runId);
+}
+
 async function apiText(path) {
   const response = await fetch(`${state.apiBase}${path}`, {
     headers: { Accept: "text/markdown" },
@@ -979,7 +998,7 @@ async function selectRun(runId, { updateUrl = true } = {}) {
     if (!detail) {
       const packageRun = catalogRun && fullPackageForRun(catalogRun);
       requestedPackageId = packageRun?.run_id || null;
-      const [summary, provenance, tests, metrics, benchmark, accuracy, packageSummary] = await Promise.all([
+      const [summary, provenance, tests, metrics, benchmark, accuracy, devkit, packageSummary] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
         api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
@@ -990,13 +1009,14 @@ async function selectRun(runId, { updateUrl = true } = {}) {
           if (error.status === 404) return null;
           throw error;
         }),
+        devkitAccuracy(catalogBuildForRun(runId)?.validation_fingerprint),
         packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : Promise.resolve(null),
       ]);
-      // DevKit accuracy is published on the benchmark run, beside the measurements it was taken with.
+      // Builds measured before accuracy became its own run carry it on the benchmark run.
       const benchmarkTests = benchmark?.benchmark_run?.id
         ? await api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
         : null;
-      detail = { summary, provenance, tests, metrics, benchmark, benchmarkTests, accuracy, packageSummary };
+      detail = { summary, provenance, tests, metrics, benchmark, benchmarkTests, accuracy, devkit, packageSummary };
       state.detailCache.set(runId, detail);
     }
     const currentPackage = fullPackageForRun(detail.summary.run);
@@ -1184,10 +1204,10 @@ const ACCURACY_METRIC_LABELS = {
   coco_ap75: "AP75",
 };
 
-function accuracyPanel(payload, tests = [], benchmarkTests = []) {
+function accuracyPanel(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
   const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
-  const devkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
-  const report = payload?.result || fallback?.summary || devkit?.summary;
+  const legacyDevkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
+  const report = devkitPayload?.result || legacyDevkit?.summary || payload?.result || fallback?.summary;
   if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report));
   if (!report || report.schema_version !== 1) return "";
   const candidate = report.metrics?.candidate || {};
@@ -1458,7 +1478,7 @@ function renderDetail(detail) {
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
   const benchmarkMarkup = benchmarkPanel(detail.benchmark);
-  const accuracyMarkup = accuracyPanel(detail.accuracy, tests, detail.benchmarkTests?.test_results || []);
+  const accuracyMarkup = accuracyPanel(detail.accuracy, tests, detail.benchmarkTests?.test_results || [], detail.devkit);
   const fidelityMarkup = fidelityPanel(tests, run.id);
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
   const primaryArtifact = artifacts[0];

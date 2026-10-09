@@ -147,7 +147,7 @@ test -e "$resolved_coco_archive"
 python models/rf_detr_medium/scripts/compile.py \
   --model "$verified_model" \
   --dataset "$resolved_coco_archive" \
-  --correctness-dataset "$resolved_coco_archive" \
+  --fidelity-dataset "$resolved_coco_archive" \
   --output-dir "$output_dir" \
   --build-profile modalix_int8_bf16 \
   --compile-invocation rf_detr

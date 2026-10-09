@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -44,15 +43,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     return {**profile, "parameters": binding["parameters"]}
 
 
-def calibration_source() -> SourceSpec:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
-    if calibration.get("status") != "ready":
-        raise ValueError("YOLO26 tiny-drone compilation requires pinned calibration data")
-    return SourceSpec.from_mapping(calibration["source"])
-
-
-def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
+def compile_variant(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     variant = variant_config(variant_id)
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") != "int8":
@@ -65,13 +56,6 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str) -> Path:
             f"expected {parameters['expected_convolutions']}, found {source_audit['convolution_count']}"
         )
 
-    calibration_override = os.environ.get("CALIBRATION_PATH", "").strip()
-    if calibration_override:
-        calibration_path = Path(calibration_override).expanduser().resolve()
-        if not calibration_path.is_file():
-            raise FileNotFoundError(f"calibration snapshot does not exist: {calibration_path}")
-    else:
-        calibration_path, _cache_hit = Fetcher().fetch(calibration_source())
     calibration, calibration_report = validate_calibration(
         calibration_path,
         contract,
@@ -136,14 +120,16 @@ def main() -> int:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--component", required=True)
+    parser.add_argument("--compile-invocation", required=True)
+    parser.add_argument("--dataset", type=Path, required=True, help="verified calibration snapshot")
     args = parser.parse_args()
-    if args.component != "model":
-        parser.error(f"unsupported component: {args.component}")
+    if args.compile_invocation != "model":
+        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    archive = compile_variant(source, args.output_dir.expanduser().resolve(), args.build_profile)
+    output_dir = args.output_dir.expanduser().resolve() / "model"
+    archive = compile_variant(source, output_dir, args.build_profile, args.dataset.expanduser().resolve())
     print(archive)
     return 0
 

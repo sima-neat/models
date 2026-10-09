@@ -78,37 +78,6 @@ def test_compile_invocation_can_group_components_with_shared_inputs() -> None:
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_compile_invocation_declares_python_packages_from_shared_source() -> None:
-    model = _two_component_model()
-    original = model["components"][0]["source"]
-    source = {
-        "type": "file_set",
-        "entrypoint": "model.onnx",
-        "files": [
-            {"path": "model.onnx", **{key: value for key, value in original.items() if key != "type"}},
-            {
-                "path": "exporter.whl",
-                "uri": original["uri"],
-                "sha256": original["sha256"],
-                "size_bytes": original["size_bytes"],
-            },
-        ],
-    }
-    for component in model["components"]:
-        component["source"] = copy.deepcopy(source)
-    invocation = {
-        "id": "combined",
-        "components": ["model", "second_model"],
-        "python_packages": [{"path": "exporter.whl", "imports": ["exporter"]}],
-    }
-    model["build_profiles"][0]["compile_invocations"] = [invocation]
-
-    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-    invocation["python_packages"][0]["path"] = "missing.whl"
-    with pytest.raises(ValidationError, match="python packages must be declared members"):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
 @pytest.mark.parametrize(
     ("invocations", "expected"),
     [
@@ -143,7 +112,6 @@ def test_compile_invocation_rejects_unsupported_component() -> None:
 @pytest.mark.parametrize(
     ("change", "expected"),
     [
-        (lambda model: model["components"][1].update({"recipe": "scripts/other.py"}), "share one recipe"),
         (
             lambda model: model["components"][1]["source"].update({"sha256": "b" * 64}),
             "share one source content identity",
@@ -212,7 +180,6 @@ def test_declarative_composition_validates_ports_and_package_contents() -> None:
         {
             "id": "pipeline",
             "type": "declarative",
-            "schema_version": 1,
             "components": [
                 {"id": "first", "component": "model", "entrypoint": "default"},
                 {"id": "second", "component": "second_model", "entrypoint": "default"},
@@ -224,6 +191,7 @@ def test_declarative_composition_validates_ports_and_package_contents() -> None:
             "outputs": [{"name": "output", "from": {"component": "second", "output": "output"}}],
         }
     ]
+    model["build_profiles"][0]["compile_invocations"] = [{"id": "combined", "components": ["model", "second_model"]}]
     model["packages"][0]["components"] = ["model", "second_model"]
     model["packages"][0]["composition"] = "pipeline"
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
@@ -240,10 +208,22 @@ def test_unapproved_https_host_is_a_validation_error() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_missing_recipe_script_fails() -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["components"][0]["recipe"] = "scripts/missing.py"
+def test_missing_compile_script_fails(tmp_path: Path) -> None:
+    directory = tmp_path / "fixture_model"
+    shutil.copytree(FIXTURES / "fixture_model", directory)
+    (directory / "scripts" / "compile.py").unlink()
     with pytest.raises(ValidationError, match="referenced file does not exist"):
+        validate_model(directory, load_model(directory), SCHEMA)
+
+
+def test_package_components_must_compile_in_one_invocation() -> None:
+    model = _two_component_model()
+    model["build_profiles"][0]["compile_invocations"] = [
+        {"id": "first", "components": ["model"]},
+        {"id": "second", "components": ["second_model"]},
+    ]
+    model["packages"][0]["components"] = ["model", "second_model"]
+    with pytest.raises(ValidationError, match="in one compile invocation"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
@@ -492,7 +472,6 @@ def test_yaml_uses_safe_loader(tmp_path: Path) -> None:
 
 def test_catalog_model_is_valid() -> None:
     model = load_and_validate_model(ROOT / "models" / "resnet_50", SCHEMA)
-    assert model["schema_version"] == 2
     assert model["tasks"] == ["image_classification"]
     categorization = validate_model_categorization(model, load_taxonomy(TAXONOMY))
     assert categorization is not None
@@ -540,12 +519,11 @@ def test_model_rejects_obsolete_taxonomy_version() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 
-def test_legacy_schema_is_rejected_even_without_category_fields() -> None:
+def test_category_fields_are_required() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["schema_version"] = 1
     for field in ("model_type", "tasks", "modalities", "architecture"):
         model.pop(field)
-    with pytest.raises(ValidationError, match="schema_version.*2 was expected"):
+    with pytest.raises(ValidationError, match="'model_type' is a required property"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 

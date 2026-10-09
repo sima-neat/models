@@ -39,7 +39,7 @@ deviation declared in `model.yaml`. The output is one FP32 tensor containing
 | Build profile | Precision | Purpose |
 | --- | --- | --- |
 | `modalix_bf16` | BF16 | Compiler canary; no accuracy measurement |
-| `modalix_int8` | INT8 | Quantized build with deterministic accuracy measurement |
+| `modalix_int8` | INT8 | Quantized build with DevKit accuracy measurement |
 
 Both profiles use the repository-wide Model Compiler version pinned in
 `deps/manifest.json`, apply direct-MLA tessellation, and produce one directly
@@ -47,17 +47,20 @@ consumable MPK archive for the `model` component.
 
 ## Quality and performance
 
-INT8 correctness uses the registered `imagenet-2012/mini` archive. It contains
-500 calibration images and a balanced 5,000-image validation proxy with five
-images for every ImageNet-1k class. The regular CI profile evaluates 500 images;
-the qualification profile evaluates all 5,000.
+Both builds report numerical fidelity: during compilation, the recipe compares
+the compiled model's logits with the FP32 source on 50 seeded images from the
+validation split of the registered `imagenet-2012/mini` archive. Fidelity is a
+diagnostic measurement, not task accuracy.
 
-Reports record the selected profile, status, evaluated and available sample
-counts, deterministic selection digest, worker count, artifact and dataset
-hashes, top-1 and top-5 accuracy, agreement, and FP32 deltas. These results are
-provisional because calibration and validation currently overlap. BF16 uses one
-zero-valued sample only to satisfy the compiler quantization entrypoint and does
-not run an accuracy measurement.
+The INT8 build also measures ImageNet top-1 and top-5 accuracy on a Modalix
+DevKit with its MPK, over the validation split of the same archive. That split
+holds five images for each of the 1,000 classes. The result is provisional.
+INT8 calibration uses the archive's separate 500-image calibration split. BF16
+uses one zero-valued sample only to satisfy the compiler quantization
+entrypoint and has no accuracy measurement.
+
+Both builds are benchmarked on a Modalix DevKit with Neat Core's default
+synthetic workload.
 
 ## Source and license
 
@@ -71,43 +74,30 @@ full Hugging Face repository revision and verified by size and SHA-256 in
 
 ### Compilation
 
-Resolve the registered dataset, then compile the verified ONNX in the pinned
-Model Compiler environment:
+In the pinned Model Compiler environment, compile one build with the shared
+runner script. It resolves the source, the calibration archive, and the
+fidelity archive, runs `scripts/compile.py`, and validates the MPK:
 
 ```bash
-source_json="$(model-registry fetch models/resnet_50 --component model --json)"
-verified_model="$(python -c 'import json,sys; print(json.load(sys.stdin)["path"])' \
-  <<<"$source_json")"
-dataset="$(dataset-registry resolve imagenet-2012 --variant mini | python -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
-python models/resnet_50/scripts/compile.py \
-  --model "$verified_model" \
-  --dataset "$dataset" \
-  --output-dir /tmp/resnet50-int8 \
-  --build-profile modalix_int8 \
-  --component model
+scripts/run_model_compilation.sh models/resnet_50 modalix_int8 model /tmp/resnet50
 ```
 
-The Vulcan recipe must run after `activate-model-compiler` in the same
-interactive shell so executables such as `mla-masm` and their runtime libraries
-remain available.
+The MPK and `fidelity.json` land in `/tmp/resnet50/resnet_50/modalix_int8/model/`.
+Use `modalix_bf16` for the BF16 build. The recipe must run after
+`activate-model-compiler` in the same interactive shell so executables such as
+`mla-masm` and their runtime libraries remain available.
 
-### Validation
+### Accuracy
 
-Run the regular correctness profile after compilation:
+On a Modalix DevKit, measure the INT8 build's accuracy from that compile
+output:
 
 ```bash
-model-registry evaluate models/resnet_50 \
-  --build-profile modalix_int8 \
-  --component model \
-  --reference-model "$verified_model" \
-  --candidate-model /tmp/resnet50-int8/resnet_50_modalix_int8.sima \
-  --dataset "$dataset" \
-  --profile regular \
-  --workers 4 \
-  --output /tmp/resnet50-int8/accuracy.json
+REGISTRY_PYTHON=<python with model-registry and dataset-registry> \
+  scripts/run_model_accuracy.sh models/resnet_50 modalix_int8 /tmp/resnet50 /tmp/resnet50-accuracy
 ```
 
-Use `--profile qualification` for the full 5,000-image proxy. Vulcan uses 500
-samples by default; a manual dispatch may set `accuracy_samples` to `5000` for
-an on-demand qualification run. Generated models and reports must remain
-outside Git.
+The script resolves the dataset, runs `scripts/accuracy.py` on all 5,000
+validation images, and writes `accuracy-result.json`. See
+[Accuracy on the DevKit](../../docs/local-accuracy-development.md#accuracy-on-the-devkit).
+Generated models and reports must remain outside Git.

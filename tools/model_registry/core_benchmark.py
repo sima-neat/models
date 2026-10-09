@@ -16,6 +16,7 @@ from .benchmark_publication import benchmark_identity_document, load_benchmark_r
 from .errors import ValidationError
 from .fetch import sha256_file
 from .registry import canonical_sha256
+from .stages import PERFORMANCE_FINGERPRINT_VERSION
 
 CORE_UNITS = {
     "latency_avg_ms": "ms",
@@ -66,7 +67,7 @@ def runner_environment() -> dict[str, Any]:
         "board_model": "Modalix",
         "machine": platform.machine(),
         "kernel_release": platform.release(),
-        "fingerprint_version": 2,
+        "fingerprint_version": PERFORMANCE_FINGERPRINT_VERSION,
         "cpu_count": os.cpu_count(),
         "cpu_governor": (
             Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip()

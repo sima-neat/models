@@ -1,28 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/sima-neat/models/schemas/performance-result-v3.schema.json",
-  "title": "SiMa Neat synthetic model performance result v3",
+  "$id": "https://github.com/sima-neat/models/schemas/performance-result.schema.json",
+  "title": "SiMa Neat synthetic model performance result",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version", "status", "benchmark_type", "tool", "identity", "timestamp_utc",
     "model", "compatibility", "configuration", "environment", "power_measurement",
-    "metrics", "trials", "orchestration", "provenance"
+    "metrics", "trials", "orchestration", "provenance", "core_report"
   ],
   "properties": {
-    "schema_version": {"const": 3},
+    "schema_version": {"const": 5},
     "status": {"enum": ["passed", "error"]},
     "benchmark_type": {"const": "model.synthetic"},
     "tool": {
       "type": "object", "required": ["name", "version"], "additionalProperties": false,
-      "properties": {"name": {"const": "benchmarker"}, "version": {"type": "string", "minLength": 1}}
+      "properties": {"name": {"const": "pyneat.Model.benchmark"}, "version": {"type": "string", "minLength": 1}}
     },
     "identity": {
       "type": "object", "additionalProperties": false,
       "required": ["algorithm", "canonicalization_version", "fingerprint"],
       "properties": {
         "algorithm": {"const": "sha256"},
-        "canonicalization_version": {"const": 3},
+        "canonicalization_version": {"const": 5},
         "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
       }
     },
@@ -32,9 +32,10 @@
       "enum": [null, "configuration", "compatibility", "model", "benchmark", "infrastructure"]
     },
     "model": {
-      "type": "object", "required": ["id", "variant_id", "path", "sha256", "uri", "contract"],
+      "type": "object", "required": ["id", "build_profile_id", "component_id", "path", "sha256", "uri", "contract"],
       "properties": {
-        "id": {"type": ["string", "null"]}, "variant_id": {"type": ["string", "null"]},
+        "id": {"type": ["string", "null"]}, "build_profile_id": {"type": ["string", "null"]},
+        "component_id": {"type": ["string", "null"]},
         "path": {"type": ["string", "null"]},
         "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "uri": {"type": ["string", "null"]}, "contract": {"type": ["object", "null"]},
@@ -52,7 +53,12 @@
       }
     },
     "configuration": {"type": ["object", "null"]},
-    "environment": {"type": "object"},
+    "environment": {"type": "object", "required": ["fingerprint", "fingerprint_version"],
+      "properties": {
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fingerprint_version": {"const": 2}
+      }
+    },
     "power_measurement": {"type": "object"},
     "metrics": {
       "type": "object",
@@ -106,6 +112,13 @@
       }
     },
     "provenance": {"type": "object"},
+    "core_report": {"type": "object", "required": ["core_version", "latency_ms", "fps", "avg_power_watts", "energy_joules"],
+      "properties": {
+        "core_version": {"type": "string", "minLength": 1},
+        "latency_ms": {"type": "number"}, "fps": {"type": "number"},
+        "avg_power_watts": {"type": "number"}, "energy_joules": {"type": "number"}
+      }
+    },
     "error": {
       "type": "object",
       "additionalProperties": false,

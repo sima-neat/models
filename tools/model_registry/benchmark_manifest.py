@@ -44,10 +44,9 @@ def validate_benchmark_components(
     staged_path = output_root / "registry-staged.json"
     if staged_path.is_file():
         staged = _load_json(staged_path, "registry staging manifest")
-        expected_fields = {"schema_version", "model_id", "build_profile_id", "compile_invocation_id", "outputs"}
+        expected_fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
         if set(staged) != expected_fields or any(
             staged.get(field) != expected for field, expected in {
-                "schema_version": 1,
                 "model_id": model_id,
                 "build_profile_id": build_profile_id,
                 "compile_invocation_id": compile_invocation_id,
@@ -79,8 +78,10 @@ def validate_benchmark_components(
             compile_invocation_id=compile_invocation_id,
             component_ids=invocation["component_ids"],
         )
-    if not component_ids or component_ids != invocation["benchmark_component_ids"]:
-        raise ValidationError("dispatched benchmark components do not match the declared benchmark entries")
+    # A reused build measures only the components whose performance is missing; an accuracy-only run measures none.
+    declared = invocation["benchmark_component_ids"]
+    if len(set(component_ids)) != len(component_ids) or component_ids != [c for c in declared if c in component_ids]:
+        raise ValidationError("dispatched benchmark components must be declared benchmark entries, in declared order")
 
 
 def load_component_performance_config(
@@ -155,7 +156,6 @@ def make_benchmark_manifest(
     if actual_sha256 != sha256:
         raise ValidationError("compiled artifact digest does not match the benchmark input")
     manifest = {
-        "schema_version": 1,
         "model": {
             "id": model_id,
             "build_profile_id": build_profile_id,

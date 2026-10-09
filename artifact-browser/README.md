@@ -40,7 +40,7 @@ To preview the complete ResNet-50 accuracy and schema-v4 benchmark UI without a
 registry or DevKit connection, run:
 
 ```bash
-python3 scripts/preview_artifact_browser.py
+python3 artifact-browser/preview.py
 ```
 
 Open the URL printed by the script. The local server provides a realistic model

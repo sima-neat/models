@@ -1,4 +1,3 @@
-schema_version: 2
 id: ssd_mobilenet_v1
 display_name: SSD-MobileNet V1 300x300
 description: COCO SSD-MobileNet V1 raw box and class predictor heads for Neat-owned decode and NMS.

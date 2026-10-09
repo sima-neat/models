@@ -65,6 +65,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
         build_profile_id: group.profile,
         component_id: component,
         artifact_suffix: catalogBuild?.artifact_suffix,
+        validation_fingerprint: catalogBuild?.validation_fingerprint,
         toolchain_name: run.toolchain_name,
         toolchain_version: run.toolchain_version,
         target_platform: run.target_platform,

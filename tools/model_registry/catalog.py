@@ -1,31 +1,21 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import subprocess
-import tarfile
-import tempfile
-from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-from .accuracy_config import DEVKIT_ACCURACY_ENGINE
+from .accuracy_config import find_devkit_accuracy_config
 from .artifact_metadata import validate_artifact_metadata
-from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import (
-    ACCURACY_REQUIREMENTS,
     ACCURACY_SCRIPT,
+    CONVERSION_FILES,
     SCRIPTS_DIR,
     compile_invocations_for,
     effective_runner_class,
     load_and_validate_model,
-)
-from .taxonomy import TAXONOMY_RELATIVE_PATH, load_taxonomy, taxonomy_sha256
-
-GLOBAL_COMPILE_INPUT_PATHS = (
-    "deps/",
 )
 
 MODEL_COMPILE_INPUT_PATHS = {
@@ -40,47 +30,9 @@ MODEL_COMPILE_INPUT_PATHS = {
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-_IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
-# Board-stage scripts run after compilation; the benchmark fingerprint owns them.
 PERFORMANCE_SCRIPT = f"{SCRIPTS_DIR}/performance.py"
-BOARD_STAGE_SCRIPTS = {PERFORMANCE_SCRIPT, ACCURACY_SCRIPT}
-COMPILE_FINGERPRINT_SCHEMA = 3
-VALIDATION_FINGERPRINT_SCHEMA = 1
-BENCHMARK_FINGERPRINT_SCHEMA = 3
-
-
-def _canonical_sha256(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _documentation_metadata(root: Path, catalog: dict[str, dict[str, Any]]) -> dict[str, dict[str, str | None]]:
-    metadata: dict[str, dict[str, str | None]] = {}
-    for model_id in sorted(catalog):
-        metadata[model_id] = {}
-        for name in ("README.md", "hero.png"):
-            path = root / "models" / model_id / name
-            try:
-                metadata[model_id][name] = hashlib.sha256(path.read_bytes()).hexdigest()
-            except OSError:
-                metadata[model_id][name] = None
-    return metadata
-
-
-def _integer_constant(path: Path, name: str) -> int:
-    try:
-        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
-        raise ValidationError(f"could not read {name} from {path}: {exc}") from exc
-    for statement in module.body:
-        if (
-            isinstance(statement, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == name for target in statement.targets)
-            and isinstance(statement.value, ast.Constant)
-            and isinstance(statement.value.value, int)
-        ):
-            return statement.value.value
-    raise ValidationError(f"{path}: missing integer constant {name}")
+# Conversion produces the pinned source, and the board stages consume the MPK; none changes compilation.
+NON_COMPILE_SCRIPTS = {PERFORMANCE_SCRIPT, ACCURACY_SCRIPT, *CONVERSION_FILES}
 
 
 def _hash_files(digest: Any, root: Path, paths: set[Path] | list[Path]) -> None:
@@ -108,44 +60,6 @@ def discover_catalog(repository: str | Path) -> dict[str, dict[str, Any]]:
             raise ValidationError(f"duplicate model id {model_id!r}: {definition}")
         discovered[model_id] = model
     return discovered
-
-
-def git_changed_paths(repository: str | Path, base: str, head: str) -> list[str]:
-    root = Path(repository).expanduser().resolve()
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACMRD", base, head, "--"],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
-        raise ValidationError(f"could not determine changed paths for {base}..{head}: {detail}") from exc
-    return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
-
-
-@contextmanager
-def _revision_tree(repository: Path, revision: str):
-    """Materialize a committed catalog without executing code from that revision."""
-    with tempfile.TemporaryDirectory(prefix="model-registry-revision-") as temporary:
-        target = Path(temporary)
-        archive = target / "repository.tar"
-        try:
-            subprocess.run(
-                ["git", "archive", "--format=tar", f"--output={archive}", revision],
-                cwd=repository,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            with tarfile.open(archive, "r") as stream:
-                stream.extractall(target / "tree", filter="data")
-        except (OSError, subprocess.CalledProcessError, tarfile.TarError) as exc:
-            detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
-            raise ValidationError(f"could not materialize catalog revision {revision}: {detail}") from exc
-        yield target / "tree"
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -216,36 +130,25 @@ def resolve_base_branch(
     return {"base_branch": branch, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
 
 
-def _component_build_input_files(
-    root: Path,
-    model: dict[str, Any],
-    component: dict[str, Any],
-    profile_id: str,
-) -> list[Path]:
-    model_id = str(model["id"])
+def _compile_input_files(root: Path, model_id: str) -> list[Path]:
+    """Model code the compile recipe runs: model scripts plus any declared training code."""
     candidates: list[Path] = []
-    model_prefixes = MODEL_COMPILE_INPUT_PATHS.get(model_id, ())
-    for prefix in model_prefixes:
+    for prefix in MODEL_COMPILE_INPUT_PATHS.get(model_id, ()):
         path = root / prefix.rstrip("/")
         if path.is_file():
             candidates.append(path)
         elif path.is_dir():
             candidates.extend(item for item in path.rglob("*") if item.is_file())
-        elif prefix in model_prefixes:
+        else:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
-    # Model code in scripts/ is a compile input, except board-stage scripts. Stage
-    # settings in model.yaml are covered by the semantic projection instead.
     candidates.extend(
         item
         for item in (model_dir / SCRIPTS_DIR).rglob("*")
         if item.is_file()
         and item.suffix in {".py", ".sh"}
-        and item.relative_to(model_dir).as_posix() not in BOARD_STAGE_SCRIPTS
+        and item.relative_to(model_dir).as_posix() not in NON_COMPILE_SCRIPTS
     )
-    missing = sorted(path for path in candidates if not path.is_file())
-    if missing:
-        raise ValidationError(f"model compile input not found: {missing[0]}")
     symlinks = sorted(item for item in candidates if item.is_symlink())
     if symlinks:
         relative = ", ".join(item.relative_to(root).as_posix() for item in symlinks)
@@ -309,50 +212,14 @@ def _binding_compile_projection(
     }
 
 
-def component_build_fingerprint(
+def compile_fingerprint(
     repository: str | Path,
     model_id: str,
-    component_id: str,
     profile_id: str,
-    compiler_version: str,
-) -> str:
-    root = Path(repository).expanduser().resolve()
-    compiler = compiler_version.strip()
-    if not compiler:
-        raise ValidationError("compiler version must not be empty")
-    digest = hashlib.sha256()
-    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    try:
-        component = next(item for item in model["components"] if item["id"] == component_id)
-        profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
-        binding = next(item for item in profile["components"] if item["id"] == component_id)
-    except StopIteration as exc:
-        raise ValidationError(f"unknown component/profile pair: {model_id}/{profile_id}/{component_id}") from exc
-    identity = {
-        "schema": COMPILE_FINGERPRINT_SCHEMA,
-        "model_id": model_id,
-        "component": _component_compile_projection(component),
-        "build_profile": {
-            "id": profile_id,
-            "target": profile["target"],
-            "compatibility": profile.get("compatibility", {}),
-            "component": _binding_compile_projection(model, component, binding),
-        },
-        "fidelity": _compile_consumed_fidelity(model, profile_id),
-        "compiler_version": compiler,
-    }
-    digest.update(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-    _hash_files(digest, root, _component_build_input_files(root, model, component, profile_id))
-    return digest.hexdigest()
-
-
-def compile_invocation_fingerprint(
-    repository: str | Path,
-    model_id: str,
     compile_invocation_id: str,
-    profile_id: str,
     compiler_version: str,
 ) -> str:
+    """Identity of one compile invocation: what it compiles, how, and with which compiler."""
     root = Path(repository).expanduser().resolve()
     compiler = compiler_version.strip()
     if not compiler:
@@ -367,24 +234,18 @@ def compile_invocation_fingerprint(
         raise ValidationError(
             f"unknown compile invocation: {model_id}/{profile_id}/{compile_invocation_id}"
         ) from exc
-
     components = {item["id"]: item for item in model["components"]}
     bindings = {item["id"]: item for item in profile["components"]}
-    component_ids = list(invocation["components"])
     identity = {
-        "schema": COMPILE_FINGERPRINT_SCHEMA,
         "model_id": model_id,
         "compile_invocation": {
             "id": compile_invocation_id,
-            "python_packages": invocation.get("python_packages", []),
             "components": [
                 {
                     "component": _component_compile_projection(components[component_id]),
-                    "binding": _binding_compile_projection(
-                        model, components[component_id], bindings[component_id]
-                    ),
+                    "binding": _binding_compile_projection(model, components[component_id], bindings[component_id]),
                 }
-                for component_id in component_ids
+                for component_id in invocation["components"]
             ],
         },
         "build_profile": {
@@ -396,177 +257,8 @@ def compile_invocation_fingerprint(
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-    input_files = {
-        path
-        for component_id in component_ids
-        for path in _component_build_input_files(root, model, components[component_id], profile_id)
-    }
-    _hash_files(digest, root, input_files)
+    _hash_files(digest, root, _compile_input_files(root, model_id))
     return digest.hexdigest()
-
-
-def _test_case_applies(model: dict[str, Any], case: dict[str, Any], profile_id: str, component_id: str) -> bool:
-    if profile_id not in case["build_profiles"]:
-        return False
-    scope = case["scope"]
-    if scope == {"type": "component", "component": component_id}:
-        return True
-    if scope.get("type") != "package":
-        return False
-    return any(
-        package["id"] == scope.get("package")
-        and profile_id in package["build_profiles"]
-        and component_id in package["components"]
-        for package in model["packages"]
-    )
-
-
-def _compile_stage_validation(model: dict[str, Any]) -> list[dict[str, Any]]:
-    """Validation entries evaluated with the compilation; DevKit accuracy runs with the benchmark instead."""
-    return model["fidelity"]
-
-
-def _devkit_accuracy_entries(model: dict[str, Any]) -> list[dict[str, Any]]:
-    return [entry for entry in model["accuracy"] if entry.get("engine") == DEVKIT_ACCURACY_ENGINE]
-
-
-def _benchmark_stage_cases(model: dict[str, Any]) -> list[dict[str, Any]]:
-    """Benchmark entries plus DevKit accuracy entries, which the benchmark job also runs."""
-    return [*model["benchmark"], *_devkit_accuracy_entries(model)]
-
-
-def validation_fingerprint(
-    repository: str | Path,
-    model_id: str,
-    component_id: str,
-    profile_id: str,
-    compiler_version: str,
-    *,
-    compile_fingerprint: str | None = None,
-    artifact_sha256: str | None = None,
-) -> str:
-    root = Path(repository).expanduser().resolve()
-    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    compiled = compile_fingerprint or component_build_fingerprint(
-        root, model_id, component_id, profile_id, compiler_version
-    )
-    entries = sorted(
-        (
-            entry
-            for entry in _compile_stage_validation(model)
-            if _test_case_applies(model, entry, profile_id, component_id)
-        ),
-        key=lambda item: item["id"],
-    )
-    evaluator_files: dict[str, str] = {}
-    return _canonical_sha256(
-        {
-            "schema": VALIDATION_FINGERPRINT_SCHEMA,
-            "model_id": model_id,
-            "build_profile_id": profile_id,
-            "component_id": component_id,
-            "compile_fingerprint": compiled,
-            "compiled_artifact_sha256": artifact_sha256,
-            "validation": entries,
-            "evaluator_files": evaluator_files,
-        }
-    )
-
-
-def benchmark_fingerprint(
-    repository: str | Path,
-    model_id: str,
-    component_id: str,
-    profile_id: str,
-    compiler_version: str,
-    *,
-    compile_fingerprint: str | None = None,
-    artifact_sha256: str | None = None,
-) -> str:
-    root = Path(repository).expanduser().resolve()
-    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    compiled = compile_fingerprint or component_build_fingerprint(
-        root, model_id, component_id, profile_id, compiler_version
-    )
-    entries = sorted(
-        (entry for entry in model["benchmark"] if _test_case_applies(model, entry, profile_id, component_id)),
-        key=lambda item: item["id"],
-    )
-    accuracy = sorted(
-        (
-            entry
-            for entry in _devkit_accuracy_entries(model)
-            if _test_case_applies(model, entry, profile_id, component_id)
-        ),
-        key=lambda item: item["id"],
-    )
-    model_dir = root / "models" / model_id
-    script = model_dir / PERFORMANCE_SCRIPT
-    accuracy_files = {
-        relative: hashlib.sha256((model_dir / relative).read_bytes()).hexdigest()
-        for relative in (ACCURACY_SCRIPT, ACCURACY_REQUIREMENTS)
-        if accuracy and (model_dir / relative).is_file()
-    }
-    return _canonical_sha256(
-        {
-            "schema": BENCHMARK_FINGERPRINT_SCHEMA,
-            "model_id": model_id,
-            "build_profile_id": profile_id,
-            "component_id": component_id,
-            "compile_fingerprint": compiled,
-            "compiled_artifact_sha256": artifact_sha256,
-            "benchmark": entries,
-            "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else None,
-            "accuracy": accuracy,
-            "accuracy_files_sha256": accuracy_files,
-            "tooling_sha256": {
-                path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-                if (root / path).is_file() else None
-                for path in (
-                    ".github/workflows/Vulcan-Model-Benchmarking.yml",
-                    "tools/model_registry/core_benchmark.py",
-                    "tools/model_registry/benchmark_publication.py",
-                    "tools/model_registry/benchmark_manifest.py",
-                    "schemas/performance-result-v5.schema.json",
-                    "tools/model_registry/accuracy_result.py",
-                    "schemas/accuracy-result-v2.schema.json",
-                    "scripts/run_model_accuracy.sh",
-                )
-            },
-            "runtime": resolve_benchmark_runtime(root),
-        }
-    )
-
-
-def _is_global_compile_input(path: str) -> bool:
-    return any(_matches_path_prefix(path, prefix) for prefix in GLOBAL_COMPILE_INPUT_PATHS)
-
-
-def _matches_path_prefix(path: str, prefix: str) -> bool:
-    normalized = prefix.rstrip("/")
-    return path == normalized or path.startswith(f"{normalized}/")
-
-
-def select_model_ids(catalog: dict[str, dict[str, Any]], changed_paths: list[str]) -> list[str]:
-    normalized_paths: set[str] = set()
-    for raw_path in changed_paths:
-        if not raw_path.strip():
-            continue
-        path = PurePosixPath(raw_path).as_posix()
-        normalized_paths.add(path[2:] if path.startswith("./") else path)
-    normalized = sorted(normalized_paths)
-    if any(_is_global_compile_input(path) for path in normalized):
-        return sorted(catalog)
-
-    selected: set[str] = set()
-    for path in normalized:
-        for model_id, prefixes in MODEL_COMPILE_INPUT_PATHS.items():
-            if model_id in catalog and any(_matches_path_prefix(path, prefix) for prefix in prefixes):
-                selected.add(model_id)
-        parts = PurePosixPath(path).parts
-        if len(parts) >= 2 and parts[0] == "models" and parts[1] in catalog:
-            selected.add(parts[1])
-    return sorted(selected)
 
 
 def build_matrix(
@@ -598,254 +290,49 @@ def build_matrix(
     if unknown_components:
         raise ValidationError(f"unknown component id(s): {', '.join(unknown_components)}")
 
+    if (repository is None) != (compiler_version is None):
+        raise ValidationError("repository and compiler version must be supplied together")
     include: list[dict[str, Any]] = []
     for model_id in sorted(set(model_ids)):
         model = catalog[model_id]
-        if repository is not None or compiler_version is not None:
-            if repository is None or compiler_version is None:
-                raise ValidationError("repository and compiler version must be supplied together")
-        components = {item["id"]: item for item in model["components"]}
         for profile in sorted(model["build_profiles"], key=lambda item: item["id"]):
             if requested_profiles and profile["id"] not in requested_profiles:
                 continue
             bindings = {item["id"]: item for item in profile["components"]}
-            has_declared_invocations = "compile_invocations" in profile
+            accuracy = find_devkit_accuracy_config(model, profile["id"])
             for invocation in sorted(compile_invocations_for(profile), key=lambda item: item["id"]):
                 invocation_component_ids = list(invocation["components"])
                 if requested_components and not requested_components.intersection(invocation_component_ids):
                     continue
-                fingerprint = ""
-                if repository is not None and compiler_version is not None:
-                    if has_declared_invocations:
-                        fingerprint = compile_invocation_fingerprint(
-                            repository,
-                            model_id,
-                            invocation["id"],
-                            profile["id"],
-                            compiler_version,
-                        )
-                    else:
-                        fingerprint = component_build_fingerprint(
-                            repository,
-                            model_id,
-                            invocation_component_ids[0],
-                            profile["id"],
-                            compiler_version,
-                        )
-                validation_fingerprints: dict[str, str] = {}
-                benchmark_fingerprints: dict[str, str] = {}
-                if repository is not None and compiler_version is not None:
-                    validation_fingerprints = {
-                        component_id: validation_fingerprint(
-                            repository, model_id, component_id, profile["id"], compiler_version,
-                            compile_fingerprint=fingerprint,
-                        )
-                        for component_id in invocation_component_ids
-                        if any(
-                            _test_case_applies(model, case, profile["id"], component_id)
-                            for case in _compile_stage_validation(model)
-                        )
-                    }
-                    benchmark_fingerprints = {
-                        component_id: benchmark_fingerprint(
-                            repository, model_id, component_id, profile["id"], compiler_version,
-                            compile_fingerprint=fingerprint,
-                        )
-                        for component_id in invocation_component_ids
-                        if any(
-                            _test_case_applies(model, case, profile["id"], component_id)
-                            for case in _benchmark_stage_cases(model)
-                        )
-                    }
                 first_component_id = invocation_component_ids[0]
-                benchmark_component_ids = [
-                    component_id
-                    for component_id in invocation_component_ids
-                    if any(
-                        case["scope"] == {"type": "component", "component": component_id}
-                        and profile["id"] in case["build_profiles"]
-                        for case in model["benchmark"]
-                    )
-                ]
                 entry: dict[str, Any] = {
                     "model_dir": f"models/{model_id}",
                     "model_id": model_id,
                     "compile_invocation_id": invocation["id"],
                     "component_id": first_component_id,
                     "component_ids": invocation_component_ids,
-                    "explicit_invocation": has_declared_invocations,
                     "build_profile_id": profile["id"],
-                    "recipe": components[first_component_id]["recipe"],
-                    "python_packages": invocation.get("python_packages", []),
-                    "requested_runner_class": effective_runner_class(
-                        profile, bindings[first_component_id]
-                    ),
+                    "requested_runner_class": effective_runner_class(profile, bindings[first_component_id]),
                     "target": profile["target"],
-                    "benchmark_component_ids": benchmark_component_ids,
-                    **({"build_fingerprint": fingerprint} if fingerprint else {}),
-                    **(
-                        {"validation_fingerprints": validation_fingerprints}
-                        if repository is not None and compiler_version is not None
-                        else {}
-                    ),
-                    **(
-                        {"benchmark_fingerprints": benchmark_fingerprints}
-                        if repository is not None and compiler_version is not None
-                        else {}
+                    "benchmark_component_ids": [
+                        component_id
+                        for component_id in invocation_component_ids
+                        if any(
+                            case["scope"] == {"type": "component", "component": component_id}
+                            and profile["id"] in case["build_profiles"]
+                            for case in model["benchmark"]
+                        )
+                    ],
+                    # Model validation keeps an accuracy entry's components in one invocation.
+                    "accuracy_id": (
+                        accuracy["id"]
+                        if accuracy is not None and accuracy["result_component"] in invocation_component_ids
+                        else None
                     ),
                 }
+                if repository is not None and compiler_version is not None:
+                    entry["build_fingerprint"] = compile_fingerprint(
+                        repository, model_id, profile["id"], invocation["id"], compiler_version
+                    )
                 include.append(entry)
     return {"include": include}
-
-
-def semantic_change_plan(
-    repository: str | Path,
-    base: str,
-    head: str,
-    *,
-    compiler_version: str,
-    force_rebuild_all: bool = False,
-) -> dict[str, Any]:
-    """Compare stage inputs at two revisions and return only the work that changed.
-
-    Head is read from the checked-out tree so uncommitted unit-test fixtures can use
-    the same code path. Base is data-only materialized with ``git archive``.
-    """
-    root = Path(repository).expanduser().resolve()
-    head_catalog = discover_catalog(root)
-    head_entries = build_matrix(
-        head_catalog,
-        sorted(head_catalog),
-        repository=root,
-        compiler_version=compiler_version,
-    )["include"]
-    changed_paths = git_changed_paths(root, base, head)
-    fallback_reason = None
-    base_entries: list[dict[str, Any]] = []
-    base_catalog: dict[str, dict[str, Any]] = {}
-    base_taxonomy_sha = None
-    base_compile_schema = None
-    base_validation_schema = None
-    base_benchmark_schema = None
-    base_documentation: dict[str, dict[str, str | None]] = {}
-    try:
-        with _revision_tree(root, base) as base_root:
-            base_catalog = discover_catalog(base_root)
-            base_documentation = _documentation_metadata(base_root, base_catalog)
-            base_taxonomy_sha = taxonomy_sha256(load_taxonomy(base_root / TAXONOMY_RELATIVE_PATH))
-            base_compile_schema = _integer_constant(
-                base_root / "tools" / "model_registry" / "catalog.py", "COMPILE_FINGERPRINT_SCHEMA"
-            )
-            base_validation_schema = _integer_constant(
-                base_root / "tools" / "model_registry" / "catalog.py", "VALIDATION_FINGERPRINT_SCHEMA"
-            )
-            base_benchmark_schema = _integer_constant(
-                base_root / "tools" / "model_registry" / "catalog.py", "BENCHMARK_FINGERPRINT_SCHEMA"
-            )
-            base_compiler_version = resolve_model_compiler(base_root)["identity"]
-            base_entries = build_matrix(
-                base_catalog,
-                sorted(base_catalog),
-                repository=base_root,
-                compiler_version=base_compiler_version,
-            )["include"]
-    except ValidationError as exc:
-        # Contract migrations are deliberately fail-safe: the first comparison
-        # against an older catalog recompiles once, then subsequent revisions are
-        # selected semantically.
-        fallback_reason = str(exc)
-
-    def invocation_key(entry: dict[str, Any]) -> tuple[str, str, str]:
-        return entry["model_id"], entry["build_profile_id"], entry["compile_invocation_id"]
-
-    base_by_key = {invocation_key(entry): entry for entry in base_entries}
-    head_by_key = {invocation_key(entry): entry for entry in head_entries}
-    compile_include: list[dict[str, Any]] = []
-    validation_include: list[dict[str, Any]] = []
-    benchmark_include: list[dict[str, Any]] = []
-    for entry in head_entries:
-        prior = base_by_key.get(invocation_key(entry))
-        compile_changed = (
-            force_rebuild_all
-            or fallback_reason is not None
-            or base_compile_schema != COMPILE_FINGERPRINT_SCHEMA
-            or prior is None
-            or prior.get("build_fingerprint") != entry["build_fingerprint"]
-            or prior.get("requested_runner_class") != entry["requested_runner_class"]
-        )
-        if compile_changed:
-            compile_include.append(entry)
-        current_validation = entry["validation_fingerprints"]
-        previous_validation = prior.get("validation_fingerprints", {}) if prior is not None else {}
-        for component_id, fingerprint in sorted(current_validation.items()):
-            if (
-                compile_changed
-                or base_validation_schema != VALIDATION_FINGERPRINT_SCHEMA
-                or previous_validation.get(component_id) != fingerprint
-            ):
-                validation_include.append({
-                    "model_id": entry["model_id"],
-                    "model_dir": entry["model_dir"],
-                    "build_profile_id": entry["build_profile_id"],
-                    "compile_invocation_id": entry["compile_invocation_id"],
-                    "component_id": component_id,
-                    "compile_fingerprint": entry["build_fingerprint"],
-                    "validation_fingerprint": fingerprint,
-                    "compile_changed": compile_changed,
-                })
-        current_benchmarks = entry["benchmark_fingerprints"]
-        previous_benchmarks = prior.get("benchmark_fingerprints", {}) if prior is not None else {}
-        if current_benchmarks and (
-            compile_changed
-            or base_benchmark_schema != BENCHMARK_FINGERPRINT_SCHEMA
-            or any(
-                previous_benchmarks.get(component_id) != fingerprint
-                for component_id, fingerprint in current_benchmarks.items()
-            )
-        ):
-            benchmark_include.append({
-                "model_id": entry["model_id"],
-                "model_dir": entry["model_dir"],
-                "build_profile_id": entry["build_profile_id"],
-                "compile_invocation_id": entry["compile_invocation_id"],
-                "component_ids": sorted(current_benchmarks),
-                "compile_fingerprint": entry["build_fingerprint"],
-                "benchmark_fingerprints": current_benchmarks,
-                "compile_changed": compile_changed,
-            })
-
-    deleted_invocations = [
-        {"model_id": key[0], "build_profile_id": key[1], "compile_invocation_id": key[2]}
-        for key in sorted(set(base_by_key) - set(head_by_key))
-    ]
-    head_taxonomy_sha = taxonomy_sha256(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
-    taxonomy_changed = base_taxonomy_sha != head_taxonomy_sha
-
-    def publication_metadata(catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
-        fields = ("display_name", "description", "license", "maturity", "categories")
-        return {
-            model_id: {
-                **{field: model.get(field) for field in fields},
-                "artifact_suffixes": sorted(
-                    (profile["id"], binding["id"], binding["artifact_suffix"])
-                    for profile in model["build_profiles"]
-                    for binding in profile["components"] if "artifact_suffix" in binding
-                ),
-            }
-            for model_id, model in sorted(catalog.items())
-        }
-
-    metadata_changed = fallback_reason is not None or (
-        publication_metadata(base_catalog) != publication_metadata(head_catalog)
-        or base_documentation != _documentation_metadata(root, head_catalog)
-    )
-    return {
-        "include": compile_include,
-        "validation_include": validation_include,
-        "benchmark_include": benchmark_include,
-        "metadata_changed": metadata_changed,
-        "taxonomy_changed": taxonomy_changed,
-        "deleted_invocations": deleted_invocations,
-        "comparison": {"base": base, "head": head, "fallback_reason": fallback_reason},
-        "changed_paths": changed_paths,
-    }

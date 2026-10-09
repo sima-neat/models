@@ -14,14 +14,25 @@ from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .accuracy_result import (
     ACCURACY_RESULT_SCHEMA,
     check_accuracy_result,
+    compiled_artifacts,
     load_accuracy_result,
     publish_accuracy_result,
 )
 from .benchmark_manifest import load_component_performance_config
+from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import load_and_validate_model
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
+from .stages import (
+    ACCURACY_FINGERPRINT_VERSION,
+    ACCURACY_RUN_TYPE,
+    PERFORMANCE_FINGERPRINT_VERSION,
+    PERFORMANCE_RESULT_SCHEMA,
+    PERFORMANCE_RUN_TYPE,
+    accuracy_key,
+    performance_key,
+)
 
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
@@ -45,29 +56,21 @@ REGISTRY_AGGREGATIONS = {
     "p99",
     "sum",
 }
-LEGACY_THROUGHPUT_DEFINITION = ("model.throughput", "fps")
 CORE_THROUGHPUT_DEFINITION = ("model.inference_rate", "inferences/s")
+PERFORMANCE_RESULT_FILE = "performance-result.json"
 
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
     model = result["model"]
-    if result["schema_version"] <= 3:
-        model_identity = {
-            "id": model["id"],
-            "variant_id": model["variant_id"],
-            "sha256": model["sha256"],
-        }
-    else:
-        model_identity = {
+    return {
+        "schema_version": result["schema_version"],
+        "benchmark_type": result["benchmark_type"],
+        "model": {
             "id": model["id"],
             "build_profile_id": model["build_profile_id"],
             "component_id": model["component_id"],
             "sha256": model["sha256"],
-        }
-    return {
-        "schema_version": result["schema_version"],
-        "benchmark_type": result["benchmark_type"],
-        "model": model_identity,
+        },
         "compatibility": {
             "platform_version": result["compatibility"]["expected_platform_version"],
             "neat_version": result["compatibility"]["expected_neat_version"],
@@ -82,13 +85,10 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
     path = Path(result_path).expanduser().resolve()
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
-        version = result.get("schema_version") if isinstance(result, dict) else None
-        if version not in {1, 2, 3, 4, 5}:
-            raise ValidationError(f"unsupported benchmark result schema version: {version!r}")
         schema = (
             Path(schema_path).expanduser().resolve()
             if schema_path is not None
-            else Path(__file__).resolve().parents[2] / "schemas" / f"performance-result-v{version}.schema.json"
+            else Path(__file__).resolve().parents[2] / PERFORMANCE_RESULT_SCHEMA
         )
         schema_value = json.loads(schema.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -117,28 +117,21 @@ def validate_benchmark_set(
     build_profile_id: str,
     component_ids: list[str],
     git_sha: str,
-    accuracy_result: str | Path | None = None,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
     results_root = Path(result_root).expanduser().resolve()
     if len(component_ids) != len(set(component_ids)) or not component_ids:
         raise ValidationError("benchmark component IDs must be non-empty and unique")
     commit_sha = _require_git_sha(git_sha)
-    actual_paths = {path.resolve() for path in results_root.rglob("performance-result-v*.json")}
-    expected_paths = set()
-    for component_id in component_ids:
-        matches = list((results_root / component_id).glob("performance-result-v[45].json"))
-        if len(matches) != 1:
-            raise ValidationError("benchmark result tree must contain exactly one result per component")
-        expected_paths.add(matches[0].resolve())
+    actual_paths = {path.resolve() for path in results_root.rglob(PERFORMANCE_RESULT_FILE)}
+    expected_paths = {(results_root / component / PERFORMANCE_RESULT_FILE).resolve() for component in component_ids}
     if actual_paths != expected_paths:
         raise ValidationError("benchmark result tree does not match the declared component set")
 
     validated = []
-    artifacts = {}
     for path in sorted(expected_paths):
         component_id = path.parent.name
-        result = load_benchmark_result(path, root / "schemas" / f"{path.stem}.schema.json")
+        result = load_benchmark_result(path, root / PERFORMANCE_RESULT_SCHEMA)
         model = result["model"]
         expected = (model_id, build_profile_id, component_id)
         actual = (model["id"], model["build_profile_id"], model["component_id"])
@@ -154,50 +147,11 @@ def validate_benchmark_set(
             if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
-        artifacts[component_id] = model["sha256"]
-    accuracy = _validate_benchmark_accuracy(
-        root, model_id, build_profile_id, component_ids, artifacts, commit_sha, accuracy_result
-    )
-    return {"count": len(validated), "results": validated, "accuracy": accuracy}
-
-
-def _validate_benchmark_accuracy(
-    root: Path,
-    model_id: str,
-    build_profile_id: str,
-    component_ids: list[str],
-    artifacts: dict[str, str],
-    commit_sha: str,
-    accuracy_result: str | Path | None,
-) -> JsonObject | None:
-    """Require the declared DevKit accuracy result, measured with these benchmarked MPKs, and nothing else."""
-    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    entry = find_devkit_accuracy_config(model, build_profile_id)
-    path = Path(accuracy_result).expanduser().resolve() if accuracy_result is not None else None
-    present = path is not None and path.is_file()
-    if entry is None:
-        if present:
-            raise ValidationError(f"{path}: {model_id} declares no DevKit accuracy for {build_profile_id}")
-        return None
-    unbenchmarked = set(accuracy_components(model, entry)) - set(component_ids)
-    if unbenchmarked:
-        raise ValidationError(
-            f"accuracy {entry['id']!r} needs benchmarked components: {', '.join(sorted(unbenchmarked))}"
-        )
-    if not present:
-        raise ValidationError(f"accuracy {entry['id']!r} is declared but its result is missing")
-    report = load_accuracy_result(path, root / ACCURACY_RESULT_SCHEMA)
-    check_accuracy_result(
-        report, model=model, build_profile_id=build_profile_id, artifacts=artifacts, models_commit=commit_sha
-    )
-    return {"path": str(path), "component_id": report["model"]["component_id"]}
+    return {"count": len(validated), "results": validated}
 
 
 def _build_identity(result: JsonObject) -> tuple[str, str]:
-    """Map legacy variant identities onto the v2 build coordinates."""
     model = result["model"]
-    if result["schema_version"] <= 3:
-        return model["variant_id"], "model"
     return model["build_profile_id"], model["component_id"]
 
 
@@ -248,13 +202,9 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
             continue
         if field == "throughput_fps":
-            name, expected_unit = (
-                CORE_THROUGHPUT_DEFINITION if result["schema_version"] == 5 else LEGACY_THROUGHPUT_DEFINITION
-            )
+            name, expected_unit = CORE_THROUGHPUT_DEFINITION
             if metric["unit"] != expected_unit:
-                raise ValidationError(
-                    f"benchmark result schema v{result['schema_version']} requires {field} unit {expected_unit!r}"
-                )
+                raise ValidationError(f"benchmark result requires {field} unit {expected_unit!r}")
         result_aggregation = metric["aggregation"]
         aggregation = REGISTRY_AGGREGATION_ALIASES.get(result_aggregation, result_aggregation)
         if aggregation not in REGISTRY_AGGREGATIONS:
@@ -294,11 +244,15 @@ def publish_benchmark_result(
     kms_key_id: str | None = None,
     github_run_url: str | None = None,
     schema_path: str | Path | None = None,
-    accuracy_result_path: str | Path | None = None,
-    accuracy_schema_path: str | Path | None = None,
+    repository: str | Path,
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
+    """Publish one component's DevKit performance result as a ``model_benchmark`` run under its compile run.
+
+    The run fingerprint is the component's performance key, read from ``repository`` at the measured revision.
+    """
+    root = Path(repository).expanduser().resolve()
     path = Path(result_path).expanduser().resolve()
     log = Path(log_path).expanduser().resolve() if log_path is not None else None
     result = load_benchmark_result(path, schema_path)
@@ -312,14 +266,16 @@ def publish_benchmark_result(
     build_profile_id, component_id = _build_identity(result)
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
-    accuracy_path = Path(accuracy_result_path).expanduser().resolve() if accuracy_result_path is not None else None
-    accuracy = _load_component_accuracy(accuracy_path, accuracy_schema_path, result, commit_sha)
-    accuracy_digest = canonical_sha256(accuracy) if accuracy is not None else None
-    # A result published with accuracy is a different request from the same result without it.
-    stable_inputs = f"{parent_run_id}:{fingerprint}:{execution_digest}"
-    if accuracy_digest is not None:
-        stable_inputs += f":{accuracy_digest}"
-    stable_digest = hashlib.sha256(stable_inputs.encode()).hexdigest()
+    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+    stage_key = performance_key(
+        root,
+        model,
+        build_profile_id,
+        component_id,
+        compile_run_id=parent_run_id,
+        artifact_sha256=result["model"]["sha256"],
+    )
+    stable_digest = hashlib.sha256(f"{parent_run_id}:{fingerprint}:{execution_digest}".encode()).hexdigest()
     stable_key = f"models-benchmark-{stable_digest}"
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
@@ -328,14 +284,14 @@ def publish_benchmark_result(
         # This is the registry run-envelope schema version, not the benchmark
         # result artifact's independently versioned schema.
         "schema_version": 1,
-        "run_type": "model_benchmark",
+        "run_type": PERFORMANCE_RUN_TYPE,
         "parent_run_id": parent_run_id,
         "commit_sha": commit_sha,
         "git_ref": f"refs/heads/{branch}",
-        "run_fingerprint": fingerprint,
+        "run_fingerprint": stage_key,
         "environment": {
             "fingerprint": result["environment"]["fingerprint"],
-            "fingerprint_version": result["environment"]["fingerprint_version"],
+            "fingerprint_version": PERFORMANCE_FINGERPRINT_VERSION,
             "toolchain_name": "sima-neat",
             "toolchain_version": result["compatibility"]["actual_neat_version"],
             "target_platform": result["compatibility"]["actual_platform_version"],
@@ -355,6 +311,7 @@ def publish_benchmark_result(
             "benchmark_type": result["benchmark_type"],
             "compile_run_id": parent_run_id,
             "benchmark_execution_digest": execution_digest,
+            "performance_key": stage_key,
         },
     }
     if github_run_url:
@@ -400,7 +357,7 @@ def publish_benchmark_result(
         f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/{component_id}/"
         f"benchmarks/{fingerprint}/{execution_digest}"
     )
-    object_key = f"{result_prefix}/performance-result-v{result['schema_version']}.json"
+    object_key = f"{result_prefix}/{PERFORMANCE_RESULT_FILE}"
     stored = store.ensure_native_sha256(path, object_key, result_sha, media_type="application/json")
     artifact = client.request(
         "PUT",
@@ -472,20 +429,6 @@ def publish_benchmark_result(
             {"measurements": measurements},
             f"{stable_key}-measurements",
         )
-    accuracy_publication = None
-    if accuracy is not None and accuracy_path is not None and accuracy_digest is not None:
-        accuracy_publication = publish_accuracy_result(
-            client,
-            store,
-            bucket=bucket,
-            run_id=run_id,
-            path=accuracy_path,
-            report=accuracy,
-            sha256=sha256_file(accuracy_path)[0],
-            fingerprint=accuracy_digest,
-            object_key=f"{result_prefix}/accuracy-result-v{accuracy['schema_version']}.json",
-            stable_key=stable_key,
-        )
     client.request(
         "POST",
         f"/v1/runs/{run_id}/finalize",
@@ -499,34 +442,187 @@ def publish_benchmark_result(
         "build_profile_id": build_profile_id,
         "component_id": component_id,
         "result_fingerprint": fingerprint,
+        "performance_key": stage_key,
         "execution_digest": execution_digest,
         "s3_key": stored.key,
         "log_s3_key": log_stored.key if log_stored is not None else None,
-        "accuracy": accuracy_publication,
     }
 
 
-def _load_component_accuracy(
-    path: Path | None, schema_path: str | Path | None, result: JsonObject, commit_sha: str
-) -> JsonObject | None:
-    """Load the accuracy result this component's benchmark run carries, if any."""
-    if path is None:
-        return None
-    schema = (
-        Path(schema_path).expanduser().resolve()
-        if schema_path is not None
-        else Path(__file__).resolve().parents[2] / ACCURACY_RESULT_SCHEMA
+def _compile_run_id(compiled_dir: Path, model_id: str, build_profile_id: str, component_id: str) -> str:
+    path = compiled_dir / model_id / build_profile_id / component_id / "registry-publication.json"
+    try:
+        runs = json.loads(path.read_text(encoding="utf-8"))["runs"]
+        run_id = str(uuid.UUID(str(runs[0]["run_id"])))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ValidationError(f"accuracy needs the registered {component_id} compile run: {path}: {exc}") from exc
+    if len(runs) != 1 or runs[0].get("component_id") != component_id:
+        raise ValidationError(f"{path}: registry publication does not belong to {component_id}")
+    return run_id
+
+
+def publish_accuracy_run(
+    *,
+    repository: str | Path,
+    compiled_dir: str | Path,
+    result_path: str | Path,
+    log_path: str | Path | None = None,
+    api_url: str,
+    aws_region: str,
+    bucket: str,
+    environment: str,
+    branch: str,
+    git_sha: str,
+    kms_key_id: str | None = None,
+    github_run_url: str | None = None,
+    request: Request | None = None,
+    artifact_store: S3ArtifactStore | None = None,
+) -> JsonObject:
+    """Publish a build profile's DevKit accuracy result as a ``model_accuracy`` run under its result component.
+
+    The run's inputs are the compiled MPKs the accuracy script ran; its fingerprint is the accuracy key.
+    """
+    root = Path(repository).expanduser().resolve()
+    compiled = Path(compiled_dir).expanduser().resolve()
+    path = Path(result_path).expanduser().resolve()
+    commit_sha = _require_git_sha(git_sha)
+    if not branch.strip():
+        raise ValidationError("branch must not be empty")
+    report = load_accuracy_result(path, root / ACCURACY_RESULT_SCHEMA)
+    model_id = report["model"]["id"]
+    build_profile_id = report["model"]["build_profile_id"]
+    component_id = report["model"]["component_id"]
+    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+    entry = find_devkit_accuracy_config(model, build_profile_id)
+    if entry is None:
+        raise ValidationError(f"{path}: {model_id} declares no DevKit accuracy for {build_profile_id}")
+    components = accuracy_components(model, entry)
+    artifacts = compiled_artifacts(compiled, model_id, build_profile_id, components)
+    check_accuracy_result(
+        report, model=model, build_profile_id=build_profile_id, artifacts=artifacts, models_commit=commit_sha
     )
-    report = load_accuracy_result(path, schema)
-    model = result["model"]
-    expected = (model["id"], model["build_profile_id"], model["component_id"], model["sha256"], commit_sha)
-    actual = (
-        report["model"]["id"],
-        report["model"]["build_profile_id"],
-        report["model"]["component_id"],
-        report["model"]["artifacts"].get(model["component_id"]),
-        report["execution"]["models_commit"],
+    builds = {
+        component: {
+            "run_id": _compile_run_id(compiled, model_id, build_profile_id, component),
+            "artifact_sha256": artifacts[component],
+        }
+        for component in components
+    }
+    stage_key = accuracy_key(root, model, build_profile_id, builds)
+    parent_run_id = builds[component_id]["run_id"]
+    report_digest = canonical_sha256(report)
+    stable_digest = hashlib.sha256(f"{parent_run_id}:{stage_key}:{report_digest}".encode()).hexdigest()
+    stable_key = f"models-accuracy-{stable_digest}"
+    runtime = resolve_benchmark_runtime(root)
+    core_version = report["execution"]["core_version"]
+    client = SigV4RegistryClient(api_url, aws_region, request=request)
+    store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
+
+    create_body: JsonObject = {
+        "schema_version": 1,
+        "run_type": ACCURACY_RUN_TYPE,
+        "parent_run_id": parent_run_id,
+        "commit_sha": commit_sha,
+        "git_ref": f"refs/heads/{branch}",
+        "run_fingerprint": stage_key,
+        "environment": {
+            "fingerprint": canonical_sha256({"runtime": runtime, "core_version": core_version}),
+            "fingerprint_version": ACCURACY_FINGERPRINT_VERSION,
+            "toolchain_name": "sima-neat",
+            "toolchain_version": core_version,
+            "target_platform": runtime["devkit"]["platform_version"],
+            "properties": {"vulcan_environment": environment},
+        },
+        "metadata": {
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "component_id": component_id,
+            "accuracy_id": entry["id"],
+            "compile_run_id": parent_run_id,
+            "accuracy_key": stage_key,
+        },
+    }
+    if github_run_url:
+        create_body.update({"ci_provider": "github-actions", "ci_run_url": github_run_url})
+    created = client.request("POST", "/v1/runs", create_body, f"{stable_key}-create")
+    try:
+        run_id = str(uuid.UUID(str(created.get("run_id"))))
+    except ValueError as exc:
+        raise ValidationError("Vulcan did not return a valid accuracy run ID") from exc
+
+    for component, build in builds.items():
+        client.request(
+            "PUT",
+            f"/v1/runs/{run_id}/inputs/compiled-model-{component.replace('_', '-')}",
+            {
+                "input_type": "model-pack",
+                "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/mpk",
+                "sha256": build["artifact_sha256"],
+                "media_type": "application/gzip",
+                "metadata": {
+                    "model_id": model_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component,
+                    "compile_run_id": build["run_id"],
+                },
+            },
+            f"{stable_key}-input-{component}",
+        )
+    # Vulcan completes a run only once its canonical parameters are stored.
+    parameters = {"accuracy": entry, "builds": builds, "runtime": runtime, "core_version": core_version}
+    client.request(
+        "PUT",
+        f"/v1/runs/{run_id}/parameters",
+        {
+            "parameters": parameters,
+            "canonical_sha256": canonical_sha256(parameters),
+            "canonicalization_version": 1,
+        },
+        f"{stable_key}-parameters",
     )
-    if actual != expected:
-        raise ValidationError(f"{path}: accuracy result does not belong to this benchmark result")
-    return report
+    prefix = (
+        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/{component_id}/"
+        f"accuracy/{stage_key}/{report_digest}"
+    )
+    publication = publish_accuracy_result(
+        client,
+        store,
+        bucket=bucket,
+        run_id=run_id,
+        path=path,
+        report=report,
+        sha256=sha256_file(path)[0],
+        fingerprint=stage_key,
+        object_key=f"{prefix}/{path.name}",
+        stable_key=stable_key,
+    )
+    if log_path is not None:
+        log = Path(log_path).expanduser().resolve()
+        log_sha, _ = sha256_file(log)
+        log_stored = store.ensure_native_sha256(log, f"{prefix}/accuracy.log", log_sha, media_type="text/plain")
+        client.request(
+            "PUT",
+            f"/v1/runs/{run_id}/artifacts/accuracy-log",
+            {
+                "artifact_type": "log",
+                "s3_bucket": bucket,
+                "s3_key": log_stored.key,
+                "s3_version_id": log_stored.version_id,
+                "sha256": log_stored.sha256,
+                "size_bytes": log_stored.size_bytes,
+                "media_type": "text/plain",
+                "retention_class": "branch",
+                "metadata": {"model_id": model_id, "build_profile_id": build_profile_id, "component_id": component_id},
+            },
+            f"{stable_key}-log-artifact",
+        )
+    client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
+    return {
+        "accuracy_run_id": run_id,
+        "compile_run_id": parent_run_id,
+        "model_id": model_id,
+        "build_profile_id": build_profile_id,
+        "component_id": component_id,
+        "accuracy_key": stage_key,
+        **publication,
+    }

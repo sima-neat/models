@@ -27,6 +27,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cancel-branch-runs:
+    name: Cancel the deleted branch's unfinished runs
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Cancel queued and running workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.ref }}
+        run: scripts/cancel_branch_runs.sh "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+
   update-registry:
     name: ${{ github.event_name == 'delete' && 'Purge deleted branch' || 'Restore branch' }}
     if: >-

@@ -1,63 +1,68 @@
 # Define the model contract
 
 A Model Registry contribution describes a product that developers can find,
-build, test, and retrieve reproducibly. For a simple model, that product is one
-ONNX input and one compiled MPK. More involved products can contain several
-ONNX components, runtime resources, an explicit composition, and a combined
-download package. `model.yaml` is the source-controlled contract joining those
-pieces together.
+build, test, and download reproducibly. For a simple model, that product is one
+ONNX input and one compiled MPK. A larger product can contain several compiled
+components, runtime resources, a composition, and a download package.
+`model.yaml` joins those pieces, and the model's `scripts/` directory holds the
+code that compiles and measures them.
 
-This guide ends when the contract validates. You must then follow [Qualify
-locally](local-development.md) and compile and test every supported build
-before opening a pull request.
+This guide ends when the contract validates. Then follow [Qualify
+locally](local-development.md) to compile and measure every build before you
+open a pull request.
 
 ## 1. Decide what the product contains
 
 Before creating files, identify:
 
-- the logical product and its responsible owner;
+- the product and its responsible owner;
 - each independently compiled ONNX component;
-- whether a component source is one file or an ONNX file set;
-- the public entrypoints, tensors, shapes, state, and preprocessing behavior;
+- whether a component source is one file or a set of related files;
+- the public entrypoints, tensors, shapes, state, and preprocessing;
 - runtime files such as tokenizers, labels, or configuration;
 - the target-wide build profiles and component-specific compiler parameters;
-- how the components compose and what users should receive in each package;
-- the calibration and correctness data required by each build;
-- the component-level and end-to-end tests needed for qualification.
+- how the components compose and what users download;
+- the calibration, fidelity, and accuracy data each build needs.
 
-Do not add a product whose source, ownership, or license remains ambiguous.
+Do not add a product whose source, ownership, or license is ambiguous.
 `experimental` maturity may describe unfinished qualification; it does not
 permit mutable provenance.
 
 ## 2. Create the directory
 
-The directory name and `model.yaml` `id` must be the same lowercase snake-case
-identifier.
+The directory name and the `id` in `model.yaml` are the same lowercase
+snake-case identifier. A model directory may contain only these entries:
 
 ```text
 models/<model-id>/
   README.md
-  model.yaml                  # the only configuration file: every stage reads its section
+  hero.png                      # optional
+  model.yaml                    # the model's only configuration file
   scripts/
-    compile.py                # one recipe, optionally shared by a compile group
-    performance.py            # Core benchmark for a compiled MPK on a DevKit
-    export.py                 # only for an upstream checkpoint source
-    surgery.py                # only for model-specific preparation
+    compile.py                  # compile stage: writes one MPK per component
+    performance.py              # performance stage: Core benchmark of one MPK on a DevKit
+    accuracy.py                 # accuracy stage, when model.yaml declares DevKit accuracy
+    requirements-accuracy.txt   # optional wheels for accuracy.py
+    convert.py                  # only when model.yaml declares a conversion
+    requirements-convert.txt    # required with convert.py
+    <helper>.py                 # model-specific surgery, calibration, or shared code
 ```
 
-Model-specific settings, such as validation thresholds or a multi-component
-composition, go into `model.yaml`, not separate YAML files.
+Put every model-specific setting in `model.yaml`, not in separate
+configuration files. The README follows the structure in
+[`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 
-The README records upstream context, unusual compiler decisions, local
-qualification notes, and known limitations. Requirements that tooling needs to
-enforce must also appear in `model.yaml`.
+Keep board-only code inside `performance.py` or `accuracy.py`. Any other
+`.py` or `.sh` file under `scripts/` is a compile input, so a helper that
+`accuracy.py` imports recompiles the model when it changes. See [step
+9](#9-know-what-a-change-reruns).
 
 ## 3. Pin every input
 
-Each compiled component owns its source. Use `type: file` for a standalone
-artifact. Use `type: file_set` when the recipe needs several related files in a
-particular relative layout. Every file gets its own immutable
-URI, SHA-256, byte count, and media type.
+Each compiled component owns its source. Use `type: file` for one artifact and
+`type: file_set` when the recipe needs several related files in a fixed
+relative layout. Every file gets its own immutable URI, SHA-256, byte count,
+and media type.
 
 Hugging Face sources use a full 40-character repository commit. Approved HTTPS
 sources include pinned Hugging Face resources and GitHub release assets.
@@ -71,22 +76,28 @@ shasum -a 256 /path/to/model.onnx
 wc -c < /path/to/model.onnx
 ```
 
-Do not commit downloaded inputs. Once they are declared, verify them by
-component:
+Do not commit downloaded inputs. Once they are declared, check them:
 
 ```bash
 model-registry validate models/<model-id>
 model-registry fetch models/<model-id> --component <component-id>
 ```
 
-If the model has only one component, `--component` may be omitted.
+`--component` may be omitted when the model has one component.
 
-When upstream publishes a checkpoint instead of ONNX, declare the checkpoint
-and its pinned exporter package as one file set. CI fetches and verifies both.
-The model's `scripts/export.py` converts the local checkpoint to ONNX; it must not
-download an undeclared model. The compiler runner must already provide the
-exporter's dependencies. CI installs the verified exporter package without
-resolving dependencies from the network. Generated ONNX files remain temporary.
+When upstream publishes a checkpoint instead of ONNX, declare it under
+`conversion` and provide `scripts/convert.py` with
+`scripts/requirements-convert.txt`. `convert.py` receives `--conversion
+<entry>` and `--output-dir <directory>` and writes `model.onnx` there.
+`scripts/run_model_conversion.sh` runs it in a fresh Python 3.12 environment:
+
+```bash
+scripts/run_model_conversion.sh models/<model-id> default /tmp/<model-id>-export
+```
+
+The **Vulcan Model Convert** workflow runs the same script, publishes
+`model.onnx`, and prints the `source` block to pin in `model.yaml`. Only that
+pin reaches the compile stage; editing `convert.py` recompiles nothing.
 
 ## 4. Describe components and interfaces
 
@@ -98,117 +109,98 @@ component owns:
 - tensor, state, streaming, and concrete shape-profile contracts;
 - preprocessing and postprocessing pipelines;
 - optional model-specific surgery;
-- the recipe that produces its MPK;
+- its `recipe`, `scripts/compile.py`;
 - optional dependencies on other components.
 
 Names and tensor details must match the pinned inputs. Inspect the ONNX files;
-do not infer them from a mutable model card. Use separate components when files
-must compile independently, as in an encoder/decoder system. Use one file-set
-source when several files jointly form one compiler input.
+do not copy them from a model card.
 
 ## 5. Add resources and calibration
 
 Declare non-compiled files under `resources` and give each its package
-`install_path`. Examples include tokenizers, vocabularies, speaker embeddings,
-labels, and runtime configuration. Declare a separate license when a resource
-has different distribution terms.
+`install_path`. Examples include tokenizers, vocabularies, labels, and runtime
+configuration. Declare a separate license when a resource has different
+distribution terms.
 
-Declare reusable calibration inputs under `calibrations`. A ready calibration
-references either an immutable source or a registered dataset. A pending entry
-states what is missing. Build-profile component bindings select calibration by
-ID only when required.
+Declare calibration inputs under `calibrations`. A ready calibration references
+either an immutable `source` or a registered dataset. A pending entry states
+what is missing. A build-profile component binding selects a calibration by ID.
 
-Calibration is compiler input for quantization; correctness or accuracy tests
-measure behavior. Do not treat calibration data as accuracy evidence. Any
-calibration or correctness dataset must resolve through Dataset Registry and
-requires working Artifactory access. See [Datasets for local model
+Calibration is compiler input for quantization. It is not accuracy evidence.
+Calibration, fidelity, and accuracy datasets resolve through Dataset Registry
+and need working Artifactory access. See [Datasets for local model
 development](datasets.md).
 
-## 6. Define build profiles
+## 6. Define build profiles and compile invocations
 
-A build profile represents one compatible product-wide target configuration,
-such as `modalix_int8`. Within it, bind every participating component and put
-component-specific compiler parameters on that binding:
+A build profile is one product-wide target configuration, such as
+`modalix_int8`. Bind every participating component and put its compiler
+parameters on the binding:
 
 ```yaml
 build_profiles:
   - id: modalix_int8
     target: modalix
     components:
-      - id: encoder
-        calibration: speech_calibration
-        parameters: {precision: int8}
-      - id: decoder
+      - id: model
+        calibration: default
         parameters: {precision: int8}
 ```
 
-By default, the matrix creates one compile job per supported component binding.
-Components that must share preparation or intermediate calibration data can be
-placed in one compile invocation:
+By default each supported binding is its own compile invocation, named after
+its component. Components that share preparation or intermediate data compile
+together in one declared invocation:
 
 ```yaml
-compile_invocations:
-  - id: detector
-    components: [backbone, transformer]
-    python_packages:
-      - path: exporter-1.2.3-py3-none-any.whl
-        imports: [exporter]
+    compile_invocations:
+      - id: detector
+        components: [backbone, transformer]
 ```
 
-Every component in a compile invocation must share one source, recipe, and
-runner class. The recipe runs once and writes one MPK per component plus
-`compile-outputs.json`. Declare any verified source-set Python package and the
-imports CI must check under `python_packages`; CI never discovers dependencies
-from filenames. The manifest maps each component to its MPK and records derived
-graph hashes and the one declared validation result.
-CI accepts the bundle only when every declared output is present and its hash
-matches. Existing models do not need this field. When the group needs
-calibration data, put its single calibration reference on the first listed
-component; CI resolves that verified input once for the shared recipe.
+Grouped components must share one source, one effective runner class, and at
+most one calibration, set on the first listed component. A package and a DevKit
+accuracy entry must each compile all their components in one invocation.
 
-For model-owned numerical comparison, declare a package-scoped `validation`
-entry with `engine: model_recipe`, write `fidelity.json` next to its owning MPK,
-name that component with `result_component`, and reference the report from the
-grouped output manifest. Numerical fidelity is diagnostic, not task accuracy;
-CI checks report integrity and dataset identity, not similarity thresholds.
+A binding proven incompatible may stay as `status: unsupported` with a reason.
+Do not use it for untested work.
 
-Each model build is independent. A failed compile invocation must not prevent
-other invocations from publishing or benchmarking. Within a grouped invocation,
-every declared MPK must be present and verified before any component publishes.
-
-A component binding proven incompatible may be retained as
-`status: unsupported` with a reason. Do not use unsupported for untested work.
-
-Each component recipe has this interface:
+Every recipe has one interface, for single and grouped invocations alike:
 
 ```text
-scripts/compile.py --model <verified-entrypoint> --output-dir <new-directory> \
-  --build-profile <profile-id> --component <component-id>
+scripts/compile.py --model <verified-source> --output-dir <new-directory> \
+  --build-profile <profile-id> --compile-invocation <invocation-id> \
+  [--dataset <verified-calibration>] [--fidelity-dataset <verified-fidelity-dataset>]
 ```
 
-The recipe reads only its selected profile binding, consumes already verified
-inputs, uses the repository-pinned compiler, creates exactly one MPK, and never
-downloads undeclared data. Shared download, checksum, MPK validation, and
-publication behavior belongs in `tools/`, not model code.
+`--model` is the verified source of the invocation's first component. The
+runner passes `--dataset` when the binding selects a ready calibration and
+`--fidelity-dataset` when a `fidelity` entry applies. The recipe:
 
-A grouped recipe uses this interface instead:
+- reads its build profile from `model.yaml`;
+- writes exactly one `*_mpk.tar.gz` under `<output-dir>/<component-id>/` for
+  each component of the invocation;
+- writes `fidelity.json` beside the MPK of the fidelity entry's
+  `result_component` when a `fidelity` entry applies;
+- for a grouped invocation, also writes `<output-dir>/compile-outputs.json`
+  with `outputs` (each component's MPK path and SHA-256), `derived_graphs`
+  (each component's derived graph SHA-256), and `correctness` (the result
+  component's `fidelity.json` and its SHA-256); and
+- never downloads undeclared data.
 
-```text
-scripts/compile.py --model <verified-entrypoint> --dataset <verified-dataset> \
-  --correctness-dataset <verified-correctness-dataset> \
-  --output-dir <new-directory> --build-profile <profile-id> \
-  --compile-invocation <invocation-id>
-```
+For a single-component invocation, `scripts/run_model_compilation.sh` writes
+`compile-outputs.json` when the recipe does not. Shared download, checksum, MPK
+validation, and publication code belongs in `tools/`, not in model code.
 
-Elevated `runner_class` requests require Vulcan approval. See [Compile runner
-class requests and approvals](runner-class-requests.md).
+Elevated `runner_class` requests need approval. See [Compile runner class
+requests and approvals](runner-class-requests.md).
 
-## 7. Define composition and retrieval packages
+## 7. Define composition and packages
 
 A one-component product uses a `single` composition naming its component and
-entrypoint. A product with several components uses a `declarative` composition
-whose `components`, `connections`, `inputs`, and `outputs` are written inline
-in `model.yaml`; see [Compositions and packages](metadata-schema.md#compositions-and-packages).
+entrypoint. A multi-component product uses a `declarative` composition whose
+`components`, `connections`, `inputs`, and `outputs` are written inline in
+`model.yaml`; see [Compositions and
+packages](metadata-schema.md#compositions-and-packages).
 
 Then declare one or more packages. A package selects:
 
@@ -217,32 +209,66 @@ Then declare one or more packages. A package selects:
 - the compatible build profiles;
 - the composition that explains how to use them.
 
-Exactly one package is `default: true`. Trusted assembly places the intact MPKs
-and resources into one deterministic archive, so a user can retrieve and
-extract the complete product without downloading each artifact separately.
+Exactly one package is `default: true`. CI assembles each package from the
+build that compiles its components, so a user downloads the complete product
+as one archive.
 
-## 8. Scope validation and benchmarks
+## 8. Declare fidelity, accuracy, and benchmark entries
 
-Every `validation` and `benchmark` entry in `model.yaml` states which build
-profiles it applies to and whether it exercises a component or a package. Use
-component scope for one compiled unit and package scope for an end-to-end
-composed product. Keep the settings in the entry itself and make missing
-qualification work visible.
+Each entry names its `scope` (a component or a package) and the
+`build_profiles` it applies to. IDs are unique within each section.
 
-For executable accuracy validation, follow [Local accuracy
-development](local-accuracy-development.md). For DevKit benchmarks, follow
-[Synthetic model benchmarking](benchmarking.md).
+| Section | Measured by | Runs in |
+| --- | --- | --- |
+| `fidelity` | `compile.py`, comparing the compiled graph with the source model | compile stage |
+| `accuracy` with `engine: devkit_script` | `accuracy.py`, running the compiled MPKs | accuracy stage |
+| `accuracy` without `engine` | nothing; the entry records results measured elsewhere | no stage |
+| `benchmark` | `performance.py`, once per component | performance stage |
 
-## 9. Validate the contract
+Fidelity is diagnostic numerical agreement, not task accuracy. A build profile
+has at most one `devkit_script` accuracy entry. Every component with a
+`benchmark` entry in a build profile gets its own performance result.
+
+Follow [Accuracy and fidelity](local-accuracy-development.md) for the fidelity
+and accuracy contracts and [DevKit performance](benchmarking.md) for the
+performance script.
+
+## 9. Know what a change reruns
+
+Each stage has a stage key, a SHA-256 of everything its result depends on. CI
+compiles a build only when the branch catalog, or the base branch's catalog for
+a new branch, records no build with its current compile key. It runs a DevKit
+stage only when no completed registry run carries that stage's current key.
+
+| Stage | Key inputs |
+| --- | --- |
+| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, and the Model Compiler version |
+| performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
+| accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
+
+A new compile run changes the performance and accuracy keys too, so a
+recompiled build is always remeasured.
+
+| Change | Reruns |
+| --- | --- |
+| README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| `performance.py` or a `benchmark` entry | that model's performance |
+| `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
+| the DevKit runtime pin | every performance and accuracy stage |
+| a compile input of a model | that model's affected builds, then their DevKit stages |
+| the Model Compiler pin | every build, then every DevKit stage |
+
+The keys are computed by `compile_fingerprint` in
+`tools/model_registry/catalog.py` and by `performance_key` and `accuracy_key`
+in `tools/model_registry/stages.py`.
+
+## 10. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>
 model-registry validate-catalog --repository .
 ```
 
-These checks establish contract coherence, not successful compilation or
-execution. The local qualification guide owns matrix inspection and build
-selection.
-
-Continue with [Qualify locally](local-development.md) and complete the full
-loop for every matrix entry before submitting the contribution.
+These checks establish that the contract is coherent, not that it compiles or
+runs. Continue with [Qualify locally](local-development.md) and complete the
+full loop for every build before submitting.

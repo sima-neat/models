@@ -2,21 +2,38 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
 from model_registry.benchmark_publication import (
     benchmark_identity_document,
     load_benchmark_result,
+    publish_accuracy_run,
     publish_benchmark_result,
     validate_benchmark_set,
 )
+from model_registry.dependencies import resolve_benchmark_runtime
 from model_registry.errors import ValidationError
+from model_registry.model import load_and_validate_model
 from model_registry.registry import S3Object, canonical_sha256
+from model_registry.stages import (
+    ACCURACY_FINGERPRINT_VERSION,
+    PERFORMANCE_FINGERPRINT_VERSION,
+    accuracy_key,
+    performance_key,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILE_RUN_ID = "00000000-0000-4000-8000-000000000001"
 BENCHMARK_RUN_ID = "00000000-0000-4000-8000-000000000002"
+ENVIRONMENT_FINGERPRINT = "e" * 64
+ACCURACY_RUN_ID = "00000000-0000-4000-8000-000000000006"
+ACCURACY_ARTIFACT_ID = "00000000-0000-4000-8000-000000000007"
+RF_DETR_COMPILE_RUN_IDS = {
+    "backbone": "00000000-0000-4000-8000-000000000011",
+    "transformer": "00000000-0000-4000-8000-000000000012",
+}
 
 
 class FakeStore:
@@ -45,9 +62,26 @@ def single_metric(value: float, unit: str) -> dict:
 
 
 def valid_result(tmp_path: Path) -> Path:
+    """A Core benchmark result, built from the browser's last pre-Core fixture."""
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v4.json").read_text())
+    result["schema_version"] = 5
+    result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
+    result["identity"]["canonicalization_version"] = 5
+    result["core_report"] = {
+        "core_version": "3.0.0",
+        "latency_ms": 3.6,
+        "fps": 460.0,
+        "avg_power_watts": 8.5,
+        "energy_joules": 1.0,
+    }
+    # Core benchmark results carry a SHA-256 environment fingerprint at version 2, the performance stage's version.
     result["environment"].update(
-        fingerprint_version=1, kernel_release="test", machine="aarch64", cpu_count=8, cpu_governor="performance"
+        fingerprint=ENVIRONMENT_FINGERPRINT,
+        fingerprint_version=PERFORMANCE_FINGERPRINT_VERSION,
+        kernel_release="test",
+        machine="aarch64",
+        cpu_count=8,
+        cpu_governor="performance",
     )
     result["provenance"]["compile_run_id"] = COMPILE_RUN_ID
     for metric in result["metrics"].values():
@@ -63,7 +97,7 @@ def valid_result(tmp_path: Path) -> Path:
     result["metrics"].update(
         {
             "latency_avg_ms": single_metric(3.6, "ms"),
-            "throughput_fps": single_metric(460.0, "fps"),
+            "throughput_fps": single_metric(460.0, "inferences/s"),
             "model_load_ms": single_metric(125.0, "ms"),
             "time_to_first_inference_ms": single_metric(340.0, "ms"),
             "mla_memory_peak_delta_mib": {**single_metric(128.0, "MiB"), "aggregation": "maximum"},
@@ -71,25 +105,6 @@ def valid_result(tmp_path: Path) -> Path:
     )
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     path = tmp_path / "performance-result.json"
-    path.write_text(json.dumps(result), encoding="utf-8")
-    return path
-
-
-def core_result(tmp_path: Path) -> Path:
-    path = valid_result(tmp_path)
-    result = json.loads(path.read_text(encoding="utf-8"))
-    result["schema_version"] = 5
-    result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
-    result["identity"]["canonicalization_version"] = 5
-    result["metrics"]["throughput_fps"]["unit"] = "inferences/s"
-    result["core_report"] = {
-        "core_version": "3.0.0",
-        "latency_ms": 3.6,
-        "fps": 460.0,
-        "avg_power_watts": 8.5,
-        "energy_joules": 1.0,
-    }
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     path.write_text(json.dumps(result), encoding="utf-8")
     return path
 
@@ -109,7 +124,7 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
         result["metrics"]["avg_power_watts"] = single_metric(8.5, "W")
         result["metrics"]["energy_per_inference_joules"] = single_metric(0.03, "J")
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    destination = tmp_path.parent / component_id / "performance-result-v4.json"
+    destination = tmp_path.parent / component_id / "performance-result.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(result), encoding="utf-8")
     return destination
@@ -127,97 +142,18 @@ def rf_detr_result_set(tmp_path: Path) -> Path:
     return results
 
 
-def rf_detr_accuracy(tmp_path: Path, **model_changes: object) -> Path:
-    sha256 = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v4.json").read_text())["model"]["sha256"]
-    report = {
-        "schema_version": 2,
-        "model": {
-            "id": "rf_detr_small",
-            "build_profile_id": "modalix_int8_bf16",
-            "component_id": "transformer",
-            "package_id": "default",
-            "artifacts": {"backbone": sha256, "transformer": sha256},
-            **model_changes,
-        },
-        "validation": {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"},
-        "dataset": {
-            "id": "coco-2017",
-            "variant": "mini",
-            "split": "val2017",
-            "sha256": "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78",
-            "evaluated_samples": 5000,
-            "available_samples": 5000,
-        },
-        "metrics": {
-            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher"},
-            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher"},
-        },
-        "execution": {"core_version": "3.0.0", "script_sha256": "c" * 64, "models_commit": "a" * 40},
-    }
-    path = tmp_path / "accuracy-result-v2.json"
-    path.write_text(json.dumps(report), encoding="utf-8")
-    return path
-
-
-def validate_rf_detr_set(results: Path, accuracy: Path | None) -> dict:
-    return validate_benchmark_set(
+def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
+    validated = validate_benchmark_set(
         repository=ROOT,
-        result_root=results,
+        result_root=rf_detr_result_set(tmp_path),
         model_id="rf_detr_small",
         build_profile_id="modalix_int8_bf16",
         component_ids=["backbone", "transformer"],
         git_sha="a" * 40,
-        accuracy_result=accuracy,
     )
 
-
-def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
-    validated = validate_rf_detr_set(rf_detr_result_set(tmp_path), rf_detr_accuracy(tmp_path))
-
     assert validated["count"] == 2
-    assert validated["accuracy"]["component_id"] == "transformer"
-
-
-def test_rejects_rf_detr_benchmark_set_without_its_declared_accuracy(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="'coco_accuracy' is declared but its result is missing"):
-        validate_rf_detr_set(rf_detr_result_set(tmp_path), tmp_path / "missing.json")
-
-
-def test_rejects_accuracy_measured_with_other_mpks(tmp_path: Path) -> None:
-    accuracy = rf_detr_accuracy(tmp_path, artifacts={"backbone": "d" * 64, "transformer": "d" * 64})
-
-    with pytest.raises(ValidationError, match="did not measure the benchmarked MPKs"):
-        validate_rf_detr_set(rf_detr_result_set(tmp_path), accuracy)
-
-
-def test_rejects_accuracy_without_a_required_metric(tmp_path: Path) -> None:
-    accuracy = rf_detr_accuracy(tmp_path)
-    report = json.loads(accuracy.read_text(encoding="utf-8"))
-    del report["metrics"]["coco_map"]
-    accuracy.write_text(json.dumps(report), encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="required accuracy metrics were not measured: coco_map"):
-        validate_rf_detr_set(rf_detr_result_set(tmp_path), accuracy)
-
-
-def test_rejects_accuracy_for_a_model_that_declares_none(tmp_path: Path) -> None:
-    results = tmp_path / "results"
-    (results / "model").mkdir(parents=True)
-    result = json.loads(valid_result(tmp_path).read_text(encoding="utf-8"))
-    result["provenance"]["models_commit"] = "a" * 40
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    (results / "model" / "performance-result-v4.json").write_text(json.dumps(result), encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="declares no DevKit accuracy"):
-        validate_benchmark_set(
-            repository=ROOT,
-            result_root=results,
-            model_id="resnet_50",
-            build_profile_id="modalix_bf16",
-            component_ids=["model"],
-            git_sha="a" * 40,
-            accuracy_result=rf_detr_accuracy(tmp_path),
-        )
+    assert "accuracy" not in validated
 
 
 def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> None:
@@ -240,50 +176,42 @@ def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> Non
         )
 
 
-@pytest.mark.parametrize("version", [2, 3])
-def test_loads_historical_variant_identity_results(version: int) -> None:
+@pytest.mark.parametrize("version", [2, 3, 4])
+def test_rejects_results_older_than_the_core_benchmark(version: int) -> None:
     path = ROOT / "artifact-browser" / "fixtures" / f"performance-result-v{version}.json"
 
-    result = load_benchmark_result(path)
+    with pytest.raises(ValidationError, match="^benchmark result "):
+        load_benchmark_result(path)
 
-    assert result["model"]["variant_id"] == "modalix_bf16"
+
+def test_result_schema_requires_the_performance_fingerprint_version() -> None:
+    schema = json.loads((ROOT / "schemas" / "performance-result.schema.json").read_text(encoding="utf-8"))
+    environment = schema["properties"]["environment"]
+    assert environment["properties"]["fingerprint_version"] == {"const": PERFORMANCE_FINGERPRINT_VERSION}
+    assert {"fingerprint", "fingerprint_version"} <= set(environment["required"])
 
 
-def test_republishes_historical_variant_identity_result(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("fingerprint_version", 1, "environment.fingerprint_version: 2 was expected"),
+        ("fingerprint", "E" * 64, "environment.fingerprint: 'E{64}' does not match"),
+        ("fingerprint", None, "environment: 'fingerprint' is a required property"),
+    ],
+)
+def test_rejects_result_environment_identity_the_stage_cannot_match(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
     path = valid_result(tmp_path)
     result = json.loads(path.read_text(encoding="utf-8"))
-    result["schema_version"] = 3
-    result["identity"]["canonicalization_version"] = 3
-    result["model"]["variant_id"] = result["model"].pop("build_profile_id")
-    result["model"].pop("component_id")
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    if value is None:
+        del result["environment"][field]
+    else:
+        result["environment"][field] = value
     path.write_text(json.dumps(result), encoding="utf-8")
-    calls: list[tuple[str, str, dict | None, str]] = []
 
-    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
-        calls.append((method, endpoint, body, key))
-        if endpoint == "/v1/runs":
-            return {"run_id": BENCHMARK_RUN_ID}
-        return {"ok": True}
-
-    published = publish_benchmark_result(
-        result_path=path,
-        api_url="https://registry.example.invalid",
-        aws_region="us-west-2",
-        bucket="artifacts",
-        environment="staging",
-        branch="feature/benchmark",
-        git_sha="a" * 40,
-        request=request,
-        artifact_store=FakeStore(),
-    )
-
-    create = calls[0][2]
-    assert create is not None
-    assert create["metadata"]["build_profile_id"] == "modalix_bf16"
-    assert create["metadata"]["component_id"] == "model"
-    assert published["build_profile_id"] == "modalix_bf16"
-    assert published["component_id"] == "model"
+    with pytest.raises(ValidationError, match=message):
+        load_benchmark_result(path)
 
 
 def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
@@ -307,6 +235,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
         environment="staging",
         branch="feature/benchmark",
         git_sha="a" * 40,
+        repository=ROOT,
         request=request,
         artifact_store=store,
     )
@@ -331,7 +260,17 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert create["schema_version"] == 1
     assert create["run_type"] == "model_benchmark"
     assert create["parent_run_id"] == COMPILE_RUN_ID
-    assert create["run_fingerprint"] == published["result_fingerprint"]
+    model = load_and_validate_model(ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json")
+    expected_key = performance_key(
+        ROOT, model, "modalix_bf16", "model", compile_run_id=COMPILE_RUN_ID, artifact_sha256=result["model"]["sha256"]
+    )
+    assert create["run_fingerprint"] == expected_key
+    assert create["run_fingerprint"] != published["result_fingerprint"]
+    assert re.fullmatch(r"[0-9a-f]{64}", create["run_fingerprint"])
+    assert create["metadata"]["performance_key"] == expected_key
+    assert published["performance_key"] == expected_key
+    assert create["environment"]["fingerprint"] == ENVIRONMENT_FINGERPRINT
+    assert create["environment"]["fingerprint_version"] == PERFORMANCE_FINGERPRINT_VERSION == 2
     test_result = calls[4][2]
     assert test_result is not None and test_result["status"] == "passed"
     assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000003"
@@ -339,7 +278,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert measurements is not None
     assert {item["name"] for item in measurements["measurements"]} == {
         "model.latency.avg",
-        "model.throughput",
+        "model.inference_rate",
         "model.initialization.load",
         "model.initialization.time_to_first_inference",
         "model.mla_memory.peak_delta",
@@ -355,75 +294,11 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v4.json")
-
-
-def publish_rf_detr_transformer(tmp_path: Path, accuracy: Path | None) -> tuple[dict, list]:
-    calls: list[tuple[str, str, dict | None, str]] = []
-
-    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
-        calls.append((method, endpoint, body, key))
-        if endpoint == "/v1/runs":
-            return {"run_id": BENCHMARK_RUN_ID}
-        if endpoint.endswith("/artifacts/accuracy-result"):
-            return {"artifact_id": "00000000-0000-4000-8000-000000000005"}
-        return {"ok": True}
-
-    published = publish_benchmark_result(
-        result_path=rf_detr_result(tmp_path, "transformer"),
-        api_url="https://registry.example.invalid",
-        aws_region="us-west-2",
-        bucket="artifacts",
-        environment="staging",
-        branch="feature/benchmark",
-        git_sha="a" * 40,
-        accuracy_result_path=accuracy,
-        request=request,
-        artifact_store=FakeStore(),
-    )
-    return published, calls
-
-
-def test_publishes_accuracy_on_the_result_component_benchmark_run(tmp_path: Path) -> None:
-    published, calls = publish_rf_detr_transformer(tmp_path, rf_detr_accuracy(tmp_path))
-
-    endpoints = [endpoint for _, endpoint, _, _ in calls]
-    assert endpoints[-4:] == [
-        f"/v1/runs/{BENCHMARK_RUN_ID}/artifacts/accuracy-result",
-        f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/accuracy/coco_accuracy",
-        f"/v1/runs/{BENCHMARK_RUN_ID}/measurements/batch",
-        f"/v1/runs/{BENCHMARK_RUN_ID}/finalize",
-    ]
-    assert published["accuracy"]["evaluated_samples"] == 5000
-    test_result = calls[-3][2]
-    assert test_result is not None
-    assert test_result["version"] == "2"
-    assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000005"
-    measurements = calls[-2][2]
-    assert measurements is not None
-    coco_map = next(item for item in measurements["measurements"] if item["name"] == "model.accuracy.coco_map")
-    assert (coco_map["value"], coco_map["unit"], coco_map["direction"]) == (0.4694, "ratio", "higher")
-    assert coco_map["dimensions"]["validation_id"] == "coco_accuracy"
-
-
-def test_accuracy_changes_the_benchmark_idempotency_key(tmp_path: Path) -> None:
-    without, without_calls = publish_rf_detr_transformer(tmp_path, None)
-    with_accuracy, with_calls = publish_rf_detr_transformer(tmp_path, rf_detr_accuracy(tmp_path))
-
-    assert without["accuracy"] is None
-    assert with_accuracy["execution_digest"] == without["execution_digest"]
-    assert with_calls[0][3] != without_calls[0][3]
-
-
-def test_rejects_accuracy_attached_to_another_component(tmp_path: Path) -> None:
-    accuracy = rf_detr_accuracy(tmp_path, component_id="backbone")
-
-    with pytest.raises(ValidationError, match="does not belong to this benchmark result"):
-        publish_rf_detr_transformer(tmp_path, accuracy)
+    assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result.json")
 
 
 def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> None:
-    path = core_result(tmp_path)
+    path = valid_result(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
@@ -440,6 +315,7 @@ def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> 
         environment="staging",
         branch="feature/benchmark",
         git_sha="a" * 40,
+        repository=ROOT,
         request=request,
         artifact_store=FakeStore(),
     )
@@ -451,23 +327,14 @@ def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> 
     assert throughput["unit"] == "inferences/s"
 
 
-@pytest.mark.parametrize(
-    ("version", "unit", "expected_unit"),
-    [(4, "inferences/s", "fps"), (5, "fps", "inferences/s")],
-)
-def test_rejects_throughput_unit_that_does_not_match_schema(
-    tmp_path: Path, version: int, unit: str, expected_unit: str
-) -> None:
-    path = core_result(tmp_path) if version == 5 else valid_result(tmp_path)
+def test_rejects_throughput_unit_that_is_not_the_inference_rate(tmp_path: Path) -> None:
+    path = valid_result(tmp_path)
     result = json.loads(path.read_text(encoding="utf-8"))
-    result["metrics"]["throughput_fps"]["unit"] = unit
+    result["metrics"]["throughput_fps"]["unit"] = "fps"
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     path.write_text(json.dumps(result), encoding="utf-8")
 
-    with pytest.raises(
-        ValidationError,
-        match=f"schema v{version} requires throughput_fps unit {expected_unit!r}",
-    ):
+    with pytest.raises(ValidationError, match="requires throughput_fps unit 'inferences/s'"):
         publish_benchmark_result(
             result_path=path,
             api_url="https://registry.example.invalid",
@@ -476,12 +343,13 @@ def test_rejects_throughput_unit_that_does_not_match_schema(
             environment="staging",
             branch="feature/benchmark",
             git_sha="a" * 40,
+            repository=ROOT,
             request=lambda *_: {},
             artifact_store=FakeStore(),
         )
 
 
-def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:
+def test_publishes_log_beside_result(tmp_path: Path) -> None:
     path = valid_result(tmp_path)
     log = tmp_path / "benchmark.log"
     log.write_text("benchmark complete\n", encoding="utf-8")
@@ -503,6 +371,7 @@ def test_publishes_log_beside_schema_versioned_result(tmp_path: Path) -> None:
         environment="staging",
         branch="feature/benchmark",
         git_sha="a" * 40,
+        repository=ROOT,
         request=request,
         artifact_store=store,
     )
@@ -533,6 +402,7 @@ def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(tmp_p
             environment="staging",
             branch="feature/benchmark",
             git_sha="a" * 40,
+            repository=ROOT,
             request=request,
             artifact_store=store,
         )
@@ -585,7 +455,217 @@ def test_rejects_metric_aggregation_the_registry_cannot_represent(tmp_path: Path
             environment="staging",
             branch="feature/benchmark",
             git_sha="a" * 40,
+            repository=ROOT,
             request=request,
             artifact_store=FakeStore(),
         )
     assert calls == []
+
+
+def rf_detr_compilation(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """Write a registered RF-DETR Small compilation: MPKs, compile-outputs.json and each compile run receipt."""
+    compiled = tmp_path / "compiled"
+    build = compiled / "rf_detr_small" / "modalix_int8_bf16"
+    outputs = []
+    digests = {}
+    for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items():
+        archive = build / component_id / f"rf_detr_small_{component_id}_mpk.tar.gz"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(f"{component_id} mpk".encode())
+        digests[component_id] = hashlib.sha256(archive.read_bytes()).hexdigest()
+        outputs.append(
+            {
+                "component_id": component_id,
+                "mpk_path": f"{component_id}/{archive.name}",
+                "mpk_sha256": digests[component_id],
+            }
+        )
+        receipt = {
+            "runs": [
+                {
+                    "run_id": run_id,
+                    "model_id": "rf_detr_small",
+                    "build_profile_id": "modalix_int8_bf16",
+                    "component_id": component_id,
+                }
+            ]
+        }
+        (build / component_id / "registry-publication.json").write_text(json.dumps(receipt), encoding="utf-8")
+    (build / "compile-outputs.json").write_text(json.dumps({"outputs": outputs}), encoding="utf-8")
+    return compiled, digests
+
+
+def rf_detr_accuracy(tmp_path: Path, artifacts: dict[str, str]) -> Path:
+    report = {
+        "schema_version": 2,
+        "model": {
+            "id": "rf_detr_small",
+            "build_profile_id": "modalix_int8_bf16",
+            "component_id": "transformer",
+            "package_id": "default",
+            "artifacts": artifacts,
+        },
+        "validation": {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"},
+        "dataset": {
+            "id": "coco-2017",
+            "variant": "mini",
+            "split": "val2017",
+            "sha256": "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78",
+            "evaluated_samples": 5000,
+            "available_samples": 5000,
+        },
+        "metrics": {
+            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher"},
+            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher"},
+        },
+        "execution": {"core_version": "3.0.0", "script_sha256": "c" * 64, "models_commit": "a" * 40},
+    }
+    path = tmp_path / "accuracy-result.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return path
+
+
+def publish_rf_detr_accuracy(
+    tmp_path: Path, *, artifacts: dict[str, str] | None = None, log_path: Path | None = None
+) -> tuple[dict, list[tuple[str, str, dict | None, str]], FakeStore]:
+    compiled, digests = rf_detr_compilation(tmp_path)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        if endpoint == "/v1/runs":
+            return {"run_id": ACCURACY_RUN_ID}
+        if endpoint.endswith("/artifacts/accuracy-result"):
+            return {"artifact_id": ACCURACY_ARTIFACT_ID}
+        return {"ok": True}
+
+    store = FakeStore()
+    published = publish_accuracy_run(
+        repository=ROOT,
+        compiled_dir=compiled,
+        result_path=rf_detr_accuracy(tmp_path, artifacts if artifacts is not None else digests),
+        log_path=log_path,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/accuracy",
+        git_sha="a" * 40,
+        request=request,
+        artifact_store=store,
+    )
+    return published, calls, store
+
+
+def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_run(tmp_path: Path) -> None:
+    published, calls, store = publish_rf_detr_accuracy(tmp_path)
+
+    run = f"/v1/runs/{ACCURACY_RUN_ID}"
+    assert [endpoint for _, endpoint, _, _ in calls] == [
+        "/v1/runs",
+        f"{run}/inputs/compiled-model-backbone",
+        f"{run}/inputs/compiled-model-transformer",
+        f"{run}/parameters",
+        f"{run}/artifacts/accuracy-result",
+        f"{run}/test-results/accuracy/coco_accuracy",
+        f"{run}/measurements/batch",
+        f"{run}/finalize",
+    ]
+    _, digests = rf_detr_compilation(tmp_path / "expected")
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    builds = {
+        component_id: {"run_id": RF_DETR_COMPILE_RUN_IDS[component_id], "artifact_sha256": digests[component_id]}
+        for component_id in ("backbone", "transformer")
+    }
+    expected_key = accuracy_key(ROOT, model, "modalix_int8_bf16", builds)
+
+    create = calls[0][2]
+    assert create is not None
+    assert create["run_type"] == "model_accuracy"
+    assert create["parent_run_id"] == RF_DETR_COMPILE_RUN_IDS["transformer"]
+    assert create["run_fingerprint"] == expected_key
+    assert re.fullmatch(r"[0-9a-f]{64}", create["run_fingerprint"])
+    assert create["metadata"]["accuracy_key"] == expected_key
+    assert create["metadata"]["accuracy_id"] == "coco_accuracy"
+    environment = create["environment"]
+    assert environment["fingerprint_version"] == ACCURACY_FINGERPRINT_VERSION == 1
+    assert environment["fingerprint"] == canonical_sha256(
+        {"runtime": resolve_benchmark_runtime(ROOT), "core_version": "3.0.0"}
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", environment["fingerprint"])
+
+    for component_id, (_, _, body, _) in zip(("backbone", "transformer"), calls[1:3]):
+        assert body is not None
+        assert body["input_type"] == "model-pack"
+        assert body["source_reference"] == f"vulcan://runs/{RF_DETR_COMPILE_RUN_IDS[component_id]}/artifacts/mpk"
+        assert body["sha256"] == digests[component_id]
+        assert body["metadata"]["compile_run_id"] == RF_DETR_COMPILE_RUN_IDS[component_id]
+
+    # Vulcan refuses to complete a run without its canonical parameters.
+    parameters = calls[3][2]
+    assert parameters is not None
+    assert parameters["parameters"]["accuracy"]["id"] == "coco_accuracy"
+    assert parameters["parameters"]["builds"] == builds
+    assert parameters["parameters"]["core_version"] == "3.0.0"
+    assert parameters["canonical_sha256"] == canonical_sha256(parameters["parameters"])
+
+    test_result = calls[5][2]
+    assert test_result is not None
+    assert test_result["status"] == "passed"
+    assert test_result["report_artifact_id"] == ACCURACY_ARTIFACT_ID
+    assert calls[-1][2] == {"status": "completed"}
+    assert published["accuracy_run_id"] == ACCURACY_RUN_ID
+    assert published["compile_run_id"] == RF_DETR_COMPILE_RUN_IDS["transformer"]
+    assert published["accuracy_key"] == expected_key
+    assert published["evaluated_samples"] == 5000
+    assert store.objects[0][3] == "application/json"
+
+
+def test_accuracy_run_idempotency_keys_are_stable_across_retries(tmp_path: Path) -> None:
+    _, first, _ = publish_rf_detr_accuracy(tmp_path / "first")
+    _, retry, _ = publish_rf_detr_accuracy(tmp_path / "retry")
+
+    keys = [key for _, _, _, key in first]
+    assert keys == [key for _, _, _, key in retry]
+    assert len(set(keys)) == len(keys)
+    assert all(key.startswith("models-accuracy-") for key in keys)
+
+
+def test_publishes_accuracy_log_before_finalizing(tmp_path: Path) -> None:
+    log = tmp_path / "accuracy.log"
+    log.write_text("accuracy complete\n", encoding="utf-8")
+
+    _, calls, store = publish_rf_detr_accuracy(tmp_path, log_path=log)
+
+    endpoints = [endpoint for _, endpoint, _, _ in calls]
+    assert endpoints[-2:] == [
+        f"/v1/runs/{ACCURACY_RUN_ID}/artifacts/accuracy-log",
+        f"/v1/runs/{ACCURACY_RUN_ID}/finalize",
+    ]
+    assert store.objects[1][1].endswith("/accuracy.log")
+    assert store.objects[1][3] == "text/plain"
+
+
+def test_rejects_accuracy_measured_with_other_mpks(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="did not measure the compiled MPKs"):
+        publish_rf_detr_accuracy(tmp_path, artifacts={"backbone": "d" * 64, "transformer": "d" * 64})
+
+
+def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Path) -> None:
+    compiled, digests = rf_detr_compilation(tmp_path)
+    (compiled / "rf_detr_small" / "modalix_int8_bf16" / "transformer" / "registry-publication.json").unlink()
+
+    with pytest.raises(ValidationError, match="needs the registered transformer compile run"):
+        publish_accuracy_run(
+            repository=ROOT,
+            compiled_dir=compiled,
+            result_path=rf_detr_accuracy(tmp_path, digests),
+            api_url="https://registry.example.invalid",
+            aws_region="us-west-2",
+            bucket="artifacts",
+            environment="staging",
+            branch="feature/accuracy",
+            git_sha="a" * 40,
+            request=lambda *_: pytest.fail("no registry request is expected"),
+            artifact_store=FakeStore(),
+        )

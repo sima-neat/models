@@ -71,8 +71,9 @@ and publishes one benchmark result for each component.
 
 On the same board and MPKs, `scripts/accuracy.py` then measures COCO detection
 accuracy on all 5,000 val2017 images. The current build scores mAP 50–95
-0.469, AP50 0.654, and AP75 0.502. The `coco_accuracy` result is published on
-the transformer's benchmark run, and the model browser shows it with the build.
+0.469, AP50 0.654, and AP75 0.502. The `coco_accuracy` result is published as
+an accuracy run under the transformer's compile run, and the model browser
+shows it with the build.
 
 The script resizes each image to 512×512 with bilinear sampling and applies
 ImageNet normalization, runs the backbone, the CPU proposal bridge, and the
@@ -132,8 +133,15 @@ export.
 
 The recipe sorts the COCO 2017 mini image names and shuffles them with the
 declared seed. It uses the first 50 images for calibration and the next 50 for
-fidelity; labels are not needed for the tensor comparison. Resolve the dataset,
-then run the grouped recipe in the pinned Model Compiler environment:
+fidelity; labels are not needed for the tensor comparison. In the pinned Model
+Compiler environment, the shared runner script resolves the inputs, runs the
+grouped recipe, and validates its outputs:
+
+```bash
+scripts/run_model_compilation.sh models/rf_detr_small modalix_int8_bf16 rf_detr /tmp/rf-detr
+```
+
+To run the recipe by hand instead, resolve the dataset and call it directly:
 
 ```bash
 output_dir=/tmp/rf-detr-small
@@ -152,7 +160,7 @@ test -e "$resolved_coco_archive"
 python models/rf_detr_small/scripts/compile.py \
   --model "$verified_model" \
   --dataset "$resolved_coco_archive" \
-  --correctness-dataset "$resolved_coco_archive" \
+  --fidelity-dataset "$resolved_coco_archive" \
   --output-dir "$output_dir" \
   --build-profile modalix_int8_bf16 \
   --compile-invocation rf_detr
@@ -177,17 +185,15 @@ tensors, generated models, and reports must remain outside Git.
 
 ### DevKit accuracy
 
-The `coco_accuracy` validation entry declares the COCO 2017 `mini` dataset
-archive and the published metrics. On a Modalix DevKit, benchmark both
-components first so that `backbone/performance-test.json` and
-`transformer/performance-test.json` exist under one benchmark directory. Then
-run from the repository root, setting `REGISTRY_PYTHON` when `python3` cannot
-import `model_registry`:
+The `coco_accuracy` accuracy entry declares the COCO 2017 `mini` dataset
+archive and the published metrics. On a Modalix DevKit, run the accuracy stage
+on the output of `scripts/run_model_compilation.sh` above, setting
+`REGISTRY_PYTHON` to a Python that has the full Model Registry tooling and
+Dataset Registry:
 
 ```bash
-benchmark_root=/media/nvme/neat-tests/rf-detr-benchmark
 scripts/run_model_accuracy.sh models/rf_detr_small modalix_int8_bf16 \
-  "$benchmark_root" /media/nvme/neat-tests/rf-detr-accuracy
+  /tmp/rf-detr /media/nvme/neat-tests/rf-detr-accuracy
 ```
 
 The script installs `scripts/requirements-accuracy.txt` beside PyNeat's

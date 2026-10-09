@@ -1,12 +1,12 @@
-# `model.yaml` v2 reference
+# `model.yaml` reference
 
 [`schemas/model.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/model.schema.json)
 is the authoritative contract. JSON Schema rejects unknown fields; semantic
 validation then checks references, dependency cycles, taxonomy compatibility,
 source policy, and model-local paths.
 
-Version 2 describes a deployable model product rather than assuming that one
-catalog entry always produces one MPK. A product can contain several compiled
+`model.yaml` describes a deployable model product rather than assuming that
+one catalog entry always produces one MPK. A product can contain several compiled
 components, support several build profiles, include runtime resources, define
 how the pieces compose, and publish one or more downloadable packages.
 
@@ -19,7 +19,8 @@ model
 ├── build_profiles ─ target-wide settings plus component bindings
 ├── compositions ─── how component entrypoints form an application
 ├── packages ─────── what a user downloads
-├── validation ───── compile-host checks scoped to a component or package
+├── fidelity ─────── numerical comparisons the compile stage computes
+├── accuracy ─────── DevKit task accuracy, or recorded results
 └── benchmark ────── DevKit performance measurements scoped to a component
 ```
 
@@ -30,14 +31,16 @@ section, and model-owned code lives in `scripts/` beside it:
 models/<model-id>/
   model.yaml
   README.md
-  scripts/      compile.py, performance.py, and any model-specific helpers
+  hero.png      optional
+  scripts/      compile.py, performance.py, accuracy.py, convert.py, and helpers
 ```
+
+Validation rejects any other entry in the model directory.
 
 ## Product identity and provenance
 
 The identity, taxonomy, ownership, license, `upstream`, and `maturity` fields
-retain their existing meaning. `schema_version` must be `2`, and `id` must
-match the model directory. See [Model taxonomy](model-taxonomy.md) for the
+are product metadata. `id` must match the model directory. See [Model taxonomy](model-taxonomy.md) for the
 sanctioned taxonomy values.
 
 `upstream` records human-reviewable provenance. Downloadable inputs belong in
@@ -61,7 +64,8 @@ conversion:
 Conversion sources follow the same source policy and file-set rules as
 component sources. A model that declares `conversion` must also provide
 `scripts/convert.py` and `scripts/requirements-convert.txt`, which the
-**Vulcan Model Convert** workflow runs in an isolated Python environment for the
+**Vulcan Model Convert** workflow runs through
+`scripts/run_model_conversion.sh` in a fresh Python environment for the
 selected entry. The workflow publishes `model.onnx` and prints the source pin
 to copy into the component `source` after surgery and compiler validation.
 
@@ -119,12 +123,6 @@ relative layout in a content-addressed cache and passes the entrypoint to the
 recipe. `depends_on` may express ordering between components; cycles and
 unknown component IDs are rejected.
 
-The entrypoint may be an upstream checkpoint when the same file set also pins
-the model-specific exporter package. In that case the recipe calls a local
-`export.py` and keeps the generated ONNX temporary. Registry tooling only
-fetches and verifies the declared files; it does not interpret checkpoint
-formats or provide a universal converter.
-
 An interface contains named `entrypoints`. Each entrypoint declares its input
 and output tensors and may declare state and streaming behavior. Symbolic
 dimensions are allowed. Put supported concrete bindings in `shape_profiles`,
@@ -162,11 +160,16 @@ build needs it:
 calibrations:
   - id: representative_images
     status: ready
-    dataset: {id: imagenet-2012, variant: calibration, split: train}
+    dataset:
+      id: imagenet-2012
+      variant: mini
+      sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
+      size_bytes: 356052889
 ```
 
-Calibration prepares quantization ranges; it is not an accuracy measurement.
-Validation entries separately compare model outputs against declared evidence.
+The recipe receives the verified calibration as `--dataset` and chooses its
+samples. Calibration prepares quantization ranges; it is not a quality
+measurement. `fidelity` and `accuracy` entries measure quality separately.
 See [Datasets for local model development](datasets.md).
 
 ## Build profiles
@@ -187,39 +190,33 @@ build_profiles:
         parameters: {precision: int8}
 ```
 
-This avoids a Cartesian product of unrelated component configurations. The
-compile matrix emits one job for every supported component binding unless the
-profile declares `compile_invocations`:
+This avoids a Cartesian product of unrelated component configurations. Each
+supported binding is its own compile invocation, named after its component,
+unless the profile declares `compile_invocations`:
 
 ```yaml
 compile_invocations:
   - id: detector
     components: [backbone, transformer]
-    python_packages:
-      - path: exporter-1.2.3-py3-none-any.whl
-        imports: [exporter]
 ```
 
-One invocation runs the shared recipe once and must emit a schema-v2
-`compile-outputs.json` with one MPK path for every listed component, derived
-graph hashes, and one validation result. `python_packages` explicitly names
-verified file-set members and imports needed by the recipe; CI does not infer
-them from filenames. Grouped
-components must share their source content, recipe, and effective runner class.
-Selecting one grouped component selects the whole invocation. `runner_class` may
-be set on the profile or overridden on a binding. A binding proven incompatible
-may use `status: unsupported` with a reason; untested work is not unsupported.
-If the invocation needs calibration data, its first component selects the one
-shared calibration input that CI passes to the recipe.
+An invocation has only an `id` and its `components`. Every supported binding
+belongs to exactly one invocation. Grouped components must share their source
+content and effective runner class. They use at most one calibration, which
+the first component must select; CI passes it to the recipe. A package or a `devkit_script`
+accuracy entry must compile all its components in one invocation.
 
-A grouped recipe with an `engine: model_recipe` validation entry writes one
-`fidelity.json` beside its owning component MPK. The report follows
-`schemas/numerical-fidelity-v1.schema.json` and records numerical agreement for
-the full composed pipeline. The validation entry names that owner with
-`result_component` and declares the output metrics. CI validates the report
-against that entry before publishing any component. Numerical metrics
-are diagnostic and do not gate compilation or publication. Execution failures,
-invalid reports, and incomplete component sets still fail validation.
+A grouped recipe runs once and writes a `compile-outputs.json` with
+`model_id`, `build_profile_id`, `compile_invocation_id`, an `outputs` list
+naming each component's MPK and SHA-256, a `derived_graphs` list with the
+SHA-256 of each component's derived graph, and a `correctness` entry pointing
+at the result component's `fidelity.json`. For a single-component invocation,
+`scripts/run_model_compilation.sh` writes the file with `outputs` only when the
+recipe does not.
+
+`runner_class` may be set on the profile or overridden on a binding. A binding
+proven incompatible may use `status: unsupported` with a reason; untested work
+is not unsupported.
 
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
@@ -232,10 +229,9 @@ one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
 precision. The complete download basename must fit within 255 characters.
 Omitting or removing the suffix preserves the original download filename.
 
-Suffix changes update catalog metadata while retaining existing compiled artifacts.
-They do not change build identities, trigger compilation or benchmarking, or rename
-stored objects and MPK contents. Registry support must deploy before catalogs
-publish this optional field.
+Suffix changes update catalog metadata while retaining existing compiled
+artifacts. The suffix is not a compile key input, so changing it reruns no
+stage and renames no stored object or MPK content.
 
 Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
 from the shared vocabulary, for example `int8_mse_tmio` or
@@ -265,13 +261,12 @@ compositions:
 A multi-component product uses `type: declarative` and declares its graph
 inline. Packaging writes the graph into the package as
 `composition/composition.yaml`, validated against
-`schemas/composition-v1.schema.json`:
+[`composition.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/composition.schema.json):
 
 ```yaml
 compositions:
   - id: pipeline
     type: declarative
-    schema_version: 1
     components:
       - {id: encoder, component: encoder, entrypoint: default}
       - {id: decoder, component: decoder, entrypoint: default}
@@ -297,27 +292,73 @@ packages:
 ```
 
 Exactly one package is the default. Validation ensures each package includes
-the components required by its composition and declares only profiles that can
-build those components. Trusted assembly preserves each MPK intact inside one
+the components required by its composition and declares only profiles that
+build all of them in one compile invocation. Trusted assembly preserves each MPK intact inside one
 deterministic bundle with a manifest, the selected resources, and the
 declarative composition document when one is used.
 The embedded manifest is validated against
-[`package-manifest-v1.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest-v1.schema.json).
+[`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json).
 
-## Validation and benchmark entries
+## Fidelity, accuracy, and benchmark entries
 
-`validation` entries are checks the compile workflow runs on the compile host,
-except `engine: devkit_script` accuracy, which runs on the DevKit after the
-benchmark. `benchmark` entries are measurements taken on a Modalix DevKit. Each entry
-declares its scope and applicable build profiles, followed by its settings:
+These three sections declare the quality and performance evidence of each
+build. Every entry has an `id`, a `scope` (`{type: component, component: <id>}`
+or `{type: package, package: <id>}`), and the `build_profiles` it covers. IDs
+are unique within each section, and an entry may cover only components and
+packages that are available in each listed build profile.
+
+### `fidelity`
+
+Computed by `scripts/compile.py` during the compile stage and written as
+`fidelity.json` beside the result component's MPK.
+
+| Field | Meaning |
+| --- | --- |
+| `scope` | A package. |
+| `status` | `diagnostic`, `provisional`, or `ready`. |
+| `result_component` | The package component whose outputs are compared and whose directory holds the report. |
+| `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
+| `selection` | `method: seeded_random_without_replacement`, with `seed`, `offset`, and `samples`. |
+| `outputs` | Output names of the result component's entrypoints to compare. |
+
+The report follows
+[`numerical-fidelity.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/numerical-fidelity.schema.json).
+Fidelity entries are compile inputs.
+
+### `accuracy`
+
+An entry with `engine: devkit_script` is measured by `scripts/accuracy.py` in
+the accuracy stage:
+
+| Field | Meaning |
+| --- | --- |
+| `engine` | `devkit_script`. |
+| `status` | `ready` or `provisional`. |
+| `result_component` | A scoped component; its compile run is the parent of the published result. |
+| `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
+| `metrics` | Metric names the script may report. |
+| `required_metrics` | Optional subset of `metrics` that every result must contain. |
+
+A build profile has at most one `devkit_script` entry, and its scoped
+components must compile in one invocation.
+
+An entry without `engine` records results measured elsewhere. It needs only
+`id`, `scope`, and `build_profiles` and may carry any other fields. No stage
+runs it.
+
+### `benchmark`
+
+Measured by `scripts/performance.py` in the performance stage, once for each
+covered component:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | A lowercase identifier such as `provisional`; a status starting with `pending` needs a `reason` or `note`. |
+| `metrics` | Metric names, as strings or `{name: ...}` objects. |
+| `required_metrics` | Optional subset of `metrics` that must be measured for publication. |
+| `target`, `reason`, `note` | Optional descriptive fields. |
 
 ```yaml
-validation:
-  - id: encoder_accuracy
-    scope: {type: component, component: encoder}
-    build_profiles: [modalix_int8]
-    engine: model_registry
-    # accuracy settings; see Local accuracy development
 benchmark:
   - id: encoder_latency
     scope: {type: component, component: encoder}
@@ -326,17 +367,10 @@ benchmark:
     metrics: [latency_avg_ms, throughput_fps]
 ```
 
-Entry IDs are unique within `validation` and within `benchmark`; model
-scripts look up their settings by ID. Component entries qualify one MPK.
-Package entries qualify the composed product. A validation entry with `engine: model_registry` runs the shared
-accuracy evaluator, and one with `engine: model_recipe` declares the numerical
-fidelity report a grouped recipe writes. One with `engine: devkit_script` runs
-the model's `scripts/accuracy.py` on the benchmarked MPKs; see
-[Accuracy on the DevKit](local-accuracy-development.md#accuracy-on-the-devkit).
-An entry without `engine` holds
-settings that only the model's own scripts read. `model-registry validate`
-checks every entry's settings, including unknown fields and that
-`required_metrics` are declared in `metrics`.
+See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
+performance](benchmarking.md) for the scripts and results, and [what a change
+reruns](adding-a-model.md#9-know-what-a-change-reruns) for how each section
+feeds the stage keys.
 
 ## Validation
 
@@ -348,5 +382,5 @@ model-registry validate-catalog --repository .
 ```
 
 Validation proves that the source-controlled contract is coherent. Developers
-must still compile and test every supported component/profile combination
-locally before submitting it.
+must still compile and measure every supported build locally before submitting
+it.

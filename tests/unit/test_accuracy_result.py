@@ -5,20 +5,39 @@ import json
 from pathlib import Path
 
 import pytest
-from model_registry.accuracy_result import ACCURACY_RESULT_SCHEMA, accuracy_measurements, load_accuracy_result
+from model_registry.accuracy_result import (
+    ACCURACY_RESULT_SCHEMA,
+    accuracy_measurements,
+    compiled_artifacts,
+    load_accuracy_result,
+)
 from model_registry.cli import main
+from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
-MPK_SHA256 = {"backbone": "b" * 64, "transformer": "c" * 64}
+GIT_SHA = "a" * 40
 
 
-def benchmark_root(tmp_path: Path) -> Path:
-    root = tmp_path / "benchmark"
-    for component_id, sha256 in MPK_SHA256.items():
-        (root / component_id).mkdir(parents=True)
-        manifest = {"model": {"sha256": sha256}, "provenance": {"models_commit": "a" * 40}}
-        (root / component_id / "performance-test.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return root
+def compiled_build(tmp_path: Path, components: tuple[str, ...] = ("backbone", "transformer")) -> tuple[Path, dict]:
+    """Write an RF-DETR Small compilation with one MPK per component and its compile-outputs.json."""
+    compiled = tmp_path / "compiled"
+    build = compiled / "rf_detr_small" / "modalix_int8_bf16"
+    outputs = []
+    digests = {}
+    for component_id in components:
+        archive = build / component_id / f"rf_detr_small_{component_id}_mpk.tar.gz"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(f"{component_id} mpk".encode())
+        digests[component_id] = hashlib.sha256(archive.read_bytes()).hexdigest()
+        outputs.append(
+            {
+                "component_id": component_id,
+                "mpk_path": f"{component_id}/{archive.name}",
+                "mpk_sha256": digests[component_id],
+            }
+        )
+    (build / "compile-outputs.json").write_text(json.dumps({"outputs": outputs}), encoding="utf-8")
+    return compiled, digests
 
 
 def script_output(tmp_path: Path, metrics: dict[str, float]) -> Path:
@@ -33,7 +52,8 @@ def script_output(tmp_path: Path, metrics: dict[str, float]) -> Path:
     return path
 
 
-def import_accuracy(tmp_path: Path, metrics: dict[str, float]) -> int:
+def import_accuracy(tmp_path: Path, metrics: dict[str, float], git_sha: str = GIT_SHA) -> int:
+    compiled, _ = compiled_build(tmp_path)
     return main(
         [
             "import-accuracy",
@@ -41,22 +61,24 @@ def import_accuracy(tmp_path: Path, metrics: dict[str, float]) -> int:
             "--model-id", "rf_detr_small",
             "--build-profile-id", "modalix_int8_bf16",
             "--script-output", str(script_output(tmp_path, metrics)),
-            "--result-root", str(benchmark_root(tmp_path)),
-            "--output", str(tmp_path / "accuracy-result-v2.json"),
+            "--compiled-dir", str(compiled),
+            "--git-sha", git_sha,
+            "--output", str(tmp_path / "accuracy-result.json"),
         ]
     )  # fmt: skip
 
 
-def test_import_accuracy_records_the_entry_dataset_and_benchmarked_mpks(tmp_path: Path) -> None:
+def test_import_accuracy_records_the_entry_dataset_and_compiled_mpks(tmp_path: Path) -> None:
     assert import_accuracy(tmp_path, {"coco_map": 0.4694, "coco_ap50": 0.6537}) == 0
 
-    report = load_accuracy_result(tmp_path / "accuracy-result-v2.json", ROOT / ACCURACY_RESULT_SCHEMA)
+    report = load_accuracy_result(tmp_path / "accuracy-result.json", ROOT / ACCURACY_RESULT_SCHEMA)
+    _, digests = compiled_build(tmp_path / "expected")
     assert report["model"]["component_id"] == "transformer"
     assert report["model"]["package_id"] == "default"
-    assert report["model"]["artifacts"] == MPK_SHA256
+    assert report["model"]["artifacts"] == digests
     assert report["validation"] == {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"}
     assert report["dataset"]["sha256"] == "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78"
-    assert report["execution"]["models_commit"] == "a" * 40
+    assert report["execution"]["models_commit"] == GIT_SHA
     script = ROOT / "models" / "rf_detr_small" / "scripts" / "accuracy.py"
     assert report["execution"]["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
     names = [item["name"] for item in accuracy_measurements(report, "f" * 64)]
@@ -75,6 +97,42 @@ def test_import_accuracy_rejects_metrics_outside_the_entry(
 ) -> None:
     assert import_accuracy(tmp_path, metrics) == 2
     assert expected in capsys.readouterr().err
+
+
+def test_import_accuracy_rejects_a_git_sha_that_is_not_a_full_revision(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert import_accuracy(tmp_path, {"coco_map": 0.4694}, git_sha="abc123") == 2
+    assert "40 lowercase hexadecimal" in capsys.readouterr().err
+
+
+def test_compiled_artifacts_returns_each_scoped_component_digest(tmp_path: Path) -> None:
+    compiled, digests = compiled_build(tmp_path)
+
+    artifacts = compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+
+    assert artifacts == digests
+
+
+def test_compiled_artifacts_rejects_a_missing_component(tmp_path: Path) -> None:
+    compiled, _ = compiled_build(tmp_path, components=("backbone",))
+
+    with pytest.raises(ValidationError, match="exactly one compiled transformer MPK"):
+        compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+
+
+def test_compiled_artifacts_rejects_an_mpk_that_does_not_match_its_recorded_sha256(tmp_path: Path) -> None:
+    compiled, _ = compiled_build(tmp_path)
+    archive = compiled / "rf_detr_small" / "modalix_int8_bf16" / "transformer" / "rf_detr_small_transformer_mpk.tar.gz"
+    archive.write_bytes(b"rebuilt after the manifest was written")
+
+    with pytest.raises(ValidationError, match="transformer MPK SHA-256 does not match"):
+        compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+
+
+def test_compiled_artifacts_rejects_a_missing_manifest(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="could not read compile outputs"):
+        compiled_artifacts(tmp_path, "rf_detr_small", "modalix_int8_bf16", ["backbone"])
 
 
 def test_resolve_devkit_accuracy_reports_models_without_it(capsys: pytest.CaptureFixture[str]) -> None:

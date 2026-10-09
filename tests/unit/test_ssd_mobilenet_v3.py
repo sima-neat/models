@@ -66,7 +66,8 @@ def test_validation_restart_preserves_component(tmp_path: Path, monkeypatch) -> 
     profile = "modalix_int8"
     monkeypatch.setattr(sys, "argv", [
         "compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"),
-        "--build-profile", profile, "--component", "model",
+        "--build-profile", profile, "--compile-invocation", "model",
+        "--dataset", str(source),
     ])
     monkeypatch.setattr(recipe, "compile_model", lambda *args: None)
     captured = []
@@ -79,7 +80,7 @@ def test_validation_restart_preserves_component(tmp_path: Path, monkeypatch) -> 
     with pytest.raises(SystemExit) as stopped:
         recipe.main()
     assert stopped.value.code == 0
-    assert captured[captured.index("--component") + 1] == "model"
+    assert captured[captured.index("--compile-invocation") + 1] == "model"
     assert captured[captured.index("--build-profile") + 1] == profile
     assert "--validation-only" in captured
 
@@ -245,20 +246,19 @@ def test_calibration_split_has_128_representative_and_32_disjoint_samples() -> N
     assert calibration.IMAGE_DATASET_REVISION == "9e50abcdc1361852f34841af4939cbcd2d37c92f"
 
 
-def test_compile_recipe_uses_verified_calibration_handoff(
+def test_compile_recipe_requires_the_verified_calibration_dataset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recipe = load_module("compile")
-    verified = tmp_path / "calibration.npz"
-    verified.write_bytes(b"verified")
-    monkeypatch.setenv("CALIBRATION_PATH", str(verified))
-
-    class UnexpectedFetcher:
-        def fetch(self, _source: Any) -> None:
-            raise AssertionError("verified calibration must not be downloaded again")
-
-    monkeypatch.setattr(recipe, "Fetcher", UnexpectedFetcher)
-    assert recipe.resolve_calibration_path() == verified.resolve()
+    source = tmp_path / "source.onnx"
+    source.touch()
+    monkeypatch.setattr(sys, "argv", [
+        "compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"),
+        "--build-profile", "modalix_int8", "--compile-invocation", "model",
+    ])
+    with pytest.raises(SystemExit) as stopped:
+        recipe.main()
+    assert stopped.value.code == 2
 
 
 def test_calibration_rejects_wrong_sample_shape() -> None:

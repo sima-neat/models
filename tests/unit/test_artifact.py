@@ -35,7 +35,6 @@ def _grouped_manifest(tmp_path: Path, outputs: list[dict[str, str]]) -> dict[str
     fidelity.write_text("{}\n", encoding="utf-8")
     digest, _ = sha256_file(fidelity)
     return {
-        "schema_version": 2,
         "model_id": "rf_detr_small",
         "build_profile_id": "modalix_int8_bf16",
         "compile_invocation_id": "rf_detr",
@@ -161,7 +160,6 @@ def test_validate_compile_outputs_rejects_mpk_hash_mismatch(tmp_path: Path) -> N
     manifest.write_text(
         json.dumps(
             {
-                "schema_version": 1,
                 "model_id": "rf_detr_small",
                 "build_profile_id": "modalix_int8_bf16",
                 "compile_invocation_id": "rf_detr",
@@ -200,7 +198,6 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
     manifest.write_text(
         json.dumps(
             {
-                "schema_version": 1,
                 "model_id": "rf_detr_small",
                 "build_profile_id": "modalix_int8_bf16",
                 "compile_invocation_id": "backbone",
@@ -218,4 +215,32 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
             build_profile_id="modalix_int8_bf16",
             compile_invocation_id="backbone",
             component_ids=["backbone"],
+        )
+
+
+@pytest.mark.parametrize("grouped", [True, False])
+def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_invocations(
+    tmp_path: Path, grouped: bool
+) -> None:
+    components = ["backbone", "transformer"] if grouped else ["backbone"]
+    for component in components:
+        directory = tmp_path / component
+        directory.mkdir()
+        _archive(directory / f"{component}_mpk.tar.gz", [f"{component}/model.elf", f"{component}/model_mpk.json"])
+    document = _grouped_manifest(
+        tmp_path, [_output(component, tmp_path / component / f"{component}_mpk.tar.gz") for component in components]
+    )
+    if grouped:
+        del document["derived_graphs"], document["correctness"]
+    manifest = tmp_path / "compile-outputs.json"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="compile outputs must contain"):
+        validate_compile_outputs(
+            manifest,
+            tmp_path,
+            model_id="rf_detr_small",
+            build_profile_id="modalix_int8_bf16",
+            compile_invocation_id="rf_detr",
+            component_ids=components,
         )

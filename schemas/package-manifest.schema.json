@@ -1,15 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.sima.ai/model-registry/package-manifest-v1.schema.json",
-  "title": "Model Registry retrieval package manifest v1",
+  "$id": "https://schemas.sima.ai/model-registry/package-manifest.schema.json",
+  "title": "Model Registry retrieval package manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "model_id", "display_name", "package_id", "build_profile_id",
+    "model_id", "display_name", "package_id", "build_profile_id",
     "composition", "target", "provenance", "components", "resources", "files", "license"
   ],
   "properties": {
-    "schema_version": {"const": 1},
     "model_id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1},
     "package_id": {"$ref": "#/$defs/id"},
@@ -30,11 +29,10 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "type", "schema_version", "path"],
+          "required": ["id", "type", "path"],
           "properties": {
             "id": {"$ref": "#/$defs/id"},
             "type": {"const": "declarative"},
-            "schema_version": {"type": "integer", "minimum": 1},
             "path": {"$ref": "#/$defs/path"}
           }
         }

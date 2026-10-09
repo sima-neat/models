@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUT_DIR_INPUT="${1:-${ROOT_DIR}/dist/model-registry}"
 PYTHON_BIN="${MODEL_REGISTRY_BUILD_PYTHON:-python3}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"

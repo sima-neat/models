@@ -8,6 +8,7 @@ from model_registry import core_benchmark
 from model_registry.benchmark_publication import load_benchmark_result
 from model_registry.core_benchmark import _require_internals_runtime, import_core_benchmark
 from model_registry.errors import ValidationError
+from model_registry.stages import PERFORMANCE_FINGERPRINT_VERSION
 
 
 @pytest.fixture
@@ -45,11 +46,11 @@ def core_inputs(tmp_path):
 
 
 def package(core_inputs, tmp_path):
-    output = tmp_path / "performance-result-v5.json"
+    output = tmp_path / "performance-result.json"
     import_core_benchmark(
         *core_inputs,
         output,
-        schema_path=Path(__file__).resolve().parents[2] / "schemas/performance-result-v5.schema.json",
+        schema_path=Path(__file__).resolve().parents[2] / "schemas/performance-result.schema.json",
         environment={
             "buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = B1800\n",
             "packages": {"neat-runtime": "0.5.0+test"},
@@ -63,7 +64,7 @@ def package(core_inputs, tmp_path):
         },
     )
     return load_benchmark_result(
-        output, Path(__file__).resolve().parents[2] / "schemas/performance-result-v5.schema.json"
+        output, Path(__file__).resolve().parents[2] / "schemas/performance-result.schema.json"
     )
 
 
@@ -120,6 +121,7 @@ def test_runner_environment_records_only_installed_packages(monkeypatch):
         "neat-runtime:arm64": "0.5.0+release-3.0.0-prep.464889585182",
         "sima-neat": "0.4.0+release-3.0.0-prep.02a5ca96b124",
     }
+    assert environment["fingerprint_version"] == PERFORMANCE_FINGERPRINT_VERSION
 
 
 def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp_path):

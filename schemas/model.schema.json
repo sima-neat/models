@@ -5,12 +5,11 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "id", "display_name", "description", "model_type", "tasks",
+    "id", "display_name", "description", "model_type", "tasks",
     "modalities", "architecture", "owners", "license", "upstream", "components", "resources",
     "calibrations", "build_profiles", "compositions", "packages", "fidelity", "accuracy", "benchmark", "maturity"
   ],
   "properties": {
-    "schema_version": {"const": 2},
     "id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
@@ -203,7 +202,7 @@
         "id": {"$ref": "#/$defs/id"}, "role": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/source"},
         "interface": {"$ref": "#/$defs/interface"}, "preprocessing": {"$ref": "#/$defs/pipeline"},
         "postprocessing": {"$ref": "#/$defs/pipeline"}, "surgery": {"$ref": "#/$defs/surgery"},
-        "recipe": {"type": "string", "pattern": "^scripts/[A-Za-z0-9_./-]+\\.py$"},
+        "recipe": {"const": "scripts/compile.py"},
         "depends_on": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
       }
     },
@@ -264,19 +263,6 @@
         "id": {"$ref": "#/$defs/id"},
         "components": {
           "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}
-        },
-        "python_packages": {
-          "type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/pythonPackage"}
-        }
-      }
-    },
-    "pythonPackage": {
-      "type": "object", "additionalProperties": false, "required": ["path", "imports"],
-      "properties": {
-        "path": {"allOf": [{"$ref": "#/$defs/relativePath"}, {"pattern": "\\.whl$"}]},
-        "imports": {
-          "type": "array", "minItems": 1, "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"}
         }
       }
     },
@@ -303,10 +289,9 @@
         },
         {
           "type": "object", "additionalProperties": false,
-          "required": ["id", "type", "schema_version", "components", "connections", "inputs", "outputs"],
+          "required": ["id", "type", "components", "connections", "inputs", "outputs"],
           "properties": {
             "id": {"$ref": "#/$defs/id"}, "type": {"const": "declarative"},
-            "schema_version": {"type": "integer", "minimum": 1},
             "components": {"type": "array"}, "connections": {"type": "array"},
             "inputs": {"type": "array"}, "outputs": {"type": "array"}
           }

@@ -12,6 +12,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 RECIPE = ROOT / "training" / "yolo26_tiny_drone"
 sys.path.insert(0, str(RECIPE))
+# The training recipe needs torch, which only the training environment installs.
+pytest.importorskip("torch")
 
 import prepare_multiuav  # noqa: E402
 import provenance  # noqa: E402

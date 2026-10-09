@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Benchmark compiled components on the DevKit with the model's scripts/performance.py and record performance results.
+#
+# Usage: run_model_performance.sh <model_dir> <build_profile> <compiled_dir> <output_dir> [components]
+#
+# <compiled_dir> holds <model_id>/<build_profile>/<component>/ with the MPK, compile-result.json and
+# registry-publication.json. [components] is comma-separated and defaults to every component the build
+# profile benchmarks. Each component's results land in <output_dir>/<component>/.
+
+set -euo pipefail
+
+if [[ $# -lt 4 || $# -gt 5 ]]; then
+  echo "usage: $0 <model_dir> <build_profile> <compiled_dir> <output_dir> [components]" >&2
+  exit 2
+fi
+MODEL_DIR="$(cd "$1" && pwd)"
+BUILD_PROFILE_ID="$2"
+COMPILED_DIR="$3"
+OUTPUT_DIR="$4"
+REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
+PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
+REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
+MODEL_ID="$(basename "$MODEL_DIR")"
+SOURCE_SHA="${SOURCE_SHA:-$(git -C "$REPOSITORY" rev-parse HEAD)}"
+SOURCE_BRANCH="${SOURCE_BRANCH:-$(git -C "$REPOSITORY" rev-parse --abbrev-ref HEAD)}"
+
+if [[ $# -eq 5 ]]; then
+  COMPONENT_IDS="$5"
+else
+  COMPONENT_IDS="$("$REGISTRY_PYTHON" -m model_registry matrix --repository "$REPOSITORY" \
+    --models "$MODEL_ID" --profiles "$BUILD_PROFILE_ID" | "$REGISTRY_PYTHON" -c '
+import json, sys
+print(",".join(c for entry in json.load(sys.stdin)["include"] for c in entry["benchmark_component_ids"]))
+')"
+fi
+IFS=',' read -ra components <<< "$COMPONENT_IDS"
+if [[ ${#components[@]} -eq 0 ]]; then
+  echo "$MODEL_ID benchmarks no component in $BUILD_PROFILE_ID." >&2
+  exit 1
+fi
+
+SIMA_PLATFORM_VERSION="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository "$REPOSITORY" |
+  "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])')"
+export SIMA_PLATFORM_VERSION
+
+for component in "${components[@]}"; do
+  output="$OUTPUT_DIR/$component"
+  mkdir -p "$output"
+  "$REGISTRY_PYTHON" -m model_registry make-benchmark-manifest \
+    --repository "$REPOSITORY" \
+    --compiled-dir "$COMPILED_DIR" \
+    --output "$output/performance-test.json" \
+    --branch "$SOURCE_BRANCH" \
+    --git-sha "$SOURCE_SHA" \
+    --model "$MODEL_ID" \
+    --build-profile "$BUILD_PROFILE_ID" \
+    --component "$component" >/dev/null
+  archive="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["path"])' \
+    "$output/performance-test.json")"
+
+  PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    --mpk "$archive" --output "$output/core-benchmark.json" 2>&1 | tee "$output/benchmark.log"
+
+  # Record the default workload Core benchmarked, separately from the measured report fields.
+  "$PYNEAT_PYTHON" - "$output/performance-test.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+import pyneat
+
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text())
+model = pyneat.Model(manifest["model"]["path"])
+options = pyneat.BenchmarkOptions()
+info = model.info()
+manifest["configuration"] = {
+    "samples": options.num_samples,
+    "include_plugin_latency": options.include_plugin_latency,
+    "original_width": None, "original_height": None, "resize_mode": None,
+}
+manifest["workload"] = {
+    "kind": "model.synthetic", "input_generation": "deterministic",
+    "selection": "mpk_default", "batch_size": model.compiled_batch_size(),
+    "inputs": [{"shape": spec.shape, "dtype": spec.dtypes[0].name} for spec in model.input_specs()],
+    "preprocess": info.selection.preprocess_graph,
+    "postprocess": info.selection.selected_post_kind,
+}
+path.write_text(json.dumps(manifest, indent=2) + "\n")
+PY
+
+  "$REGISTRY_PYTHON" -m model_registry import-core-benchmark \
+    --manifest "$output/performance-test.json" \
+    --report "$output/core-benchmark.json" \
+    --schema "$REPOSITORY/schemas/performance-result.schema.json" \
+    --output "$output/performance-result.json"
+done

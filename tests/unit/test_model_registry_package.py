@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-BUILD_SCRIPT = ROOT / "scripts" / "build_model_registry_vulcan_package.sh"
+BUILD_SCRIPT = ROOT / "packaging" / "model-registry" / "build.sh"
 INSTALL_SCRIPT = ROOT / "packaging" / "model-registry" / "install_model_registry_package.sh"
 RESOLVER = ROOT / "packaging" / "model-registry" / "resolve_model_compiler_python.sh"
 

@@ -37,7 +37,7 @@ complete catalog publication records its full Git commit as
 Historical catalog snapshots remain immutable and therefore retain the exact
 taxonomy used to interpret their model metadata.
 
-Model schema v2 and all authoritative category facets are mandatory. Catalog
+All authoritative category facets are mandatory. Catalog
 validation rejects a missing field, an unknown sanctioned ID, or an incompatible
 model type before any compilation job can be scheduled.
 

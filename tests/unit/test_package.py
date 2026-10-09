@@ -167,7 +167,6 @@ def _declarative_composition() -> dict:
     return {
         "id": "default",
         "type": "declarative",
-        "schema_version": 1,
         "components": [{"id": "only", "component": "model", "entrypoint": "default"}],
         "connections": [],
         "inputs": [{"name": "input", "to": {"component": "only", "input": "input"}}],
@@ -201,7 +200,6 @@ def test_package_ships_inline_declarative_composition_as_a_document(
     assert result["manifest"]["composition"] == {
         "id": "default",
         "type": "declarative",
-        "schema_version": 1,
         "path": "composition/composition.yaml",
     }
     assert {

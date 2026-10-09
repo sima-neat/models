@@ -19,15 +19,9 @@ from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
+from .accuracy_config import find_devkit_accuracy_config
 from .artifact import validate_compile_outputs, verify_mpk
-from .catalog import (
-    benchmark_fingerprint,
-    build_matrix,
-    compile_invocation_fingerprint,
-    component_build_fingerprint,
-    discover_catalog,
-    validation_fingerprint,
-)
+from .catalog import build_matrix, compile_fingerprint, discover_catalog
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
@@ -35,6 +29,7 @@ from .fetch import sha256_file
 from .fidelity_config import find_fidelity_config, validate_fidelity_result
 from .model import compile_invocations_for, load_and_validate_model, profile_component_for
 from .source import source_identity
+from .stages import accuracy_key, performance_key, read_current_catalog
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
@@ -411,6 +406,8 @@ def build_catalog_snapshot(
                 if prior is not None:
                     builds_by_model[key[0]].append(prior)
             continue
+        model = catalog[invocation["model_id"]]
+        invocation_builds: list[JsonObject] = []
         for component_id in invocation["component_ids"]:
             key = (invocation["model_id"], invocation["build_profile_id"], component_id)
             receipt = receipts.get(key)
@@ -437,10 +434,10 @@ def build_catalog_snapshot(
                 raise ValidationError(
                     f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}"
                 )
-            _, binding = profile_component_for(catalog[key[0]], key[1], key[2])
+            _, binding = profile_component_for(model, key[1], key[2])
             if "artifact_suffix" in binding and len(f"{key[0]}_{binding['artifact_suffix']}_mpk.tar.gz") > 255:
                 raise ValidationError(f"artifact_suffix for {key[0]}/{key[1]}/{key[2]} exceeds the filename limit")
-            builds_by_model[key[0]].append(
+            invocation_builds.append(
                 {
                     "build_profile_id": key[1],
                     "compile_invocation_id": invocation["compile_invocation_id"],
@@ -448,23 +445,25 @@ def build_catalog_snapshot(
                     **({"artifact_suffix": binding["artifact_suffix"]} if "artifact_suffix" in binding else {}),
                     "compile_fingerprint": invocation["build_fingerprint"],
                     "artifact_sha256": artifact_sha256,
-                    "validation_fingerprint": (
-                        validation_fingerprint(
-                            root, key[0], key[2], key[1], compiler_version,
-                            compile_fingerprint=invocation["build_fingerprint"],
-                            artifact_sha256=artifact_sha256,
-                        ) if key[2] in invocation["validation_fingerprints"] else None
-                    ),
+                    "validation_fingerprint": None,
                     "benchmark_fingerprint": (
-                        benchmark_fingerprint(
-                            root, key[0], key[2], key[1], compiler_version,
-                            compile_fingerprint=invocation["build_fingerprint"],
-                            artifact_sha256=artifact_sha256,
-                        ) if key[2] in invocation["benchmark_fingerprints"] else None
+                        performance_key(
+                            root, model, key[1], key[2], compile_run_id=run_id, artifact_sha256=artifact_sha256
+                        )
+                        if key[2] in invocation["benchmark_component_ids"]
+                        else None
                     ),
                     "run_id": run_id,
                 }
             )
+        if invocation["accuracy_id"]:
+            # The accuracy key lives on the build that reports the result; the field name predates it.
+            by_component = {build["component_id"]: build for build in invocation_builds}
+            result_component = find_devkit_accuracy_config(model, invocation["build_profile_id"])["result_component"]
+            by_component[result_component]["validation_fingerprint"] = accuracy_key(
+                root, model, invocation["build_profile_id"], by_component
+            )
+        builds_by_model[invocation["model_id"]].extend(invocation_builds)
     unexpected = sorted(set(receipts) - expected_keys)
     if unexpected:
         model_id, profile_id, component_id = unexpected[0]
@@ -726,7 +725,6 @@ def publish_catalog(
 ) -> JsonObject:
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     read = read_request or _public_registry_json
-    read_base_url = read_api_url.rstrip("/")
     documentation_receipts = None
     if bucket is not None:
         if not environment:
@@ -746,26 +744,7 @@ def publish_catalog(
         )
     # Read the catalog last so another publisher has the least time to replace it
     # before the compare-and-swap POST below.
-    previous: JsonObject | None = None
-    target_catalog: JsonObject | None = None
-    for source_branch in [branch, *( [base_branch] if base_branch and base_branch != branch else [])]:
-        try:
-            current = read(
-                f"{read_base_url}/v1/repositories/sima-neat/models/catalogs/current?"
-                f"git_ref={quote(f'refs/heads/{source_branch}', safe='')}"
-            )
-            candidate = current.get("catalog")
-            if isinstance(candidate, dict):
-                document = candidate.get("document") if isinstance(candidate.get("document"), dict) else candidate
-                if isinstance(document, dict):
-                    previous = document
-                if source_branch == branch:
-                    target_catalog = candidate
-                if previous is not None:
-                    break
-        except RegistryPublicationError as exc:
-            if "HTTP 404 catalog_not_found" not in str(exc):
-                raise
+    target_catalog, previous = read_current_catalog(read, read_api_url, branch, base_branch)
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
@@ -913,7 +892,6 @@ def stage_catalog_build(
         compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
         compile_result = {
             "archive": archive_name,
-            "schema_version": 1,
             "sha256": digest,
             "size_bytes": len(payload),
             "status": "success",
@@ -940,9 +918,20 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    # The same manifest a compile writes, so later stages read restored and fresh builds alike.
+    (profile_dir / "compile-outputs.json").write_text(
+        json.dumps({
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "compile_invocation_id": compile_invocation_id,
+            "outputs": [
+                {key: item[key] for key in ("component_id", "mpk_path", "mpk_sha256")} for item in staged_outputs
+            ],
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     (profile_dir / "registry-staged.json").write_text(
         json.dumps({
-            "schema_version": 1,
             "model_id": model_id,
             "build_profile_id": build_profile_id,
             "compile_invocation_id": compile_invocation_id,
@@ -1182,22 +1171,9 @@ def _preflight_compilations(
         if source_sha != source_identity(component["source"]):
             raise ValidationError(f"{result_path}: source_sha256 does not match the component source contract")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
-        if "compile_invocations" in profile:
-            expected_build_fingerprint = compile_invocation_fingerprint(
-                root,
-                model_id,
-                invocation_by_result[result_path],
-                build_profile_id,
-                compiler_identity,
-            )
-        else:
-            expected_build_fingerprint = component_build_fingerprint(
-                root,
-                model_id,
-                component_id,
-                build_profile_id,
-                compiler_identity,
-            )
+        expected_build_fingerprint = compile_fingerprint(
+            root, model_id, build_profile_id, invocation_by_result[result_path], compiler_identity
+        )
         if build_fingerprint != expected_build_fingerprint:
             raise ValidationError(f"{result_path}: build_fingerprint does not match semantic compile inputs")
         fidelity_path = result_path.parent / "fidelity.json"
@@ -1218,7 +1194,7 @@ def _preflight_compilations(
         if fidelity_path.is_file():
             fidelity = _fidelity_result(
                 fidelity_path,
-                root / "schemas" / "numerical-fidelity-v1.schema.json",
+                root / "schemas" / "numerical-fidelity.schema.json",
                 model_id=model_id,
                 build_profile_id=build_profile_id,
                 component_id=component_id,
@@ -1449,7 +1425,7 @@ def publish_compilations(
             fidelity_fingerprint = canonical_sha256(fidelity)
             fidelity_key = (
                 f"models/{branch_key}/{commit_tag}/{model_id}/{build_profile_id}/{component_id}/fidelity/"
-                f"{fidelity_fingerprint}/numerical-fidelity-v{fidelity['schema_version']}.json"
+                f"{fidelity_fingerprint}/numerical-fidelity.json"
             )
             fidelity_stored = store.ensure_native_sha256(
                 fidelity_path,

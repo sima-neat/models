@@ -8,8 +8,10 @@ it does not repeat the local qualification procedure.
 ## Entry requirement
 
 Do not start submission until every supported component/profile pair in the change has
-completed the local qualification loop. Keep the resulting MPKs, accuracy
-reports, benchmark JSON, and logs outside Git. You will summarize that evidence
+completed the local qualification loop: each build compiled, its MPKs
+validated, and its declared performance and accuracy stages run on a DevKit.
+Keep the resulting MPKs, fidelity and accuracy reports, performance reports,
+and logs outside Git. You will summarize that evidence
 in the pull request so reviewers can see exactly what was tested.
 
 ## Keep the change reviewable
@@ -26,11 +28,14 @@ A typical new-model change contains:
 
 ```text
 models/<model-id>/README.md
-models/<model-id>/model.yaml              # identity, builds, validation and benchmark settings
+models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, benchmark
 models/<model-id>/scripts/compile.py
 models/<model-id>/scripts/performance.py
-models/<model-id>/scripts/export.py       # only for an upstream checkpoint source
-models/<model-id>/scripts/surgery.py      # only when declared
+models/<model-id>/scripts/accuracy.py               # only with a devkit_script accuracy entry
+models/<model-id>/scripts/requirements-accuracy.txt # optional, with accuracy.py
+models/<model-id>/scripts/convert.py                # only with a declared conversion
+models/<model-id>/scripts/requirements-convert.txt  # required with convert.py
+models/<model-id>/scripts/surgery.py                # only when declared
 ```
 
 A taxonomy change may also be necessary, but it changes a repository-wide
@@ -47,8 +52,8 @@ model and should include corresponding unit or contract tests.
 Do not add:
 
 - ONNX files or other source model binaries;
-- calibration, training, or correctness datasets;
-- MPKs, compiler output, build directories, benchmark output, or logs;
+- calibration, training, fidelity, or accuracy datasets;
+- MPKs, compiler output, build directories, performance or accuracy output, or logs;
 - virtual environments, caches, or Python bytecode;
 - credentials, tokens, cookies, signed URLs, or private keys;
 - hand-authored generated catalog, package, checksum, or publication metadata.
@@ -62,7 +67,7 @@ staged files.
 ## Review, commit, and push the inputs
 
 Stage only the source-controlled model definition and recipe files you reviewed.
-Do not use the generated MPK or local benchmark output as Git inputs.
+Do not use the generated MPK or local stage output as Git inputs.
 
 ```bash
 git add models/<model-id>
@@ -81,8 +86,8 @@ staged diff. Write a commit message that describes the model or lifecycle
 contract, not just the filenames.
 
 Open a pull request against `develop`. Repository automation reruns validation
-and matrix selection from the committed revision. It does not compile or
-benchmark pull-request code. Trusted post-merge workflows perform those later
+and lists the declared builds from the committed revision. It does not compile
+or measure pull-request code. Trusted post-merge workflows perform those later
 stages; authors do not invoke those publication steps themselves.
 
 ## Pull request description
@@ -91,11 +96,11 @@ Give reviewers enough evidence to reproduce and assess the contribution:
 
 - model purpose, upstream project, immutable revision, and conversion history;
 - license and redistribution assessment;
-- source, calibration, and correctness dataset identities and hashes;
+- source, calibration, fidelity, and accuracy dataset identities and hashes;
 - components, build profiles, packages, and any model-specific surgery or compiler workarounds;
-- exact local commands and pass/fail summaries for compilation, applicable
-  accuracy, MPK verification, and Modalix benchmarking;
-- pinned Model Compiler, DevKit, dataset, and test-profile versions used;
+- exact local commands and pass/fail summaries for each build's compilation,
+  MPK verification, fidelity report, performance stage, and accuracy stage;
+- the pinned Model Compiler, DevKit platform, Core, and dataset versions used;
 - known limitations, unsupported combinations, and follow-up work.
 
 Link the model's tracking issue, upstream model card or conversion pull
@@ -111,53 +116,64 @@ provenance and are reserved for CI.
 
 ## CI and trust boundaries
 
-Pull requests run discovery, schema/taxonomy validation, dependency resolution,
-and deterministic matrix construction on GitHub-hosted infrastructure. They do
-not schedule contributor-controlled recipe or surgery code on a self-hosted
-Vulcan runner.
+Pull requests run catalog and taxonomy validation, compiler-pin and base-branch
+resolution, and an offline stage plan on GitHub-hosted infrastructure. They do
+not schedule contributor-controlled recipe, surgery, or measurement code on a
+self-hosted runner. The offline plan reads no registry state, so it lists every
+declared build rather than the ones the change will rerun.
 
 For a model change, interpret a successful pull-request workflow as confirmation
 that:
 
-- the complete catalog, taxonomy, conversion sources, validation and benchmark
-  entries, and declarative compositions are structurally valid;
+- the complete catalog, taxonomy, conversion sources, fidelity, accuracy, and
+  benchmark entries, and declarative compositions are structurally valid;
 - the repository-wide Model Compiler dependency resolves;
-- the comparison base and changed models were identified; and
-- the resulting supported component/profile matrix is deterministic.
+- the base branch was identified; and
+- the declared builds form a deterministic plan.
 
 It is **not** evidence that the recipe compiled, the MPK passed validation,
-accuracy met a threshold, or the model ran on a DevKit. Those claims must come
+fidelity or accuracy met a threshold, or the model ran on a DevKit. Those claims must come
 from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
-When the change is merged to `develop`, the trusted push workflow selects the
-affected component/profile pairs or compile invocations and then:
+When the change is merged to `develop`, the push runs **Vulcan Model Compile**
+on the reviewed revision:
 
-1. authorizes each requested runner class against the protected Vulcan
-   environment specification;
-2. verifies the pinned Model Compiler runner and fetches immutable source,
-   calibration, and applicable accuracy data;
-3. runs each selected supported recipe in an isolated output directory, once
-   for every matrix entry;
-4. evaluates declared dataset-backed accuracy when it applies;
-5. validates the output manifest and each emitted MPK, then uploads one complete
-   compiler output;
-6. downloads and verifies that output on a GitHub-hosted runner before publishing
-   each component and its provenance to the staging registry;
-7. assembles every complete declared package; and
-8. dispatches each newly compiled Modalix component to the dedicated DevKit
-   benchmark workflow, which benchmarks grouped components sequentially on one
-   board and publishes each successful result.
+1. **Plan.** `plan-stages` compares each build's compile key with the branch
+   catalog, or the base branch's catalog for a new branch. A build compiles
+   when no published run carries its key. A build that is reused but lacks a
+   completed performance or accuracy run for its current stage key is queued
+   for measurement only.
+2. **Authorize.** Each requested runner class is checked against the protected
+   environment specification.
+3. **Compile.** On a self-hosted compiler runner with read-only repository
+   access, `scripts/run_model_compilation.sh` runs the recipe, and every MPK is
+   verified with its provenance.
+4. **Publish.** A GitHub-hosted job verifies the complete component set,
+   publishes each component and its fidelity report as a compile run, starts
+   the DevKit stages for a new Modalix build, assembles and publishes the
+   packages the build completes, and records the build in the catalog.
+5. **Publish the catalog.** The catalog snapshot for the revision is published
+   and promoted.
+6. **Measure.** For reused builds, the workflow starts only the DevKit stages
+   they still lack.
 
-The compile and benchmark are separate GitHub Actions runs. A successful
-compile does not by itself mean the dispatched benchmark succeeded; inspect the
-per-component/profile `Vulcan Model Benchmarking` run and the model's staging registry
-record. If trusted compilation or benchmarking fails, follow up with a focused
-manifest or recipe change and reproducible evidence.
+**Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
+stages of one build on a DevKit, then publishes each result as its own
+registry run under the compile run.
 
-Production is an explicit protected workflow choice. Targeted manual profiles
-publish independently without updating shared mutable catalog pointers.
+The compile and the DevKit stages are separate GitHub Actions runs. A
+successful compile does not by itself mean the dispatched benchmark succeeded;
+inspect the `Vulcan Model Benchmarking` run of each build and the model's
+staging registry record. If trusted compilation or measurement fails, follow
+up with a focused manifest, recipe, or script change and reproducible evidence.
+
+Production is an explicit protected workflow choice, and the DevKit stages run
+only in staging. A manual dispatch can name models, build profiles, or
+components and can force every selected build to recompile. A dispatch that
+names build profiles or components compiles and publishes those builds but
+does not publish packages or update the catalog.
 
 ## Review and merge expectations
 

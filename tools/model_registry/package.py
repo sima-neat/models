@@ -141,7 +141,6 @@ def assemble_package(
         packaged_composition = {
             "id": composition["id"],
             "type": composition["type"],
-            "schema_version": composition["schema_version"],
             "path": composition_path,
         }
 
@@ -196,7 +195,6 @@ def assemble_package(
         key=lambda item: item["path"],
     )
     manifest = {
-        "schema_version": 1,
         "model_id": model_id,
         "display_name": model["display_name"],
         "package_id": package_id,
@@ -209,7 +207,7 @@ def assemble_package(
         "files": installed_files,
         "license": model["license"],
     }
-    package_schema = _load_json(root / "schemas" / "package-manifest-v1.schema.json", "package schema")
+    package_schema = _load_json(root / "schemas" / "package-manifest.schema.json", "package schema")
     errors = sorted(
         Draft202012Validator(package_schema).iter_errors(manifest),
         key=lambda error: tuple(str(part) for part in error.absolute_path),
@@ -237,7 +235,6 @@ def assemble_package(
         temporary.unlink(missing_ok=True)
     digest, size = sha256_file(bundle_path)
     result = {
-        "schema_version": 1,
         "status": "success",
         "model_id": model_id,
         "package_id": package_id,

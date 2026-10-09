@@ -231,11 +231,11 @@ def test_invalid_model_has_nonzero_exit(capsys) -> None:
 
 
 def test_matrix_emits_workflow_json(capsys) -> None:
-    result = main(["matrix", "--repository", str(ROOT), "--changed-path", "models/resnet_50/README.md"])
+    result = main(["matrix", "--repository", str(ROOT), "--models", "resnet_50", "--compiler-version", "fixture"])
     assert result == 0
-    output = capsys.readouterr().out
-    assert '"model_id":"resnet_50"' in output
-    assert '"recipe":"scripts/compile.py"' in output
+    entries = json.loads(capsys.readouterr().out)["include"]
+    assert {entry["model_id"] for entry in entries} == {"resnet_50"}
+    assert all(len(entry["build_fingerprint"]) == 64 for entry in entries)
 
 
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:

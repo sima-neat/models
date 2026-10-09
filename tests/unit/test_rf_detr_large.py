@@ -250,7 +250,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--compile-invocation", required=True)' in source
-    assert 'parser.add_argument("--correctness-dataset", type=Path, required=True)' in source
+    assert 'parser.add_argument("--fidelity-dataset", type=Path, required=True)' in source
     assert "export_model" not in source
     assert "prepare_model(source" in source
     assert "transformer_inputs(" in source
@@ -263,7 +263,6 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert 'layer_norm_use_fp32_intermediates=precision == "bf16"' in source
     assert "quantized.compile(" in source
     assert "compile-outputs.json" in source
-    assert '"schema_version": 2' in source
     assert '"derived_graphs"' in source
     assert '"correctness"' in source
     assert "shutil.copyfile" in source

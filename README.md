@@ -1,26 +1,41 @@
 # SiMa Neat Model Registry
 
-This repository is the source of truth for declarative model definitions,
-reproducible preparation and compilation, device validation, and publication to
-the Vulcan artifact registry.
+This repository defines the models in the SiMa Neat Model Registry and how
+each one is compiled, measured, and published. `model.yaml` declares a model,
+the model's `scripts/` directory holds code specific to that model, and
+`tools/model_registry` holds the shared lifecycle.
 
-Large model binaries, calibration datasets, compiled model packs, and benchmark
-artifacts do not belong in Git. Model directories contain immutable provenance
-and checksums; shared lifecycle implementation lives in `tools/model_registry`.
+Git holds no model binaries, datasets, compiled model packs (MPKs), logs, or
+results. A model declaration pins every input it downloads by URI, byte size,
+and SHA-256.
 
-Model directories do own model-specific surgery and compile recipes. Those
-recipes consume verified sources. A normal invocation emits one directly
-consumable `*_mpk.tar.gz`; a declared grouped invocation emits one per component
-and a manifest for the complete set. Common discovery, downloading, runner
-selection, MPK validation, checksumming, and publication remain shared.
+## How a model is built
 
-`model-registry` is an author-safe `sima-cli` package for local validation,
-verified input handling, variant inspection, and MPK checks. It is not a direct
-registry publishing client. Model authors compile with the model-owned
-`scripts/compile.py` and run each model’s `scripts/performance.py` on the DevKit; CI keeps
-the separate packaging and publication command surface.
+A **build** is one compile invocation of one build profile of one model. Each
+build passes through up to three **stages**:
 
-## Local setup
+| Stage | Runs on | Model entry point | Runner script |
+| --- | --- | --- | --- |
+| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
+| performance | Modalix DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
+| accuracy | Modalix DevKit | `scripts/accuracy.py` | `scripts/run_model_accuracy.sh` |
+
+Each stage has a **stage key**: a SHA-256 of everything its result depends on.
+CI compiles a build only when the branch catalog records no build with its
+current compile key, and runs a DevKit stage only when no completed registry
+run carries its current key. A change therefore reruns exactly the
+stages whose inputs it touches. [Stages and stage
+keys](docs/adding-a-model.md#9-know-what-a-change-reruns) lists the inputs of
+each key.
+
+Conversion is not a stage. `scripts/convert.py`, run by
+`scripts/run_model_conversion.sh`, exports an upstream checkpoint to the ONNX
+file that `model.yaml` pins as the component source.
+
+## Set up the contributor tool
+
+Install the repository-pinned Model Compiler first. Then install
+`model-registry` into it and check a model:
 
 ```bash
 sima-cli neat install --stg models-utils/model-registry@develop:latest
@@ -29,76 +44,34 @@ model-registry validate models/resnet_50
 model-registry fetch models/resnet_50
 ```
 
-Install the repository-pinned Model Compiler first. The package installer finds
-its NEAT SDK or standalone environment and installs `model-registry` there
-without replacing compiler-owned dependencies.
+The installer finds the Model Compiler environment from the NEAT SDK or a
+standalone installation and adds `model-registry` without replacing
+compiler-owned packages. This package contains only author commands; it
+cannot publish.
 
-Start with the [developer documentation](docs/README.md) for the end-to-end
-model contribution path, the field-level `model.yaml` contract, local testing,
-and the GitHub review checklist.
-
-## Vulcan compilation
-
-[`Vulcan-Model-Compile.yml`](.github/workflows/Vulcan-Model-Compile.yml) validates
-pull requests without granting them a self-hosted runner. Trusted pushes compare
-semantic compile, validation, and benchmark fingerprints on staging. The first
-build of a new branch resolves its
-closest base branch and compares from the merge base, so GitHub's all-zero
-previous SHA does not force a full rebuild. A maintainer can
-run the workflow manually, choose `staging` or protected `production`, and
-optionally provide comma-separated model, profile, and component lists or an explicit
-base branch; empty model and profile lists build the full catalog.
-
-Each successful staging Modalix compile dispatches the dedicated
-[`Vulcan-Model-Benchmarking.yml`](.github/workflows/Vulcan-Model-Benchmarking.yml)
-workflow, shown in GitHub Actions as `Vulcan Model Benchmarking`.
-
-Each model has a minimal benchmark script that loads its MPK and calls Core’s
-benchmark API. CI installs Core directly from the dependency manifest and exports
-its structured measurements for registry publication.
-
-The workflow first resolves the repository-wide Model Compiler pin from
-[`deps/manifest.json`](deps/manifest.json), then requests the environment label,
-`model-compiler`, and a label derived from the pin. Pins with a channel and revision
-use `model-compiler-<channel>-<revision>`, such as
-`model-compiler-develop-455ce50808c2`; version-only pins use
-`model-compiler-<version>`. Each matrix item validates its complete output and
-uploads one GitHub Actions artifact. A GitHub-hosted job checks that artifact,
-publishes each component under an
-immutable object key, records its checksum, provenance, exact S3 object version,
-through the IAM-authenticated Model Registry API, then finalizes each component
-run. A hosted job publishes one complete catalog snapshot identified by the full
-Git SHA and a taxonomy checksum. Metadata-only changes reuse matching immutable
-compile runs; benchmark-only changes restore their MPKs from the registry.
-
-Model discovery and checksum-verified downloads use registry database records
-and presigned artifact URLs:
+## Download a published model
 
 ```bash
 sima-cli models list --branch develop
-sima-cli models download --id resnet_50 --variant modalix_bf16 --branch develop
+sima-cli models download --id resnet_50 --variant modalix_int8 --branch develop
 ```
 
-The former Models-specific `metadata.json`, `latest.json`, `latest.tag`, and
-`catalog.json` publication path is retired. Existing objects remain historical
-artifacts, but workflows no longer read, carry forward, validate, generate, or
-promote those pointers. Branch purge and restore use registry API operations
-over registered runs and immutable S3 object versions.
+## CI
 
-Each record links the model source checksum, variant parameters, Model Compiler
-version, build fingerprint, and exact versioned S3 MPK. For staging feature
-branches, the workflow discovers the Modalix compile artifacts actually produced
-by the current run and benchmarks each one on the resolved Modalix GitHub runner.
-The runner verifies the manifest-selected Platform version and installs Core from
-the configured target. Each schema-v5 result records the actual board build and
-installed Core and Internals versions, alongside a log for each model component/profile. A
-trusted hosted job publishes every completed result under its model's S3 hierarchy
-and records an immutable `model_benchmark` child of the matching compile run.
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `Vulcan Model Compile` | pull request | Validates the catalog, taxonomy, and compiler pin and prints an offline stage plan. Contributor code never reaches a self-hosted runner. |
+| `Vulcan Model Compile` | push, manual dispatch | Plans each stage against the registry, compiles and publishes changed builds, starts their DevKit stages, and publishes the branch catalog. |
+| `Vulcan Model Benchmarking` | started by the compile workflow | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit and publishes each result. |
+| `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh`, publishes the ONNX file, and prints its source pin. |
+| `Model Registry Contributor Tool` | pull request, push | Runs `pytest tests/unit` and builds the `model-registry` package with `packaging/model-registry/build.sh`. |
+| `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
 
-See [the developer documentation](docs/README.md),
-[the Model Registry design](design-doc/model-registry-architecture.md), the
-[local accuracy development guide](docs/local-accuracy-development.md), the
-[synthetic benchmarking guide](docs/benchmarking.md), the
-[model taxonomy](docs/model-taxonomy.md), and the
-[SSD-MobileNet matrix qualification plan](design-doc/ssd-mobilenet-precision-matrix-plan.md)
-for repository conventions.
+## Documentation
+
+- [Developer documentation](docs/README.md): the contribution path from
+  `model.yaml` to review.
+- [Model Registry architecture](design-doc/model-registry-architecture.md):
+  components, repository layout, and the CI flow.
+- [Model taxonomy](docs/model-taxonomy.md): sanctioned category IDs.
+- [SSD-MobileNet precision matrix plan](design-doc/ssd-mobilenet-precision-matrix-plan.md).

@@ -48,17 +48,12 @@ jobs:
         with:
           path: ${{ env.PIP_CACHE_DIR }}
           key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert.txt', inputs.model)) }}
-      - name: Create export environment and install dependencies
+      - name: Convert and smoke-test with the model's convert script
+        env:
+          CONVERSION_VENV: ${{ env.EXPORT_VENV }}
         run: |
           mkdir -p "$TMPDIR"
-          python3.12 -E -s -m venv "$EXPORT_VENV"
-          "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" .
-          "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" \
-            --only-binary=:all: -r "models/$MODEL_ID/scripts/requirements-convert.txt"
-      - name: Convert and smoke-test
-        run: |
-          "$EXPORT_VENV/bin/python" -E -s "models/$MODEL_ID/scripts/convert.py" \
-            --conversion "$CONVERSION" --output-dir "$EXPORT_DIR"
+          scripts/run_model_conversion.sh "models/$MODEL_ID" "$CONVERSION" "$EXPORT_DIR"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-west-2

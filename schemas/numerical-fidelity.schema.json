@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.sima.ai/model-registry/numerical-fidelity-v1.schema.json",
-  "title": "Model Registry numerical fidelity result v1",
+  "$id": "https://schemas.sima.ai/model-registry/numerical-fidelity.schema.json",
+  "title": "Model Registry numerical fidelity result",
   "type": "object",
   "additionalProperties": false,
   "required": [

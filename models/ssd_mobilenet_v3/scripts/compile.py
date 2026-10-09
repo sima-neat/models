@@ -24,8 +24,6 @@ from calibration import (
     validate_dataset,
 )
 from model_registry.dependencies import resolve_model_compiler
-from model_registry.fetch import Fetcher
-from model_registry.source import SourceSpec
 from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_int8_model, prepare_model
 
 LOG = logging.getLogger("ssd_mobilenet_v3.compile")
@@ -133,25 +131,6 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     if parameters.get("calibration_samples") != len(CALIBRATION_IMAGE_IDS):
         raise ValueError(f"SSD variants require exactly {len(CALIBRATION_IMAGE_IDS)} calibration samples")
     return variant
-
-
-def calibration_source() -> SourceSpec:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    calibration = next(item for item in metadata["calibrations"] if item["id"] == "default")
-    if calibration.get("status") != "ready":
-        raise ValueError("SSD-MobileNet V3 requires pinned representative calibration data")
-    return SourceSpec.from_mapping(calibration["source"])
-
-
-def resolve_calibration_path() -> Path:
-    override = os.environ.get("CALIBRATION_PATH", "").strip()
-    if override:
-        path = Path(override).expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"calibration snapshot does not exist: {path}")
-        return path
-    path, _cache_hit = Fetcher().fetch(calibration_source())
-    return path
 
 
 def _safe_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -423,7 +402,7 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
     }
 
 
-def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
+def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     variant = variant_config(variant_id)
     precision = str(variant["parameters"]["precision"])
     calibration_method = str(variant["parameters"]["calibration_method"])
@@ -445,7 +424,6 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     from afe.load.importers.general_importer import ImporterParams, ModelFormat
     from sima_utils.data.data_generator import DataGenerator
 
-    calibration_path = resolve_calibration_path()
     calibration, _validation = validate_dataset(calibration_path)
     calibration = imagenet_normalize(calibration)
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -501,7 +479,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str) -> Path:
     return archives[0]
 
 
-def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Path:
+def validate_saved_model(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     """Reload compiler outputs in a fresh process and run held-out validation."""
 
     precision = str(variant_config(variant_id)["parameters"]["precision"])
@@ -510,7 +488,6 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str) -> Pat
     from afe.apis.model import Model
 
     LOG.info("Fresh validation process: resolving calibration asset")
-    calibration_path = resolve_calibration_path()
     _calibration, validation = validate_dataset(calibration_path)
     validation = imagenet_normalize(validation)
     model_name = f"ssd_mobilenet_v3_{variant_id}"
@@ -562,26 +539,29 @@ def main() -> int:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--component", required=True)
+    parser.add_argument("--compile-invocation", required=True)
+    parser.add_argument("--dataset", type=Path, required=True, help="verified calibration snapshot")
     parser.add_argument("--validation-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.component != "model":
-        parser.error(f"unsupported component: {args.component}")
+    if args.compile_invocation != "model":
+        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
     output_dir = args.output_dir.expanduser().resolve()
+    component_dir = output_dir / "model"
+    calibration_path = args.dataset.expanduser().resolve()
     if args.validation_only:
-        archive = validate_saved_model(source, output_dir, args.build_profile)
+        archive = validate_saved_model(source, component_dir, args.build_profile, calibration_path)
         LOG.info("Compiled MPK: %s", archive)
         # The dedicated worker has persisted every validation result. Avoid
         # native Model Compiler teardown, which can crash after V3 execution.
         logging.shutdown()
         os._exit(0)
     else:
-        compile_model(source, output_dir, args.build_profile)
+        compile_model(source, component_dir, args.build_profile, calibration_path)
         os.execv(
             sys.executable,
             [
@@ -593,8 +573,10 @@ def main() -> int:
                 str(output_dir),
                 "--build-profile",
                 args.build_profile,
-                "--component",
-                args.component,
+                "--compile-invocation",
+                args.compile_invocation,
+                "--dataset",
+                str(calibration_path),
                 "--validation-only",
             ],
         )

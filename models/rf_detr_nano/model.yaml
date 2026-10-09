@@ -1,4 +1,3 @@
-schema_version: 2
 id: rf_detr_nano
 display_name: RF-DETR Nano 384x384
 description: RF-DETR Nano object detection split into independently deployable backbone and transformer components.
@@ -173,7 +172,6 @@ build_profiles:
 compositions:
 - id: default
   type: declarative
-  schema_version: 1
   components:
   - {id: backbone, component: backbone, entrypoint: default}
   - {id: transformer, component: transformer, entrypoint: default}

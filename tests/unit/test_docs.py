@@ -127,9 +127,6 @@ def test_local_guide_passes_scoped_calibration_to_the_recipe() -> None:
     assert "fetch-calibration \\" in text
     assert "models/<model-id> --build-profile <profile-id> --component <component-id> --json" in text
     assert 'recipe_args=(--dataset "$calibration_path")' in text
-    assert 'source)' in text
-    assert 'export CALIBRATION_PATH="$calibration_path"' in text
-    assert "Source-based recipes read the" in text
     assert '"${recipe_args[@]}"' in text
     assert "## Measure declared accuracy locally" in text
 

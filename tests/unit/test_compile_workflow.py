@@ -1,249 +1,128 @@
 from __future__ import annotations
 
 import ast
+import json
+import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Compile.yml"
+WORKFLOWS = ROOT / ".github" / "workflows"
+WORKFLOW = WORKFLOWS / "Vulcan-Model-Compile.yml"
+BUILD_WORKFLOW = WORKFLOWS / "Vulcan-Model-Build.yml"
+BENCHMARK_WORKFLOW = WORKFLOWS / "Vulcan-Model-Benchmarking.yml"
 
 
-@pytest.mark.parametrize(
-    ("compile_result", "event", "cancelled", "authorized", "expected"),
-    [
-        ("success", "push", False, True, True),
-        ("failure", "push", False, True, True),
-        ("failure", "workflow_dispatch", False, True, True),
-        ("failure", "pull_request", False, True, False),
-        ("failure", "push", True, True, False),
-        ("failure", "push", False, False, False),
-        ("cancelled", "push", False, True, False),
-        ("skipped", "push", False, True, False),
-    ],
-)
-def test_publication_is_independent_of_other_compile_failures(
-    compile_result, event, cancelled, authorized, expected,
-) -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    publisher = workflow["jobs"]["publish-compilations"]
-    condition = publisher["if"]
-    replacements = {
-        "!cancelled()": not cancelled,
-        "github.event_name": event,
-        "needs.select.outputs.count": "2",
-        "needs.resolve-vulcan-config.result": "success",
-        "needs.authorize-runner-classes.result": "success" if authorized else "failure",
-        "needs.compile.result": compile_result,
-    }
-    for name, value in replacements.items():
-        condition = condition.replace(name, repr(value))
-    condition = condition.replace("&&", "and").replace("||", "or")
-    assert eval(condition, {"__builtins__": {}}, {}) is expected
-    assert publisher["strategy"]["fail-fast"] == "false"
-    download = next(step for step in publisher["steps"] if step.get("uses", "").startswith("actions/download-artifact"))
-    assert download["with"]["name"] == (
-        "compiler-output-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-${{ matrix.compile_invocation_id }}"
-    )
-    assert "continue-on-error" not in download
-    verify = next(step for step in publisher["steps"] if step["name"] == "Verify the complete component set")
-    publish = next(step for step in publisher["steps"] if step["name"] == "Publish the complete component set")
-    assert publisher["steps"].index(download) < publisher["steps"].index(verify) < publisher["steps"].index(publish)
-    assert "validate-compile-outputs" in verify["run"]
+def load(path: Path) -> dict:
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assert "pull_request_target" not in workflow["on"]
-    compile_job = workflow["jobs"]["compile"]
-    assert "github.event_name != 'pull_request'" in compile_job["if"]
-    assert "model-compiler" in compile_job["runs-on"]
-    assert "${{ needs.select.outputs.model_compiler_label }}" in compile_job["runs-on"]
-    assert "${{ matrix.runner_class }}" in compile_job["runs-on"]
-    assert "model-id-${{ matrix.model_id }}" in compile_job["runs-on"]
-    assert "build-profile-id-${{ matrix.build_profile_id }}" in compile_job["runs-on"]
-    assert "component-id-${{ matrix.component_id }}" in compile_job["runs-on"]
-    assert all(not label.startswith("variant-id-") for label in compile_job["runs-on"])
+def step(job: dict, name: str) -> dict:
+    return next(item for item in job["steps"] if item.get("name") == name)
+
+
+def step_index(job: dict, name: str) -> int:
+    return next(index for index, item in enumerate(job["steps"]) if item.get("name") == name)
+
+
+def evaluate(condition: str, values: dict[str, object]) -> bool:
+    """Evaluate a GitHub Actions condition after substituting every context reference it uses."""
+    expression = condition
+    for name in sorted(values, key=len, reverse=True):
+        expression = expression.replace(name, repr(values[name]))
+    expression = expression.replace("&&", " and ").replace("||", " or ")
+    return eval(expression, {"__builtins__": {}}, {})
+
+
+def dispatched_inputs(script: str) -> set[str]:
+    return set(re.findall(r"-f (\w+)=", script))
+
+
+def jq_program(script: str, prefix: str) -> str:
+    """Return the single-quoted jq program that follows ``prefix`` in a shell script."""
+    return re.search(re.escape(prefix) + r"\s*'(.*?)'", script, re.DOTALL).group(1)
+
+
+def run_jq(program: str, document: object) -> object:
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq is not installed")
+    output = subprocess.run(
+        [jq, "-c", program], input=json.dumps(document), capture_output=True, text=True, check=True
+    ).stdout
+    return json.loads(output)
+
+
+# Triggers, inputs and concurrency
 
 
 def test_changed_models_compile_on_pushes_to_every_branch() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    push_trigger = workflow["on"]["push"]
-    assert "branches" not in push_trigger
-    assert "branches-ignore" not in push_trigger
-    assert "models/**" in push_trigger["paths"]
-    for event in ("push", "pull_request"):
-        assert ".github/workflows/Vulcan-Model-Benchmarking.yml" in workflow["on"][event]["paths"]
-    assert "deps/**" in push_trigger["paths"]
-    assert "training/yolo26_tiny_drone/**" in push_trigger["paths"]
-    assert "training/yolo26_tiny_drone/**" in workflow["on"]["pull_request"]["paths"]
-    assert "taxonomies/**" in push_trigger["paths"]
+    workflow = load(WORKFLOW)
+    push_paths = workflow["on"]["push"]["paths"]
 
-
-def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    select = workflow["jobs"]["select"]
-    compile_job = workflow["jobs"]["compile"]
-    compiler_step = next(step for step in select["steps"] if step.get("id") == "compiler")
-
-    assert "model-registry resolve-compiler --repository ." in compiler_step["run"]
-    assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
-    assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
-    matrix = next(step for step in select["steps"] if step.get("id") == "matrix")
-    assert matrix["env"]["COMPILER_VERSION"] == "${{ steps.compiler.outputs.identity }}"
-    assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == ("${{ needs.select.outputs.model_compiler_version }}")
-    assert compile_job["env"]["MODEL_COMPILER_LABEL"] == "${{ needs.select.outputs.model_compiler_label }}"
-
-
-def test_sima_cli_install_retries_only_transient_package_manager_lock_failures() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    install = next(
-        step
-        for step in workflow["jobs"]["compile"]["steps"]
-        if step.get("name") == "Install dataset-registry from the main branch artifact"
-    )
-    script = install["run"]
-
-    assert "for attempt in 1 2 3" in script
-    assert "sima-cli-installer.log" in script
-    assert "Unable to acquire the dpkg frontend lock" in script
-    assert "Could not get lock .*(apt|dpkg)" in script
-    assert "attempt == 3" in script
-    assert "non-retryable error" in script
-    assert 'sleep "$delay"' in script
-
-
-def test_runner_classes_are_authorized_before_compile_matrix_is_queued() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    admission = workflow["jobs"]["authorize-runner-classes"]
-    compile_job = workflow["jobs"]["compile"]
-
-    assert admission["runs-on"] == "ubuntu-latest"
-    assert admission["needs"] == ["select", "resolve-vulcan-config"]
-    assert "github.event_name != 'pull_request'" in admission["if"]
-    assert admission["permissions"]["id-token"] == "write"
-    authorization = next(step for step in admission["steps"] if step.get("id") == "authorization")
-    assert "authorize-runner-matrix" in authorization["run"]
-    assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == ("${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}")
-    assert compile_job["needs"] == [
-        "select", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog"
-    ]
-    assert compile_job["strategy"]["matrix"] == ("${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}")
-
-
-def test_catalog_progress_is_initialized_then_updated_per_invocation() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    initialize = workflow["jobs"]["initialize-catalog"]
-    publisher = workflow["jobs"]["publish-compilations"]
-    plan = next(step for step in initialize["steps"] if step.get("name") == "Publish the pending invocation plan")
-    progress = next(step for step in publisher["steps"] if step.get("name") == "Publish this invocation in the catalog")
-
-    assert initialize["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
-    assert "needs.select.outputs.publishable == 'true'" in initialize["if"]
-    assert "needs.select.outputs.validation_count == '0'" in initialize["if"]
-    assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
-    assert "model-registry publish-catalog" in plan["run"]
-    assert plan["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
-    assert "--selected-matrix \"$matrix_file\"" in plan["run"]
-    assert "--base-branch \"$BASE_BRANCH\"" in plan["run"]
-    assert "needs.select.outputs.publishable == 'true'" in progress["if"]
-    assert "needs.select.outputs.validation_count == '0'" in progress["if"]
-    assert "--compiled-dir _compiled" in progress["run"]
-    assert "catalog_snapshot_conflict" in progress["run"]
-    assert "for attempt in 1 2 3 4 5 6 7 8; do" in progress["run"]
-    assert "(( attempt == 8 ))" in progress["run"]
-    assert 'sleep "$(( delay + RANDOM % 5 ))"' in progress["run"]
-
-
-@pytest.mark.parametrize(
-    ("publishable", "validation_count", "initialize_result", "expected"),
-    [
-        ("false", "0", "skipped", True),
-        ("true", "1", "skipped", True),
-        ("true", "0", "success", True),
-        ("true", "0", "skipped", False),
-        ("true", "0", "failure", False),
-    ],
-)
-def test_compile_allows_only_intentional_catalog_initialization_skips(
-    publishable, validation_count, initialize_result, expected,
-) -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    condition = workflow["jobs"]["compile"]["if"]
-    replacements = {
-        "!cancelled()": True,
-        "github.event_name": "workflow_dispatch",
-        "needs.select.outputs.count": "1",
-        "needs.select.outputs.publishable": publishable,
-        "needs.select.outputs.validation_count": validation_count,
-        "needs.resolve-vulcan-config.result": "success",
-        "needs.authorize-runner-classes.result": "success",
-        "needs.initialize-catalog.result": initialize_result,
-    }
-    for name, value in replacements.items():
-        condition = condition.replace(name, repr(value))
-    condition = condition.replace("&&", "and").replace("||", "or")
-    assert eval(condition, {"__builtins__": {}}, {}) is expected
-
-
-def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["select"]["steps"]
-    validation_index = next(
-        index for index, step in enumerate(steps) if step.get("name") == "Validate complete model catalog and taxonomy"
-    )
-    compiler_index = next(index for index, step in enumerate(steps) if step.get("id") == "compiler")
-
-    assert steps[validation_index]["run"] == "model-registry validate-catalog --repository ."
-    assert validation_index < compiler_index
+    assert "branches" not in workflow["on"]["push"]
+    assert "branches-ignore" not in workflow["on"]["push"]
+    assert workflow["on"]["pull_request"]["paths"] == push_paths
+    for path in (
+        ".github/workflows/Vulcan-Model-Compile.yml",
+        ".github/workflows/Vulcan-Model-Build.yml",
+        ".github/workflows/Vulcan-Model-Benchmarking.yml",
+        "deps/**",
+        "models/**",
+        "scripts/**",
+        "taxonomies/**",
+        "tools/model_registry/**",
+        "training/yolo26_tiny_drone/**",
+    ):
+        assert path in push_paths
+    assert "tools/runtime/**" not in push_paths
 
 
 def test_production_is_an_explicit_dispatch_choice() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    options = workflow["on"]["workflow_dispatch"]["inputs"]["environment"]["options"]
-    assert options == ["staging", "production"]
-    assert workflow["on"]["workflow_dispatch"]["inputs"]["environment"]["default"] == "staging"
+    inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
+
+    assert set(inputs) == {"environment", "models", "profiles", "components", "base_branch", "force_rebuild_all"}
+    assert inputs["environment"]["options"] == ["staging", "production"]
+    assert inputs["environment"]["default"] == "staging"
+    assert inputs["force_rebuild_all"]["type"] == "boolean"
 
 
-def test_dispatch_can_request_full_mini_accuracy() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    accuracy = workflow["on"]["workflow_dispatch"]["inputs"]["accuracy_samples"]
+def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -> None:
+    concurrency = load(WORKFLOW)["concurrency"]
 
-    assert accuracy["default"] == "500"
-    assert accuracy["options"] == ["500", "5000"]
-    assert workflow["jobs"]["compile"]["env"]["ACCURACY_SAMPLES"] == "${{ inputs.accuracy_samples || '500' }}"
-
-
-def test_dispatch_can_select_expensive_variants_and_passes_private_asset_token() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assert "profiles" in workflow["on"]["workflow_dispatch"]["inputs"]
-    assert "components" in workflow["on"]["workflow_dispatch"]["inputs"]
-    compile_steps = workflow["jobs"]["compile"]["steps"]
-    source_step = next(step for step in compile_steps if step.get("id") == "source")
-    recipe_step = next(
-        step for step in compile_steps if step.get("name") == "Run model-specific surgery and compilation recipe"
-    )
-    assert source_step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
-    assert recipe_step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
-    assert workflow["jobs"]["select"]["outputs"]["publishable"] == "${{ steps.matrix.outputs.publishable }}"
+    assert concurrency["cancel-in-progress"] == "${{ github.event_name != 'workflow_dispatch' }}"
+    # Only dispatches get a per-run group, so they never cancel or replace one another.
+    assert "github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id)" in concurrency["group"]
+    assert "github.ref" in concurrency["group"]
+    assert "inputs.environment" in concurrency["group"]
 
 
-def test_dispatch_without_model_filters_is_the_explicit_full_rebuild_path() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    matrix_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
+# Job graph and pull-request isolation
 
-    assert 'if [[ "$EVENT_NAME" == "workflow_dispatch" ]]' in matrix_script
-    assert 'if [[ -n "${REQUESTED_MODELS:-}" ]]' in matrix_script
-    assert "model-registry matrix --repository . --all" in matrix_script
-    assert workflow["on"]["workflow_dispatch"]["inputs"]["force_rebuild_all"]["type"] == "boolean"
-    assert '"${FORCE_REBUILD_ALL:-false}" == "true"' in matrix_script
-    assert "force_args=(--force-rebuild-all)" in matrix_script
-    assert 'model-registry matrix --repository . --models "$REQUESTED_MODELS"' in matrix_script
+
+def test_compile_workflow_has_independent_build_stages() -> None:
+    jobs = load(WORKFLOW)["jobs"]
+
+    assert set(jobs) == {
+        "select",
+        "resolve-vulcan-config",
+        "plan",
+        "authorize-runner-classes",
+        "initialize-catalog",
+        "build",
+        "publish-catalog",
+        "measure",
+        "report-partial-publication",
+    }
 
 
 def test_json_catalog_and_package_publication_are_retired() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    workflow = load(WORKFLOW)
     obsolete_jobs = {"package", "publish", "publish-latest-index", "promote-latest", "cleanup-github-artifacts"}
     assert obsolete_jobs.isdisjoint(workflow["jobs"])
     text = WORKFLOW.read_text(encoding="utf-8")
@@ -253,205 +132,601 @@ def test_json_catalog_and_package_publication_are_retired() -> None:
     assert "vulcan-update-latest-artifacts" not in text
 
 
-def test_compiler_output_is_published_from_a_hosted_runner() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    compile_job = workflow["jobs"]["compile"]
-    publish_job = workflow["jobs"]["publish-compilations"]
+def test_compilation_no_longer_evaluates_accuracy_or_layers_an_exporter() -> None:
+    for path in (WORKFLOW, BUILD_WORKFLOW):
+        text = path.read_text(encoding="utf-8")
+        assert "model_registry evaluate" not in text
+        assert "accuracy_samples" not in text
+        assert "ACCURACY_SAMPLES" not in text
+        assert "python_packages" not in text
 
-    assert compile_job["needs"] == [
-        "select", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog"
+
+def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
+    workflow = load(WORKFLOW)
+    jobs = workflow["jobs"]
+
+    assert "pull_request_target" not in workflow["on"]
+    assert workflow["permissions"] == {"contents": "read"}
+    for name, job in jobs.items():
+        if "uses" not in job:
+            assert job["runs-on"] == "ubuntu-latest", name
+    # Only select runs for pull requests; it has no write or OIDC permission and reads no registry.
+    for name, job in jobs.items():
+        if name != "select":
+            assert "github.event_name != 'pull_request'" in job["if"], name
+    select = jobs["select"]
+    assert "if" not in select
+    assert "permissions" not in select
+    offline = step(select, "List the invocations this change can compile")
+    assert offline["if"] == "github.event_name == 'pull_request'"
+    assert "plan-stages" in offline["run"]
+    assert "--offline" in offline["run"]
+    assert "--read-api-url" not in offline["run"]
+    assert "${{ vars." not in yaml.safe_dump(select)
+    assert "${{ secrets." not in yaml.safe_dump(select)
+
+    # The self-hosted compiler is reachable only through the build job, and only as a workflow call.
+    build_workflow = load(BUILD_WORKFLOW)
+    assert list(build_workflow["on"]) == ["workflow_call"]
+    assert jobs["build"]["uses"] == "./.github/workflows/Vulcan-Model-Build.yml"
+    self_hosted = [
+        name for name, job in build_workflow["jobs"].items()
+        if isinstance(job["runs-on"], list) and "self-hosted" in job["runs-on"]
     ]
-    assert "id-token" not in compile_job["permissions"]
-    assert all("aws-actions/configure-aws-credentials" not in step.get("uses", "") for step in compile_job["steps"])
-    assert all("model_registry publish" not in step.get("run", "") for step in compile_job["steps"])
-    compiler_output = next(
-        step for step in compile_job["steps"] if step.get("name") == "Retain the complete compiler output"
-    )
-    assert compiler_output["with"]["name"].startswith("compiler-output-")
-
-    assert publish_job["runs-on"] == "ubuntu-latest"
-    assert publish_job["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "compile"]
-    assert publish_job["permissions"]["id-token"] == "write"
-    download = next(
-        step for step in publish_job["steps"] if step.get("name") == "Download this complete compiler output"
-    )
-    assert download["with"]["name"].startswith("compiler-output-")
-    verify = next(step for step in publish_job["steps"] if step.get("name") == "Verify the complete component set")
-    assert "validate-compile-outputs" in verify["run"]
-    assert "compile-result.json" in verify["run"]
-    credentials = next(
-        step for step in publish_job["steps"] if step.get("name") == "Configure artifact-registry publisher credentials"
-    )
-    assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
-    publish = next(step for step in publish_job["steps"] if step.get("name") == "Publish the complete component set")
-    assert publish["env"]["REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
-    assert "model-registry publish" in publish["run"]
-    assert "--dist-dir _compiled" in publish["run"]
-    assert "path.write_text" not in publish["run"]
-    published_output = next(
-        step
-        for step in publish_job["steps"]
-        if step.get("name") == "Retain the published model output for benchmark handoff"
-    )
-    assert published_output["with"]["name"].startswith("compiled-model-")
-    progress = next(
-        step for step in publish_job["steps"] if step.get("name") == "Publish this invocation in the catalog"
-    )
-    assert publish_job["steps"].index(published_output) < publish_job["steps"].index(progress)
+    assert self_hosted == ["compile"]
 
 
-def test_catalog_publication_does_not_require_a_model_compile() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    job = workflow["jobs"]["publish-catalog"]
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+def test_trusted_events_reach_the_build(event) -> None:
+    condition = load(WORKFLOW)["jobs"]["build"]["if"]
+    values = {
+        "!cancelled()": True,
+        "github.event_name": event,
+        "needs.select.outputs.publishable": "true",
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.authorize-runner-classes.result": "success",
+        "needs.initialize-catalog.result": "success",
+    }
+    assert evaluate(condition, values) is True
+    assert evaluate(condition, {**values, "github.event_name": "pull_request"}) is False
 
-    assert job["needs"] == [
-        "select", "resolve-vulcan-config", "publish-compilations", "assemble-packages", "publish-packages",
-        "validation-gate"
-    ]
-    assert "needs.select.outputs.count == '0'" in job["if"]
-    assert "needs.validation-gate.result == 'success'" in job["if"]
-    assert "needs.assemble-packages.outputs.package_count == '0'" in job["if"]
-    assert "needs.publish-packages.result == 'success'" in job["if"]
-    assert job["permissions"]["id-token"] == "write"
-    publish = next(
-        step for step in job["steps"] if step.get("name") == "Publish and promote the complete catalog snapshot"
+
+# Selection and planning
+
+
+def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
+    select = load(WORKFLOW)["jobs"]["select"]
+    validation = step_index(select, "Validate complete model catalog and taxonomy")
+    compiler = next(index for index, item in enumerate(select["steps"]) if item.get("id") == "compiler")
+
+    assert select["steps"][validation]["run"] == "model-registry validate-catalog --repository ."
+    assert validation < compiler
+
+
+def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
+    jobs = load(WORKFLOW)["jobs"]
+    select = jobs["select"]
+    compiler = next(item for item in select["steps"] if item.get("id") == "compiler")
+
+    assert "model-registry resolve-compiler --repository ." in compiler["run"]
+    assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
+    assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
+    assert select["outputs"]["model_compiler_identity"] == "${{ steps.compiler.outputs.identity }}"
+    plan = step(jobs["plan"], "Compare stage keys with published runs")
+    assert plan["env"]["COMPILER_IDENTITY"] == "${{ needs.select.outputs.model_compiler_identity }}"
+    build = jobs["build"]["with"]
+    assert build["model_compiler_version"] == "${{ needs.select.outputs.model_compiler_version }}"
+    assert build["model_compiler_label"] == "${{ needs.select.outputs.model_compiler_label }}"
+
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    assert compile_job["env"]["EXPECTED_COMPILER_VERSION"] == "${{ inputs.model_compiler_version }}"
+    assert "${{ inputs.model_compiler_label }}" in compile_job["runs-on"]
+    verify = step(compile_job, "Verify the pinned Model Compiler environment")
+    assert "/etc/vulcan/model-compiler-artifact.json" in verify["run"]
+    assert step_index(compile_job, "Verify the pinned Model Compiler environment") < step_index(
+        compile_job, "Compile the invocation with its model's compile script"
     )
+
+
+def test_targeted_profile_or_component_dispatch_is_compile_only() -> None:
+    select = load(WORKFLOW)["jobs"]["select"]
+    scope = next(item for item in select["steps"] if item.get("id") == "scope")
+
+    assert select["outputs"]["publishable"] == "${{ steps.scope.outputs.publishable }}"
+    assert scope["env"] == {
+        "REQUESTED_PROFILES": "${{ inputs.profiles }}",
+        "REQUESTED_COMPONENTS": "${{ inputs.components }}",
+    }
+    assert "publishable=false" in scope["run"]
+
+
+def test_new_branches_inherit_the_resolved_base_branch_catalog() -> None:
+    jobs = load(WORKFLOW)["jobs"]
+    base = next(item for item in jobs["select"]["steps"] if item.get("id") == "base")
+
+    assert "model-registry resolve-base" in base["run"]
+    assert "--default-branch develop" in base["run"]
+    assert base["env"]["PREFERRED_BRANCH"] == "${{ inputs.base_branch || github.event.pull_request.base.ref }}"
+    plan = step(jobs["plan"], "Compare stage keys with published runs")
+    assert plan["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
+    assert '--base-branch "$BASE_BRANCH"' in plan["run"]
+    assert jobs["build"]["with"]["base_branch"] == "${{ needs.select.outputs.base_branch }}"
+
+
+def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
+    plan_job = load(WORKFLOW)["jobs"]["plan"]
+    plan = step(plan_job, "Compare stage keys with published runs")
+
+    assert plan_job["needs"] == "select"
+    assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
+    assert "permissions" not in plan_job
+    assert plan["env"]["REGISTRY_READ_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
+    assert "model-registry plan-stages" in plan["run"]
+    assert '--read-api-url "$REGISTRY_READ_API_URL"' in plan["run"]
+    assert "--offline" not in plan["run"]
+    for name in ("REQUESTED_MODELS", "REQUESTED_PROFILES", "REQUESTED_COMPONENTS", "FORCE_REBUILD_ALL"):
+        assert name in plan["env"]
+    assert "--force-rebuild-all" in plan["run"]
+    assert plan_job["outputs"] == {
+        "compile_count": "${{ steps.plan.outputs.compile_count }}",
+        "compile_matrix": "${{ steps.plan.outputs.compile_matrix }}",
+        "measure_count": "${{ steps.plan.outputs.measure_count }}",
+        "measure_matrix": "${{ steps.plan.outputs.measure_matrix }}",
+    }
+
+
+def test_reused_build_stages_are_measured_on_modalix_only() -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
+    program = jq_program(plan["run"], 'measure_matrix="$(jq -c')
+    document = {
+        "compile": {"include": []},
+        "measure": {"include": [{"model_id": "a", "target": "modalix"}, {"model_id": "b", "target": "davinci"}]},
+    }
+
+    assert run_jq(program, document) == {"include": [{"model_id": "a", "target": "modalix"}]}
+
+
+# Runner authorization and catalog initialization
+
+
+def test_runner_classes_are_authorized_before_builds_are_queued() -> None:
+    jobs = load(WORKFLOW)["jobs"]
+    admission = jobs["authorize-runner-classes"]
+    build = jobs["build"]
+
+    assert admission["needs"] == ["select", "plan", "resolve-vulcan-config"]
+    assert "needs.plan.outputs.compile_count != '0'" in admission["if"]
+    assert admission["permissions"]["id-token"] == "write"
+    authorization = next(item for item in admission["steps"] if item.get("id") == "authorization")
+    assert "authorize-runner-matrix" in authorization["run"]
+    assert authorization["env"]["SELECTED_MATRIX"] == "${{ needs.plan.outputs.compile_matrix }}"
+    assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == "${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}"
+
+    assert build["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog"]
+    assert build["strategy"]["matrix"] == "${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}"
+    assert build["strategy"]["fail-fast"] == "false"
+    assert build["with"]["entry"] == "${{ toJSON(matrix) }}"
+    assert build["with"]["publishable"] == "${{ needs.select.outputs.publishable == 'true' }}"
+    assert build["secrets"] == "inherit"
+    assert set(build["with"]) == set(load(BUILD_WORKFLOW)["on"]["workflow_call"]["inputs"])
+
+
+def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
+    initialize = load(WORKFLOW)["jobs"]["initialize-catalog"]
+    publish = step(initialize, "Publish the pending invocation plan")
+
+    assert initialize["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
+    assert "needs.select.outputs.publishable == 'true'" in initialize["if"]
+    assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
+    assert publish["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
     assert "model-registry publish-catalog" in publish["run"]
-    assert publish["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
+    assert '--selected-matrix "$matrix_file"' in publish["run"]
     assert '--base-branch "$BASE_BRANCH"' in publish["run"]
-    assert "--git-sha \"$GITHUB_SHA\"" in publish["run"]
-    assert "--package-dir _packages" in publish["run"]
-    assert publish["env"]["REGISTRY_READ_API_URL"] == (
-        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
-    )
-    assert "--read-api-url \"$REGISTRY_READ_API_URL\"" in publish["run"]
 
 
-def test_pending_only_catalogs_do_not_require_a_package_bundle() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assemble = workflow["jobs"]["assemble-packages"]
-    packages = next(step for step in assemble["steps"] if step.get("id") == "packages")
-    upload = next(step for step in assemble["steps"] if step.get("name") == "Retain deterministic package bundles")
-    publish_packages = workflow["jobs"]["publish-packages"]
-    catalog = workflow["jobs"]["publish-catalog"]
-    package_receipts = next(
-        step for step in catalog["steps"] if step.get("name") == "Download finalized package receipts"
-    )
-
-    assert assemble["outputs"]["package_count"] == "${{ steps.packages.outputs.count }}"
-    assert 'echo "count=$count" >> "$GITHUB_OUTPUT"' in packages["run"]
-    assert "pending builds only" in packages["run"]
-    assert upload["if"] == "steps.packages.outputs.count != '0'"
-    assert "needs.assemble-packages.outputs.package_count != '0'" in publish_packages["if"]
-    assert package_receipts["if"] == "needs.publish-packages.result == 'success'"
-
-
-def test_cancellation_stops_all_downstream_publication() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-
-    for name in ("assemble-packages", "publish-packages", "publish-catalog"):
-        assert "!cancelled()" in workflow["jobs"][name]["if"]
+@pytest.mark.parametrize(
+    ("publishable", "initialize_result", "expected"),
+    [
+        ("false", "skipped", True),
+        ("true", "success", True),
+        ("true", "skipped", False),
+        ("true", "failure", False),
+    ],
+)
+def test_build_allows_only_intentional_catalog_initialization_skips(
+    publishable, initialize_result, expected,
+) -> None:
+    condition = load(WORKFLOW)["jobs"]["build"]["if"]
+    values = {
+        "!cancelled()": True,
+        "github.event_name": "push",
+        "needs.select.outputs.publishable": publishable,
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.authorize-runner-classes.result": "success",
+        "needs.initialize-catalog.result": initialize_result,
+    }
+    assert evaluate(condition, values) is expected
 
 
-def test_complete_packages_are_published_before_the_catalog() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    job = workflow["jobs"]["publish-packages"]
-
-    assert job["needs"] == ["select", "resolve-vulcan-config", "assemble-packages"]
-    publish = next(step for step in job["steps"] if step.get("name") == "Publish finalized full packages")
-    assert "model-registry publish-package" in publish["run"]
-    assert "--package-dir _packages" in publish["run"]
-    assert workflow["jobs"]["publish-catalog"]["needs"].index("publish-packages") >= 0
+# Catalog snapshot, reused-build stages and failure report
 
 
-def test_validation_only_changes_are_reported_and_block_catalog_publication() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    select = workflow["jobs"]["select"]
-    gate = workflow["jobs"]["validation-gate"]
+@pytest.mark.parametrize(
+    ("cancelled", "publishable", "compile_count", "initialize_result", "expected"),
+    [
+        # The snapshot publishes whether or not individual builds failed; build is not in the condition.
+        (False, "true", "2", "success", True),
+        (False, "true", "0", "skipped", True),
+        (False, "true", "2", "skipped", False),
+        (False, "false", "2", "skipped", False),
+        (True, "true", "2", "success", False),
+    ],
+)
+def test_catalog_snapshot_publishes_even_when_builds_fail(
+    cancelled, publishable, compile_count, initialize_result, expected,
+) -> None:
+    job = load(WORKFLOW)["jobs"]["publish-catalog"]
+    values = {
+        "!cancelled()": not cancelled,
+        "github.event_name": "push",
+        "needs.select.outputs.publishable": publishable,
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.plan.result": "success",
+        "needs.plan.outputs.compile_count": compile_count,
+        "needs.initialize-catalog.result": initialize_result,
+    }
 
-    assert select["outputs"]["validation_count"] == "${{ steps.matrix.outputs.validation_count }}"
-    assert select["outputs"]["validation_matrix"] == "${{ steps.matrix.outputs.validation_matrix }}"
-    assert gate["needs"] == "select"
-    assert gate["env"]["VALIDATION_COUNT"] == "${{ needs.select.outputs.validation_count }}"
-    assert gate["env"]["VALIDATION_MATRIX"] == "${{ needs.select.outputs.validation_matrix }}"
-    script = gate["steps"][0]["run"]
-    assert "Validation-only changes require evaluation against retained MPKs" in script
-    assert 'jq . <<< "$VALIDATION_MATRIX"' in script
-    assert "exit 1" in script
+    assert "build" in job["needs"]
+    assert "needs.build.result" not in job["if"]
+    assert evaluate(job["if"], values) is expected
 
 
-def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    select = workflow["jobs"]["select"]
-    dispatch = workflow["jobs"]["dispatch-reused-benchmarks"]
+def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
+    job = load(WORKFLOW)["jobs"]["publish-catalog"]
+    publish = step(job, "Publish and promote the catalog snapshot")
 
-    assert select["outputs"]["benchmark_matrix"] == "${{ steps.matrix.outputs.benchmark_matrix }}"
-    assert dispatch["needs"] == ["select", "publish-catalog"]
-    assert "needs.select.outputs.benchmark_count != '0'" in dispatch["if"]
-    assert dispatch["strategy"]["matrix"] == "${{ fromJSON(needs.select.outputs.benchmark_matrix) }}"
-    step = dispatch["steps"][0]
-    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in step["run"]
+    assert job["permissions"]["id-token"] == "write"
+    assert "model-registry publish-catalog" in publish["run"]
+    assert '--git-sha "$GITHUB_SHA"' in publish["run"]
+    assert '--base-branch "$BASE_BRANCH"' in publish["run"]
+    assert '--read-api-url "$REGISTRY_READ_API_URL"' in publish["run"]
+    # Each build published its own outputs; the snapshot neither downloads nor republishes them.
+    assert "--compiled-dir" not in publish["run"]
+    assert "--package-dir" not in publish["run"]
+    assert "--selected-matrix" not in publish["run"]
+    assert all(not item.get("uses", "").startswith("actions/download-artifact") for item in job["steps"])
+
+
+@pytest.mark.parametrize(
+    ("event", "environment", "catalog_result", "measure_count", "expected"),
+    [
+        ("push", "staging", "success", "1", True),
+        ("workflow_dispatch", "staging", "success", "3", True),
+        ("push", "production", "success", "1", False),
+        ("push", "staging", "failure", "1", False),
+        ("push", "staging", "skipped", "1", False),
+        ("push", "staging", "success", "0", False),
+        ("pull_request", "staging", "success", "1", False),
+    ],
+)
+def test_reused_builds_start_devkit_stages_after_the_catalog_snapshot(
+    event, environment, catalog_result, measure_count, expected,
+) -> None:
+    job = load(WORKFLOW)["jobs"]["measure"]
+    values = {
+        "!cancelled()": True,
+        "github.event_name": event,
+        "needs.publish-catalog.result": catalog_result,
+        "needs.select.outputs.vulcan_environment": environment,
+        "needs.plan.outputs.measure_count": measure_count,
+    }
+
+    assert job["needs"] == ["select", "plan", "publish-catalog"]
+    # Without a status function GitHub adds success(), which also requires the
+    # indirectly needed build jobs and skips reused builds when one build fails.
+    assert job["if"].startswith("!cancelled() &&")
+    assert evaluate(job["if"], values) is expected
+
+
+def test_reused_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
+    job = load(WORKFLOW)["jobs"]["measure"]
+    start = step(job, "Start the stages a reused build still lacks")
+    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
+
+    assert job["permissions"] == {"actions": "write", "contents": "read"}
+    assert job["strategy"]["fail-fast"] == "false"
+    assert job["strategy"]["matrix"] == "${{ fromJSON(needs.plan.outputs.measure_matrix) }}"
+    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in start["run"]
+    assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
     # The job has no checkout, so gh cannot infer the repository from a git remote.
-    assert '--repo "$GITHUB_REPOSITORY"' in step["run"]
-    assert '--ref "$GITHUB_REF_NAME"' in step["run"]
-    assert "-f source_run_id=" in step["run"]
-    assert '-f source_branch="$GITHUB_REF_NAME"' in step["run"]
+    assert all(not item.get("uses", "").startswith("actions/checkout") for item in job["steps"])
+    assert '--repo "$GITHUB_REPOSITORY"' in start["run"]
+    # The benchmark only runs when dispatched on its source branch.
+    assert '--ref "$GITHUB_REF_NAME"' in start["run"]
+    assert '-f source_branch="$GITHUB_REF_NAME"' in start["run"]
+    # An empty source run restores the reused build from the registry at this catalog revision.
+    assert "-f source_run_id= " in start["run"]
+    assert '-f source_sha="$GITHUB_SHA"' in start["run"]
+    assert '-f stages="$STAGES"' in start["run"]
+    assert '-f component_ids="$COMPONENT_IDS"' in start["run"]
+    assert start["env"]["STAGES"] == "${{ join(matrix.stages, ',') }}"
+    assert start["env"]["COMPONENT_IDS"] == "${{ join(matrix.benchmark_component_ids, ',') }}"
 
 
-def test_changed_selection_does_not_fetch_or_carry_forward_a_previous_catalog() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    select = workflow["jobs"]["select"]
-    matrix_script = next(step["run"] for step in select["steps"] if step.get("id") == "matrix")
-    assert all(step.get("id") != "previous" for step in select["steps"])
-    assert "fetch-previous" not in matrix_script
-    assert "--previous-index" not in matrix_script
-    assert '--compiler-version "$COMPILER_VERSION"' in matrix_script
+def test_failed_builds_are_reported_after_the_snapshot() -> None:
+    workflow = load(WORKFLOW)
+    jobs = workflow["jobs"]
+    report = jobs["report-partial-publication"]
+    script = step(report, "List the builds that did not publish")["run"]
+    program = jq_program(script, "| jq")
+
+    assert report["needs"] == ["plan", "build", "publish-catalog"]
+    assert report["if"].startswith("always() &&")
+    assert "github.event_name != 'pull_request'" in report["if"]
+    assert report["permissions"] == {"actions": "read", "contents": "read"}
+    # The filter matches the build job's name, and no other job shares its prefix.
+    assert jobs["build"]["name"].startswith("Build ")
+    assert [name for name, job in jobs.items() if job["name"].startswith("Build ")] == ["build"]
+
+    def job(name: str, conclusion: str) -> dict:
+        return {"name": name, "conclusion": conclusion, "html_url": f"https://example.test/{name}"}
+
+    pages = [{"jobs": [
+        job("Build a/b (p) / Compile", "failure"),
+        job("Build a/b (p) / Publish", "skipped"),
+        job("Build c/d (p) / Publish", "cancelled"),
+        job("Build e/f (p) / Publish", "success"),
+        job("Publish the catalog at this revision", "failure"),
+    ]}]
+    failed = run_jq(program, pages)
+    assert [item["name"] for item in failed] == ["Build a/b (p) / Compile", "Build c/d (p) / Publish"]
 
 
-def test_feature_branch_pushes_always_use_merge_base_for_retryable_selection() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    matrix_script = next(step["run"] for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
-    base_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
-    base_script = base_step["run"]
+# Reusable build workflow: compile on the self-hosted compiler
 
-    assert "model-registry resolve-base" in base_script
-    assert 'comparison_base="$merge_base"' in base_script
-    assert base_step["env"]["EVENT_NAME"] == "${{ github.event_name }}"
-    assert '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]' in base_script
-    assert base_script.index('comparison_base="$merge_base"') < base_script.index(
-        '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]'
+
+def test_compile_job_requests_authorized_runner_labels() -> None:
+    runs_on = load(BUILD_WORKFLOW)["jobs"]["compile"]["runs-on"]
+
+    assert {"self-hosted", "model-compiler", "${{ inputs.runner_environment }}"} <= set(runs_on)
+    assert "${{ fromJSON(inputs.entry).runner_class }}" in runs_on
+    assert "model-id-${{ fromJSON(inputs.entry).model_id }}" in runs_on
+    assert "build-profile-id-${{ fromJSON(inputs.entry).build_profile_id }}" in runs_on
+    assert "component-id-${{ fromJSON(inputs.entry).component_id }}" in runs_on
+    assert all(not label.startswith("variant-id-") for label in runs_on)
+
+
+def test_self_hosted_compile_holds_no_publication_credentials() -> None:
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    text = yaml.safe_dump(compile_job)
+
+    assert compile_job["permissions"] == {"contents": "read"}
+    assert all("aws-actions/configure-aws-credentials" not in item.get("uses", "") for item in compile_job["steps"])
+    assert "${{ secrets." not in text
+    assert "${{ vars." not in text
+    for item in compile_job["steps"]:
+        run = item.get("run", "")
+        assert "model-registry publish" not in run
+        assert "model_registry publish" not in run
+        assert "gh workflow run" not in run
+
+
+def test_compile_script_runs_in_activated_model_compiler_shell() -> None:
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    script = step(compile_job, "Compile the invocation with its model's compile script")["run"]
+
+    assert "bash --noprofile --norc" in script
+    assert "source /etc/profile.d/vulcan-model-compiler.sh" in script
+    assert "type activate-model-compiler" in script
+    assert "command -v mla-masm" in script
+    assert script.index("activate-model-compiler") < script.index("scripts/run_model_compilation.sh")
+    assert (
+        'scripts/run_model_compilation.sh "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"'
+        in script
     )
-    assert "model-registry matrix --repository ." in matrix_script
-    assert '--base "$COMPARISON_BASE" --head "$HEAD_SHA"' in matrix_script
-    assert 'elif [[ "$BASE_SHA" =~ ^0+$ ]]' not in matrix_script
+    order = [
+        step_index(compile_job, name)
+        for name in (
+            "Check out the trusted revision",
+            "Verify the pinned Model Compiler environment",
+            "Install dataset-registry from the main branch artifact",
+            "Install shared registry tooling outside the read-only compiler image",
+            "Compile the invocation with its model's compile script",
+            "Verify every MPK and record its provenance",
+            "Retain the complete compiler output",
+        )
+    ]
+    assert order == sorted(order)
 
 
-def test_develop_pushes_compare_only_the_push_event_range() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    base_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "base")
-    base_script = base_step["run"]
+def test_sima_cli_install_retries_only_transient_package_manager_lock_failures() -> None:
+    script = step(
+        load(BUILD_WORKFLOW)["jobs"]["compile"], "Install dataset-registry from the main branch artifact"
+    )["run"]
 
-    assert base_step["env"]["DEFAULT_BRANCH"] == "develop"
-    assert base_step["env"]["EVENT_BEFORE"] == "${{ github.event.before }}"
-    develop_guard = '[[ "$EVENT_NAME" == "push" && "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]'
-    assert develop_guard in base_script
-    assert 'git cat-file -e "${EVENT_BEFORE}^{commit}"' in base_script
-    assert 'comparison_base="$EVENT_BEFORE"' in base_script
-    assert base_script.index(develop_guard) < base_script.index('comparison_base="$EVENT_BEFORE"')
+    assert "for attempt in 1 2 3" in script
+    assert "Unable to acquire the dpkg frontend lock" in script
+    assert "Could not get lock .*(apt|dpkg)" in script
+    assert "attempt == 3" in script
+    assert "non-retryable error" in script
+    assert 'sleep "$delay"' in script
 
 
-def test_manual_dispatch_keeps_explicit_model_profile_and_component_selection() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    matrix_step = next(step for step in workflow["jobs"]["select"]["steps"] if step.get("id") == "matrix")
-    matrix_script = matrix_step["run"]
+def test_compile_worker_installs_main_dataset_registry_artifact() -> None:
+    install = step(load(BUILD_WORKFLOW)["jobs"]["compile"], "Install dataset-registry from the main branch artifact")
 
-    assert 'if [[ "$EVENT_NAME" == "workflow_dispatch" ]]' in matrix_script
-    assert matrix_step["env"]["REQUESTED_MODELS"] == "${{ inputs.models }}"
-    assert matrix_step["env"]["REQUESTED_PROFILES"] == "${{ inputs.profiles }}"
-    assert matrix_step["env"]["REQUESTED_COMPONENTS"] == "${{ inputs.components }}"
-    assert '--models "$REQUESTED_MODELS"' in matrix_script
-    assert 'profile_args=(--profiles "$REQUESTED_PROFILES")' in matrix_script
-    assert 'component_args=(--components "$REQUESTED_COMPONENTS")' in matrix_script
+    assert install["env"]["DATASET_REGISTRY_ENVIRONMENT"] == "${{ inputs.vulcan_environment }}"
+    assert "dataset/dataset-registry@main:latest" in install["run"]
+    assert "--download-only" in install["run"]
+    assert "sima_neat_dataset_registry-*.whl" in install["run"]
+    assert '--target "$dataset_tools"' in install["run"]
+    assert '"$MODEL_COMPILER_PYTHON" -m dataset_registry --version' in install["run"]
+
+
+def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
+    script = step(
+        load(BUILD_WORKFLOW)["jobs"]["compile"], "Install shared registry tooling outside the read-only compiler image"
+    )["run"]
+
+    assert "--no-deps" in script
+    assert "--target" in script
+    assert "import certifi, jsonschema, yaml" in script
+
+
+def test_every_component_mpk_records_runner_and_input_provenance() -> None:
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    verify = step(compile_job, "Verify every MPK and record its provenance")["run"]
+
+    assert compile_job["env"]["COMPONENT_IDS"] == "${{ join(fromJSON(inputs.entry).component_ids, ',') }}"
+    assert compile_job["env"]["RUNNER_CLASS"] == "${{ fromJSON(inputs.entry).runner_class }}"
+    assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == (
+        "${{ fromJSON(inputs.entry).runner_approval_spec_revision }}"
+    )
+    assert 'for index in "${!components[@]}"' in verify
+    assert 'verify-mpk "$PROFILE_OUTPUT_DIR/$component"' in verify
+    for option in (
+        "--write-manifest",
+        "--source-sha256",
+        "--calibration-sha256",
+        "--build-fingerprint",
+        "--requested-runner-class",
+        "--runner-class",
+        "--runner-approval-id",
+        "--runner-approval-spec-revision",
+    ):
+        assert option in verify
+
+
+# Reusable build workflow: publish from a hosted runner
+
+
+def test_build_is_published_from_a_hosted_runner() -> None:
+    jobs = load(BUILD_WORKFLOW)["jobs"]
+    compile_job, publish = jobs["compile"], jobs["publish"]
+    upload = step(compile_job, "Retain the complete compiler output")
+    download = step(publish, "Download this compiler output")
+
+    assert publish["needs"] == "compile"
+    assert "if" not in publish
+    assert publish["runs-on"] == "ubuntu-latest"
+    assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
+    assert upload["with"]["name"].startswith("compiler-output-")
+    assert download["with"]["name"] == upload["with"]["name"]
+    assert "continue-on-error" not in download
+    verify = step(publish, "Verify the complete component set")["run"]
+    assert "validate-compile-outputs" in verify
+    assert "compile-result.json" in verify
+    credentials = step(publish, "Configure artifact-registry publisher credentials")
+    assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
+    assert "model-registry publish" in step(publish, "Publish the complete component set")["run"]
+    order = [
+        step_index(publish, name)
+        for name in (
+            "Download this compiler output",
+            "Verify the complete component set",
+            "Configure artifact-registry publisher credentials",
+            "Publish the complete component set",
+            "Retain the published model output for the DevKit stages",
+            "Start the DevKit stages",
+            "Assemble the packages this build completes",
+            "Publish the finalized packages",
+            "Publish this build in the catalog",
+        )
+    ]
+    assert order == sorted(order)
+
+
+def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
+    publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
+    retained = step(publish, "Retain the published model output for the DevKit stages")
+    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage-dispatched-benchmark"]
+    verify = step(stage, "Verify the source run and compiled artifact")["run"]
+
+    assert retained["with"]["name"] == (
+        "compiled-model-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}"
+        "-${{ fromJSON(inputs.entry).compile_invocation_id }}"
+    )
+    assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify
+
+
+@pytest.mark.parametrize(
+    ("environment", "target", "stages", "expected"),
+    [
+        ("staging", "modalix", "performanceaccuracy", True),
+        ("staging", "modalix", "accuracy", True),
+        ("staging", "modalix", "", False),
+        ("production", "modalix", "performance", False),
+        ("staging", "davinci", "performance", False),
+    ],
+)
+def test_new_builds_start_only_their_applicable_devkit_stages(environment, target, stages, expected) -> None:
+    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the DevKit stages")
+    values = {
+        "inputs.vulcan_environment": environment,
+        "fromJSON(inputs.entry).target": target,
+        "join(fromJSON(inputs.entry).stages, '')": stages,
+    }
+
+    assert "inputs.publishable" not in start["if"]
+    assert evaluate(start["if"], values) is expected
+
+
+def test_new_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
+    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the DevKit stages")
+    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
+
+    # A failed dispatch leaves the build published; the next run plans the missing stages.
+    assert start["continue-on-error"] == "true"
+    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in start["run"]
+    assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
+    assert '--repo "$GITHUB_REPOSITORY"' in start["run"]
+    assert '--ref "$GITHUB_REF_NAME"' in start["run"]
+    assert '-f source_branch="$GITHUB_REF_NAME"' in start["run"]
+    assert '-f source_run_id="$GITHUB_RUN_ID"' in start["run"]
+    assert '-f stages="$STAGES"' in start["run"]
+    assert '-f component_ids="$BENCHMARK_COMPONENT_IDS"' in start["run"]
+    assert start["env"]["STAGES"] == "${{ join(fromJSON(inputs.entry).stages, ',') }}"
+    assert start["env"]["BENCHMARK_COMPONENT_IDS"] == (
+        "${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}"
+    )
+
+
+def test_packages_and_catalog_update_only_for_publishable_builds() -> None:
+    publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
+    assemble = step(publish, "Assemble the packages this build completes")
+    packages = step(publish, "Publish the finalized packages")
+    catalog = step(publish, "Publish this build in the catalog")
+
+    assert assemble["if"] == "inputs.publishable"
+    assert "--all" in assemble["run"]
+    assert packages["if"] == "inputs.publishable && steps.packages.outputs.count != '0'"
+    assert "model-registry publish-package" in packages["run"]
+    assert catalog["if"] == "inputs.publishable"
+    assert "--compiled-dir _compiled" in catalog["run"]
+    assert '--base-branch "$BASE_BRANCH"' in catalog["run"]
+
+
+def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:
+    catalog = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Publish this build in the catalog")["run"]
+
+    assert "for attempt in 1 2 3 4 5 6 7 8; do" in catalog
+    assert "grep -q 'catalog_snapshot_conflict'" in catalog
+    assert "(( attempt == 8 ))" in catalog
+    assert 'sleep "$(( delay + RANDOM % 5 ))"' in catalog
+
+
+# Scripts the workflows invoke
+
+
+def test_directly_invoked_scripts_exist_and_are_executable() -> None:
+    texts = "\n".join(path.read_text(encoding="utf-8") for path in WORKFLOWS.glob("*.yml"))
+    scripts = sorted(set(re.findall(r"(?<![\w/])scripts/[\w.-]+\.sh", texts)))
+
+    assert "scripts/run_model_compilation.sh" in scripts
+    for script in scripts:
+        path = ROOT / script
+        assert path.is_file(), script
+        assert os.access(path, os.X_OK), f"{script} is not executable"
 
 
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
@@ -467,202 +742,3 @@ def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
     assert {"--model", "--output-dir", "--build-profile", "--dataset"} <= option_strings
     assert "--accuracy-samples" not in option_strings
     assert "--accuracy-workers" not in option_strings
-
-
-def test_compile_recipe_runs_in_activated_model_compiler_shell() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    compile_script = next(
-        step["run"] for step in steps if step.get("name") == "Run model-specific surgery and compilation recipe"
-    )
-    assert "bash --noprofile --norc" in compile_script
-    assert "source /etc/profile.d/vulcan-model-compiler.sh" in compile_script
-    assert "type activate-model-compiler" in compile_script
-    assert "activate-model-compiler" in compile_script
-    assert "command -v mla-masm" in compile_script
-    assert 'archives=("$OUTPUT_DIR"/*_mpk.tar.gz)' in compile_script
-    assert '--compile-invocation "$COMPILE_INVOCATION_ID"' in compile_script
-    assert '--dataset "$CALIBRATION_PATH"' in compile_script
-    assert 'if [[ "$CALIBRATION_KIND" == "dataset" ]]' in compile_script
-    assert "python -m model_registry evaluate" not in compile_script
-
-
-def test_verified_exporter_is_layered_on_the_model_compiler_interpreter() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    exporter = next(step for step in steps if step.get("name") == "Prepare the verified model exporter")
-
-    assert "json.loads(sys.argv[3])" in exporter["run"]
-    assert 'package["path"]' in exporter["run"]
-    assert 'package["imports"]' in exporter["run"]
-    assert '"--no-deps"' in exporter["run"]
-    assert '"--target"' in exporter["run"]
-    assert "--system-site-packages" not in exporter["run"]
-    assert 'importlib.import_module("afe")' in exporter["run"]
-    assert 'echo "PYTHONPATH=$exporter_packages' in exporter["run"]
-
-
-def test_grouped_recipe_receives_the_declared_correctness_dataset() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    recipe = next(
-        step
-        for step in workflow["jobs"]["compile"]["steps"]
-        if step.get("name") == "Run model-specific surgery and compilation recipe"
-    )
-
-    assert recipe["env"]["CORRECTNESS_DATASET_PATH"] == "${{ steps.accuracy_dataset.outputs.path }}"
-    assert 'correctness_args=(--correctness-dataset "$CORRECTNESS_DATASET_PATH")' in recipe["run"]
-
-
-def test_grouped_compile_validates_and_verifies_each_component_output() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    compile_job = workflow["jobs"]["compile"]
-    verify = next(step for step in compile_job["steps"] if step.get("name") == "Validate and checksum every MPK")
-    retain = next(step for step in compile_job["steps"] if step.get("uses") == "actions/upload-artifact@v7")
-
-    assert "validate-compile-outputs" in verify["run"]
-    assert 'for index in "${!components[@]}"' in verify["run"]
-    assert 'verify-mpk "$PROFILE_OUTPUT_DIR/$component"' in verify["run"]
-    assert retain["with"]["name"].startswith("compiler-output-")
-
-
-def test_compile_workflow_resolves_registered_calibration_input() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    calibration = next(step for step in steps if step.get("id") == "calibration")
-    assert "model_registry fetch-calibration" in calibration["run"]
-    assert '--build-profile "$BUILD_PROFILE_ID"' in calibration["run"]
-    assert 'get("kind", "none")' in calibration["run"]
-
-
-def test_compile_workflow_resolves_accuracy_independently_of_calibration() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    accuracy_dataset = next(step for step in steps if step.get("id") == "accuracy_dataset")
-    accuracy_step = next(step for step in steps if step.get("name") == "Measure model accuracy")
-
-    assert "model_registry fetch-accuracy-dataset" in accuracy_dataset["run"]
-    assert '--build-profile "$BUILD_PROFILE_ID"' in accuracy_dataset["run"]
-    assert accuracy_dataset["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
-    assert (
-        accuracy_step["if"] == "steps.accuracy_dataset.outputs.kind == 'dataset' && matrix.explicit_invocation != true"
-    )
-    assert accuracy_step["env"]["SOURCE_PATH"] == "${{ steps.source.outputs.path }}"
-    assert accuracy_step["env"]["ACCURACY_DATASET_PATH"] == "${{ steps.accuracy_dataset.outputs.path }}"
-    assert "source /etc/profile.d/vulcan-model-compiler.sh" in accuracy_step["run"]
-    assert "activate-model-compiler" in accuracy_step["run"]
-    assert "python -m model_registry evaluate" in accuracy_step["run"]
-    assert '--dataset "$ACCURACY_DATASET_PATH"' in accuracy_step["run"]
-    assert '--samples "$ACCURACY_SAMPLES"' in accuracy_step["run"]
-    assert "--workers 6" in accuracy_step["run"]
-    assert ".dataset.evaluated_samples" in accuracy_step["run"]
-    assert ".evaluation.status" in accuracy_step["run"]
-
-
-def test_compile_result_records_runner_authorization_provenance() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    compile_job = workflow["jobs"]["compile"]
-    verify = next(step for step in compile_job["steps"] if step.get("name") == "Validate and checksum every MPK")
-
-    assert compile_job["env"]["REQUESTED_RUNNER_CLASS"] == "${{ matrix.requested_runner_class }}"
-    assert compile_job["env"]["RUNNER_CLASS"] == "${{ matrix.runner_class }}"
-    assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == ("${{ matrix.runner_approval_spec_revision }}")
-    assert "--requested-runner-class" in verify["run"]
-    assert "--runner-class" in verify["run"]
-    assert "--runner-approval-id" in verify["run"]
-    assert "--runner-approval-spec-revision" in verify["run"]
-
-
-def test_registry_tool_install_does_not_replace_compiler_dependencies() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    install_script = next(
-        step["run"]
-        for step in steps
-        if step.get("name") == "Install shared registry tooling outside the read-only compiler image"
-    )
-    assert "--no-deps" in install_script
-    assert "import certifi, jsonschema, yaml" in install_script
-
-
-def test_compile_worker_installs_main_dataset_registry_artifact() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    install_index, install = next(
-        (index, step)
-        for index, step in enumerate(steps)
-        if step.get("name") == "Install dataset-registry from the main branch artifact"
-    )
-    calibration_index = next(index for index, step in enumerate(steps) if step.get("id") == "calibration")
-
-    assert install_index < calibration_index
-    assert install["env"]["DATASET_REGISTRY_ENVIRONMENT"] == "${{ needs.select.outputs.vulcan_environment }}"
-    assert "sima-cli-installer.sh" in install["run"]
-    assert 'sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"' in install["run"]
-    assert "dataset/dataset-registry@main:latest" in install["run"]
-    assert "--download-only" in install["run"]
-    assert "sima_neat_dataset_registry-*.whl" in install["run"]
-    assert '--target "$dataset_tools"' in install["run"]
-    assert '"$MODEL_COMPILER_PYTHON" -m dataset_registry --version' in install["run"]
-    assert 'echo "PYTHONPATH=$dataset_tools${PYTHONPATH:+:$PYTHONPATH}"' in install["run"]
-
-
-def test_ready_calibration_is_fetched_and_bound_to_compile_provenance() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["compile"]["steps"]
-    calibration = next(step for step in steps if step.get("id") == "calibration")
-    compile_step = next(
-        step for step in steps if step.get("name") == "Run model-specific surgery and compilation recipe"
-    )
-    verify_step = next(step for step in steps if step.get("name") == "Validate and checksum every MPK")
-
-    assert "model_registry fetch-calibration" in calibration["run"]
-    assert calibration["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
-    assert compile_step["env"]["CALIBRATION_PATH"] == "${{ steps.calibration.outputs.path }}"
-    assert compile_step["env"]["CALIBRATION_KIND"] == "${{ steps.calibration.outputs.kind }}"
-    assert "--calibration-sha256" in verify_step["run"]
-
-
-def test_published_compile_dispatches_one_grouped_benchmark_after_handoff() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    compile_job = workflow["jobs"]["compile"]
-    publish_job = workflow["jobs"]["publish-compilations"]
-    dispatch = next(step for step in publish_job["steps"] if step.get("name") == "Start the component benchmarks")
-
-    assert all(step.get("name") != "Start the component benchmarks" for step in compile_job["steps"])
-    assert publish_job["permissions"]["actions"] == "write"
-    assert dispatch["continue-on-error"] == "true"
-    assert "needs.select.outputs.publishable" not in dispatch["if"]
-    assert "needs.select.outputs.vulcan_environment == 'staging'" in dispatch["if"]
-    assert "matrix.target == 'modalix'" in dispatch["if"]
-    assert "github.ref_name" not in dispatch["if"]
-    assert "gh workflow run" not in dispatch["run"]
-    assert "python - <<'PY'" in dispatch["run"]
-    assert "$MODEL_COMPILER_PYTHON" not in dispatch["run"]
-    assert 'method="POST"' in dispatch["run"]
-    assert "/actions/workflows/Vulcan-Model-Benchmarking.yml/dispatches" in dispatch["run"]
-    assert '"operation"' not in dispatch["run"]
-    assert '"source_run_id": os.environ["GITHUB_RUN_ID"]' in dispatch["run"]
-    assert '"source_sha": os.environ["GITHUB_SHA"]' in dispatch["run"]
-    assert '"source_branch": os.environ["GITHUB_REF_NAME"]' in dispatch["run"]
-    assert '"ref": os.environ["GITHUB_REF_NAME"]' in dispatch["run"]
-    assert '"model_id": os.environ["BENCHMARK_MODEL_ID"]' in dispatch["run"]
-    assert '"build_profile_id": os.environ["BENCHMARK_BUILD_PROFILE_ID"]' in dispatch["run"]
-    dispatch_python = dispatch["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    compile(dispatch_python, "<benchmark-dispatch>", "exec")
-    publish_index = next(
-        index
-        for index, step in enumerate(publish_job["steps"])
-        if step.get("name") == "Publish the complete component set"
-    )
-    handoff_index = next(
-        index
-        for index, step in enumerate(publish_job["steps"])
-        if step.get("name") == "Retain the published model output for benchmark handoff"
-    )
-    retained_output = publish_job["steps"][handoff_index]
-    assert retained_output["with"]["name"].startswith("compiled-model-")
-    assert publish_index < handoff_index < publish_job["steps"].index(dispatch)
-    assert "discover-benchmark-matrix" not in workflow["jobs"]
-    assert "inputs.operation" not in workflow["concurrency"]["group"]
-    assert "stage-dispatched-benchmark" not in workflow["jobs"]

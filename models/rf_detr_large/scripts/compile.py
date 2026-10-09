@@ -424,7 +424,7 @@ def _component_archive(temporary_dir: Path, component_id: str) -> Path:
 def compile_model(
     source: Path,
     calibration_dataset: Path,
-    correctness_dataset: Path,
+    fidelity_dataset: Path,
     output_dir: Path,
 ) -> dict[str, Path]:
     profile = _profile()
@@ -438,7 +438,7 @@ def compile_model(
         raise ValueError("backbone and transformer must use the same calibration sample count")
     if int(selection["offset"]) != calibration_samples:
         raise ValueError("fidelity selection must begin after the calibration partition")
-    if calibration_dataset.resolve() != correctness_dataset.resolve():
+    if calibration_dataset.resolve() != fidelity_dataset.resolve():
         raise ValueError("RF-DETR calibration and fidelity must use the same verified dataset")
     calibration_names, evaluation_names = select_images(
         calibration_dataset,
@@ -456,7 +456,7 @@ def compile_model(
             "RF-DETR graph preparation",
             _prepare_graphs_and_reference,
             source,
-            correctness_dataset,
+            fidelity_dataset,
             evaluation_names,
             temporary_dir,
         )
@@ -503,7 +503,6 @@ def compile_model(
         fidelity_path = output_dir / fidelity_component / "fidelity.json"
         shutil.copyfile(temporary_dir / "fidelity.json", fidelity_path)
         manifest = {
-            "schema_version": 2,
             "model_id": MODEL_ID,
             "build_profile_id": PROFILE_ID,
             "compile_invocation_id": INVOCATION_ID,
@@ -536,7 +535,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument("--correctness-dataset", type=Path, required=True)
+    parser.add_argument("--fidelity-dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
@@ -547,20 +546,20 @@ def main() -> int:
         parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     source = args.model.expanduser().resolve()
     dataset = args.dataset.expanduser().resolve()
-    correctness_dataset = args.correctness_dataset.expanduser().resolve()
+    fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
     if source.suffix != ".onnx":
         parser.error("--model must be the verified ONNX from the manual conversion workflow")
     if not source.is_file():
         parser.error(f"source does not exist: {source}")
     if not dataset.exists():
         parser.error(f"dataset does not exist: {dataset}")
-    if not correctness_dataset.exists():
-        parser.error(f"correctness dataset does not exist: {correctness_dataset}")
+    if not fidelity_dataset.exists():
+        parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     outputs = compile_model(
         source,
         dataset,
-        correctness_dataset,
+        fidelity_dataset,
         args.output_dir.expanduser().resolve(),
     )
     for component_id, archive in outputs.items():

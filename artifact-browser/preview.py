@@ -180,8 +180,16 @@ def _benchmark_run_id(index: int) -> str:
     return f"9bd7b220-478f-4d5f-a02f-5fca756305{index:02x}"
 
 
+def _accuracy_key(index: int) -> str:
+    return hashlib.sha256(f"accuracy-{index}".encode()).hexdigest()
+
+
+def _accuracy_run_id(index: int) -> str:
+    return f"7bd7b220-478f-4d5f-a02f-5fca756305{index:02x}"
+
+
 def _devkit_accuracy_result(index: int) -> dict | None:
-    """Schema-2 accuracy measured on the DevKit and published on the benchmark run."""
+    """Schema-2 accuracy measured on the DevKit and published as its own model_accuracy run."""
     model_id, variant_id, component_id, _, _, _ = PREVIEW_RUNS[index]
     if model_id != "detr_resnet50":
         return None
@@ -268,7 +276,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "run_id": run["id"],
                     "build_profile_id": run["metadata"]["build_profile_id"],
                     "component_id": run["metadata"]["component_id"],
-                    "compile_invocation_id": run["metadata"].get("compile_invocation_id", run["metadata"]["component_id"]),
+                    "compile_invocation_id": run["metadata"].get(
+                        "compile_invocation_id", run["metadata"]["component_id"]
+                    ),
                     "status": run["status"],
                     "commit_sha": run["commit_sha"],
                     "created_at": run["created_at"],
@@ -276,6 +286,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "toolchain_name": run["toolchain_name"],
                     "toolchain_version": run["toolchain_version"],
                     "target_platform": run["target_platform"],
+                    "validation_fingerprint": (
+                        _accuracy_key(_run_index(run["id"])) if _devkit_accuracy_result(_run_index(run["id"])) else None
+                    ),
                 })
             models = [model for model in grouped.values() if not compiler or any(
                 build["toolchain_version"] == compiler for build in model["builds"]
@@ -306,6 +319,16 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 },
             }}}})
             return
+        if path == "/v1/repositories/sima-neat/models/resolve":
+            fingerprint = query.get("fingerprint", [""])[0]
+            accuracy_index = next(
+                (item for item in range(len(PREVIEW_RUNS)) if _accuracy_key(item) == fingerprint), None
+            )
+            if query.get("run_type") != ["model_accuracy"] or accuracy_index is None:
+                self._json({"error": {"code": "fingerprint_not_found", "message": "No completed run"}}, 404)
+            else:
+                self._json({"run": {"id": _accuracy_run_id(accuracy_index), "run_type": "model_accuracy"}})
+            return
         if path.startswith("/v1/runs/"):
             parts = path.strip("/").split("/")
             requested_run_id = parts[2] if len(parts) >= 3 else ""
@@ -314,17 +337,19 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 (item for item in range(len(PREVIEW_RUNS)) if _benchmark_run_id(item) == requested_run_id), None
             )
             if benchmark_index is not None and parts[3:] == ["test-results"]:
-                accuracy = _devkit_accuracy_result(benchmark_index)
                 test_results = [{"suite": "performance", "name": "model-synthetic", "status": "passed"}]
-                if accuracy:
-                    test_results.append({
-                        "suite": "accuracy",
-                        "name": accuracy["validation"]["id"],
-                        "status": "passed",
-                        "version": "2",
-                        "summary": accuracy,
-                    })
                 self._json({"run_id": requested_run_id, "test_results": test_results})
+                return
+            accuracy_index = next(
+                (item for item in range(len(PREVIEW_RUNS)) if _accuracy_run_id(item) == requested_run_id), None
+            )
+            if accuracy_index is not None and parts[3:] == ["accuracy", "latest"]:
+                accuracy = _devkit_accuracy_result(accuracy_index)
+                self._json({
+                    "accuracy_test": {"name": accuracy["validation"]["id"], "status": "passed", "attempt": 1},
+                    "result": accuracy,
+                    "result_artifact_url": None,
+                })
                 return
         else:
             index = None

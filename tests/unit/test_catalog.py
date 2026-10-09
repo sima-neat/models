@@ -5,26 +5,22 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import yaml
 from model_registry.catalog import (
     _compile_consumed_fidelity,
-    benchmark_fingerprint,
     build_matrix,
-    compile_invocation_fingerprint,
-    component_build_fingerprint,
+    compile_fingerprint,
     discover_catalog,
-    git_changed_paths,
     resolve_base_branch,
-    select_model_ids,
-    semantic_change_plan,
-    validation_fingerprint,
 )
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot, publish_catalog
+from model_registry.stages import ACCURACY_TOOLING, PERFORMANCE_TOOLING, applicable_stages, plan_stages
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -35,13 +31,7 @@ COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
 def _fingerprint(repository: Path, model_id: str, compiler_version: str) -> str:
     model = yaml.safe_load((repository / "models" / model_id / "model.yaml").read_text(encoding="utf-8"))
-    return component_build_fingerprint(
-        repository,
-        model_id,
-        "model",
-        model["build_profiles"][0]["id"],
-        compiler_version,
-    )
+    return compile_fingerprint(repository, model_id, model["build_profiles"][0]["id"], "model", compiler_version)
 
 
 def _write_model(repository: Path, model_id: str, *, declared_id: str | None = None) -> None:
@@ -64,21 +54,6 @@ def _declare_grouped_invocation(model: dict) -> None:
     ]
 
 
-def _commit(repository: Path, message: str) -> str:
-    subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", message], cwd=repository, check=True)
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-
-def _initialize_repository(repository: Path) -> str:
-    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
-    return _commit(repository, "base")
-
-
 @pytest.fixture
 def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "schemas").mkdir()
@@ -91,13 +66,6 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "deps" / "manifest.json").write_text(
         (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    (tmp_path / "tools" / "model_registry").mkdir(parents=True)
-    (tmp_path / "tools" / "model_registry" / "catalog.py").write_text(
-        "COMPILE_FINGERPRINT_SCHEMA = 3\n"
-        "VALIDATION_FINGERPRINT_SCHEMA = 1\n"
-        "BENCHMARK_FINGERPRINT_SCHEMA = 3\n",
-        encoding="utf-8",
-    )
     _write_model(tmp_path, "alpha")
     _write_model(tmp_path, "bravo")
     return tmp_path
@@ -109,104 +77,13 @@ def test_discovery_and_matrix_are_stable(catalog_repository: Path) -> None:
     assert [entry["model_id"] for entry in matrix["include"]] == ["alpha", "bravo"]
     assert "compiler_label" not in matrix["include"][0]
     assert "compiler_version" not in matrix["include"][0]
-    assert matrix["include"][0]["recipe"] == "scripts/compile.py"
     assert matrix["include"][0]["requested_runner_class"] == "default"
     assert matrix["include"][0]["compile_invocation_id"] == "model"
     assert matrix["include"][0]["component_ids"] == ["model"]
     assert matrix["include"][0]["component_id"] == "model"
     assert matrix["include"][0]["benchmark_component_ids"] == []
-    assert matrix["include"][0]["explicit_invocation"] is False
-
-
-@pytest.mark.parametrize(
-    ("path", "expected"),
-    [
-        ("models/alpha/model.yaml", ["alpha"]),
-        ("models/alpha/scripts/compile.py", ["alpha"]),
-        ("models/deleted/model.yaml", []),
-        ("design-doc/model-registry-architecture.md", []),
-    ],
-)
-def test_model_local_added_modified_and_deleted_paths(catalog_repository: Path, path: str, expected: list[str]) -> None:
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == expected
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "training/yolo26_tiny_drone/compile.py",
-        "training/yolo26_tiny_drone/contract.py",
-        "training/yolo26_tiny_drone/dataset.py",
-        "training/yolo26_tiny_drone/onnx_audit.py",
-    ],
-)
-def test_yolo26_training_inputs_select_only_the_tiny_drone_model(catalog_repository: Path, path: str) -> None:
-    _write_model(catalog_repository, "yolo26_tiny_drone")
-
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == ["yolo26_tiny_drone"]
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "training/yolo26_tiny_drone/evaluate.py",
-        "training/yolo26_tiny_drone/train_qat.py",
-        "training/yolo26_tiny_drone_extra/compile.py",
-        "training/unrelated_model/compile.py",
-    ],
-)
-def test_unrelated_training_inputs_do_not_select_tiny_drone(catalog_repository: Path, path: str) -> None:
-    _write_model(catalog_repository, "yolo26_tiny_drone")
-
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "deps/manifest.json",
-    ],
-)
-def test_global_compile_inputs_select_every_model(catalog_repository: Path, path: str) -> None:
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == ["alpha", "bravo"]
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        ".github/workflows/Vulcan-Model-Compile.yml",
-        "pyproject.toml",
-        "schemas/model.schema.json",
-        "tools/model_registry/__init__.py",
-        "tools/model_registry/artifact.py",
-        "tools/model_registry/catalog.py",
-        "tools/model_registry/cli.py",
-        "tools/model_registry/errors.py",
-        "tools/model_registry/fetch.py",
-        "tools/model_registry/model.py",
-        "tools/model_registry/registry.py",
-        "tools/model_registry/source.py",
-        "tools/runtime/execute.py",
-    ],
-)
-def test_orchestration_and_publication_paths_do_not_select_models(catalog_repository: Path, path: str) -> None:
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "tools/model_registry/__init__.py",
-        "tools/model_registry/errors.py",
-        "tools/model_registry/fetch.py",
-        "tools/model_registry/model.py",
-        "tools/model_registry/source.py",
-    ],
-)
-def test_registry_control_plane_changes_do_not_select_models(catalog_repository: Path, path: str) -> None:
-    # These modules validate, locate, or transport immutable inputs; they do not
-    # transform the size- and SHA-256-pinned bytes passed to Model Compiler.
-    assert select_model_ids(discover_catalog(catalog_repository), [path]) == []
+    assert matrix["include"][0]["accuracy_id"] is None
+    assert "build_fingerprint" not in matrix["include"][0]
 
 
 def test_mismatched_directory_id_fails(catalog_repository: Path) -> None:
@@ -273,7 +150,6 @@ def test_matrix_emits_one_row_per_declared_compile_invocation(catalog_repository
     assert matrix["include"][0]["compile_invocation_id"] == "combined"
     assert matrix["include"][0]["component_id"] == "model"
     assert matrix["include"][0]["component_ids"] == ["model", "second_model"]
-    assert matrix["include"][0]["explicit_invocation"] is True
 
 
 def test_explicit_singleton_uses_invocation_recipe_contract(catalog_repository: Path) -> None:
@@ -284,15 +160,8 @@ def test_explicit_singleton_uses_invocation_recipe_contract(catalog_repository: 
 
     entry = build_matrix(catalog, ["alpha"])["include"][0]
 
-    assert entry["explicit_invocation"] is True
     assert entry["compile_invocation_id"] == "export_and_compile"
     assert entry["component_ids"] == ["model"]
-
-
-def test_rf_detr_compile_matrix_needs_no_exporter_packages() -> None:
-    catalog = discover_catalog(ROOT)
-    matrix = build_matrix(catalog, ["rf_detr_small"])
-    assert matrix["include"][0]["python_packages"] == []
 
 
 @pytest.mark.parametrize("component_id", ["model", "second_model"])
@@ -337,30 +206,6 @@ def test_requested_profile_builds_supported_models_and_skips_unsupported_compone
 def test_unknown_requested_build_profile_fails(catalog_repository: Path) -> None:
     with pytest.raises(ValidationError, match="unknown build profile id"):
         build_matrix(discover_catalog(catalog_repository), ["alpha"], ["missing"])
-
-
-def test_git_diff_reports_added_modified_and_deleted_paths(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=tmp_path, check=True)
-    for name in ("modified.txt", "deleted.txt"):
-        (tmp_path / name).write_text("before\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
-    base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-    (tmp_path / "modified.txt").write_text("after\n", encoding="utf-8")
-    (tmp_path / "deleted.txt").unlink()
-    (tmp_path / "added.txt").write_text("added\n", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-qm", "changes"], cwd=tmp_path, check=True)
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-    assert git_changed_paths(tmp_path, base, head) == ["added.txt", "deleted.txt", "modified.txt"]
 
 
 def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(catalog_repository: Path) -> None:
@@ -433,17 +278,13 @@ def test_compile_invocation_fingerprint_includes_every_component_binding(
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     _declare_grouped_invocation(model)
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    first = compile_invocation_fingerprint(
-        catalog_repository, "alpha", "combined", "fixture", "2.1.3"
-    )
+    first = compile_fingerprint(catalog_repository, "alpha", "fixture", "combined", "2.1.3")
 
     model["build_profiles"][0]["components"][1]["parameters"]["output_name"] = "second"
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert (
-        compile_invocation_fingerprint(
-            catalog_repository, "alpha", "combined", "fixture", "2.1.3"
-        )
+        compile_fingerprint(catalog_repository, "alpha", "fixture", "combined", "2.1.3")
         != first
     )
 
@@ -465,14 +306,12 @@ def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
         "outputs": ["output"],
     }]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    first = compile_invocation_fingerprint(catalog_repository, "alpha", "combined", "fixture", "2.1.3")
+    first = compile_fingerprint(catalog_repository, "alpha", "fixture", "combined", "2.1.3")
 
     model["fidelity"][0]["selection"]["samples"] = 2
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
-    assert compile_invocation_fingerprint(
-        catalog_repository, "alpha", "combined", "fixture", "2.1.3"
-    ) != first
+    assert compile_fingerprint(catalog_repository, "alpha", "fixture", "combined", "2.1.3") != first
 
 
 def _consumed_ids(model: dict, profile_id: str) -> list[str]:
@@ -576,39 +415,6 @@ def _declare_benchmark(manifest: Path, note: str) -> None:
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
 
-def test_benchmark_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    manifest = model_dir / "model.yaml"
-    _declare_benchmark(manifest, "initial metric profile")
-    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
-    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-
-    _declare_benchmark(manifest, "revised metric profile")
-
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
-    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == validation_before
-    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != benchmark_before
-    before_script = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    (model_dir / "scripts" / "performance.py").write_text("report = model.benchmark()\n")
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
-    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
-
-
-def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repository: Path) -> None:
-    _declare_benchmark(catalog_repository / "models" / "alpha" / "model.yaml", "revised metric profile")
-
-    matrix = build_matrix(
-        discover_catalog(catalog_repository),
-        ["alpha"],
-        repository=catalog_repository,
-        compiler_version="2.1.3",
-    )
-
-    assert [(entry["model_id"], entry["build_profile_id"]) for entry in matrix["include"]] == [("alpha", "fixture")]
-    assert set(matrix["include"][0]["benchmark_fingerprints"]) == {"model"}
-
-
 def test_matrix_records_fingerprints_without_catalog_carry_forward(catalog_repository: Path) -> None:
     catalog = discover_catalog(catalog_repository)
     matrix = build_matrix(
@@ -620,193 +426,6 @@ def test_matrix_records_fingerprints_without_catalog_carry_forward(catalog_repos
 
     assert {entry["model_id"] for entry in matrix["include"]} == {"alpha", "bravo"}
     assert all(len(entry["build_fingerprint"]) == 64 for entry in matrix["include"])
-
-
-def test_semantic_plan_treats_display_metadata_as_catalog_only(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["display_name"] = "A clearer Alpha label"
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    head = _commit(catalog_repository, "metadata")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert plan["validation_include"] == []
-    assert plan["benchmark_include"] == []
-    assert plan["metadata_changed"] is True
-
-
-@pytest.mark.parametrize("filename", ["README.md", "hero.png"])
-def test_semantic_plan_treats_documentation_as_catalog_only(catalog_repository: Path, filename: str) -> None:
-    documentation = catalog_repository / "models" / "alpha" / filename
-    documentation.write_bytes(b"initial model documentation\n")
-    base = _initialize_repository(catalog_repository)
-    documentation.write_bytes(b"revised model documentation\n")
-    head = _commit(catalog_repository, "documentation")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert plan["validation_include"] == []
-    assert plan["benchmark_include"] == []
-    assert plan["metadata_changed"] is True
-
-
-def test_semantic_plan_rebuilds_every_model_for_a_new_develop_revision(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    manifest_path = catalog_repository / "deps" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["model-compiler"]["revision"] = "f94f03a8f59c"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    head = _commit(catalog_repository, "compiler revision")
-    compiler_identity = resolve_model_compiler(catalog_repository)["identity"]
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=compiler_identity)
-
-    assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
-    assert all(entry["build_fingerprint"] for entry in plan["include"])
-
-
-def test_semantic_plan_schedules_runner_class_changes(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["build_profiles"][0]["runner_class"] = "expensive"
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    head = _commit(catalog_repository, "use expensive runner")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
-    assert plan["include"][0]["requested_runner_class"] == "expensive"
-
-
-def test_semantic_plan_selects_only_changed_compile_invocation(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    (catalog_repository / "models" / "alpha" / "scripts" / "compile.py").write_text("# changed\n", encoding="utf-8")
-    head = _commit(catalog_repository, "recipe")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert [entry["model_id"] for entry in plan["include"]] == ["alpha"]
-    assert plan["metadata_changed"] is False
-
-
-@pytest.mark.parametrize("changed_input", [
-    "models/alpha/model.yaml",
-    "models/alpha/scripts/performance.py",
-    ".github/workflows/Vulcan-Model-Benchmarking.yml",
-    "tools/model_registry/core_benchmark.py",
-    "tools/model_registry/benchmark_publication.py",
-    "tools/model_registry/benchmark_manifest.py",
-    "schemas/performance-result-v5.schema.json",
-    "tools/model_registry/accuracy_result.py",
-    "schemas/accuracy-result-v2.schema.json",
-    "scripts/run_model_accuracy.sh",
-])
-def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Path, changed_input: str) -> None:
-    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
-    _declare_benchmark(manifest, "initial metric profile")
-    changed_file = catalog_repository / changed_input
-    if changed_file != manifest:
-        changed_file.parent.mkdir(parents=True, exist_ok=True)
-        changed_file.write_text("initial tooling\n", encoding="utf-8")
-    base = _initialize_repository(catalog_repository)
-    unchanged = semantic_change_plan(catalog_repository, base, base, compiler_version=COMPILER_VERSION)
-    assert unchanged["benchmark_include"] == []
-    if changed_file == manifest:
-        _declare_benchmark(manifest, "revised metric profile")
-    else:
-        changed_file.write_text("revised tooling\n", encoding="utf-8")
-    head = _commit(catalog_repository, "benchmark")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert [(item["model_id"], item["component_ids"]) for item in plan["benchmark_include"]] == [
-        ("alpha", ["model"])
-    ]
-
-
-def _declare_devkit_accuracy(manifest: Path, status: str) -> None:
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["accuracy"] = [{
-        "id": "devkit_accuracy",
-        "scope": {"type": "component", "component": "model"},
-        "build_profiles": ["fixture"],
-        "engine": "devkit_script",
-        "status": status,
-        "result_component": "model",
-        "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
-        "metrics": ["score"],
-    }]
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-
-
-def test_devkit_accuracy_is_measured_with_the_benchmark(catalog_repository: Path) -> None:
-    model_dir = catalog_repository / "models" / "alpha"
-    _declare_benchmark(model_dir / "model.yaml", "accuracy runs on these MPKs")
-    _declare_devkit_accuracy(model_dir / "model.yaml", "provisional")
-    (model_dir / "scripts" / "accuracy.py").write_text("score = 0.5\n", encoding="utf-8")
-    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
-    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-
-    _declare_devkit_accuracy(model_dir / "model.yaml", "ready")
-    after_entry = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    (model_dir / "scripts" / "accuracy.py").write_text("score = 0.6\n", encoding="utf-8")
-
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
-    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == validation_before
-    assert after_entry != benchmark_before
-    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != after_entry
-
-
-def test_semantic_plan_reports_removed_invocation_without_rebuild(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    shutil.rmtree(catalog_repository / "models" / "bravo")
-    head = _commit(catalog_repository, "remove model")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert plan["deleted_invocations"] == [{
-        "model_id": "bravo",
-        "build_profile_id": "fixture",
-        "compile_invocation_id": "model",
-    }]
-    assert plan["metadata_changed"] is True
-
-
-def test_semantic_plan_taxonomy_label_change_validates_without_rebuild(catalog_repository: Path) -> None:
-    base = _initialize_repository(catalog_repository)
-    taxonomy_path = catalog_repository / "taxonomies" / "model-taxonomy.yaml"
-    taxonomy = yaml.safe_load(taxonomy_path.read_text(encoding="utf-8"))
-    taxonomy["tasks"]["image_classification"]["display_name"] = "Image categorization"
-    taxonomy_path.write_text(yaml.safe_dump(taxonomy, sort_keys=False), encoding="utf-8")
-    head = _commit(catalog_repository, "taxonomy label")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert plan["taxonomy_changed"] is True
-    assert plan["metadata_changed"] is False
-
-
-def test_compile_fingerprint_schema_bump_forces_all_invocations(
-    catalog_repository: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base = _initialize_repository(catalog_repository)
-    marker = catalog_repository / "schema-bump.txt"
-    marker.write_text("changed\n", encoding="utf-8")
-    head = _commit(catalog_repository, "schema bump")
-    monkeypatch.setattr("model_registry.catalog.COMPILE_FINGERPRINT_SCHEMA", 4)
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert {entry["model_id"] for entry in plan["include"]} == {"alpha", "bravo"}
 
 
 def test_resolve_base_prefers_explicit_branch_and_returns_merge_base(tmp_path: Path) -> None:
@@ -876,7 +495,7 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
     if grouped:
         _declare_grouped_invocation(model)
         manifest.write_text(yaml.safe_dump(model))
-    base = _initialize_repository(catalog_repository)
+    base = "1" * 40
     catalog = discover_catalog(catalog_repository)
     matrix = build_matrix(
         catalog,
@@ -903,12 +522,17 @@ def test_artifact_suffix_updates_catalog_without_rebuilding(catalog_repository: 
         else:
             binding["artifact_suffix"] = suffix
         manifest.write_text(yaml.safe_dump(model))
-        head = _commit(catalog_repository, "rename download")
-        plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-        assert plan["include"] == []
-        assert plan["validation_include"] == []
-        assert plan["benchmark_include"] == []
-        assert plan["metadata_changed"] is True
+        head = f"{int(base[0]) + 1}" * 40
+        # The download name is catalog metadata: it never changes a compile key.
+        assert [
+            entry["build_fingerprint"]
+            for entry in build_matrix(
+                discover_catalog(catalog_repository),
+                sorted(catalog),
+                repository=catalog_repository,
+                compiler_version=COMPILER_VERSION,
+            )["include"]
+        ] == [entry["build_fingerprint"] for entry in matrix["include"]]
         current = build_catalog_snapshot(
             repository=catalog_repository, branch="develop", git_sha=head, previous=previous,
         )
@@ -1010,3 +634,334 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(catalog_reposi
     else:
         assert len(reads) == 2
         assert reads[1].endswith("git_ref=refs%2Fheads%2Fdevelop")
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "scripts/performance.py",
+        "scripts/accuracy.py",
+        "scripts/requirements-accuracy.txt",
+        "scripts/convert.py",
+        "scripts/requirements-convert.txt",
+    ],
+)
+def test_compile_key_ignores_board_stage_and_conversion_files(catalog_repository: Path, relative: str) -> None:
+    path = catalog_repository / "models" / "alpha" / relative
+    path.write_text("# initial\n", encoding="utf-8")
+    first = _fingerprint(catalog_repository, "alpha", "2.1.3")
+
+    path.write_text("# revised\n", encoding="utf-8")
+
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
+
+
+def test_compile_key_ignores_benchmark_and_accuracy_declarations(catalog_repository: Path) -> None:
+    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
+    first = _fingerprint(catalog_repository, "alpha", "2.1.3")
+
+    _declare_benchmark(manifest, "revised metric profile")
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["accuracy"] = [{
+        "id": "devkit_accuracy",
+        "scope": {"type": "component", "component": "model"},
+        "build_profiles": ["fixture"],
+        "engine": "devkit_script",
+        "status": "provisional",
+        "result_component": "model",
+        "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
+        "metrics": ["score"],
+    }]
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    (manifest.parent / "scripts" / "accuracy.py").write_text("score = 0.5\n", encoding="utf-8")
+
+    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == first
+
+
+# Stage planning runs against a copy of resnet_50: modalix_bf16 declares only performance,
+# modalix_int8 declares performance and DevKit accuracy over the default package.
+PLAN_MODEL = "resnet_50"
+BRANCH = "feat/stages"
+READ_API = "https://reader.example.invalid"
+
+
+@pytest.fixture
+def stage_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    for relative in ("schemas", "taxonomies", f"models/{PLAN_MODEL}"):
+        shutil.copytree(ROOT / relative, repository / relative)
+    for relative in ("deps/manifest.json", *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    return repository
+
+
+def _published_catalog(repository: Path) -> dict:
+    """The catalog a publisher writes after compiling every invocation of the repository."""
+    catalog = discover_catalog(repository)
+    matrix = build_matrix(catalog, sorted(catalog), repository=repository, compiler_version=COMPILER_VERSION)
+    prior = {"models": [{"id": model_id, "builds": [
+        {
+            "build_profile_id": entry["build_profile_id"],
+            "component_id": component_id,
+            "compile_fingerprint": entry["build_fingerprint"],
+            "artifact_sha256": f"{index:x}" * 64,
+            "run_id": f"00000000-0000-4000-8000-{index:012d}",
+        }
+        for index, entry in enumerate(matrix["include"], 1)
+        if entry["model_id"] == model_id
+        for component_id in entry["component_ids"]
+    ]} for model_id in catalog]}
+    return build_catalog_snapshot(repository=repository, branch="develop", git_sha="a" * 40, previous=prior)
+
+
+def _published_runs(document: dict) -> set[tuple[str, str, int]]:
+    """Registry runs that carry the stage keys the catalog records."""
+    runs: set[tuple[str, str, int]] = set()
+    for model in document["models"]:
+        for build in model["builds"]:
+            if build["benchmark_fingerprint"]:
+                runs.add(("model_benchmark", build["benchmark_fingerprint"], 2))
+            if build["validation_fingerprint"]:
+                runs.add(("model_accuracy", build["validation_fingerprint"], 1))
+    return runs
+
+
+class FakeRegistry:
+    def __init__(self, catalogs: dict[str, dict], runs: set[tuple[str, str, int]]) -> None:
+        self.catalogs = catalogs
+        self.runs = runs
+        self.urls: list[str] = []
+
+    def read(self, url: str) -> dict:
+        self.urls.append(url)
+        parsed = urlsplit(url)
+        query = parse_qs(parsed.query)
+        if parsed.path.endswith("/catalogs/current"):
+            branch = query["git_ref"][0].removeprefix("refs/heads/")
+            if branch not in self.catalogs:
+                raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+            return {"catalog": {"canonical_sha256": "c" * 64, "document": self.catalogs[branch]}}
+        if parsed.path.endswith("/resolve"):
+            run = (query["run_type"][0], query["fingerprint"][0], int(query["fingerprint_version"][0]))
+            if run not in self.runs:
+                raise RegistryPublicationError("public artifact registry HTTP 404 fingerprint_not_found")
+            return {"run": {"run_id": "00000000-0000-4000-8000-000000000099"}}
+        raise AssertionError(url)
+
+    def resolved(self) -> list[tuple[str, str]]:
+        return [
+            (query["run_type"][0], query["fingerprint_version"][0])
+            for query in (parse_qs(urlsplit(url).query) for url in self.urls if "/resolve?" in url)
+        ]
+
+
+def _plan(repository: Path, registry: FakeRegistry | None, **kwargs) -> dict:
+    return plan_stages(
+        repository,
+        compiler_version=COMPILER_VERSION,
+        read=registry.read if registry is not None else None,
+        read_api_url=READ_API,
+        branch=BRANCH,
+        **kwargs,
+    )
+
+
+def _selected(plan: dict, stage: str) -> list[tuple[str, list[str], list[str]]]:
+    return [
+        (entry["build_profile_id"], entry["stages"], entry["benchmark_component_ids"])
+        for entry in plan[stage]["include"]
+    ]
+
+
+def _edit(repository: Path, relative: str) -> None:
+    path = repository / "models" / PLAN_MODEL / relative
+    path.write_text(path.read_text(encoding="utf-8") + "\n# revised\n", encoding="utf-8")
+
+
+def test_stage_repository_declares_both_stage_shapes(stage_repository: Path) -> None:
+    entries = build_matrix(discover_catalog(stage_repository), [PLAN_MODEL])["include"]
+    assert [(entry["build_profile_id"], applicable_stages(entry)) for entry in entries] == [
+        ("modalix_bf16", ["performance"]),
+        ("modalix_int8", ["performance", "accuracy"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("relative", "changes_compile_key"),
+    [("scripts/performance.py", False), ("scripts/accuracy.py", False), ("scripts/compile.py", True)],
+)
+def test_only_compile_inputs_change_the_compile_key(
+    stage_repository: Path, relative: str, changes_compile_key: bool
+) -> None:
+    def keys() -> list[str]:
+        return [
+            compile_fingerprint(stage_repository, PLAN_MODEL, profile, "model", COMPILER_VERSION)
+            for profile in ("modalix_bf16", "modalix_int8")
+        ]
+
+    before = keys()
+    _edit(stage_repository, relative)
+    after = keys()
+
+    assert all((first != second) is changes_compile_key for first, second in zip(before, after, strict=True))
+
+
+def test_everything_published_plans_nothing(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan == {"compile": {"include": []}, "measure": {"include": []}, "catalog_found": True}
+
+
+def test_resolve_requests_carry_each_stage_fingerprint_version(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+
+    _plan(stage_repository, registry)
+
+    # One performance lookup per profile, one accuracy lookup for the profile that declares it.
+    assert sorted(registry.resolved()) == [
+        ("model_accuracy", "1"),
+        ("model_benchmark", "2"),
+        ("model_benchmark", "2"),
+    ]
+    builds = {build["build_profile_id"]: build for build in document["models"][0]["builds"]}
+    assert builds["modalix_bf16"]["validation_fingerprint"] is None
+    assert all(
+        any(f"fingerprint={build['benchmark_fingerprint']}&" in url for url in registry.urls)
+        for build in builds.values()
+    )
+    assert any(f"fingerprint={builds['modalix_int8']['validation_fingerprint']}&" in url for url in registry.urls)
+
+
+def test_compile_key_change_compiles_with_every_applicable_stage(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "scripts/compile.py")
+
+    plan = _plan(stage_repository, registry)
+
+    assert _selected(plan, "compile") == [
+        ("modalix_bf16", ["performance"], ["model"]),
+        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+    ]
+    assert plan["measure"]["include"] == []
+    assert all(len(entry["build_fingerprint"]) == 64 for entry in plan["compile"]["include"])
+    # A compiled build is measured by its own workflow; no published stage run is consulted.
+    assert registry.resolved() == []
+
+
+def test_performance_script_change_measures_performance_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "scripts/performance.py")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "measure") == [
+        ("modalix_bf16", ["performance"], ["model"]),
+        ("modalix_int8", ["performance"], ["model"]),
+    ]
+
+
+def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "scripts/accuracy.py")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+
+
+def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    runs = _published_runs(document)
+    model = document["models"][0]
+    int8 = next(build for build in model["builds"] if build["build_profile_id"] == "modalix_int8")
+    # A cancelled run leaves its invocation in pending_builds rather than builds.
+    model["builds"].remove(int8)
+    document["pending_builds"] = [{
+        "model_id": PLAN_MODEL,
+        "build_profile_id": "modalix_int8",
+        "compile_invocation_id": "model",
+        "component_ids": ["model"],
+        "compile_fingerprint": int8["compile_fingerprint"],
+    }]
+    registry = FakeRegistry({BRANCH: document}, runs)
+
+    plan = _plan(stage_repository, registry)
+
+    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert plan["measure"]["include"] == []
+
+
+def test_force_rebuild_compiles_published_invocations(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+
+    plan = _plan(stage_repository, registry, force_rebuild_all=True)
+
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert plan["measure"]["include"] == []
+
+
+def test_branch_without_catalog_plans_against_base_branch_catalog(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({"develop": document}, _published_runs(document))
+    _edit(stage_repository, "scripts/accuracy.py")
+
+    plan = _plan(stage_repository, registry, base_branch="develop")
+
+    assert plan["catalog_found"] is True
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+    catalog_reads = [url for url in registry.urls if "/catalogs/current?" in url]
+    assert [url.rsplit("git_ref=", 1)[1] for url in catalog_reads] == [
+        "refs%2Fheads%2Ffeat%2Fstages",
+        "refs%2Fheads%2Fdevelop",
+    ]
+    assert all(url.startswith(f"{READ_API}/v1/repositories/sima-neat/models/") for url in registry.urls)
+
+
+@pytest.mark.parametrize("base_branch", [None, "develop"])
+def test_no_catalog_compiles_everything(stage_repository: Path, base_branch: str | None) -> None:
+    registry = FakeRegistry({}, set())
+
+    plan = _plan(stage_repository, registry, base_branch=base_branch)
+
+    assert plan["catalog_found"] is False
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert plan["measure"]["include"] == []
+
+
+def test_offline_plan_compiles_everything(stage_repository: Path) -> None:
+    plan = _plan(stage_repository, None)
+
+    assert plan["catalog_found"] is False
+    assert _selected(plan, "compile") == [
+        ("modalix_bf16", ["performance"], ["model"]),
+        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+    ]
+
+
+@pytest.mark.parametrize("failing", ["/catalogs/current?", "/resolve?"])
+def test_registry_failures_other_than_not_found_propagate(stage_repository: Path, failing: str) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    original = registry.read
+
+    def read(url: str) -> dict:
+        if failing in url:
+            raise RegistryPublicationError("public artifact registry HTTP 403 forbidden")
+        return original(url)
+
+    registry.read = read
+    with pytest.raises(RegistryPublicationError, match="403 forbidden"):
+        _plan(stage_repository, registry, base_branch="develop")

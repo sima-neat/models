@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.catalog import build_matrix, component_build_fingerprint, discover_catalog
+from model_registry.catalog import build_matrix, compile_fingerprint, discover_catalog
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.package import assemble_package
@@ -25,6 +25,7 @@ from model_registry.registry import (
     publish_packages,
     stage_catalog_build,
 )
+from model_registry.stages import accuracy_key, performance_key
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILER = resolve_model_compiler(ROOT)
@@ -186,7 +187,6 @@ def _packaged_result(tmp_path: Path) -> Path:
     result = {
         "archive": archive.name,
         "built_at": "2026-08-13T00:00:00Z",
-        "schema_version": 1,
         "sha256": digest,
         "size_bytes": archive.stat().st_size,
         "status": "success",
@@ -200,16 +200,13 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": component_build_fingerprint(
-                ROOT, "resnet_50", "model", "modalix_bf16", COMPILER_IDENTITY
-            ),
+            "build_fingerprint": compile_fingerprint(ROOT, "resnet_50", "modalix_bf16", "model", COMPILER_IDENTITY),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
     (output.parent / "compile-outputs.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
                 "model_id": "resnet_50",
                 "build_profile_id": "modalix_bf16",
                 "compile_invocation_id": "model",
@@ -667,6 +664,50 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
 
 
+def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
+    catalog = discover_catalog(ROOT)
+    model = catalog["resnet_50"]
+    matrix = build_matrix(
+        catalog, sorted(catalog), repository=ROOT, compiler_version=COMPILER_IDENTITY,
+    )["include"]
+
+    def snapshot(run_prefix: str) -> dict:
+        previous = {"models": [{"id": model_id, "builds": [
+            {
+                "build_profile_id": entry["build_profile_id"],
+                "component_id": component_id,
+                "compile_fingerprint": entry["build_fingerprint"],
+                "artifact_sha256": "e" * 64,
+                "run_id": f"{run_prefix}-{index:012d}",
+            }
+            for index, entry in enumerate(matrix, 1)
+            if entry["model_id"] == model_id
+            for component_id in entry["component_ids"]
+        ]} for model_id in catalog]}
+        document = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="a" * 40, previous=previous)
+        resnet = next(item for item in document["models"] if item["id"] == "resnet_50")
+        return {build["build_profile_id"]: build for build in resnet["builds"]}
+
+    builds = snapshot("00000000-0000-4000-8000")
+    for profile_id, build in builds.items():
+        assert build["benchmark_fingerprint"] == performance_key(
+            ROOT, model, profile_id, "model", compile_run_id=build["run_id"], artifact_sha256="e" * 64,
+        )
+    # Only the profile with DevKit accuracy records an accuracy key, on its result component.
+    assert builds["modalix_bf16"]["validation_fingerprint"] is None
+    assert builds["modalix_int8"]["validation_fingerprint"] == accuracy_key(
+        ROOT, model, "modalix_int8", {"model": builds["modalix_int8"]},
+    )
+    assert builds["modalix_int8"]["validation_fingerprint"] != builds["modalix_int8"]["benchmark_fingerprint"]
+
+    # A new compile run of identical inputs still needs its own board measurements.
+    rebuilt = snapshot("00000000-0000-4000-9000")
+    for profile_id in builds:
+        assert rebuilt[profile_id]["compile_fingerprint"] == builds[profile_id]["compile_fingerprint"]
+        assert rebuilt[profile_id]["benchmark_fingerprint"] != builds[profile_id]["benchmark_fingerprint"]
+    assert rebuilt["modalix_int8"]["validation_fingerprint"] != builds["modalix_int8"]["validation_fingerprint"]
+
+
 def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
     catalog = discover_catalog(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
@@ -963,7 +1004,18 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
     profile = tmp_path / "staged" / "resnet_50" / "modalix_bf16"
     assert (profile / "registry-staged.json").is_file()
     assert (profile / "model" / "registry-publication.json").is_file()
-    build_catalog_snapshot,
+    # Restored builds carry the manifest a fresh compile writes, so later stages read both alike.
+    staged = next((profile / "model").glob("*_mpk.tar.gz"))
+    assert json.loads((profile / "compile-outputs.json").read_text(encoding="utf-8")) == {
+        "model_id": "resnet_50",
+        "build_profile_id": "modalix_bf16",
+        "compile_invocation_id": "model",
+        "outputs": [{
+            "component_id": "model",
+            "mpk_path": f"model/{staged.name}",
+            "mpk_sha256": hashlib.sha256(payload).hexdigest(),
+        }],
+    }
 
 
 @pytest.mark.parametrize("timing", [

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/sima-neat/models/schemas/accuracy-result-v2.schema.json",
-  "title": "SiMa Neat model accuracy result v2",
+  "$id": "https://github.com/sima-neat/models/schemas/accuracy-result.schema.json",
+  "title": "SiMa Neat model accuracy result",
   "description": "Task metrics measured on a declared dataset with compiled MPKs. Metric names and meanings belong to the model's validation entry.",
   "type": "object",
   "additionalProperties": false,
