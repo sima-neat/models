@@ -16,7 +16,7 @@ touches.
 
 | Stage | Venue | Model entry point | Runner script | Key inputs |
 |---|---|---|---|---|
-| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` | the invocation's `model.yaml` declarations, `fidelity:` entries, every `.py`/`.sh` in the model's `scripts/` except the stage and conversion scripts below, declared training code, compiler version |
+| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` | the invocation's `model.yaml` declarations, `fidelity:` entries, every `.py`/`.sh` in the model's `scripts/` except the stage and conversion scripts below, declared training code, `scripts/run_model_compilation.sh`, compiler version |
 | performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` | the compile run and MPK digest, `benchmark:` entries, `performance.py`, shared performance tooling, DevKit runtime pin |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` | the compile runs and MPK digests of its components, the `accuracy:` entry, the script and its requirements, shared accuracy tooling, DevKit runtime pin |
 
@@ -34,8 +34,8 @@ What a change reruns:
 | registry tooling outside a stage's tooling, a README, `convert.py` | nothing |
 | a model's `performance.py` | that model's performance |
 | a model's `accuracy.py` | that model's accuracy |
-| the DevKit runtime pin | every performance and accuracy stage |
-| a model's compile inputs or the compiler pin | that model's builds (all builds for the compiler pin), then their board stages |
+| the DevKit runtime pin, `Vulcan-Model-Benchmarking.yml`, `benchmark_publication.py` | every performance and accuracy stage |
+| a model's compile inputs, `scripts/run_model_compilation.sh`, or the compiler pin | that model's builds (all builds for the shared runner or compiler pin), then their board stages |
 
 A board key hashes only its own stage script. A helper module that
 `performance.py` or `accuracy.py` imports from `scripts/` is a compile input,

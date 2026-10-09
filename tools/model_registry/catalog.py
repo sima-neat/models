@@ -28,6 +28,9 @@ MODEL_COMPILE_INPUT_PATHS = {
     ),
 }
 
+# Shared code on the compile path; a change to it recompiles every model.
+COMPILE_TOOLING = ("scripts/run_model_compilation.sh",)
+
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 PERFORMANCE_SCRIPT = f"{SCRIPTS_DIR}/performance.py"
@@ -131,9 +134,9 @@ def resolve_base_branch(
 
 
 def _compile_input_files(root: Path, model_id: str) -> list[Path]:
-    """Model code the compile recipe runs: model scripts plus any declared training code."""
+    """Code the compile runs: the shared runner, model scripts, and any declared training code."""
     candidates: list[Path] = []
-    for prefix in MODEL_COMPILE_INPUT_PATHS.get(model_id, ()):
+    for prefix in (*COMPILE_TOOLING, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
         path = root / prefix.rstrip("/")
         if path.is_file():
             candidates.append(path)

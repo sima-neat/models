@@ -242,7 +242,7 @@ stage only when no completed registry run carries that stage's current key.
 
 | Stage | Key inputs |
 | --- | --- |
-| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, and the Model Compiler version |
+| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the shared `scripts/run_model_compilation.sh`, and the Model Compiler version |
 | performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
@@ -254,9 +254,9 @@ recompiled build is always remeasured.
 | README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
-| the DevKit runtime pin | every performance and accuracy stage |
+| the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
 | a compile input of a model | that model's affected builds, then their DevKit stages |
-| the Model Compiler pin | every build, then every DevKit stage |
+| the Model Compiler pin or `scripts/run_model_compilation.sh` | every build, then every DevKit stage |
 
 The keys are computed by `compile_fingerprint` in
 `tools/model_registry/catalog.py` and by `performance_key` and `accuracy_key`

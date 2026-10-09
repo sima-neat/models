@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 import yaml
 from model_registry.catalog import (
+    COMPILE_TOOLING,
     _compile_consumed_fidelity,
     build_matrix,
     compile_fingerprint,
@@ -20,7 +21,13 @@ from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot, publish_catalog
-from model_registry.stages import ACCURACY_TOOLING, PERFORMANCE_TOOLING, applicable_stages, plan_stages
+from model_registry.stages import (
+    ACCURACY_TOOLING,
+    BOARD_STAGE_TOOLING,
+    PERFORMANCE_TOOLING,
+    applicable_stages,
+    plan_stages,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -66,6 +73,9 @@ def catalog_repository(tmp_path: Path) -> Path:
     (tmp_path / "deps" / "manifest.json").write_text(
         (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
     )
+    for relative in COMPILE_TOOLING:
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, tmp_path / relative)
     _write_model(tmp_path, "alpha")
     _write_model(tmp_path, "bravo")
     return tmp_path
@@ -690,7 +700,7 @@ def stage_repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     for relative in ("schemas", "taxonomies", f"models/{PLAN_MODEL}"):
         shutil.copytree(ROOT / relative, repository / relative)
-    for relative in ("deps/manifest.json", *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+    for relative in ("deps/manifest.json", *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
@@ -878,6 +888,31 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+
+
+def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../scripts/run_model_compilation.sh")
+
+    plan = _plan(stage_repository, registry)
+
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+
+
+@pytest.mark.parametrize("relative", BOARD_STAGE_TOOLING)
+def test_board_stage_tooling_change_measures_both_stages(stage_repository: Path, relative: str) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, f"../../{relative}")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "measure") == [
+        ("modalix_bf16", ["performance"], ["model"]),
+        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+    ]
 
 
 def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path) -> None:

@@ -26,13 +26,20 @@ ACCURACY_RUN_TYPE = "model_accuracy"
 # Vulcan stores a run's fingerprint version from its environment and resolves version 1 by default.
 PERFORMANCE_FINGERPRINT_VERSION = 2
 ACCURACY_FINGERPRINT_VERSION = 1
+# The workflow sets up the board run and benchmark_publication shapes the published run.
+BOARD_STAGE_TOOLING = (
+    ".github/workflows/Vulcan-Model-Benchmarking.yml",
+    "tools/model_registry/benchmark_publication.py",
+)
 PERFORMANCE_TOOLING = (
+    *BOARD_STAGE_TOOLING,
     "scripts/run_model_performance.sh",
     "tools/model_registry/core_benchmark.py",
     "tools/model_registry/benchmark_manifest.py",
     PERFORMANCE_RESULT_SCHEMA,
 )
 ACCURACY_TOOLING = (
+    *BOARD_STAGE_TOOLING,
     "scripts/run_model_accuracy.sh",
     "tools/model_registry/accuracy_result.py",
     ACCURACY_RESULT_SCHEMA,
