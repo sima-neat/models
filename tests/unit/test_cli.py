@@ -62,7 +62,7 @@ def test_validate_catalog_checks_every_manifest(capsys) -> None:
     result = main(["validate-catalog", "--repository", str(ROOT), "--json"])
     assert result == 0
     output = capsys.readouterr().out
-    assert '"model_count": 7' in output
+    assert '"model_count": 9' in output
     assert '"ssd_mobilenet_v3"' in output
     assert '"valid": true' in output
 

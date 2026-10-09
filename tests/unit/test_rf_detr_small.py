@@ -258,6 +258,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert "any_shape_on_mla=" not in source
     assert "automatic_layout_conversion=" not in source
     assert "with_per_token_quant(False)" in source
+    assert "HistogramMSEMethod(calibration_bins)" in source
     assert "flexible_batch_size=True" in source
     assert 'layer_norm_use_fp32_intermediates=precision == "bf16"' in source
     assert "quantized.compile(" in source
@@ -294,6 +295,8 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_samples"] == 50
+    assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 2048
+    assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_bins"] == 2048
     assert correctness["scope"] == {"type": "package", "package": "default"}
     assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "transformer"]
     assert all(entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks)

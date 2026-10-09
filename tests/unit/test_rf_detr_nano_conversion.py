@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("rf_detr_convert", ROOT / "models/rf_detr_small/scripts/convert.py")
+SPEC = importlib.util.spec_from_file_location("rf_detr_nano_convert", ROOT / "models/rf_detr_nano/scripts/convert.py")
 converter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(converter)
 
@@ -73,7 +73,7 @@ def test_fixed_onnx_interface(tmp_path, case):
 
 
 def test_source_must_be_the_hugging_face_file_set():
-    model = yaml.safe_load((ROOT / "models/rf_detr_small/model.yaml").read_text(encoding="utf-8"))
+    model = yaml.safe_load((ROOT / "models/rf_detr_nano/model.yaml").read_text(encoding="utf-8"))
     converter.validate_source(model["conversion"]["default"]["source"])
     pth = {"type": "file", "uri": "https://example.com/checkpoint.pth"}
     with pytest.raises(ValueError, match="Hugging Face file set"):
@@ -92,8 +92,8 @@ def test_config_must_name_rf_detr(tmp_path, model_type):
 
 @pytest.mark.parametrize("case", ["same", "tie", "different"])
 def test_selection_allows_only_swaps_of_tied_proposals(case):
-    scores = np.linspace(1, 0, converter.PROPOSALS, dtype=np.float32)[None]
-    actual, indices = scores.copy(), np.arange(converter.QUERIES)[None]
+    scores = np.linspace(1, 0, converter.PROPOSAL_COUNT, dtype=np.float32)[None]
+    actual, indices = scores.copy(), np.arange(converter.QUERY_COUNT)[None]
     if case == "tie":
         actual[0, 11] = actual[0, 10]
         indices[0, [10, 11]] = [11, 10]
