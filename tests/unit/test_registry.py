@@ -895,7 +895,7 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
 
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
-    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": {"models": []}}
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "b" * 40, "document": {"models": []}}
     monkeypatch.setattr(
         "model_registry.registry.publish_model_documentation",
         lambda **kwargs: {"fixture": {"run_id": kwargs["github_run_url"].rsplit("/", 1)[-1]}},
@@ -929,7 +929,7 @@ def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monk
 
 def test_publish_catalog_reads_current_catalog_after_documentation(monkeypatch) -> None:
     events: list[str] = []
-    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "a" * 40, "document": {"models": []}}
+    target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "b" * 40, "document": {"models": []}}
     monkeypatch.setattr(
         "model_registry.registry.publish_model_documentation",
         lambda **kwargs: events.append("documentation") or {},
@@ -952,7 +952,71 @@ def test_publish_catalog_reads_current_catalog_after_documentation(monkeypatch) 
         read_request=lambda _: events.append("read current") or {"catalog": target_catalog},
     )
 
-    assert events == ["documentation", "read current", "build", "POST"]
+    assert events == ["read current", "documentation", "read current", "build", "POST"]
+
+
+def test_publish_catalog_reuses_documentation_receipts_of_a_cataloged_revision(monkeypatch) -> None:
+    receipt = {"format": "markdown", "run_id": "first-run", "artifact_name": "readme"}
+    target_catalog = {
+        "canonical_sha256": "c" * 64,
+        "catalog_revision": "a" * 40,
+        "document": {"models": [{"id": "resnet_50", "documentation": receipt, "builds": []}]},
+    }
+    snapshots: list[dict] = []
+
+    def publish_documentation(**kwargs):
+        raise AssertionError("a cataloged revision must not publish new documentation runs")
+
+    monkeypatch.setattr("model_registry.registry.publish_model_documentation", publish_documentation)
+    monkeypatch.setattr(
+        "model_registry.registry.build_catalog_snapshot",
+        lambda **kwargs: snapshots.append(kwargs["documentation_receipts"]) or {"models": []},
+    )
+
+    publish_catalog(
+        repository=ROOT,
+        api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid",
+        aws_region="us-west-2",
+        branch="develop",
+        git_sha="A" * 40,
+        bucket="artifacts",
+        environment="staging",
+        github_run_url="https://github.example.invalid/actions/runs/456",
+        request=lambda *args: {"stored": True},
+        read_request=lambda _: {"catalog": target_catalog},
+    )
+
+    assert snapshots == [{"resnet_50": receipt}]
+
+
+def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none(monkeypatch) -> None:
+    target_catalog = {
+        "canonical_sha256": "c" * 64,
+        "catalog_revision": "a" * 40,
+        "document": {"models": [{"id": "resnet_50", "builds": []}]},
+    }
+    published: list[str] = []
+    monkeypatch.setattr(
+        "model_registry.registry.publish_model_documentation",
+        lambda **kwargs: published.append(kwargs["git_sha"]) or {"resnet_50": {"run_id": "new-run"}},
+    )
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: {"models": []})
+
+    publish_catalog(
+        repository=ROOT,
+        api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid",
+        aws_region="us-west-2",
+        branch="develop",
+        git_sha="a" * 40,
+        bucket="artifacts",
+        environment="staging",
+        request=lambda *args: {"stored": True},
+        read_request=lambda _: {"catalog": target_catalog},
+    )
+
+    assert published == ["a" * 40]
 
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:

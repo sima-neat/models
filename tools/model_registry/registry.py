@@ -729,6 +729,11 @@ def publish_catalog(
     if bucket is not None:
         if not environment:
             raise ValidationError("environment is required when publishing model documentation")
+        # The registry rejects model metadata changes within a revision, and each
+        # workflow run creates new documentation run IDs, so a re-dispatch on a
+        # cataloged commit keeps the receipts already in that revision's catalog.
+        documentation_receipts = _revision_documentation_receipts(read, read_api_url, branch, git_sha)
+    if bucket is not None and documentation_receipts is None:
         documentation_receipts = publish_model_documentation(
             repository=repository,
             api_url=api_url,
@@ -774,6 +779,18 @@ def publish_catalog(
         f"models-catalog-{branch}-{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
     )
     return {"catalog": document, "registry": result}
+
+
+def _revision_documentation_receipts(
+    read: ReadRequest, read_api_url: str, branch: str, git_sha: str
+) -> dict[str, JsonObject] | None:
+    record, document = read_current_catalog(read, read_api_url, branch)
+    if record is None or document is None or record.get("catalog_revision") != git_sha.lower():
+        return None
+    receipts = {model.get("id"): model.get("documentation") for model in document.get("models", [])}
+    if not receipts or not all(isinstance(receipt, dict) for receipt in receipts.values()):
+        return None
+    return receipts
 
 
 def _public_registry_json(url: str) -> JsonObject:
