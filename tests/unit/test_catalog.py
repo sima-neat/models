@@ -890,6 +890,20 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
     assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
 
 
+@pytest.mark.parametrize(
+    "relative", sorted(set(ACCURACY_TOOLING) - set(BOARD_STAGE_TOOLING) - {"scripts/run_model_accuracy.sh"})
+)
+def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository: Path, relative: str) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, f"../../{relative}")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+
+
 def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))

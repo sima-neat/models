@@ -40,6 +40,8 @@ PERFORMANCE_TOOLING = (
 )
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
+    "scripts/install_dataset_registry.sh",
+    "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",
     "tools/model_registry/accuracy_result.py",
     ACCURACY_RESULT_SCHEMA,
