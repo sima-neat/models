@@ -381,7 +381,9 @@ def test_publishes_log_beside_result(tmp_path: Path) -> None:
     assert store.objects[1][3] == "text/plain"
 
 
-def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(tmp_path: Path) -> None:
+def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = valid_result(tmp_path)
 
     def publish() -> tuple[dict, list[str], FakeStore]:
@@ -423,6 +425,11 @@ def test_idempotency_keys_are_stable_per_report_and_distinct_per_execution(tmp_p
     assert later["execution_digest"] != first["execution_digest"]
     assert later_keys[0] != first_keys[0]
     assert later_store.objects[0][1] != first_store.objects[0][1]
+
+    # A new stage key creates a new run even when the result itself is unchanged.
+    monkeypatch.setattr("model_registry.benchmark_publication.performance_key", lambda *args, **kwargs: "f" * 64)
+    _, rekeyed_keys, _ = publish()
+    assert rekeyed_keys[0] != later_keys[0]
 
 
 def test_rejects_tampered_benchmark_identity(tmp_path: Path) -> None:

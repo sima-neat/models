@@ -275,7 +275,9 @@ def publish_benchmark_result(
         compile_run_id=parent_run_id,
         artifact_sha256=result["model"]["sha256"],
     )
-    stable_digest = hashlib.sha256(f"{parent_run_id}:{fingerprint}:{execution_digest}".encode()).hexdigest()
+    stable_digest = hashlib.sha256(
+        f"{parent_run_id}:{stage_key}:{fingerprint}:{execution_digest}".encode()
+    ).hexdigest()
     stable_key = f"models-benchmark-{stable_digest}"
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
