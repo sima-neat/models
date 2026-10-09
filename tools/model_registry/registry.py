@@ -21,15 +21,16 @@ from jsonschema import Draft202012Validator
 
 from .accuracy_config import find_devkit_accuracy_config
 from .artifact import validate_compile_outputs, verify_mpk
-from .catalog import build_matrix, compile_fingerprint, discover_catalog
+from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fidelity_config import find_fidelity_config, validate_fidelity_result
-from .model import compile_invocations_for, load_and_validate_model, profile_component_for
+from .model import compile_invocations_for, load_and_validate_model, load_models, profile_component_for
 from .source import source_identity
-from .stages import accuracy_key, performance_key, read_current_catalog
+from .stage_keys import accuracy_key, compile_key, performance_key
+from .stage_plan import read_current_catalog
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
@@ -313,13 +314,13 @@ def build_catalog_snapshot(
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
     if not branch.strip():
         raise ValidationError("branch must not be empty")
-    catalog = discover_catalog(root)
+    models = load_models(root)
     taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
     taxonomy_digest = taxonomy_sha256(taxonomy)
     compiler_version = resolve_model_compiler(root)["identity"]
     matrix = build_matrix(
-        catalog,
-        sorted(catalog),
+        models,
+        sorted(models),
         repository=root,
         compiler_version=compiler_version,
     )["include"]
@@ -360,8 +361,8 @@ def build_catalog_snapshot(
             if all(isinstance(value, str) for value in key):
                 previous_packages[key] = package
     expected_keys: set[tuple[str, str, str]] = set()
-    builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
-    packages_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in catalog}
+    builds_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in models}
+    packages_by_model: dict[str, list[JsonObject]] = {model_id: [] for model_id in models}
     pending_builds: list[JsonObject] = []
     for invocation in matrix:
         keys = [
@@ -406,7 +407,7 @@ def build_catalog_snapshot(
                 if prior is not None:
                     builds_by_model[key[0]].append(prior)
             continue
-        model = catalog[invocation["model_id"]]
+        model = models[invocation["model_id"]]
         invocation_builds: list[JsonObject] = []
         for component_id in invocation["component_ids"]:
             key = (invocation["model_id"], invocation["build_profile_id"], component_id)
@@ -471,7 +472,7 @@ def build_catalog_snapshot(
             f"publication receipt references removed build unit: {model_id}/{profile_id}/{component_id}"
         )
 
-    for model_id, model in sorted(catalog.items()):
+    for model_id, model in sorted(models.items()):
         for declaration in model["packages"]:
             for profile_id in declaration["build_profiles"]:
                 key = (model_id, profile_id, declaration["id"])
@@ -508,8 +509,8 @@ def build_catalog_snapshot(
                     "component_run_ids": component_runs,
                 })
 
-    models = []
-    for model_id, model in sorted(catalog.items()):
+    model_entries = []
+    for model_id, model in sorted(models.items()):
         entry = {
             "id": model_id,
             "display_name": model["display_name"],
@@ -530,7 +531,7 @@ def build_catalog_snapshot(
             if not isinstance(documentation, dict):
                 raise ValidationError(f"model documentation receipt is missing: {model_id}")
             entry["documentation"] = documentation
-        models.append(entry)
+        model_entries.append(entry)
     document: JsonObject = {
         "schema_version": 2 if incremental else 1,
         "repository": "sima-neat/models",
@@ -538,7 +539,7 @@ def build_catalog_snapshot(
         "catalog_revision": git_sha.lower(),
         "taxonomy_sha256": taxonomy_digest,
         "taxonomy": taxonomy,
-        "models": models,
+        "models": model_entries,
     }
     if incremental:
         document["pending_builds"] = pending_builds
@@ -564,13 +565,13 @@ def publish_model_documentation(
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
     if not branch.strip() or not environment.strip():
         raise ValidationError("branch and environment must not be empty")
-    catalog = discover_catalog(root)
+    models = load_models(root)
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
     branch_key = quote(branch, safe="")
     branch_identity = hashlib.sha256(branch.encode()).hexdigest()[:16]
     receipts: dict[str, JsonObject] = {}
-    for model_id, model in sorted(catalog.items()):
+    for model_id, model in sorted(models.items()):
         documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root)
         digest = documentation["readme_sha256"]
         stored = store.ensure_native_sha256(
@@ -1085,7 +1086,7 @@ def _compile_timing(path: Path) -> JsonObject | None:
 def _preflight_compilations(
     root: Path,
     dist: Path,
-    catalog: dict[str, JsonObject],
+    models: dict[str, JsonObject],
     *,
     environment: str,
     git_sha: str,
@@ -1097,9 +1098,9 @@ def _preflight_compilations(
     manifests = sorted(dist.glob("*/*/compile-outputs.json"))
     for manifest_path in manifests:
         model_id, build_profile_id = manifest_path.relative_to(dist).parts[:2]
-        if model_id not in catalog:
+        if model_id not in models:
             raise ValidationError(f"compile outputs reference unknown model: {model_id}")
-        model = catalog[model_id]
+        model = models[model_id]
         profiles = {item["id"]: item for item in model["build_profiles"]}
         if build_profile_id not in profiles:
             raise ValidationError(f"compile outputs reference unknown build profile: {model_id}/{build_profile_id}")
@@ -1132,7 +1133,7 @@ def _preflight_compilations(
     prepared = []
     for result_path in sorted(actual_results):
         model_id, build_profile_id, component_id = result_path.relative_to(dist).parts[:3]
-        model = catalog[model_id]
+        model = models[model_id]
         profiles = {item["id"]: item for item in model["build_profiles"]}
         components = {item["id"]: item for item in model["components"]}
         profile = profiles[build_profile_id]
@@ -1188,7 +1189,7 @@ def _preflight_compilations(
         if source_sha != source_identity(component["source"]):
             raise ValidationError(f"{result_path}: source_sha256 does not match the component source contract")
         build_fingerprint = _require_sha256(provenance.get("build_fingerprint"), "build_fingerprint")
-        expected_build_fingerprint = compile_fingerprint(
+        expected_build_fingerprint = compile_key(
             root, model_id, build_profile_id, invocation_by_result[result_path], compiler_identity
         )
         if build_fingerprint != expected_build_fingerprint:
@@ -1273,11 +1274,11 @@ def publish_compilations(
     if not branch.strip() or not github_run_id.strip() or not github_run_attempt.strip():
         raise ValidationError("branch, GitHub run ID, and run attempt must not be empty")
 
-    catalog = discover_catalog(root)
+    models = load_models(root)
     compilations = _preflight_compilations(
         root,
         dist,
-        catalog,
+        models,
         environment=environment,
         git_sha=git_sha,
     )
@@ -1548,7 +1549,7 @@ def publish_packages(
     if not branch.strip() or not github_run_id.strip() or not github_run_attempt.strip():
         raise ValidationError("branch, GitHub run ID, and run attempt must not be empty")
 
-    catalog = discover_catalog(root)
+    models = load_models(root)
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
     branch_key, commit_tag = quote(branch, safe=""), git_sha[:12]
@@ -1567,9 +1568,9 @@ def publish_packages(
         model_id = _require_text(result.get("model_id"), "package model_id")
         profile_id = _require_text(result.get("build_profile_id"), "package build_profile_id")
         package_id = _require_text(result.get("package_id"), "package package_id")
-        if model_id not in catalog:
+        if model_id not in models:
             raise ValidationError(f"{result_path}: package references unknown model {model_id}")
-        model = catalog[model_id]
+        model = models[model_id]
         declaration = next((item for item in model["packages"] if item["id"] == package_id), None)
         if declaration is None or profile_id not in declaration["build_profiles"]:
             raise ValidationError(f"{result_path}: package is not declared for {model_id}/{profile_id}/{package_id}")

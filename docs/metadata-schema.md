@@ -378,7 +378,7 @@ Run both checks from the repository root:
 
 ```bash
 model-registry validate models/<model-id>
-model-registry validate-catalog --repository .
+model-registry validate-models --repository .
 ```
 
 Validation proves that the source-controlled contract is coherent. Developers

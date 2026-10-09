@@ -19,7 +19,7 @@ python - "$1" <<'PY'
 import sys
 from pathlib import Path
 
-from model_registry.stages import ACCURACY_TOOLING, PERFORMANCE_TOOLING
+from model_registry.stage_keys import ACCURACY_TOOLING, PERFORMANCE_TOOLING
 
 source = Path(sys.argv[1])
 

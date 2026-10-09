@@ -20,9 +20,8 @@ touches.
 | performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` | the compile run and MPK digest, `benchmark:` entries, `performance.py`, shared performance tooling, DevKit runtime pin |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` | the compile runs and MPK digests of its components, the `accuracy:` entry, the script and its requirements, shared accuracy tooling, DevKit runtime pin |
 
-The keys are computed by `compile_fingerprint` in
-`tools/model_registry/catalog.py` and by `performance_key` and `accuracy_key`
-in `tools/model_registry/stages.py`; read them before changing what a stage
+The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
+in `tools/model_registry/stage_keys.py`; read them before changing what a stage
 depends on. Conversion (`scripts/convert.py`, run by
 `scripts/run_model_conversion.sh`) produces the ONNX that `model.yaml` pins as
 the source; only that pin enters the compile key.

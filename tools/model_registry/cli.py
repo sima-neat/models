@@ -10,14 +10,15 @@ from pathlib import Path
 from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_mpk
 from .artifact_metadata import validate_artifact_metadata
-from .catalog import build_matrix, discover_catalog, resolve_base_branch
+from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .fidelity_config import find_fidelity_config
-from .model import component_for, load_and_validate_model, profile_component_for
+from .model import component_for, load_and_validate_model, load_models, profile_component_for
 from .runner_approval import authorize_runner_matrix
+from .stage_plan import plan_stages, resolve_base_branch
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -30,7 +31,7 @@ AUTHOR_COMMANDS = frozenset(
         "assemble-package",
         "resolve-compiler",
         "validate",
-        "validate-catalog",
+        "validate-models",
         "validate-compile-outputs",
         "verify-mpk",
     }
@@ -54,11 +55,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     validate.add_argument("--schema", type=Path)
     validate.add_argument("--json", action="store_true", dest="json_output")
 
-    validate_catalog = subcommands.add_parser(
-        "validate-catalog", help="validate every model manifest and its taxonomy categorization"
+    validate_models = subcommands.add_parser(
+        "validate-models", help="validate every model manifest and its taxonomy categorization"
     )
-    validate_catalog.add_argument("--repository", type=Path, default=Path.cwd())
-    validate_catalog.add_argument("--json", action="store_true", dest="json_output")
+    validate_models.add_argument("--repository", type=Path, default=Path.cwd())
+    validate_models.add_argument("--json", action="store_true", dest="json_output")
 
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
@@ -365,17 +366,17 @@ def _validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _validate_catalog(args: argparse.Namespace) -> int:
+def _validate_models(args: argparse.Namespace) -> int:
     repository = args.repository.expanduser().resolve()
-    catalog = discover_catalog(repository)
-    for model_id, model in sorted(catalog.items()):
+    models = load_models(repository)
+    for model_id, model in sorted(models.items()):
         load_model_documentation(
             repository / "models" / model_id,
             model["display_name"],
             repository=repository,
         )
-    result = {"model_count": len(catalog), "model_ids": sorted(catalog), "valid": True}
-    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model catalog: {len(catalog)} models")
+    result = {"model_count": len(models), "model_ids": sorted(models), "valid": True}
+    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid models: {len(models)}")
     return 0
 
 
@@ -526,10 +527,10 @@ def _id_list(value: str | None, option: str) -> list[str] | None:
 
 
 def _matrix(args: argparse.Namespace) -> int:
-    catalog = discover_catalog(args.repository)
+    models = load_models(args.repository)
     result = build_matrix(
-        catalog,
-        _id_list(args.models, "--models") or sorted(catalog),
+        models,
+        _id_list(args.models, "--models") or sorted(models),
         _id_list(args.profiles, "--profiles"),
         _id_list(args.components, "--components"),
         repository=args.repository if args.compiler_version is not None else None,
@@ -541,7 +542,6 @@ def _matrix(args: argparse.Namespace) -> int:
 
 def _plan_stages(args: argparse.Namespace) -> int:
     from .registry import _public_registry_json
-    from .stages import plan_stages
 
     if args.offline == bool(args.read_api_url):
         raise ModelRegistryError("pass exactly one of --read-api-url or --offline")
@@ -894,8 +894,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
     try:
         if args.command == "validate":
             return _validate(args)
-        if args.command == "validate-catalog":
-            return _validate_catalog(args)
+        if args.command == "validate-models":
+            return _validate_models(args)
         if args.command == "validate-compile-outputs":
             return _validate_compile_outputs(args)
         if args.command == "record-compile-outputs":

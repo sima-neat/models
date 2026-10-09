@@ -24,7 +24,7 @@ from .errors import ValidationError
 from .fetch import sha256_file
 from .model import load_and_validate_model
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
-from .stages import (
+from .stage_keys import (
     ACCURACY_FINGERPRINT_VERSION,
     ACCURACY_RUN_TYPE,
     PERFORMANCE_FINGERPRINT_VERSION,

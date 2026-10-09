@@ -76,10 +76,10 @@ hook. A declared `conversion` also needs `scripts/convert.py` and
 `scripts/requirements-convert.txt`. Fix the reported field in `model.yaml`; do
 not weaken a declaration just to pass validation.
 
-Then validate the complete catalog:
+Then validate every model:
 
 ```bash
-model-registry validate-catalog --repository .
+model-registry validate-models --repository .
 ```
 
 ## Fetch and verify immutable inputs

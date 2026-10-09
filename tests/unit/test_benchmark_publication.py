@@ -17,7 +17,7 @@ from model_registry.dependencies import resolve_benchmark_runtime
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model
 from model_registry.registry import S3Object, canonical_sha256
-from model_registry.stages import (
+from model_registry.stage_keys import (
     ACCURACY_FINGERPRINT_VERSION,
     PERFORMANCE_FINGERPRINT_VERSION,
     accuracy_key,

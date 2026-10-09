@@ -196,10 +196,10 @@ def test_trusted_events_reach_the_build(event) -> None:
 
 def test_catalog_taxonomy_is_validated_before_compiler_selection() -> None:
     select = load(WORKFLOW)["jobs"]["select"]
-    validation = step_index(select, "Validate complete model catalog and taxonomy")
+    validation = step_index(select, "Validate every model and the taxonomy")
     compiler = next(index for index, item in enumerate(select["steps"]) if item.get("id") == "compiler")
 
-    assert select["steps"][validation]["run"] == "model-registry validate-catalog --repository ."
+    assert select["steps"][validation]["run"] == "model-registry validate-models --repository ."
     assert validation < compiler
 
 

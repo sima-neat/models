@@ -354,7 +354,7 @@ def test_model_readme_contract_rejects_setext_heading_in_overview(tmp_path: Path
 def test_model_readme_contract_rejects_indented_code_in_overview(tmp_path: Path, indent: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    overview = _overview() + f"\n\n{indent}model-registry validate-catalog"
+    overview = _overview() + f"\n\n{indent}model-registry validate-models"
     (model_dir / "README.md").write_text(_readme(overview), encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 

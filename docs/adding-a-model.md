@@ -258,15 +258,14 @@ recompiled build is always remeasured.
 | a compile input of a model | that model's affected builds, then their DevKit stages |
 | the Model Compiler pin or `scripts/run_model_compilation.sh` | every build, then every DevKit stage |
 
-The keys are computed by `compile_fingerprint` in
-`tools/model_registry/catalog.py` and by `performance_key` and `accuracy_key`
-in `tools/model_registry/stages.py`.
+The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
+in `tools/model_registry/stage_keys.py`.
 
 ## 10. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>
-model-registry validate-catalog --repository .
+model-registry validate-models --repository .
 ```
 
 These checks establish that the contract is coherent, not that it compiles or

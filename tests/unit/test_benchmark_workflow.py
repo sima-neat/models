@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.stages import ACCURACY_TOOLING, PERFORMANCE_TOOLING
+from model_registry.stage_keys import ACCURACY_TOOLING, PERFORMANCE_TOOLING
 
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Benchmarking.yml"

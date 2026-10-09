@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.catalog import build_matrix, compile_fingerprint, discover_catalog
+from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
+from model_registry.model import load_models
 from model_registry.package import assemble_package
 from model_registry.registry import (
     RegistryPublicationError,
@@ -25,7 +26,7 @@ from model_registry.registry import (
     publish_packages,
     stage_catalog_build,
 )
-from model_registry.stages import accuracy_key, performance_key
+from model_registry.stage_keys import accuracy_key, compile_key, performance_key
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILER = resolve_model_compiler(ROOT)
@@ -76,7 +77,7 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
         artifact_store=store,
     )
 
-    assert set(receipts) == set(discover_catalog(ROOT))
+    assert set(receipts) == set(load_models(ROOT))
     assert len(store.objects) == len(receipts)
     assert len(calls) == len(receipts) * 4
     for model_id, receipt in receipts.items():
@@ -107,7 +108,7 @@ def test_publish_model_documentation_includes_an_available_optional_hero(tmp_pat
     calls: list[tuple[str, str, dict | None, str]] = []
 
     monkeypatch.setattr(
-        "model_registry.registry.discover_catalog",
+        "model_registry.registry.load_models",
         lambda _: {"fixture": {"display_name": "Fixture"}},
     )
     monkeypatch.setattr(
@@ -200,7 +201,7 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": compile_fingerprint(ROOT, "resnet_50", "modalix_bf16", "model", COMPILER_IDENTITY),
+            "build_fingerprint": compile_key(ROOT, "resnet_50", "modalix_bf16", "model", COMPILER_IDENTITY),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -411,10 +412,10 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
 
     receipt_path = dist / "resnet_50" / "modalix_bf16" / "model" / "registry-publication.json"
     receipt_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    catalog = discover_catalog(ROOT)
+    models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     selected = build_matrix(
-        catalog,
+        models,
         ["resnet_50"],
         ["modalix_bf16"],
         repository=ROOT,
@@ -625,7 +626,7 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
 
 
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
-    catalog = discover_catalog(ROOT)
+    models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
@@ -645,7 +646,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
                             "run_id": f"00000000-0000-4000-8000-{index:012d}",
                         }
                         for entry in build_matrix(
-                            catalog,
+                            models,
                             [model_id],
                             repository=ROOT,
                             compiler_version=compiler_version,
@@ -653,7 +654,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
                         for component_id in entry["component_ids"]
                     ],
                 }
-                for index, model_id in enumerate(catalog, 1)
+                for index, model_id in enumerate(models, 1)
             ]
         },
     )
@@ -665,10 +666,10 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 
 def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
-    catalog = discover_catalog(ROOT)
-    model = catalog["resnet_50"]
+    models = load_models(ROOT)
+    model = models["resnet_50"]
     matrix = build_matrix(
-        catalog, sorted(catalog), repository=ROOT, compiler_version=COMPILER_IDENTITY,
+        models, sorted(models), repository=ROOT, compiler_version=COMPILER_IDENTITY,
     )["include"]
 
     def snapshot(run_prefix: str) -> dict:
@@ -683,7 +684,7 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
             for index, entry in enumerate(matrix, 1)
             if entry["model_id"] == model_id
             for component_id in entry["component_ids"]
-        ]} for model_id in catalog]}
+        ]} for model_id in models]}
         document = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="a" * 40, previous=previous)
         resnet = next(item for item in document["models"] if item["id"] == "resnet_50")
         return {build["build_profile_id"]: build for build in resnet["builds"]}
@@ -709,10 +710,10 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
 
 
 def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
-    catalog = discover_catalog(ROOT)
+    models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     invocation = build_matrix(
-        catalog, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+        models, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]
     changed = dict(invocation, build_fingerprint="f" * 64)
     monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [changed]})
@@ -749,10 +750,10 @@ def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(
 def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publication(
     monkeypatch, tmp_path: Path,
 ) -> None:
-    catalog = discover_catalog(ROOT)
+    models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["version"]
     invocation = build_matrix(
-        catalog, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+        models, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]
     monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [invocation]})
     old_run_id = "00000000-0000-4000-8000-000000000001"

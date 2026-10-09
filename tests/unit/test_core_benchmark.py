@@ -8,7 +8,7 @@ from model_registry import core_benchmark
 from model_registry.benchmark_publication import load_benchmark_result
 from model_registry.core_benchmark import _require_internals_runtime, import_core_benchmark
 from model_registry.errors import ValidationError
-from model_registry.stages import PERFORMANCE_FINGERPRINT_VERSION
+from model_registry.stage_keys import PERFORMANCE_FINGERPRINT_VERSION
 
 
 @pytest.fixture

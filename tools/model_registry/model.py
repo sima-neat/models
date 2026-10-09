@@ -9,6 +9,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
+from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
@@ -24,6 +25,8 @@ CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-co
 # A devkit_script accuracy entry runs this script on the DevKit.
 ACCURACY_SCRIPT = f"{SCRIPTS_DIR}/accuracy.py"
 ACCURACY_REQUIREMENTS = f"{SCRIPTS_DIR}/requirements-accuracy.txt"
+# A benchmark entry runs this script on the DevKit.
+PERFORMANCE_SCRIPT = f"{SCRIPTS_DIR}/performance.py"
 
 
 def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
@@ -713,3 +716,21 @@ def load_and_validate_model(
     model = load_model(model_dir)
     validate_model(model_dir, model, schema_path, taxonomy_path)
     return model
+
+
+def load_models(repository: str | Path) -> dict[str, dict[str, Any]]:
+    """Load and validate every models/<id>/model.yaml, keyed by model ID."""
+    root = Path(repository).expanduser().resolve()
+    model_root = root / "models"
+    discovered: dict[str, dict[str, Any]] = {}
+    if not model_root.is_dir():
+        raise ValidationError(f"models directory not found: {model_root}")
+
+    for definition in sorted(model_root.glob("*/model.yaml")):
+        model = load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
+        validate_artifact_metadata(model)
+        model_id = str(model["id"])
+        if model_id in discovered:
+            raise ValidationError(f"duplicate model id {model_id!r}: {definition}")
+        discovered[model_id] = model
+    return discovered

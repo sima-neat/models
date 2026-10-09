@@ -1,72 +1,99 @@
-"""Stage keys and the stage plan: which builds compile, and what a reused build still has to measure.
+"""The stage plan: which builds compile, and which DevKit stages a reused build still has to run.
 
-A key identifies everything a stage's result depends on. Each published stage run carries its key as
-the run fingerprint, so a completed registry run with the same key means that stage need not run again.
+A stage runs when no completed registry run carries its current key; see stage_keys.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from .accuracy_config import accuracy_components, find_devkit_accuracy_config
-from .accuracy_result import ACCURACY_RESULT_SCHEMA
-from .catalog import PERFORMANCE_SCRIPT, build_matrix, discover_catalog
-from .dependencies import resolve_benchmark_runtime
+from .compile_matrix import build_matrix
 from .errors import ModelRegistryError, ValidationError
-from .model import ACCURACY_REQUIREMENTS, ACCURACY_SCRIPT
+from .model import load_models
+from .stage_keys import (
+    ACCURACY_FINGERPRINT_VERSION,
+    ACCURACY_RUN_TYPE,
+    PERFORMANCE_FINGERPRINT_VERSION,
+    PERFORMANCE_RUN_TYPE,
+    accuracy_key,
+    performance_key,
+)
 
-PERFORMANCE_RESULT_SCHEMA = "schemas/performance-result.schema.json"
-PERFORMANCE_RUN_TYPE = "model_benchmark"
-ACCURACY_RUN_TYPE = "model_accuracy"
-# Vulcan stores a run's fingerprint version from its environment and resolves version 1 by default.
-PERFORMANCE_FINGERPRINT_VERSION = 2
-ACCURACY_FINGERPRINT_VERSION = 1
-# The workflow sets up the board run and benchmark_publication shapes the published run.
-BOARD_STAGE_TOOLING = (
-    ".github/workflows/Vulcan-Model-Benchmarking.yml",
-    "tools/model_registry/benchmark_publication.py",
-)
-PERFORMANCE_TOOLING = (
-    *BOARD_STAGE_TOOLING,
-    "scripts/run_model_performance.sh",
-    "tools/model_registry/core_benchmark.py",
-    "tools/model_registry/benchmark_manifest.py",
-    PERFORMANCE_RESULT_SCHEMA,
-)
-ACCURACY_TOOLING = (
-    *BOARD_STAGE_TOOLING,
-    "scripts/install_dataset_registry.sh",
-    "scripts/cache_accuracy_dataset.sh",
-    "scripts/run_model_accuracy.sh",
-    "tools/model_registry/accuracy_result.py",
-    ACCURACY_RESULT_SCHEMA,
-)
 REPOSITORY_API_PATH = "/v1/repositories/sima-neat/models"
 
 ReadRequest = Callable[[str], dict[str, Any]]
 
 
-def _key(identity: dict[str, Any]) -> str:
-    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    return hashlib.sha256(payload).hexdigest()
+def _git(repository: Path, *arguments: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+        raise ValidationError(f"git {' '.join(arguments)} failed: {detail}") from exc
+    return result.stdout.strip()
 
 
-def _file_digests(root: Path, required: list[str], optional: list[str] = ()) -> dict[str, str | None]:
-    digests: dict[str, str | None] = {}
-    for relative in [*required, *optional]:
-        path = root / relative
-        if not path.is_file():
-            if relative in required:
-                raise ValidationError(f"stage input not found: {relative}")
-            digests[relative] = None
+def resolve_base_branch(
+    repository: str | Path,
+    *,
+    current_branch: str,
+    head: str,
+    preferred_branch: str | None = None,
+    default_branch: str = "develop",
+) -> dict[str, str]:
+    """Resolve a deterministic comparison branch for an initial branch build.
+
+    Git does not record the branch from which another branch was created. An
+    explicit PR/dispatch base therefore wins. Otherwise, use the closest remote
+    branch by graph distance and prefer the configured integration branch for
+    ties.
+    """
+    root = Path(repository).expanduser().resolve()
+    current = current_branch.strip()
+    if not current:
+        raise ValidationError("current branch must not be empty")
+
+    refs = [
+        line.strip()
+        for line in _git(root, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin").splitlines()
+        if line.strip() and line.strip() != "origin/HEAD"
+    ]
+    branches = {ref.removeprefix("origin/"): ref for ref in refs if ref.startswith("origin/")}
+
+    preferred = preferred_branch.strip() if preferred_branch else ""
+    if preferred:
+        ref = branches.get(preferred)
+        if ref is None:
+            raise ValidationError(f"base branch {preferred!r} was not fetched from origin")
+        merge_base = _git(root, "merge-base", head, ref)
+        return {"base_branch": preferred, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
+
+    branches.pop(current, None)
+    candidates: list[tuple[int, int, int, str, str, str]] = []
+    for branch, ref in branches.items():
+        try:
+            merge_base = _git(root, "merge-base", head, ref)
+            ahead = int(_git(root, "rev-list", "--count", f"{merge_base}..{head}"))
+            behind = int(_git(root, "rev-list", "--count", f"{merge_base}..{ref}"))
+        except (ValidationError, ValueError):
             continue
-        digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return digests
+        default_penalty = 0 if branch == default_branch else 1
+        candidates.append((ahead + behind, behind, default_penalty, branch, ref, merge_base))
+
+    if not candidates:
+        raise ValidationError("could not resolve a related remote base branch")
+    _, _, _, branch, ref, merge_base = min(candidates)
+    return {"base_branch": branch, "base_sha": _git(root, "rev-parse", ref), "merge_base": merge_base}
 
 
 def applicable_stages(entry: dict[str, Any]) -> list[str]:
@@ -77,81 +104,6 @@ def applicable_stages(entry: dict[str, Any]) -> list[str]:
     ]
 
 
-def performance_key(
-    repository: str | Path,
-    model: dict[str, Any],
-    build_profile_id: str,
-    component_id: str,
-    *,
-    compile_run_id: str,
-    artifact_sha256: str,
-) -> str:
-    """Identity of one component's DevKit performance measurement."""
-    root = Path(repository).expanduser().resolve()
-    model_id = str(model["id"])
-    entries = sorted(
-        (
-            entry
-            for entry in model["benchmark"]
-            if entry["scope"] == {"type": "component", "component": component_id}
-            and build_profile_id in entry["build_profiles"]
-        ),
-        key=lambda item: item["id"],
-    )
-    if not entries:
-        raise ValidationError(f"no benchmark entry applies to {model_id}/{build_profile_id}/{component_id}")
-    return _key({
-        "stage": "performance",
-        "model_id": model_id,
-        "build_profile_id": build_profile_id,
-        "component_id": component_id,
-        "compile_run_id": compile_run_id,
-        "artifact_sha256": artifact_sha256,
-        "benchmark": entries,
-        "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING]),
-        "runtime": resolve_benchmark_runtime(root),
-    })
-
-
-def accuracy_key(
-    repository: str | Path,
-    model: dict[str, Any],
-    build_profile_id: str,
-    builds: dict[str, dict[str, Any]],
-) -> str:
-    """Identity of a build profile's DevKit accuracy measurement over its scoped compiled components.
-
-    ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``.
-    """
-    root = Path(repository).expanduser().resolve()
-    model_id = str(model["id"])
-    entry = find_devkit_accuracy_config(model, build_profile_id)
-    if entry is None:
-        raise ValidationError(f"no DevKit accuracy entry applies to {model_id}/{build_profile_id}")
-    scoped = accuracy_components(model, entry)
-    missing = [component_id for component_id in scoped if component_id not in builds]
-    if missing:
-        raise ValidationError(f"accuracy {entry['id']!r} needs compiled component {missing[0]!r}")
-    model_dir = f"models/{model_id}"
-    return _key({
-        "stage": "accuracy",
-        "model_id": model_id,
-        "build_profile_id": build_profile_id,
-        "accuracy": entry,
-        "builds": {
-            component_id: {
-                "compile_run_id": builds[component_id]["run_id"],
-                "artifact_sha256": builds[component_id]["artifact_sha256"],
-            }
-            for component_id in scoped
-        },
-        "files": _file_digests(
-            root, [f"{model_dir}/{ACCURACY_SCRIPT}", *ACCURACY_TOOLING], [f"{model_dir}/{ACCURACY_REQUIREMENTS}"]
-        ),
-        "runtime": resolve_benchmark_runtime(root),
-    })
-
-
 def _is_not_found(error: ModelRegistryError, code: str) -> bool:
     return f"HTTP 404 {code}" in str(error)
 
@@ -159,7 +111,7 @@ def _is_not_found(error: ModelRegistryError, code: str) -> bool:
 def read_current_catalog(
     read: ReadRequest, read_api_url: str, branch: str, base_branch: str | None = None
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Return the branch's catalog record, and the document of the branch catalog or else the base's."""
+    """Return the branch's models record, and the document of the branch models or else the base's."""
     base_url = read_api_url.rstrip("/")
     for source in [branch, *([base_branch] if base_branch and base_branch != branch else [])]:
         try:
@@ -194,7 +146,7 @@ def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, key: s
 
 
 def catalog_builds(document: dict[str, Any] | None) -> dict[tuple[str, str, str], dict[str, Any]]:
-    """Index a catalog document's builds by (model, build profile, component)."""
+    """Index a models document's builds by (model, build profile, component)."""
     builds: dict[tuple[str, str, str], dict[str, Any]] = {}
     for model in (document or {}).get("models", []):
         if not isinstance(model, dict) or not isinstance(model.get("id"), str):
@@ -226,10 +178,10 @@ def plan_stages(
     Without a reader, nothing is known to be published, so every selected invocation compiles.
     """
     root = Path(repository).expanduser().resolve()
-    catalog = discover_catalog(root)
+    models = load_models(root)
     head = build_matrix(
-        catalog,
-        model_ids or sorted(catalog),
+        models,
+        model_ids or sorted(models),
         profile_ids,
         component_ids,
         repository=root,
@@ -255,7 +207,7 @@ def plan_stages(
         ):
             compile_entries.append({**entry, "stages": applicable_stages(entry)})
             continue
-        model = catalog[entry["model_id"]]
+        model = models[entry["model_id"]]
         profile_id = entry["build_profile_id"]
         performance = [
             component_id

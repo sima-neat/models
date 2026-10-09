@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .artifact import validate_compile_outputs
-from .catalog import build_matrix
+from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file

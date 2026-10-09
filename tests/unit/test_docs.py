@@ -138,7 +138,7 @@ def test_local_guide_uses_supported_validation_commands() -> None:
     assert "python -m pip install -e" not in text
     for command in (
         "model-registry validate ",
-        "model-registry validate-catalog ",
+        "model-registry validate-models ",
         "model-registry fetch ",
         "model-registry fetch-calibration ",
         "model-registry matrix ",

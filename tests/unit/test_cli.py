@@ -58,8 +58,8 @@ def test_validate_json_output(capsys) -> None:
     assert '"valid": true' in output
 
 
-def test_validate_catalog_checks_every_manifest(capsys) -> None:
-    result = main(["validate-catalog", "--repository", str(ROOT), "--json"])
+def test_validate_models_checks_every_manifest(capsys) -> None:
+    result = main(["validate-models", "--repository", str(ROOT), "--json"])
     assert result == 0
     output = capsys.readouterr().out
     assert '"model_count": 9' in output
@@ -67,7 +67,7 @@ def test_validate_catalog_checks_every_manifest(capsys) -> None:
     assert '"valid": true' in output
 
 
-@pytest.mark.parametrize("command", ["validate", "validate-catalog"])
+@pytest.mark.parametrize("command", ["validate", "validate-models"])
 @pytest.mark.parametrize("filename_length", [255, 256])
 def test_validation_checks_complete_filename_length(command, filename_length, tmp_path: Path, capsys) -> None:
     model_dir = tmp_path / "models" / "fixture_model"
@@ -79,7 +79,7 @@ def test_validation_checks_complete_filename_length(command, filename_length, tm
     suffix_length = filename_length - len(f"{model['id']}__mpk.tar.gz")
     model["build_profiles"][0]["components"][0]["artifact_suffix"] = "a" * suffix_length
     manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
-    if command == "validate-catalog":
+    if command == "validate-models":
         overview = " ".join(f"word{index}" for index in range(50))
         sections = [
             ("Overview", overview), ("Usage", "Usage."), ("Model interface", "Interface."),

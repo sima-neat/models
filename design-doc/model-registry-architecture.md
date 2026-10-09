@@ -71,9 +71,9 @@ result depends on.
 
 | Stage | Model script | Key | Registry record |
 | --- | --- | --- | --- |
-| compile | `compile.py` | `compile_fingerprint` in `catalog.py` | compile run per component, recorded in the branch catalog |
-| performance | `performance.py` | `performance_key` in `stages.py` | `model_benchmark` run under the component's compile run |
-| accuracy | `accuracy.py` | `accuracy_key` in `stages.py` | `model_accuracy` run under the result component's compile run |
+| compile | `compile.py` | `compile_key` in `stage_keys.py` | compile run per component, recorded in the branch catalog |
+| performance | `performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
+| accuracy | `accuracy.py` | `accuracy_key` in `stage_keys.py` | `model_accuracy` run under the result component's compile run |
 
 The compile key covers the invocation's `model.yaml` projection, the fidelity
 entries, the model's compile scripts, declared training code, and the compiler

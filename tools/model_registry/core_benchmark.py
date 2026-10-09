@@ -16,7 +16,7 @@ from .benchmark_publication import benchmark_identity_document, load_benchmark_r
 from .errors import ValidationError
 from .fetch import sha256_file
 from .registry import canonical_sha256
-from .stages import PERFORMANCE_FINGERPRINT_VERSION
+from .stage_keys import PERFORMANCE_FINGERPRINT_VERSION
 
 CORE_UNITS = {
     "latency_avg_ms": "ms",
