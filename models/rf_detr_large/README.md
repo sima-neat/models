@@ -29,9 +29,12 @@ MPK alone is not a complete detector.
 
 The backbone consumes a normalized NCHW FP32 RGB tensor with shape
 `1×3×704×704`. It emits the final feature map, 1,936 proposal scores, and 1,936
-decoded proposal boxes. On the A65, select the 300 highest scores and gather the
-matching boxes. The transformer consumes those proposals and the backbone
-feature map, then emits 300 boxes and 91 class scores for each box.
+decoded proposal boxes. On the A65, select the 300 highest scores, breaking ties
+by the lower proposal index, and gather the matching boxes in that order. Each
+decoder query slot has its own learned embedding, so a different tie order
+pairs boxes with different queries and changes the detections. The transformer
+consumes those proposals and the backbone feature map, then emits 300 boxes and
+91 class scores for each box.
 
 ```text
 image -> backbone.mpk -> scores + boxes -> A65 TopK/Gather -> transformer.mpk
@@ -41,6 +44,12 @@ image -> backbone.mpk -> scores + boxes -> A65 TopK/Gather -> transformer.mpk
 The package exposes `proposals` as an input because package composition connects
 only the two MPKs. `calibration.py` contains the deterministic reference bridge
 used during compilation and fidelity validation.
+
+The transformer outputs are not final detections. Boxes are normalized
+`(cx, cy, w, h)` values and class scores are logits. Apply a sigmoid to the
+scores, convert each box to corners, and scale x by the original image width
+and y by its height. Class index `i` is COCO category ID `i`; RF-DETR keeps all
+91 original COCO slots, 11 of which are unused.
 
 ## Available builds
 
