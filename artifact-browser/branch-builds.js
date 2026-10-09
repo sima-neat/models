@@ -56,7 +56,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     }
     for (const run of components.values()) {
       const component = run.metadata?.component_id || "model";
-      const catalogBuild = definition.builds?.find((build) => build.run_id === run.id)
+      const exactBuild = definition.builds?.find((build) => build.run_id === run.id);
+      const catalogBuild = exactBuild
         || definition.builds?.find((build) => (build.build_profile_id || build.variant_id) === group.profile
           && (build.component_id || "model") === component);
       model.builds.push({
@@ -65,7 +66,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
         build_profile_id: group.profile,
         component_id: component,
         artifact_suffix: catalogBuild?.artifact_suffix,
-        validation_fingerprint: catalogBuild?.validation_fingerprint,
+        // The accuracy key names the MPKs it measured, so only the catalog build of this run carries it.
+        validation_fingerprint: exactBuild?.validation_fingerprint,
         toolchain_name: run.toolchain_name,
         toolchain_version: run.toolchain_version,
         target_platform: run.target_platform,

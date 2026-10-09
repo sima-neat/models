@@ -113,7 +113,9 @@ measurements. The model browser reads performance results with
 absent metrics unavailable. A failure keeps its workflow evidence and is not
 published as a successful measurement. Performance and accuracy publish on
 their own outcomes: when one stage fails, the other's result is still
-published, and the next push reruns only the stage that has no run.
+published, and the next push reruns only the stage that has no run. A
+dispatched run stops before measuring when its branch has since changed the
+tooling the stage keys hash; the newer push measures that build instead.
 
 Because the performance stage has its own key, editing `performance.py`, a
 `benchmark` entry, or the DevKit runtime pin remeasures performance from the

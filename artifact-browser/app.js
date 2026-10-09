@@ -272,8 +272,10 @@ async function devkitAccuracy(accuracyKey) {
   }
 }
 
-function catalogBuildForRun(runId) {
-  return state.models.flatMap((model) => model.builds || []).find((build) => build.run_id === runId);
+// History mode lists runs without a catalog, so the key comes from the catalog at the run's revision.
+async function accuracyKeyForRun(run) {
+  const model = state.catalogMode === "runs" ? await loadHistoricalCatalogModel(run) : catalogModelForRun(run);
+  return model?.builds?.find((build) => build.run_id === run.id)?.validation_fingerprint;
 }
 
 async function apiText(path) {
@@ -998,7 +1000,7 @@ async function selectRun(runId, { updateUrl = true } = {}) {
     if (!detail) {
       const packageRun = catalogRun && fullPackageForRun(catalogRun);
       requestedPackageId = packageRun?.run_id || null;
-      const [summary, provenance, tests, metrics, benchmark, accuracy, devkit, packageSummary] = await Promise.all([
+      const [summary, provenance, tests, metrics, benchmark, accuracy, packageSummary] = await Promise.all([
         api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
         api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
         api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
@@ -1009,13 +1011,15 @@ async function selectRun(runId, { updateUrl = true } = {}) {
           if (error.status === 404) return null;
           throw error;
         }),
-        devkitAccuracy(catalogBuildForRun(runId)?.validation_fingerprint),
         packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : Promise.resolve(null),
       ]);
-      // Builds measured before accuracy became its own run carry it on the benchmark run.
-      const benchmarkTests = benchmark?.benchmark_run?.id
-        ? await api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
-        : null;
+      const [benchmarkTests, devkit] = await Promise.all([
+        // Builds measured before accuracy became its own run carry it on the benchmark run.
+        benchmark?.benchmark_run?.id
+          ? api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
+          : null,
+        accuracyKeyForRun(summary.run).then(devkitAccuracy),
+      ]);
       detail = { summary, provenance, tests, metrics, benchmark, benchmarkTests, accuracy, devkit, packageSummary };
       state.detailCache.set(runId, detail);
     }

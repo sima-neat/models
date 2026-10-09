@@ -1,7 +1,12 @@
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
+from model_registry.stages import ACCURACY_TOOLING, PERFORMANCE_TOOLING
 
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Benchmarking.yml"
@@ -408,3 +413,32 @@ def test_cleanup_removes_input_and_both_evidence_artifacts() -> None:
     )
     for prefix in ("benchmark-input-", "benchmark-", "accuracy-"):
         assert f"{prefix}$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" in script
+
+
+def test_board_runs_require_the_measured_revisions_tooling(tmp_path) -> None:
+    stage = load_workflow()["jobs"]["stage-dispatched-benchmark"]
+    guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
+    assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
+    source = tmp_path / "_source"
+    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING}:
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, source / relative)
+    python_bin = tmp_path / "bin"
+    python_bin.mkdir()
+    # The CI step's `python` is the one with model-registry installed.
+    (python_bin / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    (python_bin / "python").chmod(0o755)
+    env = {**os.environ, "PATH": f"{python_bin}{os.pathsep}{os.environ['PATH']}"}
+
+    def check() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [ROOT / "scripts" / "require_source_board_tooling.sh", source],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+        )
+
+    assert check().returncode == 0
+    changed = source / "tools" / "model_registry" / "benchmark_publication.py"
+    changed.write_text(changed.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
+    result = check()
+    assert result.returncode != 0
+    assert "tools/model_registry/benchmark_publication.py" in result.stderr

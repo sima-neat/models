@@ -752,7 +752,13 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
-    assert "devkitAccuracy(catalogBuildForRun(runId)?.validation_fingerprint)" in script
+    assert "accuracyKeyForRun(summary.run).then(devkitAccuracy)" in script
+    # History mode has no catalog loaded, so the key comes from the catalog at the run's own revision.
+    assert (
+        'state.catalogMode === "runs" ? await loadHistoricalCatalogModel(run) : catalogModelForRun(run)'
+        in script
+    )
+    assert "model?.builds?.find((build) => build.run_id === run.id)?.validation_fingerprint" in script
     assert 'run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1"' in script
     assert "return await api(`/v1/runs/${run.id}/accuracy/latest`)" in script
     assert "api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`)" in script
@@ -961,7 +967,8 @@ const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1
              run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
   {run_id: 'stale-backbone', build_profile_id: 'modalix_int8_bf16', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
-  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16'},
+  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16',
+   validation_fingerprint: 'stale-accuracy-key'},
 ]},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
 const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
@@ -975,6 +982,12 @@ assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
 assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
 assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_int8', 'transformer_bf16']);
 assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
+// A profile/component fallback supplies static metadata, never another build's accuracy key.
+assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
+const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'modalix_int8_bf16',
+  component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];
+assert.deepEqual(branchModels(current, [], matched)[0].builds.map(build => build.validation_fingerprint),
+                 [undefined, 'accuracy-key']);
 assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
 assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
                  ['old-backbone', 'old-transformer']);
