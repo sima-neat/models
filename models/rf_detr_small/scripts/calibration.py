@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+IMAGE_SIZE = 512
+FEATURE_SIZE = IMAGE_SIZE // 16
+QUERY_COUNT = 300
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)[:, None, None]
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)[:, None, None]
@@ -72,7 +75,7 @@ def _image_bytes(dataset: Path, names: Sequence[str]) -> Iterator[bytes]:
 
 def preprocess_image(content: bytes) -> np.ndarray:
     with Image.open(io.BytesIO(content)) as image:
-        resized = image.convert("RGB").resize((512, 512), Image.Resampling.BILINEAR)
+        resized = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
         array = np.asarray(resized, dtype=np.float32).transpose(2, 0, 1) / 255.0
     return (array - MEAN) / STD
 
@@ -89,7 +92,7 @@ def to_afe_layout(array: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
-def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = 300) -> np.ndarray:
+def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY_COUNT) -> np.ndarray:
     if scores.ndim != 2 or boxes.ndim != 3 or boxes.shape[2] != 4:
         raise ValueError(f"unexpected proposal shapes: scores={scores.shape}, boxes={boxes.shape}")
     if scores.shape != boxes.shape[:2]:
@@ -103,9 +106,9 @@ def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = 300) 
 
 
 def normalize_features(feature: np.ndarray) -> np.ndarray:
-    if feature.shape == (1, 32, 32, 256):
+    if feature.shape == (1, FEATURE_SIZE, FEATURE_SIZE, 256):
         return feature.transpose(0, 3, 1, 2)
-    if feature.shape != (1, 256, 32, 32):
+    if feature.shape != (1, 256, FEATURE_SIZE, FEATURE_SIZE):
         raise RuntimeError(f"unexpected backbone feature shape: {feature.shape}")
     return feature
 

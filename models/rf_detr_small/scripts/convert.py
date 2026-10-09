@@ -18,11 +18,19 @@ from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
-INTERFACE = {"input": [1, 3, 512, 512], "dets": [1, 300, 4], "labels": [1, 300, 91]}
+IMAGE_SIZE = 512
+# The backbone emits one feature-map cell per 16x16 patch, and the encoder scores one proposal per cell.
+FEATURE_SIZE = IMAGE_SIZE // 16
+PROPOSAL_COUNT = FEATURE_SIZE * FEATURE_SIZE
+QUERY_COUNT = 300
+CLASS_COUNT = 91
+INTERFACE = {
+    "input": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
+    "dets": [1, QUERY_COUNT, 4],
+    "labels": [1, QUERY_COUNT, CLASS_COUNT],
+}
 OUTPUTS = ("dets", "labels")
 SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json", "preprocessor_config.json"])
-PROPOSALS = 1024
-QUERIES = 300
 # Synthetic inputs tried until PyTorch and ONNX Runtime select the same proposals in the same order.
 SEEDS = range(123, 133)
 
@@ -74,7 +82,7 @@ def compare_selection(expected_scores, actual_scores, actual_indices):
     boxes. Only such swaps are allowed; the caller then retries with another input.
     """
     np.testing.assert_allclose(actual_scores, expected_scores, rtol=1e-3, atol=1e-3, err_msg="proposal scores")
-    expected_indices = np.argsort(-expected_scores, axis=1, kind="stable")[:, :QUERIES]
+    expected_indices = np.argsort(-expected_scores, axis=1, kind="stable")[:, :QUERY_COUNT]
     swapped = expected_indices != actual_indices
     gaps = np.abs(
         np.take_along_axis(actual_scores, expected_indices, 1) - np.take_along_axis(actual_scores, actual_indices, 1)
@@ -138,7 +146,9 @@ def convert(source, output_dir):
             return result.pred_boxes, result.logits
 
     def synthetic(seed):
-        image = Image.fromarray(np.random.RandomState(seed).randint(0, 256, (512, 512, 3), dtype=np.uint8))
+        image = Image.fromarray(
+            np.random.RandomState(seed).randint(0, 256, (IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
+        )
         return processor(images=image, return_tensors="pt")["pixel_values"]
 
     reference = Wrapper(detector).cpu().float().eval()
@@ -148,8 +158,9 @@ def convert(source, output_dir):
         raise ValueError("Expected one positional-encoding module")
     module = embeddings[0]
     with torch.no_grad():
-        dummy = torch.zeros(1, 1025, module.position_embeddings.shape[-1])
-        fixed = module.interpolate_pos_encoding(dummy, 512, 512)
+        # One token per patch plus the class token.
+        dummy = torch.zeros(1, FEATURE_SIZE * FEATURE_SIZE + 1, module.position_embeddings.shape[-1])
+        fixed = module.interpolate_pos_encoding(dummy, IMAGE_SIZE, IMAGE_SIZE)
     module.register_buffer("fixed_position_encoding", fixed.detach().clone())
     module.interpolate_pos_encoding = types.MethodType(lambda self, *args: self.fixed_position_encoding, module)
     with torch.inference_mode():
@@ -168,7 +179,7 @@ def convert(source, output_dir):
     scores = []
 
     def capture_scores(_module, _inputs, value):
-        if value.shape[1] == PROPOSALS:
+        if value.shape[1] == PROPOSAL_COUNT:
             scores.append(value.detach().amax(-1).numpy())
 
     detector.model.enc_out_class_embed[0].register_forward_hook(capture_scores)
