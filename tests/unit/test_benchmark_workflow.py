@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Benchmarking.yml"
 MEASURE_PERFORMANCE = "${{ contains(format(',{0},', inputs.stages), ',performance,') }}"
 MEASURE_ACCURACY = "${{ contains(format(',{0},', inputs.stages), ',accuracy,') }}"
-PUBLISH_PERFORMANCE = "contains(format(',{0},', inputs.stages), ',performance,')"
-PUBLISH_ACCURACY = "contains(format(',{0},', inputs.stages), ',accuracy,')"
+PUBLISH_PERFORMANCE = "${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}"
+PUBLISH_ACCURACY = "${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}"
 # Model code from the source revision runs only through these steps' scripts.
 MODEL_CODE_MARKERS = ("scripts/run_model_performance.sh", "scripts/run_model_accuracy.sh", "pip install _source")
 
@@ -174,7 +174,9 @@ def test_devkit_stages_run_only_when_requested() -> None:
     assert benchmark["env"]["MEASURE_PERFORMANCE"] == MEASURE_PERFORMANCE
     assert benchmark["env"]["MEASURE_ACCURACY"] == MEASURE_ACCURACY
     performance = step(steps, "Measure performance on DevKit")
-    assert performance["if"] == "env.MEASURE_PERFORMANCE == 'true'"
+    assert performance["if"] == (
+        "${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}"
+    )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark '
         '"$COMPONENT_IDS"'
@@ -184,7 +186,10 @@ def test_devkit_stages_run_only_when_requested() -> None:
     assert performance_evidence["with"]["name"] == f"benchmark-{artifact_suffix}"
 
     accuracy = step(steps, "Measure accuracy on DevKit")
-    assert accuracy["if"] == "env.MEASURE_ACCURACY == 'true'"
+    assert accuracy["if"] == (
+        "${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' "
+        "&& env.MEASURE_ACCURACY == 'true' }}"
+    )
     assert accuracy["run"] == (
         'scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy'
     )
@@ -195,6 +200,24 @@ def test_devkit_stages_run_only_when_requested() -> None:
     for name in ("Install trusted dataset tooling", "Configure dataset reader credentials",
                  "Cache the accuracy dataset on NVMe"):
         assert step(steps, name)["if"] == "env.MEASURE_ACCURACY == 'true'", name
+
+
+def test_each_devkit_stage_runs_and_publishes_on_its_own_outcome() -> None:
+    workflow = load_workflow()
+    benchmark = workflow["jobs"]["benchmark-dispatched-model"]
+    publish = workflow["jobs"]["publish-dispatched-benchmark"]
+
+    assert benchmark["outputs"] == {
+        "performance": "${{ steps.performance.outcome }}",
+        "accuracy": "${{ steps.accuracy.outcome }}",
+    }
+    # Shared setup gates both stages; a failed accuracy dataset step does not skip performance.
+    assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
+        "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
+    )
+    assert "needs.benchmark-dispatched-model.result" not in publish["if"]
+    assert "needs.benchmark-dispatched-model.outputs.performance == 'success' ||" in publish["if"]
+    assert "needs.benchmark-dispatched-model.outputs.accuracy == 'success'" in publish["if"]
 
 
 def test_credentialed_devkit_steps_never_run_model_code() -> None:
@@ -378,7 +401,10 @@ def test_cleanup_removes_input_and_both_evidence_artifacts() -> None:
     cleanup = load_workflow()["jobs"]["cleanup-dispatched-benchmark-artifacts"]
     script = cleanup["steps"][0]["run"]
 
-    assert cleanup["needs"] == "publish-dispatched-benchmark"
-    assert cleanup["if"] == "always() && needs.publish-dispatched-benchmark.result == 'success'"
+    assert cleanup["needs"] == ["benchmark-dispatched-model", "publish-dispatched-benchmark"]
+    assert cleanup["if"] == (
+        "!cancelled() && needs.benchmark-dispatched-model.result == 'success' && "
+        "needs.publish-dispatched-benchmark.result == 'success'"
+    )
     for prefix in ("benchmark-input-", "benchmark-", "accuracy-"):
         assert f"{prefix}$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" in script

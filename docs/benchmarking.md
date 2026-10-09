@@ -111,7 +111,9 @@ benchmark log, a `performance/model-synthetic` test result, and the
 measurements. The model browser reads performance results with
 `schema_version` 1 through 5, shows measured values with their units, and marks
 absent metrics unavailable. A failure keeps its workflow evidence and is not
-published as a successful measurement.
+published as a successful measurement. Performance and accuracy publish on
+their own outcomes: when one stage fails, the other's result is still
+published, and the next push reruns only the stage that has no run.
 
 Because the performance stage has its own key, editing `performance.py`, a
 `benchmark` entry, or the DevKit runtime pin remeasures performance from the

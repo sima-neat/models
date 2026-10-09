@@ -289,6 +289,10 @@ jobs:
       actions: read
       contents: read
       id-token: write
+    # Each stage publishes on its own outcome, so one stage's failure does not discard the other's result.
+    outputs:
+      performance: ${{ steps.performance.outcome }}
+      accuracy: ${{ steps.accuracy.outcome }}
     env:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
@@ -325,6 +329,7 @@ jobs:
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
 
       - name: Resolve and verify benchmark runtime
+        id: runtime
         run: |
           set -euo pipefail
           runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository _source)"
@@ -369,6 +374,7 @@ jobs:
           output-env-credentials: false
 
       - name: Cache the accuracy dataset on NVMe
+        id: dataset-cache
         if: env.MEASURE_ACCURACY == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.dataset-credentials.outputs.aws-access-key-id }}
@@ -380,6 +386,9 @@ jobs:
         run: scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID"
 
       - name: Install selected Neat Core
+        id: core
+        # A failed accuracy dataset step must not stop the performance stage.
+        if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
         run: |
           set -euo pipefail
           target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
@@ -388,11 +397,15 @@ jobs:
           dpkg-query -W '*neat*'
 
       - name: Measure performance on DevKit
-        if: env.MEASURE_PERFORMANCE == 'true'
+        id: performance
+        if: ${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark "$COMPONENT_IDS"
 
       - name: Measure accuracy on DevKit
-        if: env.MEASURE_ACCURACY == 'true'
+        id: accuracy
+        if: >-
+          ${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' &&
+          env.MEASURE_ACCURACY == 'true' }}
         run: scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy
 
       - name: Retain benchmark evidence
@@ -421,10 +434,11 @@ jobs:
     name: Publish ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) benchmarks to Vulcan
     needs: [benchmark-dispatched-model, resolve-dispatched-benchmark-config]
     if: >-
-      always() &&
+      !cancelled() &&
       inputs.source_branch == github.ref_name &&
-      needs.benchmark-dispatched-model.result == 'success' &&
-      needs.resolve-dispatched-benchmark-config.result == 'success'
+      needs.resolve-dispatched-benchmark-config.result == 'success' &&
+      (needs.benchmark-dispatched-model.outputs.performance == 'success' ||
+      needs.benchmark-dispatched-model.outputs.accuracy == 'success')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
@@ -450,19 +464,19 @@ jobs:
           cache: pip
       - run: python -m pip install .
       - name: Download performance evidence
-        if: contains(format(',{0},', inputs.stages), ',performance,')
+        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}
         uses: actions/download-artifact@v7
         with:
           name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _benchmarks
       - name: Download accuracy evidence
-        if: contains(format(',{0},', inputs.stages), ',accuracy,')
+        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
         uses: actions/download-artifact@v7
         with:
           name: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _accuracy
       - name: Download the registered compilation the accuracy measured
-        if: contains(format(',{0},', inputs.stages), ',accuracy,')
+        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
         uses: actions/download-artifact@v7
         with:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
@@ -476,7 +490,7 @@ jobs:
           output-credentials: true
           output-env-credentials: false
       - name: Publish each component's performance run
-        if: contains(format(',{0},', inputs.stages), ',performance,')
+        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.benchmark-publisher-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.benchmark-publisher-credentials.outputs.aws-secret-access-key }}
@@ -514,7 +528,7 @@ jobs:
               --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           done
       - name: Publish the accuracy run
-        if: contains(format(',{0},', inputs.stages), ',accuracy,')
+        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.benchmark-publisher-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.benchmark-publisher-credentials.outputs.aws-secret-access-key }}
@@ -543,8 +557,12 @@ jobs:
 
   cleanup-dispatched-benchmark-artifacts:
     name: Clean up dispatched benchmark artifacts
-    needs: publish-dispatched-benchmark
-    if: always() && needs.publish-dispatched-benchmark.result == 'success'
+    needs: [benchmark-dispatched-model, publish-dispatched-benchmark]
+    # A failed stage keeps its evidence for diagnosis.
+    if: >-
+      !cancelled() &&
+      needs.benchmark-dispatched-model.result == 'success' &&
+      needs.publish-dispatched-benchmark.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       actions: write
