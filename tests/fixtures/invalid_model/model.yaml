@@ -47,6 +47,7 @@ packages:
     resources: []
     build_profiles: [fixture]
     composition: default
-validation: []
+fidelity: []
+accuracy: []
 benchmark: []
 maturity: experimental

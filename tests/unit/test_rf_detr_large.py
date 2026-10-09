@@ -285,7 +285,7 @@ def test_surgery_simplifies_only_the_transformer_partition() -> None:
 def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     invocation = model["build_profiles"][0]["compile_invocations"][0]
-    correctness = model["validation"][0]
+    correctness = model["fidelity"][0]
     benchmarks = model["benchmark"]
 
     assert invocation["components"] == ["backbone", "transformer"]

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from model_registry.errors import ValidationError
-from model_registry.fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
+from model_registry.fidelity_config import find_fidelity_config, validate_fidelity_result
 from model_registry.model import load_and_validate_model
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,7 +14,7 @@ MODEL_DIR = ROOT / "models" / "rf_detr_small"
 
 def _config() -> dict:
     model = load_and_validate_model(MODEL_DIR)
-    return find_recipe_fidelity_config(
+    return find_fidelity_config(
         MODEL_DIR, model, build_profile_id="modalix_int8_bf16", component_id="transformer"
     )
 
@@ -43,7 +43,7 @@ def _report(config: dict) -> dict:
 def test_fidelity_result_matches_its_declared_contract() -> None:
     config = _config()
 
-    validate_recipe_fidelity_result(config, _report(config), "fidelity.json")
+    validate_fidelity_result(config, _report(config), "fidelity.json")
 
 
 def test_diagnostic_fidelity_accepts_low_similarity() -> None:
@@ -53,7 +53,7 @@ def test_diagnostic_fidelity_accepts_low_similarity() -> None:
 
     report["metrics"][0]["normalized_rmse"] = 2.0
 
-    validate_recipe_fidelity_result(config, report, "fidelity.json")
+    validate_fidelity_result(config, report, "fidelity.json")
 
 
 def test_fidelity_result_still_requires_the_declared_samples() -> None:
@@ -62,4 +62,4 @@ def test_fidelity_result_still_requires_the_declared_samples() -> None:
     report["samples"] -= 1
 
     with pytest.raises(ValidationError, match="samples does not match"):
-        validate_recipe_fidelity_result(config, report, "fidelity.json")
+        validate_fidelity_result(config, report, "fidelity.json")

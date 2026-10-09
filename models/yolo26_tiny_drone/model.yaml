@@ -191,7 +191,8 @@ packages:
   build_profiles:
   - modalix_int8_tessellation_mla
   composition: default
-validation:
+fidelity: []
+accuracy:
 - id: multiuav_tiny_drone_accuracy
   scope:
     type: component

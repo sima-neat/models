@@ -7,8 +7,7 @@ from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from .accuracy import evaluate_accuracy, resolve_dataset
-from .accuracy_config import find_accuracy_config, find_devkit_accuracy_config, validation_components
+from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .artifact import validate_compile_outputs, verify_mpk
 from .artifact_metadata import validate_artifact_metadata
 from .catalog import (
@@ -21,8 +20,8 @@ from .catalog import (
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError
-from .fetch import Fetcher
-from .fidelity_config import find_recipe_fidelity_config
+from .fetch import Fetcher, resolve_dataset
+from .fidelity_config import find_fidelity_config
 from .model import component_for, load_and_validate_model, profile_component_for
 from .runner_approval import authorize_runner_matrix
 
@@ -30,8 +29,7 @@ AUTHOR_COMMANDS = frozenset(
     {
         "fetch",
         "fetch-calibration",
-        "fetch-accuracy-dataset",
-        "evaluate",
+        "fetch-fidelity-dataset",
         "matrix",
         "authorize-runner-matrix",
         "assemble-package",
@@ -84,35 +82,15 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     calibration.add_argument("--component", required=True, help="component within the selected build profile")
     calibration.add_argument("--json", action="store_true", dest="json_output")
 
-    accuracy_dataset = subcommands.add_parser(
-        "fetch-accuracy-dataset", help="download and verify a model's immutable correctness dataset"
+    fidelity_dataset = subcommands.add_parser(
+        "fetch-fidelity-dataset", help="download and verify the dataset a build's fidelity entry compares on"
     )
-    accuracy_dataset.add_argument("model_dir", type=Path)
-    accuracy_dataset.add_argument("--schema", type=Path)
-    accuracy_dataset.add_argument("--cache-dir", type=Path)
-    accuracy_dataset.add_argument(
-        "--build-profile", required=True, help="resolve accuracy only when its config applies"
-    )
-    accuracy_dataset.add_argument(
-        "--component", required=True, help="component evaluated by the selected build profile"
-    )
-    accuracy_dataset.add_argument("--json", action="store_true", dest="json_output")
-
-    evaluate = subcommands.add_parser("evaluate", help="run a declarative model accuracy evaluation")
-    evaluate.add_argument("model_dir", type=Path)
-    evaluate.add_argument("--build-profile", required=True)
-    evaluate.add_argument("--component", required=True)
-    evaluate.add_argument("--candidate-model", type=Path, required=True, help="saved candidate .sima graph")
-    evaluate.add_argument("--reference-model", type=Path, help="verified ONNX source; fetched when omitted")
-    evaluate.add_argument("--dataset", type=Path, help="verified dataset archive; resolved when omitted")
-    evaluate.add_argument("--dataset-cache-dir", type=Path)
-    evaluate.add_argument("--model-cache-dir", type=Path)
-    evaluate.add_argument("--test-id")
-    evaluate.add_argument("--profile", default="regular")
-    evaluate.add_argument("--samples", type=int)
-    evaluate.add_argument("--workers", type=int)
-    evaluate.add_argument("--output", type=Path, required=True)
-    evaluate.add_argument("--json", action="store_true", dest="json_output")
+    fidelity_dataset.add_argument("model_dir", type=Path)
+    fidelity_dataset.add_argument("--schema", type=Path)
+    fidelity_dataset.add_argument("--cache-dir", type=Path)
+    fidelity_dataset.add_argument("--build-profile", required=True)
+    fidelity_dataset.add_argument("--component", required=True, help="component within the selected build profile")
+    fidelity_dataset.add_argument("--json", action="store_true", dest="json_output")
 
     matrix = subcommands.add_parser("matrix", help="emit a deterministic changed-model compilation matrix")
     matrix.add_argument("--repository", type=Path, default=Path.cwd())
@@ -437,7 +415,7 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
         }
     elif "dataset" in calibration:
         dataset = calibration["dataset"]
-        path = resolve_dataset(dataset, None, args.cache_dir)
+        path = resolve_dataset(dataset, args.cache_dir)
         result = {
             "kind": "dataset",
             "model_id": model["id"],
@@ -468,82 +446,38 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
     return 0
 
 
-def _fetch_accuracy_dataset(args: argparse.Namespace) -> int:
+def _fetch_fidelity_dataset(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     profile_component_for(model, args.build_profile, args.component)
-    selected = find_accuracy_config(
+    selected = find_fidelity_config(
         args.model_dir,
         model,
         build_profile_id=args.build_profile,
         component_id=args.component,
     )
-    if selected is None:
-        selected = find_recipe_fidelity_config(
-            args.model_dir,
-            model,
-            build_profile_id=args.build_profile,
-            component_id=args.component,
-        )
-    if selected is None:
-        result = {
-            "kind": "none",
-            "model_id": model["id"],
-            "component_id": args.component,
-            "build_profile_id": args.build_profile,
-            "path": "",
-            "sha256": "",
-            "size_bytes": 0,
-        }
-    else:
+    result = {
+        "kind": "none",
+        "model_id": model["id"],
+        "component_id": args.component,
+        "build_profile_id": args.build_profile,
+        "path": "",
+        "sha256": "",
+        "size_bytes": 0,
+    }
+    if selected is not None:
         dataset = selected["dataset"]
-        path = resolve_dataset(dataset, None, args.cache_dir)
-        result = {
-            "kind": "dataset",
-            "model_id": model["id"],
-            "component_id": args.component,
-            "build_profile_id": args.build_profile,
-            "path": str(path),
-            "sha256": dataset["sha256"],
-            "size_bytes": dataset["size_bytes"],
-        }
+        result.update(
+            kind="dataset",
+            path=str(resolve_dataset(dataset, args.cache_dir)),
+            sha256=dataset["sha256"],
+            size_bytes=dataset["size_bytes"],
+        )
     if args.json_output:
         print(json.dumps(result, sort_keys=True))
     elif result["path"]:
-        print(f"Verified accuracy dataset: {result['path']}")
+        print(f"Verified fidelity dataset: {result['path']}")
     else:
-        print(f"No applicable executable accuracy dataset configured: {result['model_id']}")
-    return 0
-
-
-def _evaluate(args: argparse.Namespace) -> int:
-    report = evaluate_accuracy(
-        args.model_dir,
-        args.build_profile,
-        args.component,
-        args.candidate_model,
-        reference_model=args.reference_model,
-        dataset_path=args.dataset,
-        dataset_cache_dir=args.dataset_cache_dir,
-        model_cache_dir=args.model_cache_dir,
-        test_id=args.test_id,
-        profile_name=args.profile,
-        sample_count=args.samples,
-        workers=args.workers,
-    )
-    output = args.output.expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    if args.json_output:
-        print(json.dumps(report, sort_keys=True))
-    else:
-        samples = report["dataset"]
-        candidate = report["metrics"]["candidate"]
-        print(
-            f"Accuracy {report['model']['id']}/{report['model']['build_profile_id']}/"
-            f"{report['model']['component_id']}: "
-            f"samples={samples['evaluated_samples']}/{samples['available_samples']} "
-            f"top1={candidate['top1_accuracy']:.4f} output={output}"
-        )
+        print(f"No fidelity entry applies: {result['model_id']}")
     return 0
 
 
@@ -834,10 +768,10 @@ def _resolve_devkit_accuracy(args: argparse.Namespace) -> int:
             "kind": "dataset",
             "model_id": model["id"],
             "build_profile_id": args.build_profile,
-            "validation_id": entry["id"],
+            "accuracy_id": entry["id"],
             "result_component": entry["result_component"],
-            "components": validation_components(model, entry),
-            "path": str(resolve_dataset(entry["dataset"], None, args.cache_dir)),
+            "components": accuracy_components(model, entry),
+            "path": str(resolve_dataset(entry["dataset"], args.cache_dir)),
             "sha256": entry["dataset"]["sha256"],
             "size_bytes": entry["dataset"]["size_bytes"],
         }
@@ -921,10 +855,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _fetch(args)
         if args.command == "fetch-calibration":
             return _fetch_calibration(args)
-        if args.command == "fetch-accuracy-dataset":
-            return _fetch_accuracy_dataset(args)
-        if args.command == "evaluate":
-            return _evaluate(args)
+        if args.command == "fetch-fidelity-dataset":
+            return _fetch_fidelity_dataset(args)
         if args.command == "matrix":
             return _matrix(args)
         if args.command == "authorize-runner-matrix":

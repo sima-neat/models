@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from model_registry.catalog import (
-    _compile_consumed_validation,
+    _compile_consumed_fidelity,
     benchmark_fingerprint,
     build_matrix,
     compile_invocation_fingerprint,
@@ -379,7 +379,7 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(cat
     assert _fingerprint(catalog_repository, "alpha", "2.1.4") != dependency_changed
 
 
-def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
+def test_calibrated_build_fingerprint_includes_preprocessing_but_not_registry_tooling(
     catalog_repository: Path,
 ) -> None:
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
@@ -405,12 +405,7 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
     model["build_profiles"][0]["components"][0]["calibration"] = "default"
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
-    for relative in (
-        "tools/model_registry/accuracy.py",
-        "tools/model_registry/artifact_metadata.py",
-        "tools/model_registry/accuracy_config.py",
-        "tools/model_registry/model.py",
-    ):
+    for relative in ("tools/model_registry/artifact_metadata.py", "tools/model_registry/model.py"):
         destination = catalog_repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
@@ -424,13 +419,11 @@ def test_calibrated_build_fingerprint_includes_preprocessing_and_shared_loader(
     preprocessing_changed = _fingerprint(catalog_repository, "alpha", "2.1.3")
     assert preprocessing_changed != first
 
-    metadata = catalog_repository / "tools" / "model_registry" / "artifact_metadata.py"
-    metadata.write_text(metadata.read_text(encoding="utf-8") + "\n# metadata validation change\n", encoding="utf-8")
+    # Model-owned scripts calibrate; registry tooling changes must not rebuild MPKs.
+    for relative in ("artifact_metadata.py", "model.py"):
+        tool = catalog_repository / "tools" / "model_registry" / relative
+        tool.write_text(tool.read_text(encoding="utf-8") + "\n# registry tooling change\n", encoding="utf-8")
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == preprocessing_changed
-
-    loader = catalog_repository / "tools" / "model_registry" / "accuracy.py"
-    loader.write_text(loader.read_text(encoding="utf-8") + "\n# calibration loader change\n", encoding="utf-8")
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") != preprocessing_changed
 
 
 def test_compile_invocation_fingerprint_includes_every_component_binding(
@@ -461,11 +454,10 @@ def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
     manifest = catalog_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     _declare_grouped_invocation(model)
-    model["validation"] = [{
+    model["fidelity"] = [{
         "id": "recipe_fidelity",
         "scope": {"type": "package", "package": "default"},
         "build_profiles": ["fixture"],
-        "engine": "model_recipe",
         "status": "diagnostic",
         "result_component": "model",
         "dataset": {"id": "fixture-data", "variant": "mini", "sha256": "d" * 64, "size_bytes": 1},
@@ -475,7 +467,7 @@ def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     first = compile_invocation_fingerprint(catalog_repository, "alpha", "combined", "fixture", "2.1.3")
 
-    model["validation"][0]["selection"]["samples"] = 2
+    model["fidelity"][0]["selection"]["samples"] = 2
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert compile_invocation_fingerprint(
@@ -483,30 +475,23 @@ def test_recipe_owned_correctness_inputs_invalidate_grouped_compile(
     ) != first
 
 
-def _consumed_ids(model: dict, profile: dict, components: list[str], *, include_recipe_fidelity: bool) -> list[str]:
-    consumed = _compile_consumed_validation(model, profile, components, include_recipe_fidelity=include_recipe_fidelity)
+def _consumed_ids(model: dict, profile_id: str) -> list[str]:
+    consumed = _compile_consumed_fidelity(model, profile_id)
     assert all("scope" not in entry and "build_profiles" not in entry for entry in consumed)
     return [entry["id"] for entry in consumed]
 
 
-def test_compile_consumes_only_calibration_accuracy_and_recipe_fidelity_settings() -> None:
+def test_compile_consumes_only_fidelity_settings_of_its_build_profile() -> None:
     resnet = load_and_validate_model(ROOT / "models" / "resnet_50", SCHEMA)
-    profiles = {profile["id"]: profile for profile in resnet["build_profiles"]}
-    assert _consumed_ids(resnet, profiles["modalix_int8"], ["model"], include_recipe_fidelity=False) == [
-        "imagenet_top5_smoke"
-    ]
-    assert _consumed_ids(resnet, profiles["modalix_bf16"], ["model"], include_recipe_fidelity=False) == []
+    assert _consumed_ids(resnet, "modalix_int8") == ["logits_fidelity"]
+    assert _consumed_ids(resnet, "modalix_bf16") == ["logits_fidelity"]
 
     rf_detr = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
-    profile = rf_detr["build_profiles"][0]
-    assert _consumed_ids(rf_detr, profile, ["backbone", "transformer"], include_recipe_fidelity=True) == [
-        "full_pipeline_fidelity"
-    ]
-    assert _consumed_ids(rf_detr, profile, ["backbone"], include_recipe_fidelity=False) == []
+    assert _consumed_ids(rf_detr, rf_detr["build_profiles"][0]["id"]) == ["full_pipeline_fidelity"]
 
     ssd = load_and_validate_model(ROOT / "models" / "ssd_mobilenet_v1", SCHEMA)
     for profile in ssd["build_profiles"]:
-        assert _consumed_ids(ssd, profile, ["model"], include_recipe_fidelity=True) == []
+        assert _consumed_ids(ssd, profile["id"]) == []
 
 
 def test_build_fingerprint_includes_model_local_recipe_helpers(catalog_repository: Path) -> None:
@@ -608,30 +593,6 @@ def test_benchmark_configuration_has_an_independent_fingerprint(catalog_reposito
     (model_dir / "scripts" / "performance.py").write_text("report = model.benchmark()\n")
     assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
     assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != before_script
-
-
-def test_validation_configuration_has_an_independent_fingerprint(catalog_repository: Path) -> None:
-    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["validation"] = [
-        {
-            "id": "fidelity",
-            "scope": {"type": "component", "component": "model"},
-            "build_profiles": ["fixture"],
-            "status": "diagnostic",
-        }
-    ]
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    compile_before = _fingerprint(catalog_repository, "alpha", "2.1.3")
-    validation_before = validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-    benchmark_before = benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3")
-
-    model["validation"][0]["status"] = "provisional"
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-
-    assert _fingerprint(catalog_repository, "alpha", "2.1.3") == compile_before
-    assert benchmark_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") == benchmark_before
-    assert validation_fingerprint(catalog_repository, "alpha", "model", "fixture", "2.1.3") != validation_before
 
 
 def test_matrix_records_changed_benchmark_configuration_fingerprint(catalog_repository: Path) -> None:
@@ -769,32 +730,9 @@ def test_semantic_plan_selects_benchmark_without_compile(catalog_repository: Pat
     ]
 
 
-def test_semantic_plan_selects_validation_without_compile(catalog_repository: Path) -> None:
-    manifest = catalog_repository / "models" / "alpha" / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["validation"] = [{
-        "id": "fidelity",
-        "scope": {"type": "component", "component": "model"},
-        "build_profiles": ["fixture"],
-        "status": "diagnostic",
-    }]
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    base = _initialize_repository(catalog_repository)
-    model["validation"][0]["status"] = "provisional"
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    head = _commit(catalog_repository, "validation")
-
-    plan = semantic_change_plan(catalog_repository, base, head, compiler_version=COMPILER_VERSION)
-
-    assert plan["include"] == []
-    assert [(item["model_id"], item["component_id"]) for item in plan["validation_include"]] == [
-        ("alpha", "model")
-    ]
-
-
 def _declare_devkit_accuracy(manifest: Path, status: str) -> None:
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["validation"] = [{
+    model["accuracy"] = [{
         "id": "devkit_accuracy",
         "scope": {"type": "component", "component": "model"},
         "build_profiles": ["fixture"],

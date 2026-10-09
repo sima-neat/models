@@ -5,12 +5,14 @@ import json
 import os
 import shutil
 import ssl
+import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
 from http.client import HTTPException
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -232,3 +234,39 @@ def urlsplit_hostname(url: str) -> str:
     from urllib.parse import urlsplit
 
     return (urlsplit(url).hostname or "").lower()
+
+
+def _verify_dataset(path: Path, dataset: dict[str, Any]) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise FetchError(f"dataset does not exist: {resolved}")
+    digest, size = sha256_file(resolved)
+    if size != int(dataset["size_bytes"]):
+        raise FetchError(f"dataset size mismatch: expected {dataset['size_bytes']}, found {size}")
+    if digest != dataset["sha256"]:
+        raise FetchError(f"dataset SHA-256 mismatch: expected {dataset['sha256']}, found {digest}")
+    return resolved
+
+
+def resolve_dataset(dataset: dict[str, Any], cache_dir: Path | None = None) -> Path:
+    """Resolve a declared dataset archive through dataset-registry and verify its size and digest."""
+    executable = shutil.which("dataset-registry")
+    installed_script = Path(sys.executable).resolve().with_name("dataset-registry")
+    if executable is not None:
+        command = [executable]
+    elif installed_script.is_file():
+        command = [str(installed_script)]
+    else:
+        command = [sys.executable, "-m", "dataset_registry"]
+    command += ["resolve", str(dataset["id"]), "--variant", str(dataset["variant"])]
+    if cache_dir is not None:
+        command += ["--cache-dir", str(cache_dir.expanduser().resolve())]
+    try:
+        completed = subprocess.run(command, check=True, text=True, capture_output=True)
+        path = Path(json.loads(completed.stdout)["path"])
+    except FileNotFoundError as exc:
+        raise FetchError("dataset-registry is required to resolve the configured dataset") from exc
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise FetchError(f"dataset-registry resolution failed: {detail.strip()}") from exc
+    return _verify_dataset(path, dataset)

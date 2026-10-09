@@ -13,7 +13,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import find_devkit_accuracy_config, validation_components
+from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .errors import ValidationError
 from .model import ACCURACY_SCRIPT, load_and_validate_model
 
@@ -68,7 +68,7 @@ def build_accuracy_result(
         raise ValidationError(f"accuracy script did not measure required metrics: {', '.join(sorted(missing))}")
 
     manifests = {}
-    for component_id in validation_components(model, entry):
+    for component_id in accuracy_components(model, entry):
         manifest_path = Path(result_root) / component_id / "performance-test.json"
         try:
             manifests[component_id] = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -133,7 +133,7 @@ def check_accuracy_result(
     for field, value in expected.items():
         if actual[field] != value:
             raise ValidationError(f"accuracy result {field} {actual[field]!r} does not match {value!r}")
-    components = validation_components(model, entry)
+    components = accuracy_components(model, entry)
     if report["model"]["artifacts"] != {component_id: artifacts.get(component_id) for component_id in components}:
         raise ValidationError("accuracy result did not measure the benchmarked MPKs")
     missing = set(entry.get("required_metrics", ())) - set(report["metrics"])

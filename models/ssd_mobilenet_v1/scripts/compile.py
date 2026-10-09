@@ -225,7 +225,7 @@ def validate_quantization(loaded: Any, quantized: Any, validation: np.ndarray, I
 
 def enforce_quantization_quality(report: dict[str, Any], precision: str) -> dict[str, Any]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    specification = next(entry for entry in metadata["validation"] if entry["id"] == "coco_val2017_quantization")
+    specification = next(entry for entry in metadata["accuracy"] if entry["id"] == "coco_val2017_quantization")
     try:
         thresholds = specification["compiler_raw_head_thresholds"][precision]
         minimum_cosine = float(thresholds["minimum_cosine_similarity"])

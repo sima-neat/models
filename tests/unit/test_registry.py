@@ -6,6 +6,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import yaml
 from model_registry.catalog import build_matrix, component_build_fingerprint, discover_catalog
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
@@ -223,44 +224,13 @@ def _packaged_result(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    # resnet_50 declares fidelity for every build profile, so publication requires its report.
+    _add_fidelity_result(dist)
     return dist
 
 
-def _add_accuracy_result(dist: Path) -> Path:
-    path = dist / "resnet_50" / "modalix_bf16" / "model" / "accuracy.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "report_scope": "sampled_accuracy_smoke",
-                "model": {
-                    "id": "resnet_50",
-                    "build_profile_id": "modalix_bf16",
-                    "component_id": "model",
-                    "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
-                },
-                "dataset": {
-                    "id": "imagenet-2012",
-                    "variant": "mini",
-                    "split": "validation",
-                    "sha256": "d" * 64,
-                    "evaluated_samples": 500,
-                    "available_samples": 5000,
-                },
-                "evaluation": {"profile": "regular", "status": "provisional"},
-                "metrics": {
-                    "candidate": {"top1_accuracy": 0.762, "top5_accuracy": 0.934},
-                    "reference": {"top1_accuracy": 0.798, "top5_accuracy": 0.95},
-                    "comparison": {"top1_agreement": 0.886, "top1_delta": -0.036, "top5_delta": -0.016},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
 def _add_fidelity_result(dist: Path) -> Path:
+    config = yaml.safe_load((ROOT / "models" / "resnet_50" / "model.yaml").read_text(encoding="utf-8"))["fidelity"][0]
     path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
     path.write_text(
         json.dumps(
@@ -270,15 +240,10 @@ def _add_fidelity_result(dist: Path) -> Path:
                 "build_profile_id": "modalix_bf16",
                 "component_id": "model",
                 "scope": "component",
-                "status": "provisional",
-                "dataset": {"id": "imagenet-2012", "variant": "mini", "sha256": "d" * 64},
-                "selection": {
-                    "method": "seeded_random_without_replacement",
-                    "seed": 42,
-                    "offset": 0,
-                    "samples": 4,
-                },
-                "samples": 4,
+                "status": config["status"],
+                "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
+                "selection": config["selection"],
+                "samples": config["selection"]["samples"],
                 "metrics": [
                     {
                         "name": "logits",
@@ -403,6 +368,9 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
         "/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/mpk",
         "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/compile/mpk-validation",
+        "/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/numerical-fidelity",
+        "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/correctness/numerical-fidelity",
+        "/v1/runs/00000000-0000-4000-8000-000000000001/measurements/batch",
         "/v1/runs/00000000-0000-4000-8000-000000000001/finalize",
     ]
     create = calls[0][2]
@@ -484,70 +452,9 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     }]
 
 
-def test_publish_attaches_accuracy_artifact_test_result_and_measurements(tmp_path: Path) -> None:
-    dist = _packaged_result(tmp_path)
-    accuracy_path = _add_accuracy_result(dist)
-    calls: list[tuple[str, str, dict | None, str]] = []
-
-    def request(method: str, path: str, body: dict | None, key: str) -> dict:
-        calls.append((method, path, body, key))
-        if path == "/v1/runs":
-            return {"run_id": "00000000-0000-4000-8000-000000000001"}
-        if path.endswith("/artifacts/accuracy-result"):
-            return {"artifact_id": "00000000-0000-4000-8000-000000000002"}
-        return {"ok": True}
-
-    store = FakeStore()
-    result = publish_compilations(
-        repository=ROOT,
-        dist_dir=dist,
-        api_url="https://registry.example.invalid",
-        aws_region="us-west-2",
-        bucket="artifacts",
-        kms_key_id=None,
-        environment="staging",
-        branch="develop",
-        git_sha="a" * 40,
-        github_run_id="1234",
-        github_run_attempt="1",
-        github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
-        request=request,
-        artifact_store=store,
-    )
-
-    run_id = "00000000-0000-4000-8000-000000000001"
-    endpoints = [path for _, path, _, _ in calls]
-    assert f"/v1/runs/{run_id}/artifacts/accuracy-result" in endpoints
-    assert f"/v1/runs/{run_id}/test-results/accuracy/sampled_accuracy_smoke" in endpoints
-    assert f"/v1/runs/{run_id}/measurements/batch" in endpoints
-    assert endpoints.index(f"/v1/runs/{run_id}/measurements/batch") < endpoints.index(f"/v1/runs/{run_id}/finalize")
-    artifact_call = next(body for _, path, body, _ in calls if path.endswith("/artifacts/accuracy-result"))
-    assert artifact_call is not None
-    assert artifact_call["metadata"]["evaluated_samples"] == 500
-    assert artifact_call["metadata"]["candidate_top1_accuracy"] == 0.762
-    test_call = next(body for _, path, body, _ in calls if "/test-results/accuracy/" in path)
-    assert test_call is not None
-    assert test_call["report_artifact_id"] == "00000000-0000-4000-8000-000000000002"
-    measurement_call = next(body for _, path, body, _ in calls if path.endswith("/measurements/batch"))
-    assert measurement_call is not None
-    assert {item["name"] for item in measurement_call["measurements"]} == {
-        "model.accuracy.candidate.top1",
-        "model.accuracy.candidate.top5",
-        "model.accuracy.reference.top1",
-        "model.accuracy.reference.top5",
-        "model.accuracy.top1_agreement",
-        "model.accuracy.top1_delta",
-        "model.accuracy.top5_delta",
-    }
-    assert all(item["sample_count"] == 500 for item in measurement_call["measurements"])
-    assert result["runs"][0]["accuracy"]["evaluated_samples"] == 500
-    assert store.objects[1][0] == accuracy_path
-    assert store.objects[1][3] == "application/json"
-
-
 def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
-    fidelity_path = _add_fidelity_result(dist)
+    fidelity_path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -593,14 +500,14 @@ def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
         measurement for measurement in measurements if measurement["name"] == "model.fidelity.max_absolute_error"
     )
     assert maximum["aggregation"] == "max"
-    assert result["runs"][0]["fidelity"]["samples"] == 4
+    assert result["runs"][0]["fidelity"]["samples"] == 50
     assert store.objects[1][0] == fidelity_path
     assert store.objects[1][3] == "application/json"
 
 
 def test_publish_preflights_all_evidence_before_external_writes(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
-    fidelity_path = _add_fidelity_result(dist)
+    fidelity_path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
     fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
     fidelity["unexpected"] = True
     fidelity_path.write_text(json.dumps(fidelity), encoding="utf-8")

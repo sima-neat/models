@@ -432,7 +432,7 @@ def compile_model(
     calibration_samples = int(bindings["backbone"]["calibration_samples"])
     transformer_samples = int(bindings["transformer"]["calibration_samples"])
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    fidelity_config = next(entry for entry in metadata["validation"] if entry["id"] == "full_pipeline_fidelity")
+    fidelity_config = next(entry for entry in metadata["fidelity"] if entry["id"] == "full_pipeline_fidelity")
     selection = fidelity_config["selection"]
     if transformer_samples != calibration_samples:
         raise ValueError("backbone and transformer must use the same calibration sample count")

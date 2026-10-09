@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Compile the pinned ResNet-50 ONNX source into a Modalix MPK."""
+"""Compile the pinned ResNet-50 ONNX source into a Modalix MPK and measure its numerical fidelity."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import onnxruntime as ort
 import yaml
 from afe.apis.defines import (
     CalibrationMethod,
+    InputName,
     QuantizationParams,
     bfloat16_scheme,
     gen2_target,
@@ -22,30 +25,34 @@ from afe.apis.model import Model as AfeModel
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
-from model_registry.accuracy import load_calibration_samples
+from calibration import calibration_samples, fidelity_names, preprocess_image, read_images
 from sima_utils.data.data_generator import DataGenerator
 
 LOG = logging.getLogger("resnet_50.compile")
 MODEL_DIR = Path(__file__).resolve().parents[1]
+MODEL_ID = "resnet_50"
+COMPONENT_ID = "model"
 
 
-def _variant(variant_id: str) -> dict[str, Any]:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+def _metadata() -> dict[str, Any]:
+    return yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+
+
+def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:
     matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one build profile named {variant_id!r}")
     profile = matches[0]
-    binding = next(item for item in profile["components"] if item["id"] == "model")
+    binding = next(item for item in profile["components"] if item["id"] == COMPONENT_ID)
     return {**profile, "parameters": binding["parameters"]}
 
 
-def compile_model(
-    source: Path,
-    output_dir: Path,
-    variant_id: str,
-    dataset: Path | None = None,
-) -> Path:
-    variant = _variant(variant_id)
+def _fidelity_config(metadata: dict[str, Any], variant_id: str) -> dict[str, Any] | None:
+    return next((item for item in metadata["fidelity"] if variant_id in item["build_profiles"]), None)
+
+
+def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
+    variant = _variant(_metadata(), variant_id)
     parameters = variant["parameters"]
     precision = str(parameters.get("precision"))
     if variant["target"] != "modalix" or precision not in {"bf16", "int8"}:
@@ -56,16 +63,16 @@ def compile_model(
     if input_shape != (1, 3, 224, 224):
         raise ValueError(f"unsupported ResNet-50 input shape: {input_shape}")
 
-    output_dir.mkdir(parents=True, exist_ok=False)
+    component_dir.mkdir(parents=True, exist_ok=False)
     importer = onnx_source(str(source), {input_name: input_shape}, {input_name: ScalarType.float32})
     loaded = load_model(importer, target=gen2_target)
 
     if precision == "int8":
         if dataset is None:
             raise ValueError("the INT8 variant requires --dataset from dataset-registry")
-        sample_count = int(parameters.get("calibration_samples", 0))
+        sample_count = int(parameters["calibration_samples"])
         LOG.info("Loading %d representative calibration samples", sample_count)
-        samples = load_calibration_samples(MODEL_DIR, dataset, sample_count, output_layout="NHWC")
+        samples = calibration_samples(dataset, sample_count)
         activation_scheme = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
         weight_scheme = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     else:
@@ -75,7 +82,7 @@ def compile_model(
         activation_scheme = weight_scheme = bfloat16_scheme()
 
     data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
-    model_name = f"resnet_50_{variant_id}"
+    model_name = f"{MODEL_ID}_{variant_id}"
     quantized = loaded.quantize(
         data,
         QuantizationParams(
@@ -85,14 +92,67 @@ def compile_model(
         ),
         model_name=model_name,
     )
-    quantized.save(model_name=model_name, output_directory=str(output_dir))
-    saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(output_dir))
-    saved.compile(output_path=str(output_dir))
+    quantized.save(model_name=model_name, output_directory=str(component_dir))
+    saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(component_dir))
+    saved.compile(output_path=str(component_dir))
 
-    archives = sorted(output_dir.glob("*_mpk.tar.gz"))
+    archives = sorted(component_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
-        raise RuntimeError(f"expected exactly one MPK archive, found {len(archives)} in {output_dir}")
-    return archives[0]
+        raise RuntimeError(f"expected exactly one MPK archive, found {len(archives)} in {component_dir}")
+    LOG.info("Compiled MPK: %s", archives[0])
+    return saved
+
+
+def measure_fidelity(
+    source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
+) -> dict[str, Any]:
+    """Compare the quantized graph's logits with the ONNX source on the declared validation images."""
+    input_name = str(_variant(_metadata(), variant_id)["parameters"]["input_name"])
+    selection = config["selection"]
+    names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
+    images = read_images(dataset, names)
+    reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
+    totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
+    for name in names:
+        sample = preprocess_image(images[name])
+        expected = reference.run(None, {input_name: sample.transpose(2, 0, 1)[None]})[0].astype(np.float64)
+        outputs = candidate.execute(inputs={InputName(input_name): sample[None]}, use_jax=True)
+        actual = np.asarray(outputs[0], dtype=np.float64).reshape(expected.shape)
+        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
+            raise RuntimeError(f"logits for {name} contain non-finite values")
+        error = actual - expected
+        totals["count"] += expected.size
+        totals["dot"] += float(np.dot(expected.ravel(), actual.ravel()))
+        totals["expected"] += float(np.sum(expected**2))
+        totals["actual"] += float(np.sum(actual**2))
+        totals["error"] += float(np.sum(error**2))
+        totals["absolute"] += float(np.sum(np.abs(error)))
+        totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
+    count = totals["count"]
+    expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
+    norm = np.sqrt(totals["expected"] * totals["actual"])
+    return {
+        "schema_version": 1,
+        "model_id": MODEL_ID,
+        "build_profile_id": variant_id,
+        "component_id": config["result_component"],
+        "scope": "component",
+        "status": config["status"],
+        "reference": "ONNX source (ONNX Runtime)",
+        "candidate": "Quantized AFE graph (JAX execute)",
+        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
+        "selection": selection,
+        "samples": len(names),
+        "metrics": [
+            {
+                "name": "logits",
+                "cosine_similarity": float(np.clip(totals["dot"] / norm if norm else 1.0, -1.0, 1.0)),
+                "normalized_rmse": float(np.sqrt(totals["error"] / count) / expected_rms),
+                "mean_absolute_error": float(totals["absolute"] / count),
+                "max_absolute_error": totals["max"],
+            }
+        ],
+    }
 
 
 def main() -> int:
@@ -100,19 +160,31 @@ def main() -> int:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--component", required=True)
+    parser.add_argument("--compile-invocation", required=True)
     parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
+    parser.add_argument("--fidelity-dataset", type=Path, help="dataset-registry fidelity archive")
     args = parser.parse_args()
-    if args.component != "model":
-        parser.error(f"unsupported component: {args.component}")
+    if args.compile_invocation != COMPONENT_ID:
+        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
+    fidelity = _fidelity_config(_metadata(), args.build_profile)
+    if fidelity is not None and args.fidelity_dataset is None:
+        parser.error(f"{args.build_profile} declares fidelity {fidelity['id']!r}; pass --fidelity-dataset")
+    component_dir = args.output_dir.expanduser().resolve() / COMPONENT_ID
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile, dataset)
-    LOG.info("Compiled MPK: %s", archive)
+    candidate = compile_model(source, component_dir, args.build_profile, dataset)
+    if fidelity is not None:
+        LOG.info("Measuring %s on %d images", fidelity["id"], fidelity["selection"]["samples"])
+        fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
+        report = measure_fidelity(source, candidate, fidelity_dataset, fidelity, args.build_profile)
+        (component_dir / "fidelity.json").write_text(
+            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        LOG.info("Fidelity: %s", report["metrics"][0])
     return 0
 
 

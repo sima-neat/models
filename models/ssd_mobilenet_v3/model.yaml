@@ -268,7 +268,8 @@ packages:
   - modalix_int8
   - modalix_bf16
   composition: default
-validation:
+fidelity: []
+accuracy:
 - id: coco_val2017_quantization
   scope:
     type: component

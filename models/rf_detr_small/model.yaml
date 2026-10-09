@@ -202,11 +202,10 @@ packages:
   build_profiles: [modalix_int8_bf16]
   composition: default
   maturity: experimental
-validation:
+fidelity:
 - id: full_pipeline_fidelity
   scope: {type: package, package: default}
   build_profiles: [modalix_int8_bf16]
-  engine: model_recipe
   status: diagnostic
   result_component: transformer
   dataset:
@@ -220,6 +219,7 @@ validation:
     offset: 50
     samples: 50
   outputs: [dets, labels]
+accuracy:
 - id: coco_accuracy
   scope: {type: package, package: default}
   build_profiles: [modalix_int8_bf16]

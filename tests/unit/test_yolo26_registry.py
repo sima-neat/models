@@ -111,7 +111,7 @@ def test_modelsdk_output_labels_refuse_to_overwrite_an_abi_change() -> None:
 
 
 def test_registry_accuracy_gates_match_qualified_export() -> None:
-    accuracy = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["validation"][0]
+    accuracy = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["accuracy"][0]
     metrics = {item["name"]: item for item in accuracy["metrics"]}
 
     assert accuracy["status"] == "qualified_reference"

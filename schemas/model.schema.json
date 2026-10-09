@@ -7,7 +7,7 @@
   "required": [
     "schema_version", "id", "display_name", "description", "model_type", "tasks",
     "modalities", "architecture", "owners", "license", "upstream", "components", "resources",
-    "calibrations", "build_profiles", "compositions", "packages", "validation", "benchmark", "maturity"
+    "calibrations", "build_profiles", "compositions", "packages", "fidelity", "accuracy", "benchmark", "maturity"
   ],
   "properties": {
     "schema_version": {"const": 2},
@@ -38,7 +38,8 @@
         "properties": {"source": {"$ref": "#/$defs/source"}}
       }
     },
-    "validation": {"type": "array", "items": {"$ref": "#/$defs/validationEntry"}},
+    "fidelity": {"type": "array", "items": {"$ref": "#/$defs/fidelityEntry"}},
+    "accuracy": {"type": "array", "items": {"$ref": "#/$defs/accuracyEntry"}},
     "benchmark": {"type": "array", "items": {"$ref": "#/$defs/benchmarkEntry"}},
     "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
   },
@@ -339,108 +340,27 @@
     "stageEntryId": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
     "stageBuildProfiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
-    "validationEntry": {
+    "accuracyEntry": {
       "oneOf": [
-        {"$ref": "#/$defs/accuracyValidation"},
-        {"$ref": "#/$defs/recipeFidelityValidation"},
-        {"$ref": "#/$defs/devkitAccuracyValidation"},
-        {"$ref": "#/$defs/modelOwnedValidation"}
+        {"$ref": "#/$defs/devkitAccuracy"},
+        {"$ref": "#/$defs/recordedAccuracy"}
       ]
     },
-    "modelOwnedValidation": {
-      "description": "Validation settings owned and read by the model's own scripts; no shared engine runs them.",
+    "recordedAccuracy": {
+      "description": "Accuracy evidence recorded in model.yaml; no stage runs it.",
       "type": "object", "required": ["id", "scope", "build_profiles"], "not": {"required": ["engine"]},
       "properties": {
         "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
         "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"}
       }
     },
-    "accuracyValidation": {
+    "fidelityEntry": {
+      "description": "Numerical comparison of compiled outputs against the source model, computed by scripts/compile.py.",
       "type": "object", "additionalProperties": false,
-      "required": ["id", "scope", "build_profiles", "engine", "status", "task", "dataset", "profiles", "executors", "metrics"],
+      "required": ["id", "scope", "build_profiles", "status", "result_component", "dataset", "selection", "outputs"],
       "properties": {
         "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
         "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
-        "engine": {"const": "model_registry"},
-        "status": {"enum": ["ready", "provisional", "pending"]},
-        "task": {"const": "image_classification"},
-        "dataset": {"$ref": "#/$defs/accuracyDataset"},
-        "profiles": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/accuracyProfile"}},
-        "executors": {
-          "type": "object", "additionalProperties": false, "required": ["reference", "candidate"],
-          "properties": {"reference": {"$ref": "#/$defs/accuracyExecutor"}, "candidate": {"$ref": "#/$defs/accuracyExecutor"}}
-        },
-        "metrics": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/accuracyMetric"}},
-        "reporting": {
-          "type": "object", "additionalProperties": false,
-          "properties": {"required_fields": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}
-        },
-        "notes": {"type": "array", "items": {"type": "string", "minLength": 1}}
-      }
-    },
-    "accuracySplit": {
-      "type": "object", "additionalProperties": false, "required": ["prefix", "samples"],
-      "properties": {
-        "prefix": {"type": "string", "minLength": 1}, "samples": {"type": "integer", "minimum": 1},
-        "classes": {"type": "integer", "minimum": 1},
-        "label_strategy": {"enum": ["none", "lexicographic_parent_directory"]}
-      }
-    },
-    "accuracyDataset": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "variant", "sha256", "size_bytes", "loader", "splits"],
-      "properties": {
-        "id": {"$ref": "#/$defs/datasetId"}, "variant": {"$ref": "#/$defs/datasetId"},
-        "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1},
-        "loader": {
-          "type": "object", "additionalProperties": false, "required": ["type", "image_suffixes"],
-          "properties": {
-            "type": {"const": "image_classification_tar"},
-            "image_suffixes": {
-              "type": "array", "minItems": 1, "uniqueItems": true,
-              "items": {"type": "string", "pattern": "^\\.[A-Za-z0-9.]+$"}
-            }
-          }
-        },
-        "splits": {
-          "type": "object", "additionalProperties": false, "required": ["calibration", "validation"],
-          "properties": {"calibration": {"$ref": "#/$defs/accuracySplit"}, "validation": {"$ref": "#/$defs/accuracySplit"}}
-        }
-      }
-    },
-    "accuracyProfile": {
-      "type": "object", "additionalProperties": false, "required": ["report_scope", "samples", "sampling", "workers"],
-      "properties": {
-        "report_scope": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "samples": {"oneOf": [{"type": "integer", "minimum": 1}, {"const": "all"}]},
-        "sampling": {"enum": ["deterministic_evenly_spaced"]},
-        "workers": {"oneOf": [{"type": "integer", "minimum": 1}, {"const": "auto"}]},
-        "cadence": {"type": "string", "minLength": 1}
-      }
-    },
-    "accuracyExecutor": {
-      "type": "object", "additionalProperties": false, "required": ["type", "artifact", "input_layout"],
-      "properties": {
-        "type": {"enum": ["onnxruntime", "afe_sima"]}, "artifact": {"enum": ["source", "compiled_component"]},
-        "input_layout": {"enum": ["NCHW", "NHWC"]}, "use_jax": {"type": "boolean"}
-      }
-    },
-    "accuracyMetric": {
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "k"],
-          "properties": {"type": {"const": "top_k_accuracy"}, "k": {"type": "integer", "minimum": 1}}
-        },
-        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "top1_agreement"}}}
-      ]
-    },
-    "recipeFidelityValidation": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "scope", "build_profiles", "engine", "status", "result_component", "dataset", "selection", "outputs"],
-      "properties": {
-        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
-        "engine": {"const": "model_recipe"},
         "status": {"enum": ["diagnostic", "provisional", "ready"]},
         "result_component": {"$ref": "#/$defs/id"},
         "dataset": {
@@ -461,8 +381,8 @@
         "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       }
     },
-    "devkitAccuracyValidation": {
-      "description": "Task accuracy measured by the model's scripts/accuracy.py with its compiled MPKs on a DevKit, in the benchmark job.",
+    "devkitAccuracy": {
+      "description": "Task accuracy measured by the model's scripts/accuracy.py with its compiled MPKs on a DevKit.",
       "type": "object", "additionalProperties": false,
       "required": ["id", "scope", "build_profiles", "engine", "status", "result_component", "dataset", "metrics"],
       "properties": {

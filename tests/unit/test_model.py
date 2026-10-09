@@ -279,9 +279,9 @@ def test_required_benchmark_metrics_must_be_declared() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_model_owned_validation_entry_needs_no_engine() -> None:
+def test_recorded_accuracy_entry_needs_no_engine() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["validation"] = [
+    model["accuracy"] = [
         {
             "id": "owned",
             "scope": {"type": "component", "component": "model"},
@@ -290,6 +290,41 @@ def test_model_owned_validation_entry_needs_no_engine() -> None:
         }
     ]
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+def _fidelity_entry(**settings) -> dict:
+    return {
+        "id": "output_fidelity",
+        "scope": {"type": "package", "package": "default"},
+        "build_profiles": ["fixture"],
+        "status": "diagnostic",
+        "result_component": "model",
+        "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
+        "selection": {"method": "seeded_random_without_replacement", "seed": 1, "offset": 0, "samples": 2},
+        "outputs": ["output"],
+        **settings,
+    }
+
+
+def test_fidelity_entry_is_valid() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["fidelity"] = [_fidelity_entry()]
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({"scope": {"type": "component", "component": "model"}}, "fidelity requires package scope"),
+        ({"outputs": ["missing"]}, "fidelity outputs are not exposed by 'model': missing"),
+        ({"engine": "model_recipe"}, "'engine' was unexpected"),
+    ],
+)
+def test_fidelity_entry_is_validated(settings: dict, expected: str) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["fidelity"] = [_fidelity_entry(**settings)]
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def _devkit_accuracy_entry(**settings) -> dict:
@@ -310,29 +345,25 @@ def _model_with_accuracy_script(tmp_path: Path) -> tuple[Path, dict]:
     directory = tmp_path / "fixture_model"
     shutil.copytree(FIXTURES / "fixture_model", directory)
     (directory / "scripts" / "accuracy.py").write_text("score = 1.0\n", encoding="utf-8")
-    model = load_model(directory)
-    model["benchmark"] = [_benchmark_entry()]
-    return directory, model
+    return directory, load_model(directory)
 
 
 def test_devkit_accuracy_requires_its_script() -> None:
     model = load_model(FIXTURES / "fixture_model")
-    model["validation"] = [_devkit_accuracy_entry()]
+    model["accuracy"] = [_devkit_accuracy_entry()]
     with pytest.raises(ValidationError, match="referenced file does not exist.*accuracy.py"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_devkit_accuracy_requires_its_components_to_be_benchmarked(tmp_path: Path) -> None:
+def test_devkit_accuracy_needs_no_benchmark_entry(tmp_path: Path) -> None:
     directory, model = _model_with_accuracy_script(tmp_path)
-    model["benchmark"] = []
-    model["validation"] = [_devkit_accuracy_entry()]
-    with pytest.raises(ValidationError, match="needs a component benchmark entry for model/fixture"):
-        validate_model(directory, model, SCHEMA)
+    model["accuracy"] = [_devkit_accuracy_entry()]
+    validate_model(directory, model, SCHEMA)
 
 
-def test_devkit_accuracy_may_share_scope_with_another_engine(tmp_path: Path) -> None:
+def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -> None:
     directory, model = _model_with_accuracy_script(tmp_path)
-    model["validation"] = [
+    model["accuracy"] = [
         _devkit_accuracy_entry(),
         {"id": "owned", "scope": {"type": "component", "component": "model"}, "build_profiles": ["fixture"]},
     ]
@@ -356,7 +387,7 @@ def test_devkit_accuracy_may_share_scope_with_another_engine(tmp_path: Path) -> 
 )
 def test_devkit_accuracy_entry_is_validated(tmp_path: Path, entries: list[dict], expected: str) -> None:
     directory, model = _model_with_accuracy_script(tmp_path)
-    model["validation"] = entries
+    model["accuracy"] = entries
     with pytest.raises(ValidationError, match=expected):
         validate_model(directory, model, SCHEMA)
 
@@ -364,9 +395,9 @@ def test_devkit_accuracy_entry_is_validated(tmp_path: Path, entries: list[dict],
 def test_devkit_accuracy_package_must_be_compiled_in_one_invocation() -> None:
     directory = ROOT / "models" / "rf_detr_small"
     model = load_model(directory)
-    # Without grouping, each component compiles and benchmarks in its own job, which lacks the other MPK.
+    # Without grouping, each component compiles in its own job, so no job holds every MPK the script needs.
     del model["build_profiles"][0]["compile_invocations"]
-    with pytest.raises(ValidationError, match="compile invocation 'backbone' .* benchmarked without all of"):
+    with pytest.raises(ValidationError, match="must compile backbone, transformer in one compile invocation"):
         validate_model(directory, model, SCHEMA)
 
 
@@ -422,7 +453,7 @@ def test_declared_conversion_requires_its_workflow_files(tmp_path: Path, missing
         validate_model(directory, model, SCHEMA)
 
 
-@pytest.mark.parametrize("stage", ["validation", "benchmark"])
+@pytest.mark.parametrize("stage", ["accuracy", "benchmark"])
 def test_stage_entry_ids_must_be_unique(stage: str) -> None:
     model = load_model(FIXTURES / "fixture_model")
     first = _benchmark_entry() if stage == "benchmark" else {

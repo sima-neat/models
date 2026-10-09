@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import find_devkit_accuracy_config, validation_components
+from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .accuracy_result import (
     ACCURACY_RESULT_SCHEMA,
     check_accuracy_result,
@@ -179,7 +179,7 @@ def _validate_benchmark_accuracy(
         if present:
             raise ValidationError(f"{path}: {model_id} declares no DevKit accuracy for {build_profile_id}")
         return None
-    unbenchmarked = set(validation_components(model, entry)) - set(component_ids)
+    unbenchmarked = set(accuracy_components(model, entry)) - set(component_ids)
     if unbenchmarked:
         raise ValidationError(
             f"accuracy {entry['id']!r} needs benchmarked components: {', '.join(sorted(unbenchmarked))}"

@@ -6,7 +6,7 @@ from typing import Any
 from .errors import ValidationError
 
 
-def validate_recipe_fidelity_result(
+def validate_fidelity_result(
     config: dict[str, Any],
     report: dict[str, Any],
     path: str | Path,
@@ -31,7 +31,7 @@ def validate_recipe_fidelity_result(
         raise ValidationError(f"{report_path}: numerical fidelity metrics do not match configured outputs")
 
 
-def find_recipe_fidelity_config(
+def find_fidelity_config(
     model_dir: str | Path,
     model: dict[str, Any],
     *,
@@ -41,8 +41,8 @@ def find_recipe_fidelity_config(
     directory = Path(model_dir).expanduser().resolve()
     packages = {package["id"]: package for package in model["packages"]}
     matches = []
-    for entry in model["validation"]:
-        if entry.get("engine") != "model_recipe" or build_profile_id not in entry["build_profiles"]:
+    for entry in model["fidelity"]:
+        if build_profile_id not in entry["build_profiles"]:
             continue
         scope = entry["scope"]
         applies = scope == {"type": "component", "component": component_id}
@@ -54,7 +54,6 @@ def find_recipe_fidelity_config(
         return None
     if len(matches) != 1:
         raise ValidationError(
-            f"{directory}: expected exactly one model_recipe validation entry for "
-            f"{build_profile_id}/{component_id}"
+            f"{directory}: expected exactly one fidelity entry for {build_profile_id}/{component_id}"
         )
     return matches[0]

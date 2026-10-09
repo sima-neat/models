@@ -19,7 +19,6 @@ from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
-from .accuracy_result import publish_accuracy_result
 from .artifact import validate_compile_outputs, verify_mpk
 from .catalog import (
     benchmark_fingerprint,
@@ -33,7 +32,7 @@ from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
-from .fidelity_config import find_recipe_fidelity_config, validate_recipe_fidelity_result
+from .fidelity_config import find_fidelity_config, validate_fidelity_result
 from .model import compile_invocations_for, load_and_validate_model, profile_component_for
 from .source import source_identity
 from .taxonomy import (
@@ -974,68 +973,6 @@ def _component_source_media_type(source: JsonObject) -> str:
     return "application/onnx" if source.get("type") == "file" else "application/vnd.sima.source-file-set+json"
 
 
-def _accuracy_result(
-    path: Path, *, model_id: str, build_profile_id: str, component_id: str, source_sha256: str
-) -> JsonObject:
-    try:
-        report = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"{path}: could not read accuracy result: {exc}") from exc
-    if not isinstance(report, dict) or report.get("schema_version") != 1:
-        raise ValidationError(f"{path}: accuracy result schema_version must be 1")
-    model = report.get("model")
-    if not isinstance(model, dict):
-        raise ValidationError(f"{path}: accuracy result model must be an object")
-    expected_model = {
-        "id": model_id,
-        "build_profile_id": build_profile_id,
-        "component_id": component_id,
-        "source_sha256": source_sha256,
-    }
-    for field, expected in expected_model.items():
-        if model.get(field) != expected:
-            raise ValidationError(f"{path}: accuracy result model.{field} must be {expected!r}")
-
-    dataset = report.get("dataset")
-    if not isinstance(dataset, dict):
-        raise ValidationError(f"{path}: accuracy result dataset must be an object")
-    evaluated = dataset.get("evaluated_samples")
-    available = dataset.get("available_samples")
-    if not isinstance(evaluated, int) or not isinstance(available, int) or not 0 < evaluated <= available:
-        raise ValidationError(f"{path}: accuracy sample counts must satisfy 0 < evaluated_samples <= available_samples")
-    _require_sha256(dataset.get("sha256"), "accuracy dataset sha256")
-
-    evaluation = report.get("evaluation")
-    if not isinstance(evaluation, dict) or evaluation.get("status") not in {"provisional", "ready"}:
-        raise ValidationError(f"{path}: publishable accuracy evaluation status must be provisional or ready")
-    if not isinstance(evaluation.get("profile"), str) or not evaluation["profile"].strip():
-        raise ValidationError(f"{path}: accuracy evaluation profile must be a non-empty string")
-    if not isinstance(report.get("report_scope"), str) or not report["report_scope"].strip():
-        raise ValidationError(f"{path}: accuracy report_scope must be a non-empty string")
-
-    metrics = report.get("metrics")
-    if not isinstance(metrics, dict):
-        raise ValidationError(f"{path}: accuracy metrics must be an object")
-    ratio_fields = {
-        "candidate": ("top1_accuracy", "top5_accuracy"),
-        "reference": ("top1_accuracy", "top5_accuracy"),
-        "comparison": ("top1_agreement",),
-    }
-    for group, fields in ratio_fields.items():
-        values = metrics.get(group)
-        if not isinstance(values, dict):
-            raise ValidationError(f"{path}: accuracy metrics.{group} must be an object")
-        for field in fields:
-            value = values.get(field)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1:
-                raise ValidationError(f"{path}: accuracy metrics.{group}.{field} must be a ratio in 0..1")
-    for field in ("top1_delta", "top5_delta"):
-        value = metrics["comparison"].get(field)
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not -1 <= value <= 1:
-            raise ValidationError(f"{path}: accuracy metrics.comparison.{field} must be a ratio in -1..1")
-    return report
-
-
 def _fidelity_result(
     path: Path,
     schema_path: Path,
@@ -1089,7 +1026,7 @@ def _fidelity_result(
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
                 raise ValidationError(f"{path}: numerical fidelity {field} must be non-negative")
     if config is not None:
-        validate_recipe_fidelity_result(config, report, path)
+        validate_fidelity_result(config, report, path)
     return report
 
 
@@ -1263,9 +1200,8 @@ def _preflight_compilations(
             )
         if build_fingerprint != expected_build_fingerprint:
             raise ValidationError(f"{result_path}: build_fingerprint does not match semantic compile inputs")
-        accuracy_path = result_path.parent / "accuracy.json"
         fidelity_path = result_path.parent / "fidelity.json"
-        configured_fidelity = find_recipe_fidelity_config(
+        configured_fidelity = find_fidelity_config(
             root / "models" / model_id,
             model,
             build_profile_id=build_profile_id,
@@ -1278,20 +1214,6 @@ def _preflight_compilations(
                 raise ValidationError(
                     f"{result_path.parent}: configured numerical fidelity {expectation} fidelity.json"
                 )
-        accuracy_evidence = None
-        if accuracy_path.is_file():
-            accuracy = _accuracy_result(
-                accuracy_path,
-                model_id=model_id,
-                build_profile_id=build_profile_id,
-                component_id=component_id,
-                source_sha256=source_sha,
-            )
-            accuracy_evidence = {
-                "path": accuracy_path,
-                "document": accuracy,
-                "sha256": sha256_file(accuracy_path)[0],
-            }
         fidelity_evidence = None
         if fidelity_path.is_file():
             fidelity = _fidelity_result(
@@ -1326,7 +1248,6 @@ def _preflight_compilations(
                 "target": target,
                 "source_sha": source_sha,
                 "build_fingerprint": build_fingerprint,
-                "accuracy": accuracy_evidence,
                 "fidelity": fidelity_evidence,
             }
         )
@@ -1519,29 +1440,6 @@ def publish_compilations(
             },
             f"{stable_key}-validation",
         )
-        accuracy_evidence = compilation["accuracy"]
-        accuracy_publication = None
-        if accuracy_evidence is not None:
-            accuracy_path = accuracy_evidence["path"]
-            accuracy = accuracy_evidence["document"]
-            accuracy_sha = accuracy_evidence["sha256"]
-            accuracy_fingerprint = canonical_sha256(accuracy)
-            accuracy_key = (
-                f"models/{branch_key}/{commit_tag}/{model_id}/{build_profile_id}/{component_id}/accuracy/"
-                f"{accuracy_fingerprint}/accuracy-result-v{accuracy['schema_version']}.json"
-            )
-            accuracy_publication = publish_accuracy_result(
-                client,
-                store,
-                bucket=bucket,
-                run_id=run_id,
-                path=accuracy_path,
-                report=accuracy,
-                sha256=accuracy_sha,
-                fingerprint=accuracy_fingerprint,
-                object_key=accuracy_key,
-                stable_key=stable_key,
-            )
         fidelity_evidence = compilation["fidelity"]
         fidelity_publication = None
         if fidelity_evidence is not None:
@@ -1620,7 +1518,6 @@ def publish_compilations(
                 "compile_fingerprint": build_fingerprint,
                 "artifact_sha256": artifact_sha,
                 "s3_key": stored.key,
-                "accuracy": accuracy_publication,
                 "fidelity": fidelity_publication,
             }
         )

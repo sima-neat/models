@@ -38,12 +38,6 @@ MODEL_COMPILE_INPUT_PATHS = {
     ),
 }
 
-CALIBRATION_COMPILE_INPUT_PATHS = (
-    "tools/model_registry/accuracy.py",
-    "tools/model_registry/accuracy_config.py",
-    "tools/model_registry/model.py",
-)
-
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 _IGNORED_MODEL_BUILD_NAMES = {"README.md", "hero.png"}
@@ -249,10 +243,6 @@ def _component_build_input_files(
         and item.suffix in {".py", ".sh"}
         and item.relative_to(model_dir).as_posix() not in BOARD_STAGE_SCRIPTS
     )
-    profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
-    binding = next(item for item in profile["components"] if item["id"] == component["id"])
-    if binding.get("calibration") is not None:
-        candidates.extend(root / relative for relative in CALIBRATION_COMPILE_INPUT_PATHS)
     missing = sorted(path for path in candidates if not path.is_file())
     if missing:
         raise ValidationError(f"model compile input not found: {missing[0]}")
@@ -281,26 +271,14 @@ def _calibration_projection(model: dict[str, Any], binding: dict[str, Any]) -> d
         raise ValidationError(f"unknown calibration {calibration_id!r}") from exc
 
 
-def _compile_consumed_validation(
-    model: dict[str, Any], profile: dict[str, Any], component_ids: list[str], *, include_recipe_fidelity: bool
-) -> list[dict[str, Any]]:
-    """Validation entries a compile recipe reads: calibration accuracy settings and recipe fidelity."""
-    bindings = {item["id"]: item for item in profile["components"]}
-    consumed = []
-    for entry in model["validation"]:
-        if profile["id"] not in entry["build_profiles"]:
-            continue
-        component_id = entry["scope"].get("component")
-        calibrated = (
-            entry.get("engine") == "model_registry"
-            and component_id in component_ids
-            and bindings[component_id].get("calibration") is not None
-        )
-        recipe_fidelity = entry.get("engine") == "model_recipe" and entry["scope"]["type"] == "package"
-        if calibrated or (include_recipe_fidelity and recipe_fidelity):
-            # Selection already depends on scope and profiles; hash only what the recipe reads.
-            consumed.append({key: value for key, value in entry.items() if key not in {"scope", "build_profiles"}})
-    return consumed
+def _compile_consumed_fidelity(model: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    """Fidelity entries the compile recipe evaluates for a build profile."""
+    # Selection already depends on scope and profiles; hash only what the recipe reads.
+    return [
+        {key: value for key, value in entry.items() if key not in {"scope", "build_profiles"}}
+        for entry in model["fidelity"]
+        if profile_id in entry["build_profiles"]
+    ]
 
 
 def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
@@ -360,7 +338,7 @@ def component_build_fingerprint(
             "compatibility": profile.get("compatibility", {}),
             "component": _binding_compile_projection(model, component, binding),
         },
-        "validation": _compile_consumed_validation(model, profile, [component_id], include_recipe_fidelity=False),
+        "fidelity": _compile_consumed_fidelity(model, profile_id),
         "compiler_version": compiler,
     }
     digest.update(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -414,7 +392,7 @@ def compile_invocation_fingerprint(
             "target": profile["target"],
             "compatibility": profile.get("compatibility", {}),
         },
-        "validation": _compile_consumed_validation(model, profile, component_ids, include_recipe_fidelity=True),
+        "fidelity": _compile_consumed_fidelity(model, profile_id),
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -445,11 +423,11 @@ def _test_case_applies(model: dict[str, Any], case: dict[str, Any], profile_id: 
 
 def _compile_stage_validation(model: dict[str, Any]) -> list[dict[str, Any]]:
     """Validation entries evaluated with the compilation; DevKit accuracy runs with the benchmark instead."""
-    return [entry for entry in model["validation"] if entry.get("engine") != DEVKIT_ACCURACY_ENGINE]
+    return model["fidelity"]
 
 
 def _devkit_accuracy_entries(model: dict[str, Any]) -> list[dict[str, Any]]:
-    return [entry for entry in model["validation"] if entry.get("engine") == DEVKIT_ACCURACY_ENGINE]
+    return [entry for entry in model["accuracy"] if entry.get("engine") == DEVKIT_ACCURACY_ENGINE]
 
 
 def _benchmark_stage_cases(model: dict[str, Any]) -> list[dict[str, Any]]:
@@ -480,10 +458,7 @@ def validation_fingerprint(
         ),
         key=lambda item: item["id"],
     )
-    evaluator_files = {}
-    if any(entry.get("engine") == "model_registry" for entry in entries):
-        for relative in ("tools/model_registry/accuracy.py", "tools/model_registry/accuracy_config.py"):
-            evaluator_files[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+    evaluator_files: dict[str, str] = {}
     return _canonical_sha256(
         {
             "schema": VALIDATION_FINGERPRINT_SCHEMA,

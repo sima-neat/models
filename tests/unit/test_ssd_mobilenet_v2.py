@@ -334,7 +334,7 @@ def test_quantization_validation_executes_all_32_held_out_samples(monkeypatch: p
 
 
 def test_first_qualification_thresholds_are_committed_from_vulcan_evidence() -> None:
-    specification = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["validation"][0]
+    specification = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["accuracy"][0]
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert specification["compiler_raw_head_thresholds"] == {
         "int8": {
