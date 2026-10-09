@@ -125,7 +125,7 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert manifest["model"]["path"].endswith(f"/{model_id}/{build_profile_id}/{component_id}/{model_id}_mpk.tar.gz")
     assert manifest["model"]["uri"] == "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
     assert manifest["provenance"]["execution_provider"] == "github-actions-devkit-runner"
-    assert manifest["script"] == str(ROOT / "models" / model_id / "scripts" / "benchmark.py")
+    assert manifest["script"] == str(ROOT / "models" / model_id / "scripts" / "performance.py")
     assert "build" not in manifest["runtime"]["devkit"]
     assert "benchmark" not in manifest
     assert "model_options" not in manifest

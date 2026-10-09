@@ -28,7 +28,7 @@ A typical new-model change contains:
 models/<model-id>/README.md
 models/<model-id>/model.yaml              # identity, builds, validation and benchmark settings
 models/<model-id>/scripts/compile.py
-models/<model-id>/scripts/benchmark.py
+models/<model-id>/scripts/performance.py
 models/<model-id>/scripts/export.py       # only for an upstream checkpoint source
 models/<model-id>/scripts/surgery.py      # only when declared
 ```

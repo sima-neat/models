@@ -40,7 +40,7 @@ models/<model-id>/
   model.yaml                  # the only configuration file: every stage reads its section
   scripts/
     compile.py                # one recipe, optionally shared by a compile group
-    benchmark.py              # Core benchmark for a compiled MPK on a DevKit
+    performance.py            # Core benchmark for a compiled MPK on a DevKit
     export.py                 # only for an upstream checkpoint source
     surgery.py                # only for model-specific preparation
 ```

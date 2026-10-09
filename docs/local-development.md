@@ -322,12 +322,12 @@ For each qualified component/profile pair, follow this shorter sequence.
 
 ### Run on the DevKit and retain evidence
 
-Copy the exact compiled MPK and the model’s `scripts/benchmark.py` to the DevKit.
+Copy the exact compiled MPK and the model’s `scripts/performance.py` to the DevKit.
 Use the Core package selected in `deps/manifest.json`, then run:
 
 ```bash
 source ~/pyneat/bin/activate
-python models/resnet_50/scripts/benchmark.py \
+python models/resnet_50/scripts/performance.py \
   /workspace/resnet_50_mpk.tar.gz /workspace/core-benchmark.json \
   2>&1 | tee /workspace/benchmark.log
 ```

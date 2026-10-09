@@ -17,7 +17,7 @@ selection, MPK validation, checksumming, and publication remain shared.
 `model-registry` is an author-safe `sima-cli` package for local validation,
 verified input handling, variant inspection, and MPK checks. It is not a direct
 registry publishing client. Model authors compile with the model-owned
-`scripts/compile.py` and run each model’s `scripts/benchmark.py` on the DevKit; CI keeps
+`scripts/compile.py` and run each model’s `scripts/performance.py` on the DevKit; CI keeps
 the separate packaging and publication command surface.
 
 ## Local setup
@@ -61,7 +61,7 @@ The workflow first resolves the repository-wide Model Compiler pin from
 [`deps/manifest.json`](deps/manifest.json), then requests the environment label,
 `model-compiler`, and a label derived from the pin. Pins with a channel and revision
 use `model-compiler-<channel>-<revision>`, such as
-`model-compiler-develop-e94f03a8f59c`; version-only pins use
+`model-compiler-develop-455ce50808c2`; version-only pins use
 `model-compiler-<version>`. Each matrix item validates its complete output and
 uploads one GitHub Actions artifact. A GitHub-hosted job checks that artifact,
 publishes each component under an
