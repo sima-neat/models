@@ -115,7 +115,7 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
     return destination
 
 
-def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
+def rf_detr_result_set(tmp_path: Path) -> Path:
     results = tmp_path / "results"
     for component_id in ("backbone", "transformer"):
         component_tmp = tmp_path / f"tmp-{component_id}"
@@ -124,17 +124,100 @@ def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: P
         destination = results / component_id / generated.name
         destination.parent.mkdir(parents=True)
         generated.replace(destination)
+    return results
 
-    validated = validate_benchmark_set(
+
+def rf_detr_accuracy(tmp_path: Path, **model_changes: object) -> Path:
+    sha256 = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v4.json").read_text())["model"]["sha256"]
+    report = {
+        "schema_version": 2,
+        "model": {
+            "id": "rf_detr_small",
+            "build_profile_id": "modalix_int8_bf16",
+            "component_id": "transformer",
+            "package_id": "default",
+            "artifacts": {"backbone": sha256, "transformer": sha256},
+            **model_changes,
+        },
+        "validation": {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"},
+        "dataset": {
+            "id": "coco-2017",
+            "variant": "mini",
+            "split": "val2017",
+            "sha256": "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78",
+            "evaluated_samples": 5000,
+            "available_samples": 5000,
+        },
+        "metrics": {
+            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher"},
+            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher"},
+        },
+        "execution": {"core_version": "3.0.0", "script_sha256": "c" * 64, "models_commit": "a" * 40},
+    }
+    path = tmp_path / "accuracy-result-v2.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return path
+
+
+def validate_rf_detr_set(results: Path, accuracy: Path | None) -> dict:
+    return validate_benchmark_set(
         repository=ROOT,
         result_root=results,
         model_id="rf_detr_small",
         build_profile_id="modalix_int8_bf16",
         component_ids=["backbone", "transformer"],
         git_sha="a" * 40,
+        accuracy_result=accuracy,
     )
 
+
+def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
+    validated = validate_rf_detr_set(rf_detr_result_set(tmp_path), rf_detr_accuracy(tmp_path))
+
     assert validated["count"] == 2
+    assert validated["accuracy"]["component_id"] == "transformer"
+
+
+def test_rejects_rf_detr_benchmark_set_without_its_declared_accuracy(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="'coco_accuracy' is declared but its result is missing"):
+        validate_rf_detr_set(rf_detr_result_set(tmp_path), tmp_path / "missing.json")
+
+
+def test_rejects_accuracy_measured_with_other_mpks(tmp_path: Path) -> None:
+    accuracy = rf_detr_accuracy(tmp_path, artifacts={"backbone": "d" * 64, "transformer": "d" * 64})
+
+    with pytest.raises(ValidationError, match="did not measure the benchmarked MPKs"):
+        validate_rf_detr_set(rf_detr_result_set(tmp_path), accuracy)
+
+
+def test_rejects_accuracy_without_a_required_metric(tmp_path: Path) -> None:
+    accuracy = rf_detr_accuracy(tmp_path)
+    report = json.loads(accuracy.read_text(encoding="utf-8"))
+    del report["metrics"]["coco_map"]
+    accuracy.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="required accuracy metrics were not measured: coco_map"):
+        validate_rf_detr_set(rf_detr_result_set(tmp_path), accuracy)
+
+
+def test_rejects_accuracy_for_a_model_that_declares_none(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    (results / "model").mkdir(parents=True)
+    result = json.loads(valid_result(tmp_path).read_text(encoding="utf-8"))
+    result["provenance"]["models_commit"] = "a" * 40
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    (results / "model" / "performance-result-v4.json").write_text(json.dumps(result), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="declares no DevKit accuracy"):
+        validate_benchmark_set(
+            repository=ROOT,
+            result_root=results,
+            model_id="resnet_50",
+            build_profile_id="modalix_bf16",
+            component_ids=["model"],
+            git_sha="a" * 40,
+            accuracy_result=rf_detr_accuracy(tmp_path),
+        )
 
 
 def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> None:
@@ -273,6 +356,70 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result-v4.json")
+
+
+def publish_rf_detr_transformer(tmp_path: Path, accuracy: Path | None) -> tuple[dict, list]:
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        if endpoint == "/v1/runs":
+            return {"run_id": BENCHMARK_RUN_ID}
+        if endpoint.endswith("/artifacts/accuracy-result"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000005"}
+        return {"ok": True}
+
+    published = publish_benchmark_result(
+        result_path=rf_detr_result(tmp_path, "transformer"),
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        accuracy_result_path=accuracy,
+        request=request,
+        artifact_store=FakeStore(),
+    )
+    return published, calls
+
+
+def test_publishes_accuracy_on_the_result_component_benchmark_run(tmp_path: Path) -> None:
+    published, calls = publish_rf_detr_transformer(tmp_path, rf_detr_accuracy(tmp_path))
+
+    endpoints = [endpoint for _, endpoint, _, _ in calls]
+    assert endpoints[-4:] == [
+        f"/v1/runs/{BENCHMARK_RUN_ID}/artifacts/accuracy-result",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/accuracy/coco_accuracy",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/measurements/batch",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/finalize",
+    ]
+    assert published["accuracy"]["evaluated_samples"] == 5000
+    test_result = calls[-3][2]
+    assert test_result is not None
+    assert test_result["version"] == "2"
+    assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000005"
+    measurements = calls[-2][2]
+    assert measurements is not None
+    coco_map = next(item for item in measurements["measurements"] if item["name"] == "model.accuracy.coco_map")
+    assert (coco_map["value"], coco_map["unit"], coco_map["direction"]) == (0.4694, "ratio", "higher")
+    assert coco_map["dimensions"]["validation_id"] == "coco_accuracy"
+
+
+def test_accuracy_changes_the_benchmark_idempotency_key(tmp_path: Path) -> None:
+    without, without_calls = publish_rf_detr_transformer(tmp_path, None)
+    with_accuracy, with_calls = publish_rf_detr_transformer(tmp_path, rf_detr_accuracy(tmp_path))
+
+    assert without["accuracy"] is None
+    assert with_accuracy["execution_digest"] == without["execution_digest"]
+    assert with_calls[0][3] != without_calls[0][3]
+
+
+def test_rejects_accuracy_attached_to_another_component(tmp_path: Path) -> None:
+    accuracy = rf_detr_accuracy(tmp_path, component_id="backbone")
+
+    with pytest.raises(ValidationError, match="does not belong to this benchmark result"):
+        publish_rf_detr_transformer(tmp_path, accuracy)
 
 
 def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> None:

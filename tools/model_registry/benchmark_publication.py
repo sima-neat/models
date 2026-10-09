@@ -10,9 +10,17 @@ from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from .accuracy_config import find_devkit_accuracy_config, validation_components
+from .accuracy_result import (
+    ACCURACY_RESULT_SCHEMA,
+    check_accuracy_result,
+    load_accuracy_result,
+    publish_accuracy_result,
+)
 from .benchmark_manifest import load_component_performance_config
 from .errors import ValidationError
 from .fetch import sha256_file
+from .model import load_and_validate_model
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 
 JsonObject = dict[str, Any]
@@ -109,6 +117,7 @@ def validate_benchmark_set(
     build_profile_id: str,
     component_ids: list[str],
     git_sha: str,
+    accuracy_result: str | Path | None = None,
 ) -> JsonObject:
     root = Path(repository).expanduser().resolve()
     results_root = Path(result_root).expanduser().resolve()
@@ -126,6 +135,7 @@ def validate_benchmark_set(
         raise ValidationError("benchmark result tree does not match the declared component set")
 
     validated = []
+    artifacts = {}
     for path in sorted(expected_paths):
         component_id = path.parent.name
         result = load_benchmark_result(path, root / "schemas" / f"{path.stem}.schema.json")
@@ -144,7 +154,43 @@ def validate_benchmark_set(
             if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
-    return {"count": len(validated), "results": validated}
+        artifacts[component_id] = model["sha256"]
+    accuracy = _validate_benchmark_accuracy(
+        root, model_id, build_profile_id, component_ids, artifacts, commit_sha, accuracy_result
+    )
+    return {"count": len(validated), "results": validated, "accuracy": accuracy}
+
+
+def _validate_benchmark_accuracy(
+    root: Path,
+    model_id: str,
+    build_profile_id: str,
+    component_ids: list[str],
+    artifacts: dict[str, str],
+    commit_sha: str,
+    accuracy_result: str | Path | None,
+) -> JsonObject | None:
+    """Require the declared DevKit accuracy result, measured with these benchmarked MPKs, and nothing else."""
+    model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+    entry = find_devkit_accuracy_config(model, build_profile_id)
+    path = Path(accuracy_result).expanduser().resolve() if accuracy_result is not None else None
+    present = path is not None and path.is_file()
+    if entry is None:
+        if present:
+            raise ValidationError(f"{path}: {model_id} declares no DevKit accuracy for {build_profile_id}")
+        return None
+    unbenchmarked = set(validation_components(model, entry)) - set(component_ids)
+    if unbenchmarked:
+        raise ValidationError(
+            f"accuracy {entry['id']!r} needs benchmarked components: {', '.join(sorted(unbenchmarked))}"
+        )
+    if not present:
+        raise ValidationError(f"accuracy {entry['id']!r} is declared but its result is missing")
+    report = load_accuracy_result(path, root / ACCURACY_RESULT_SCHEMA)
+    check_accuracy_result(
+        report, model=model, build_profile_id=build_profile_id, artifacts=artifacts, models_commit=commit_sha
+    )
+    return {"path": str(path), "component_id": report["model"]["component_id"]}
 
 
 def _build_identity(result: JsonObject) -> tuple[str, str]:
@@ -248,6 +294,8 @@ def publish_benchmark_result(
     kms_key_id: str | None = None,
     github_run_url: str | None = None,
     schema_path: str | Path | None = None,
+    accuracy_result_path: str | Path | None = None,
+    accuracy_schema_path: str | Path | None = None,
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
@@ -264,9 +312,14 @@ def publish_benchmark_result(
     build_profile_id, component_id = _build_identity(result)
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
-    stable_digest = hashlib.sha256(
-        f"{parent_run_id}:{fingerprint}:{execution_digest}".encode()
-    ).hexdigest()
+    accuracy_path = Path(accuracy_result_path).expanduser().resolve() if accuracy_result_path is not None else None
+    accuracy = _load_component_accuracy(accuracy_path, accuracy_schema_path, result, commit_sha)
+    accuracy_digest = canonical_sha256(accuracy) if accuracy is not None else None
+    # A result published with accuracy is a different request from the same result without it.
+    stable_inputs = f"{parent_run_id}:{fingerprint}:{execution_digest}"
+    if accuracy_digest is not None:
+        stable_inputs += f":{accuracy_digest}"
+    stable_digest = hashlib.sha256(stable_inputs.encode()).hexdigest()
     stable_key = f"models-benchmark-{stable_digest}"
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
@@ -419,6 +472,20 @@ def publish_benchmark_result(
             {"measurements": measurements},
             f"{stable_key}-measurements",
         )
+    accuracy_publication = None
+    if accuracy is not None and accuracy_path is not None and accuracy_digest is not None:
+        accuracy_publication = publish_accuracy_result(
+            client,
+            store,
+            bucket=bucket,
+            run_id=run_id,
+            path=accuracy_path,
+            report=accuracy,
+            sha256=sha256_file(accuracy_path)[0],
+            fingerprint=accuracy_digest,
+            object_key=f"{result_prefix}/accuracy-result-v{accuracy['schema_version']}.json",
+            stable_key=stable_key,
+        )
     client.request(
         "POST",
         f"/v1/runs/{run_id}/finalize",
@@ -435,4 +502,31 @@ def publish_benchmark_result(
         "execution_digest": execution_digest,
         "s3_key": stored.key,
         "log_s3_key": log_stored.key if log_stored is not None else None,
+        "accuracy": accuracy_publication,
     }
+
+
+def _load_component_accuracy(
+    path: Path | None, schema_path: str | Path | None, result: JsonObject, commit_sha: str
+) -> JsonObject | None:
+    """Load the accuracy result this component's benchmark run carries, if any."""
+    if path is None:
+        return None
+    schema = (
+        Path(schema_path).expanduser().resolve()
+        if schema_path is not None
+        else Path(__file__).resolve().parents[2] / ACCURACY_RESULT_SCHEMA
+    )
+    report = load_accuracy_result(path, schema)
+    model = result["model"]
+    expected = (model["id"], model["build_profile_id"], model["component_id"], model["sha256"], commit_sha)
+    actual = (
+        report["model"]["id"],
+        report["model"]["build_profile_id"],
+        report["model"]["component_id"],
+        report["model"]["artifacts"].get(model["component_id"]),
+        report["execution"]["models_commit"],
+    )
+    if actual != expected:
+        raise ValidationError(f"{path}: accuracy result does not belong to this benchmark result")
+    return report

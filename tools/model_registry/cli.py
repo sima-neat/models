@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .accuracy import evaluate_accuracy, resolve_dataset
-from .accuracy_config import find_accuracy_config
+from .accuracy_config import find_accuracy_config, find_devkit_accuracy_config, validation_components
 from .artifact import validate_compile_outputs, verify_mpk
 from .artifact_metadata import validate_artifact_metadata
 from .catalog import (
@@ -158,6 +158,26 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     core_report.add_argument("--output", type=Path, required=True)
     core_report.add_argument("--schema", type=Path, required=True)
 
+    devkit_accuracy = subcommands.add_parser(
+        "resolve-devkit-accuracy", help="resolve a build profile's DevKit accuracy entry and its cached dataset"
+    )
+    devkit_accuracy.add_argument("model_dir", type=Path)
+    devkit_accuracy.add_argument("--schema", type=Path)
+    devkit_accuracy.add_argument("--cache-dir", type=Path)
+    devkit_accuracy.add_argument("--build-profile", required=True)
+
+    accuracy_import = subcommands.add_parser(
+        "import-accuracy", help="attach model, dataset and MPK identity to scripts/accuracy.py output"
+    )
+    accuracy_import.add_argument("--repository", type=Path, default=Path.cwd())
+    accuracy_import.add_argument("--model-id", required=True)
+    accuracy_import.add_argument("--build-profile-id", required=True)
+    accuracy_import.add_argument("--script-output", type=Path, required=True)
+    accuracy_import.add_argument(
+        "--result-root", type=Path, required=True, help="benchmark result root with each component's manifest"
+    )
+    accuracy_import.add_argument("--output", type=Path, required=True)
+
     benchmark_manifest = subcommands.add_parser(
         "make-benchmark-manifest", help="generate a direct-DevKit benchmark manifest for one compiled model"
     )
@@ -262,6 +282,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_benchmark.add_argument("--git-sha", required=True)
     publish_benchmark.add_argument("--github-run-url")
     publish_benchmark.add_argument("--compile-run-id")
+    publish_benchmark.add_argument("--accuracy-result", type=Path, help="DevKit accuracy result this component carries")
+    publish_benchmark.add_argument("--accuracy-schema", type=Path)
     publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
 
     benchmark_set = subcommands.add_parser(
@@ -273,6 +295,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_set.add_argument("--build-profile-id", required=True)
     benchmark_set.add_argument("--components", required=True)
     benchmark_set.add_argument("--git-sha", required=True)
+    benchmark_set.add_argument("--accuracy-result", type=Path, help="DevKit accuracy result, when one was measured")
     benchmark_set.add_argument("--json", action="store_true", dest="json_output")
 
     publish_catalog_parser = subcommands.add_parser(
@@ -771,6 +794,8 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
         git_sha=args.git_sha,
         github_run_url=args.github_run_url,
         compile_run_id=args.compile_run_id,
+        accuracy_result_path=args.accuracy_result,
+        accuracy_schema_path=args.accuracy_schema,
     )
     message = (
         json.dumps(result, sort_keys=True)
@@ -793,8 +818,47 @@ def _validate_benchmark_set(args: argparse.Namespace) -> int:
         build_profile_id=args.build_profile_id,
         component_ids=component_ids,
         git_sha=args.git_sha,
+        accuracy_result=args.accuracy_result,
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid benchmark set: {result['count']}")
+    return 0
+
+
+def _resolve_devkit_accuracy(args: argparse.Namespace) -> int:
+    model = load_and_validate_model(args.model_dir, args.schema)
+    entry = find_devkit_accuracy_config(model, args.build_profile)
+    if entry is None:
+        result = {"kind": "none", "model_id": model["id"], "build_profile_id": args.build_profile}
+    else:
+        result = {
+            "kind": "dataset",
+            "model_id": model["id"],
+            "build_profile_id": args.build_profile,
+            "validation_id": entry["id"],
+            "result_component": entry["result_component"],
+            "components": validation_components(model, entry),
+            "path": str(resolve_dataset(entry["dataset"], None, args.cache_dir)),
+            "sha256": entry["dataset"]["sha256"],
+            "size_bytes": entry["dataset"]["size_bytes"],
+        }
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+def _import_accuracy(args: argparse.Namespace) -> int:
+    from .accuracy_result import ACCURACY_RESULT_SCHEMA, build_accuracy_result, load_accuracy_result
+
+    result = build_accuracy_result(
+        repository=args.repository,
+        model_id=args.model_id,
+        build_profile_id=args.build_profile_id,
+        script_output=args.script_output,
+        result_root=args.result_root,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    load_accuracy_result(args.output, Path(args.repository).expanduser().resolve() / ACCURACY_RESULT_SCHEMA)
+    print(json.dumps({"output": str(args.output), "metrics": sorted(result["metrics"])}, sort_keys=True))
     return 0
 
 
@@ -877,6 +941,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             result = import_core_benchmark(args.manifest, args.report, args.output, schema_path=args.schema)
             print(json.dumps(result, sort_keys=True))
             return 0
+        if args.command == "resolve-devkit-accuracy":
+            return _resolve_devkit_accuracy(args)
+        if args.command == "import-accuracy":
+            return _import_accuracy(args)
         if args.command == "make-benchmark-manifest":
             return _make_benchmark_manifest(args)
         if args.command == "verify-mpk":

@@ -391,6 +391,8 @@ def test_benchmark_only_changes_dispatch_against_durable_registry_artifacts() ->
     assert dispatch["strategy"]["matrix"] == "${{ fromJSON(needs.select.outputs.benchmark_matrix) }}"
     step = dispatch["steps"][0]
     assert "gh workflow run Vulcan-Model-Benchmarking.yml" in step["run"]
+    # The job has no checkout, so gh cannot infer the repository from a git remote.
+    assert '--repo "$GITHUB_REPOSITORY"' in step["run"]
     assert '--ref "$GITHUB_REF_NAME"' in step["run"]
     assert "-f source_run_id=" in step["run"]
     assert '-f source_branch="$GITHUB_REF_NAME"' in step["run"]

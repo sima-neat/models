@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve each component's declared dataset into the persistent NVMe cache.
+# Resolve each component's declared dataset, and the DevKit accuracy dataset, into the persistent NVMe cache.
 
 set -euo pipefail
 
@@ -22,15 +22,19 @@ prepare_cache_root() {
 }
 
 # One resolution at a time per board, so concurrent jobs never download the same dataset twice.
-resolve_dataset() {
-  local component="$1"
+resolve_locked() {
   flock --verbose --wait "$LOCK_WAIT_SECONDS" --close "$DATASET_ROOT/locks/prepare.lock" \
     timeout --verbose --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" \
-    "$REGISTRY_PYTHON" -m model_registry fetch-accuracy-dataset "$MODEL_DIR" \
-      --build-profile "$BUILD_PROFILE_ID" \
-      --component "$component" \
-      --cache-dir "$DATASET_ROOT/artifacts" \
-      --json
+    "$REGISTRY_PYTHON" -m model_registry "$@" --cache-dir "$DATASET_ROOT/artifacts"
+}
+
+resolve_dataset() {
+  resolve_locked fetch-accuracy-dataset "$MODEL_DIR" --build-profile "$BUILD_PROFILE_ID" --component "$1" --json
+}
+
+# The benchmark job's accuracy step reads this archive from the cache without dataset credentials.
+resolve_devkit_accuracy_dataset() {
+  resolve_locked resolve-devkit-accuracy "$MODEL_DIR" --build-profile "$BUILD_PROFILE_ID"
 }
 
 # Dataset Registry rewrites its receipt only when it downloads the archive.
@@ -66,6 +70,10 @@ main() {
     echo "$row"
     echo "$row" >> "$SUMMARY"
   done
+  result="$(resolve_devkit_accuracy_dataset)"
+  row="$(summary_row "DevKit accuracy" "$result" "$STARTED")"
+  echo "$row"
+  echo "$row" >> "$SUMMARY"
 }
 
 # Receipts newer than this marker were written by a download in this run.
