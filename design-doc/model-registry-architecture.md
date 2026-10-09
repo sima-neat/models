@@ -63,6 +63,38 @@ alongside it without replacing compiler-owned dependencies.
 `packaging/model-registry/build.sh` removes the publication modules from that
 package. Packaging and publication remain automation-only.
 
+## Shared tooling
+
+`tools/model_registry/` holds one module per job. Model-specific code belongs in
+the model's `scripts/`, not here. Put a new operation in the module that owns
+its job; a new job gets a new module named after what it does, and a row in
+this table. Modules marked CI only are removed from the author package by
+`packaging/model-registry/build.sh`.
+
+| Module | Owns |
+| --- | --- |
+| `cli.py` | the `model-registry` command; `AUTHOR_COMMANDS` lists the commands the author package exposes |
+| `model.py` | loading and validating `model.yaml` and the model folder (`load_models`), and reading a model's declarations: compile invocations, profiles, components |
+| `compile_matrix.py` | the compile matrix: one entry per declared compile invocation (`build_matrix`) |
+| `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
+| `stage_plan.py` | which builds compile and which DevKit stages run on a push (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
+| `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
+| `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
+| `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
+| `core_benchmark.py` | packaging Core's measurements for publication |
+| `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
+| `fidelity_config.py` | finding a build's fidelity entry and checking its result |
+| `artifact.py` | compile outputs and MPK verification |
+| `artifact_metadata.py` | publication metadata validation |
+| `package.py` | assembling model packages from component MPKs |
+| `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
+| `fetch.py` | verified downloads, the cache, and dataset resolution |
+| `source.py` | source identity and URL redaction |
+| `taxonomy.py` | loading the taxonomy and validating model categories |
+| `documentation.py` | loading a model's README and hero image |
+| `runner_approval.py` | authorizing requested compile runner classes |
+| `errors.py` | the error types every module raises |
+
 ## Stages and stage keys
 
 A build is one compile invocation of one build profile of one model. It passes
@@ -105,6 +137,30 @@ branch. A build compiles when the catalog records no build with its current
 compile key, or when a maintainer forces a rebuild. A reused build is queued
 for the DevKit stages whose keys have no completed run. DevKit stages run only
 in staging and only for Modalix targets.
+
+### Branches, merges, and concurrent pushes
+
+- **One registry per environment.** Pushes publish to staging. Each branch has
+  its own catalog in that registry, keyed by Git ref; runs are shared by every
+  branch.
+- **Where each decision looks.** The compile decision compares compile keys
+  with the branch's catalog, or the base branch's catalog on a branch's first
+  push. The DevKit decision looks for a completed run with the stage key from
+  any branch; that key names the compile run and MPK digest, so it matches
+  only a measurement of the same build.
+- **New branch.** It reuses its base's builds and compiles only the builds
+  whose keys differ.
+- **Merge.** A merge is a push to `develop`, which compares with its own
+  catalog. Builds the merged branch changed compile again on `develop`, and
+  their DevKit stages run again; builds the branch compiled are not reused.
+- **Newer push.** It cancels the running compile workflow of the same ref
+  (manual dispatches run to completion). Builds that already published stay;
+  builds left pending are planned again. Dispatched DevKit runs continue. A
+  DevKit stage still running when the next plan runs has no completed run yet,
+  so it is dispatched again.
+- **Model browser.** A branch's view lists only builds compiled on that branch
+  (#141); a reused build appears under the branch that compiled it. `develop`
+  compiles every build in its catalog, so its view is complete.
 
 ## Compile workflow trust boundary
 

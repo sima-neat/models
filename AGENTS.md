@@ -14,32 +14,43 @@ carries its key, and CI runs a stage only when no completed run carries the
 current key. A change therefore reruns exactly the stages whose inputs it
 touches.
 
-| Stage | Venue | Model entry point | Runner script | Key inputs |
-|---|---|---|---|---|
-| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` | the invocation's `model.yaml` declarations, `fidelity:` entries, every `.py`/`.sh` in the model's `scripts/` except the stage and conversion scripts below, declared training code, `scripts/run_model_compilation.sh`, compiler version |
-| performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` | the compile run and MPK digest, `benchmark:` entries, `performance.py`, shared performance tooling, DevKit runtime pin |
-| accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` | the compile runs and MPK digests of its components, the `accuracy:` entry, the script and its requirements, shared accuracy tooling, DevKit runtime pin |
+| Stage | Venue | Model entry point | Runner script |
+|---|---|---|---|
+| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
+| performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
+| accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` |
 
-The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
-in `tools/model_registry/stage_keys.py`; read them before changing what a stage
-depends on. Conversion (`scripts/convert.py`, run by
-`scripts/run_model_conversion.sh`) produces the ONNX that `model.yaml` pins as
-the source; only that pin enters the compile key.
+`compile_key`, `performance_key` and `accuracy_key` in
+`tools/model_registry/stage_keys.py` compute the keys. Their inputs, and what
+each kind of change reruns, are listed once in
+[what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns);
+read both before changing what a stage depends on. Conversion
+(`scripts/convert.py`, run by `scripts/run_model_conversion.sh`) produces the
+ONNX that `model.yaml` pins as the source; only that pin enters the compile
+key.
 
-What a change reruns:
+The shared tooling is one module per job. The
+[module map](design-doc/model-registry-architecture.md#shared-tooling) says
+which module owns what; put new shared code in the module that owns its job,
+and give a new job a new module named after what it does.
 
-| Change | Reruns |
+## Keep the structure consistent
+
+Each row is a change that is incomplete without the files beside it. Make them
+in the same commit.
+
+| When you change | Also change |
 |---|---|
-| registry tooling outside a stage's tooling, a README, `convert.py` | nothing |
-| a model's `performance.py` | that model's performance |
-| a model's `accuracy.py` | that model's accuracy |
-| the DevKit runtime pin, `Vulcan-Model-Benchmarking.yml`, `benchmark_publication.py` | every performance and accuracy stage |
-| a model's compile inputs, `scripts/run_model_compilation.sh`, or the compiler pin | that model's builds (all builds for the shared runner or compiler pin), then their board stages |
-
-A board key hashes only its own stage script. A helper module that
-`performance.py` or `accuracy.py` imports from `scripts/` is a compile input,
-so editing it recompiles the model and then remeasures it. Keep board-only
-code in the stage script itself.
+| what a stage depends on: a `model.yaml` field its key reads, or a shared file it runs | the key function or the `PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `stage_keys.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/unit/test_compile_matrix.py` or `tests/unit/test_stage_plan.py` |
+| the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
+| board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
+| a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
+| the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
+| a `model-registry` command | `cli.py` (and `AUTHOR_COMMANDS` when authors run it), every workflow and script that calls it, `packaging/model-registry/install_model_registry_package.sh`, the docs, and `tests/unit/test_cli.py` |
+| a module that only CI may run | the removal list in `packaging/model-registry/build.sh` |
+| a module's job, or a new module | the [module map](design-doc/model-registry-architecture.md#shared-tooling) |
+| a published result's shape | its schema under `schemas/` and `artifact-browser/`, which must keep rendering results already in the registry |
+| a CI job, trigger, or concurrency rule | [CI flow](design-doc/model-registry-architecture.md#ci-flow) and the [after-merge steps](docs/contributing.md#after-merge-trusted-staging-automation) |
 
 ## CI
 
@@ -58,7 +69,9 @@ code in the stage script itself.
   `stages` on a DevKit and publishes performance (`model_benchmark` runs) and
   accuracy (`model_accuracy` runs) separately.
 - A newer push cancels the branch's running compile workflow; builds that
-  already published stay and are reused.
+  already published stay and are reused. How branch catalogs, merges, and the
+  model browser interact is in
+  [branches and merges](design-doc/model-registry-architecture.md#branches-merges-and-concurrent-pushes).
 
 ## Contributing
 
@@ -91,8 +104,11 @@ Conventions the code relies on:
   documents that only this repository's tooling reads (`model.yaml`, compile
   outputs, package manifests) carry no version; change their readers and
   writers together instead.
-- When a published result's shape changes, update `artifact-browser/` in the
-  same change and keep it rendering results already in the registry.
+
+## Model browser
+
+Before changing `artifact-browser/`, read its
+[design context](artifact-browser/DESIGN.md).
 
 ## Model README requirements
 

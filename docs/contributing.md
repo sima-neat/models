@@ -183,6 +183,19 @@ plan, and remaining maturity gaps. Merge does not mean production approval;
 trusted staging still verifies the committed revision, and promotion remains a
 separate protected stage.
 
+Reviewers also check that the change keeps the repository structure
+consistent:
+
+- every companion change listed in [keep the structure
+  consistent](https://github.com/sima-neat/models/blob/develop/AGENTS.md#keep-the-structure-consistent)
+  is in the same pull request;
+- the description states which stages the change reruns, following [what a
+  change reruns](adding-a-model.md#9-know-what-a-change-reruns);
+- model-specific code is under `models/<model-id>/scripts/`, and shared code is
+  in the module the [module
+  map](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#shared-tooling)
+  assigns to its job.
+
 If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
