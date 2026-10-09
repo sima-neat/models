@@ -34,16 +34,20 @@ trap 'rm -f "$started"' EXIT
 result="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
   timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
   --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
-if [[ "$(jq -er '.kind' <<< "$result")" == "none" ]]; then
+# The DevKit has no jq; read the resolution with the registry Python.
+field() {
+  "$REGISTRY_PYTHON" -c 'import json, sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$result" "$1"
+}
+if [[ "$(field kind)" == "none" ]]; then
   echo "$(basename "$MODEL_DIR") declares no DevKit accuracy for $BUILD_PROFILE_ID."
   exit 0
 fi
-path="$(jq -er '.path' <<< "$result")"
+path="$(field path)"
 cache="hit"
 if [[ "$(dirname "$path")/resolution-receipt.json" -nt "$started" ]]; then
   cache="downloaded"
 fi
-row="| $(jq -er '.accuracy_id' <<< "$result") | \`$path\` | \`$(jq -er '.sha256' <<< "$result")\` | $(jq -er '.size_bytes' <<< "$result") | $cache |"
+row="| $(field accuracy_id) | \`$path\` | \`$(field sha256)\` | $(field size_bytes) | $cache |"
 echo "$row"
 {
   echo "### Accuracy dataset"

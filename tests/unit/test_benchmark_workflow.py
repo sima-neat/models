@@ -232,6 +232,17 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
         assert model_code not in cache_script
 
 
+def test_devkit_steps_use_only_tools_the_board_provides() -> None:
+    steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
+    runs = "\n".join(item.get("run", "") for item in steps)
+    scripts = sorted({word.strip('"') for word in runs.split() if word.startswith("scripts/") and word.endswith(".sh")})
+
+    assert "scripts/cache_accuracy_dataset.sh" in scripts
+    # The DevKit image has no jq; JSON is read with the registry Python.
+    for text in [runs, *((ROOT / script).read_text(encoding="utf-8") for script in scripts)]:
+        assert "jq " not in text
+
+
 def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
     steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
     names = [item.get("name") for item in steps]
