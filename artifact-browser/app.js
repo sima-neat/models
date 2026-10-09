@@ -992,7 +992,11 @@ async function selectRun(runId, { updateUrl = true } = {}) {
         }),
         packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : Promise.resolve(null),
       ]);
-      detail = { summary, provenance, tests, metrics, benchmark, accuracy, packageSummary };
+      // DevKit accuracy is published on the benchmark run, beside the measurements it was taken with.
+      const benchmarkTests = benchmark?.benchmark_run?.id
+        ? await api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
+        : null;
+      detail = { summary, provenance, tests, metrics, benchmark, benchmarkTests, accuracy, packageSummary };
       state.detailCache.set(runId, detail);
     }
     const currentPackage = fullPackageForRun(detail.summary.run);
@@ -1173,21 +1177,59 @@ function percentage(value, { signed = false } = {}) {
   return `${signed && percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
 }
 
-function accuracyPanel(payload, tests = []) {
+// Display names for common accuracy metrics; any other metric shows its declared name.
+const ACCURACY_METRIC_LABELS = {
+  coco_map: "mAP 50–95",
+  coco_ap50: "AP50",
+  coco_ap75: "AP75",
+};
+
+function accuracyPanel(payload, tests = [], benchmarkTests = []) {
   const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
-  const report = payload?.result || fallback?.summary;
+  const devkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
+  const report = payload?.result || fallback?.summary || devkit?.summary;
+  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report));
   if (!report || report.schema_version !== 1) return "";
   const candidate = report.metrics?.candidate || {};
   const reference = report.metrics?.reference || {};
   const comparison = report.metrics?.comparison || {};
-  const dataset = report.dataset || {};
   const evaluation = report.evaluation || {};
+  return accuracySection(report, `
+      <div class="accuracy-metric primary"><span>Candidate top-1</span><strong>${percentage(candidate.top1_accuracy)}</strong><small>Reference ${percentage(reference.top1_accuracy)}</small></div>
+      <div class="accuracy-metric primary"><span>Candidate top-5</span><strong>${percentage(candidate.top5_accuracy)}</strong><small>Reference ${percentage(reference.top5_accuracy)}</small></div>
+      <div class="accuracy-metric"><span>Top-1 agreement</span><strong>${percentage(comparison.top1_agreement)}</strong><small>Candidate vs reference</small></div>
+      <div class="accuracy-metric"><span>Top-1 delta</span><strong>${percentage(comparison.top1_delta, { signed: true })}</strong><small>Top-5 ${percentage(comparison.top5_delta, { signed: true })}</small></div>
+    `, `${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}`);
+}
+
+function accuracyMetricValue(metric) {
+  if (!Number.isFinite(metric?.value)) return "—";
+  return metric.unit === "ratio" ? percentage(metric.value) : `${metric.value.toFixed(4)} ${metric.unit}`;
+}
+
+function accuracyMetricTiles(report) {
+  return Object.entries(report.metrics || {}).map(([name, metric], index) => {
+    const reference = Number.isFinite(metric?.reference) ? `Reference ${accuracyMetricValue({ ...metric, value: metric.reference })}` : "";
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(reference)}</small></div>`;
+  }).join("");
+}
+
+function accuracyContextV2(report) {
+  return `${keyValue("Validation", report.validation?.id)}${keyValue("Measured on", "DevKit")}${keyValue("Core", report.execution?.core_version)}`;
+}
+
+function accuracySection(report, metricsMarkup, contextMarkup) {
+  const dataset = report.dataset || {};
   const fullCoverage = Number.isInteger(dataset.evaluated_samples)
     && dataset.evaluated_samples === dataset.available_samples;
-  const status = fullCoverage ? "Qualification" : "Provisional";
-  const statusClass = fullCoverage ? "qualification" : "provisional";
-  const statusExplanation = fullCoverage
+  // A full run still reads provisional when its validation entry declares it so.
+  const qualified = fullCoverage && report.validation?.status !== "provisional";
+  const status = qualified ? "Qualification" : "Provisional";
+  const statusClass = qualified ? "qualification" : "provisional";
+  const statusExplanation = qualified
     ? "This run evaluated the full configured validation split and is intended for final accuracy reporting."
+    : fullCoverage
+    ? "This run evaluated the full configured validation split, but its validation entry is still marked provisional."
     : "This run evaluated a sampled subset of the validation images. It is useful for routine regression checks; run the qualification profile for final accuracy reporting.";
   const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage";
   const coverageExplanation = fullCoverage
@@ -1199,13 +1241,8 @@ function accuracyPanel(payload, tests = []) {
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3><details class="accuracy-explainer"><summary class="accuracy-status ${statusClass}" aria-label="Explain ${status.toLowerCase()} accuracy status">${status}</summary><div class="accuracy-explainer-card"><strong>${status}</strong><p>${escapeHtml(statusExplanation)}</p><p><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p></div></details></div>
     <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}</p>
-    <div class="accuracy-summary">
-      <div class="accuracy-metric primary"><span>Candidate top-1</span><strong>${percentage(candidate.top1_accuracy)}</strong><small>Reference ${percentage(reference.top1_accuracy)}</small></div>
-      <div class="accuracy-metric primary"><span>Candidate top-5</span><strong>${percentage(candidate.top5_accuracy)}</strong><small>Reference ${percentage(reference.top5_accuracy)}</small></div>
-      <div class="accuracy-metric"><span>Top-1 agreement</span><strong>${percentage(comparison.top1_agreement)}</strong><small>Candidate vs reference</small></div>
-      <div class="accuracy-metric"><span>Top-1 delta</span><strong>${percentage(comparison.top1_delta, { signed: true })}</strong><small>Top-5 ${percentage(comparison.top5_delta, { signed: true })}</small></div>
-    </div>
-    <dl class="accuracy-context">${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}</dl>
+    <div class="accuracy-summary">${metricsMarkup}</div>
+    <dl class="accuracy-context">${contextMarkup}</dl>
   </section>`;
 }
 
@@ -1421,7 +1458,7 @@ function renderDetail(detail) {
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
   const benchmarkMarkup = benchmarkPanel(detail.benchmark);
-  const accuracyMarkup = accuracyPanel(detail.accuracy, tests);
+  const accuracyMarkup = accuracyPanel(detail.accuracy, tests, detail.benchmarkTests?.test_results || []);
   const fidelityMarkup = fidelityPanel(tests, run.id);
   const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
   const primaryArtifact = artifacts[0];

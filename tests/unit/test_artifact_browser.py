@@ -732,7 +732,8 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert '>?</summary>' not in script
     assert "run the qualification profile for final accuracy reporting" in script
     assert 'const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage"' in script
-    assert 'const status = fullCoverage ? "Qualification" : "Provisional"' in script
+    assert 'const status = qualified ? "Qualification" : "Provisional"' in script
+    assert 'report.validation?.status !== "provisional"' in script
     assert 'class="accuracy-status ${statusClass}"' in script
     assert ".accuracy-summary" in styles
     assert ".accuracy-status.provisional" in styles
@@ -744,6 +745,21 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert '"top1_accuracy": 0.762' in preview
     assert '"suite": "accuracy"' in preview
     assert 'parts[3:] == ["accuracy", "latest"]' in preview
+
+
+def test_devkit_accuracy_is_read_from_the_benchmark_run_and_rendered_per_metric() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    preview = (ROOT / "scripts" / "preview_artifact_browser.py").read_text(encoding="utf-8")
+
+    assert "api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`)" in script
+    assert "item.summary?.schema_version === 2" in script
+    assert "Object.entries(report.metrics || {})" in script
+    assert 'coco_map: "mAP 50–95"' in script
+    assert "ACCURACY_METRIC_LABELS[name] || name" in script
+    # Units come from the published result, so the formatted value is escaped before insertion.
+    assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
+    assert '"engine": "devkit_script"' in preview
+    assert '"suite": "accuracy"' in preview
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:

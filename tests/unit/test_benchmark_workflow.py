@@ -168,7 +168,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "NEAT_VERSION" not in install["run"]
     assert 'sima-cli neat install --env production --type minimal "$target"' in install["run"]
     assert '["neat_core"]["install_target"]' in install["run"]
-    assert '"models/$MODEL_ID/scripts/benchmark.py"' not in execute["run"]
+    assert '"models/$MODEL_ID/scripts/performance.py"' not in execute["run"]
     assert "report = model.benchmark()" in execute["run"]
     assert "PYBENCH" in execute["run"]
     assert "import-core-benchmark" in execute["run"]
@@ -261,7 +261,7 @@ def test_dispatched_benchmark_caches_declared_datasets_on_nvme() -> None:
         step.get("run", "") for step in steps[credentials:] if isinstance(step, dict)
     )
     assert "pip install _source" not in credentialed_runs
-    assert '"models/$MODEL_ID/scripts/benchmark.py"' not in credentialed_runs
+    assert '"models/$MODEL_ID/scripts/performance.py"' not in credentialed_runs
 
     install_script = (ROOT / "scripts" / "install_dataset_registry.sh").read_text(encoding="utf-8")
     assert "--download-only" in install_script
@@ -290,3 +290,36 @@ def test_dispatched_benchmark_runs_only_on_its_source_branch() -> None:
         condition = workflow["jobs"][name]["if"]
         assert "inputs.source_branch == github.ref_name" in condition, name
         assert "refs/heads/develop" not in condition, name
+
+
+def test_dispatched_benchmark_measures_and_publishes_devkit_accuracy() -> None:
+    workflow = yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    jobs = workflow["jobs"]
+    steps = jobs["benchmark-dispatched-model"]["steps"]
+    names = [step.get("name") for step in steps]
+    benchmark = names.index("Generate manifest and run benchmark")
+    accuracy = names.index("Measure accuracy on DevKit")
+    retain = names.index("Retain accuracy evidence")
+
+    assert benchmark < accuracy < retain
+    assert "env" not in steps[accuracy]
+    assert steps[accuracy]["run"] == (
+        'scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _benchmark _accuracy'
+    )
+    artifact = "accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
+    assert steps[retain]["if"] == "always()"
+    assert steps[retain]["with"]["name"] == artifact
+    assert steps[retain]["with"]["if-no-files-found"] == "ignore"
+
+    publish = jobs["publish-dispatched-benchmark"]["steps"]
+    download = next(step for step in publish if step.get("with", {}).get("pattern") == artifact)
+    assert download["with"]["path"] == "_accuracy"
+    publication = next(
+        step for step in publish if step.get("name") == "Publish every completed schema-v5 result and log"
+    )
+    assert '--accuracy-result "$accuracy"' in publication["run"]
+    assert "--accuracy-schema schemas/accuracy-result-v2.schema.json" in publication["run"]
+    assert '"${accuracy_args[@]}"' in publication["run"]
+
+    cleanup = jobs["cleanup-dispatched-benchmark-artifacts"]["steps"]
+    assert any("accuracy-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" in step.get("run", "") for step in cleanup)

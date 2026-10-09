@@ -442,6 +442,9 @@ jobs:
               --output "$output/performance-result-v5.json"
           done
 
+      - name: Measure accuracy on DevKit
+        run: scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _benchmark _accuracy
+
       - name: Retain benchmark evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -453,6 +456,16 @@ jobs:
             _benchmark/*/performance-test.json
             _benchmark/*/benchmark.log
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain accuracy evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+          path: _accuracy/
+          # Models without DevKit accuracy produce none; validate-benchmark-set requires a declared one.
+          if-no-files-found: ignore
           retention-days: 14
 
   publish-dispatched-benchmark:
@@ -491,6 +504,12 @@ jobs:
         with:
           name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _benchmarks
+      - uses: actions/download-artifact@v7
+        with:
+          # A pattern that matches nothing downloads nothing instead of failing.
+          pattern: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+          merge-multiple: true
+          path: _accuracy
       - id: benchmark-publisher-credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -514,13 +533,17 @@ jobs:
         run: |
           set -euo pipefail
           IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          model-registry validate-benchmark-set \
+          accuracy="_accuracy/accuracy-result-v2.json"
+          validation="$(model-registry validate-benchmark-set \
             --repository _source \
             --result-root _benchmarks \
             --model-id "${{ inputs.model_id }}" \
             --build-profile-id "${{ inputs.build_profile_id }}" \
             --components "$COMPONENT_IDS" \
-            --git-sha "$SOURCE_SHA"
+            --git-sha "$SOURCE_SHA" \
+            --accuracy-result "$accuracy" \
+            --json)"
+          accuracy_component="$(jq -r '.accuracy.component_id // ""' <<< "$validation")"
           results=()
           for component in "${components[@]}"; do
             result="_benchmarks/$component/performance-result-v5.json"
@@ -535,6 +558,10 @@ jobs:
           }
           for result in "${results[@]}"; do
             log="$(dirname "$result")/benchmark.log"
+            accuracy_args=()
+            if [[ "$(basename "$(dirname "$result")")" == "$accuracy_component" ]]; then
+              accuracy_args=(--accuracy-result "$accuracy" --accuracy-schema schemas/accuracy-result-v2.schema.json)
+            fi
             model-registry publish-benchmark \
               --result "$result" \
               --log "$log" \
@@ -546,7 +573,8 @@ jobs:
               --environment staging \
               --branch "$SOURCE_BRANCH" \
               --git-sha "$SOURCE_SHA" \
-              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              "${accuracy_args[@]}"
           done
 
   cleanup-dispatched-benchmark-artifacts:
@@ -567,7 +595,7 @@ jobs:
         run: |
           set -euo pipefail
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
+            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"accuracy-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
           while read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"

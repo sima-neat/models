@@ -1,6 +1,6 @@
 # Synthetic model benchmarking
 
-Each model owns `scripts/benchmark.py`. The script loads the compiled MPK through
+Each model owns `scripts/performance.py`. The script loads the compiled MPK through
 `pyneat.Model` and calls Core's benchmark API. Core owns synthetic inputs,
 warmup, latency and throughput measurement, power telemetry, and runner lifetime.
 There is no shared benchmark executor or model-specific timing loop.
@@ -22,7 +22,7 @@ python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
 Run the model's own script on the DevKit, supplying its MPK and output report:
 
 ```bash
-python models/resnet_50/scripts/benchmark.py \
+python models/resnet_50/scripts/performance.py \
   /workspace/resnet_50_mpk.tar.gz /workspace/core-benchmark.json
 ```
 
@@ -87,7 +87,9 @@ the pinned Core package, then invokes each model's script once per component.
 it with compilation identity, script digest, source revision, runner build, and
 actual Core/Internals package versions. The CI metadata step loads the same MPK
 with default options to inspect its workload; it does not run inference. The
-importer never executes or times a model.
+importer never executes or times a model. A model with a `devkit_script`
+validation entry then measures its task accuracy with the same MPKs; see
+[Accuracy on the DevKit](local-accuracy-development.md#accuracy-on-the-devkit).
 
 Model authors do not publish benchmark results directly.
 The board has no registry publication credentials. A separate hosted job validates
