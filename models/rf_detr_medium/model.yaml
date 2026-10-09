@@ -123,12 +123,12 @@ components:
         dtype: float32
         shape: [1, 300, 4]
         layout: NLC
-        description: Predicted boxes.
+        description: Normalized (cx, cy, w, h) box for each query; scale by the original image size.
       - name: labels
         dtype: float32
         shape: [1, 300, 91]
         layout: NLC
-        description: COCO class scores for each predicted box.
+        description: COCO class logits for each query; apply a sigmoid to get scores.
     shape_profiles: []
   preprocessing:
     pipeline: []

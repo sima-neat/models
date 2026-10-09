@@ -3,7 +3,7 @@
 ## Overview
 
 RF-DETR Medium is a COCO object detector that accepts a normalized 576×576 RGB
-image and produces 300 boxes with 91 class scores. The Modalix package splits
+image and produces 300 boxes with 91 class logits. The Modalix package splits
 inference into independently deployable backbone and transformer components.
 Applications must select the 300 highest-scoring backbone proposals and gather
 their boxes on the A65 before invoking the transformer. Published fidelity
@@ -31,12 +31,18 @@ The backbone consumes a normalized NCHW FP32 RGB tensor with shape
 `1×3×576×576`. It emits the final feature map, 1,296 proposal scores, and 1,296
 decoded proposal boxes. On the A65, select the 300 highest scores and gather the
 matching boxes. The transformer consumes those proposals and the backbone
-feature map, then emits 300 boxes and 91 class scores for each box.
+feature map, then emits 300 boxes and 91 class logits for each box.
 
 ```text
 image -> backbone.mpk -> scores + boxes -> A65 TopK/Gather -> transformer.mpk
                          feature map -----------------------> transformer.mpk
 ```
+
+To decode detections on the A65, apply a sigmoid to `labels` and rank all
+300×91 query-class scores. Each `dets` row is a normalized (cx, cy, w, h) box;
+multiply it by the original image width and height, because preprocessing
+resizes without preserving the aspect ratio. The class index is the COCO
+category ID; 11 of the 91 slots are unused.
 
 The package exposes `proposals` as an input because package composition connects
 only the two MPKs. `calibration.py` contains the deterministic reference bridge
