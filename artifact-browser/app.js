@@ -1206,13 +1206,24 @@ const ACCURACY_METRIC_LABELS = {
   coco_map: "mAP 50–95",
   coco_ap50: "AP50",
   coco_ap75: "AP75",
+  coco_ap_small: "AP small",
+  coco_ap_medium: "AP medium",
+  coco_ap_large: "AP large",
+  coco_ar1: "AR@1",
+  coco_ar10: "AR@10",
+  coco_ar100: "AR@100",
+  coco_ar_small: "AR small",
+  coco_ar_medium: "AR medium",
+  coco_ar_large: "AR large",
 };
+// The first metrics a result reports are shown as tiles; any further metrics are listed in a table.
+const ACCURACY_SUMMARY_TILES = 4;
 
 function accuracyPanel(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
   const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
   const legacyDevkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
   const report = devkitPayload?.result || legacyDevkit?.summary || payload?.result || fallback?.summary;
-  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report));
+  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report), accuracyMetricTable(report));
   if (!report || report.schema_version !== 1) return "";
   const candidate = report.metrics?.candidate || {};
   const reference = report.metrics?.reference || {};
@@ -1231,18 +1242,31 @@ function accuracyMetricValue(metric) {
   return metric.unit === "ratio" ? percentage(metric.value) : `${metric.value.toFixed(4)} ${metric.unit}`;
 }
 
+// A metric's reference is the source model's published score, recorded in the model's accuracy entry.
+function publishedAccuracyValue(metric) {
+  return Number.isFinite(metric?.reference) ? accuracyMetricValue({ ...metric, value: metric.reference }) : "";
+}
+
 function accuracyMetricTiles(report) {
-  return Object.entries(report.metrics || {}).map(([name, metric], index) => {
-    const reference = Number.isFinite(metric?.reference) ? `Reference ${accuracyMetricValue({ ...metric, value: metric.reference })}` : "";
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(reference)}</small></div>`;
+  return Object.entries(report.metrics || {}).slice(0, ACCURACY_SUMMARY_TILES).map(([name, metric], index) => {
+    const published = publishedAccuracyValue(metric);
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
   }).join("");
+}
+
+function accuracyMetricTable(report) {
+  const rows = Object.entries(report.metrics || {}).slice(ACCURACY_SUMMARY_TILES).map(([name, metric]) => (
+    `<tr><th scope="row">${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</th><td>${escapeHtml(accuracyMetricValue(metric))}</td><td>${escapeHtml(publishedAccuracyValue(metric) || "—")}</td></tr>`
+  )).join("");
+  if (!rows) return "";
+  return `<div class="benchmark-measurements"><h4>Additional metrics</h4><div class="benchmark-measurements-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function accuracyContextV2(report) {
   return `${keyValue("Validation", report.validation?.id)}${keyValue("Measured on", "DevKit")}${keyValue("Core", report.execution?.core_version)}`;
 }
 
-function accuracySection(report, metricsMarkup, contextMarkup) {
+function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "") {
   const dataset = report.dataset || {};
   const fullCoverage = Number.isInteger(dataset.evaluated_samples)
     && dataset.evaluated_samples === dataset.available_samples;
@@ -1266,6 +1290,7 @@ function accuracySection(report, metricsMarkup, contextMarkup) {
     <div class="detail-section-title"><h3>Accuracy</h3><details class="accuracy-explainer"><summary class="accuracy-status ${statusClass}" aria-label="Explain ${status.toLowerCase()} accuracy status">${status}</summary><div class="accuracy-explainer-card"><strong>${status}</strong><p>${escapeHtml(statusExplanation)}</p><p><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p></div></details></div>
     <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}</p>
     <div class="accuracy-summary">${metricsMarkup}</div>
+    ${tableMarkup}
     <dl class="accuracy-context">${contextMarkup}</dl>
   </section>`;
 }

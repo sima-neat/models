@@ -680,6 +680,11 @@ def _validate_devkit_accuracy(
     missing = set(entry.get("required_metrics", ())) - set(entry["metrics"])
     if missing:
         raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")
+    undeclared = set(entry.get("reference", {}).get("metrics", {})) - set(entry["metrics"])
+    if undeclared:
+        raise ValidationError(
+            f"{label}: reference metrics are not declared in metrics: {', '.join(sorted(undeclared))}"
+        )
     # The accuracy stage runs scripts/accuracy.py once per build profile.
     repeated = seen_profiles & set(entry["build_profiles"])
     if repeated:

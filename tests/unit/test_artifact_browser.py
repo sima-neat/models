@@ -765,7 +765,14 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert "item.summary?.schema_version === 2" in script
     assert "Object.entries(report.metrics || {})" in script
     assert 'coco_map: "mAP 50–95"' in script
+    assert 'coco_ar100: "AR@100"' in script
     assert "ACCURACY_METRIC_LABELS[name] || name" in script
+    # Results with more metrics than tiles list the rest in a table; each shows its published score.
+    assert ".slice(0, ACCURACY_SUMMARY_TILES)" in script
+    assert ".slice(ACCURACY_SUMMARY_TILES)" in script
+    assert "Published ${published}" in script
+    assert '<th scope="col">Published</th>' in script
+    assert '"reference": 0.530' in preview
     # Units come from the published result, so the formatted value is escaped before insertion.
     assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
     assert '"engine": "devkit_script"' in preview

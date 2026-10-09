@@ -338,6 +338,7 @@ the accuracy stage:
 | `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
 | `metrics` | Metric names the script may report. |
 | `required_metrics` | Optional subset of `metrics` that every result must contain. |
+| `reference` | Optional published scores of the source model: an HTTPS `source` and `metrics`, a map from metric names in `metrics` to values in the script's units. Each value is published as that metric's `reference`. |
 
 A build profile has at most one `devkit_script` entry, and its scoped
 components must compile in one invocation.

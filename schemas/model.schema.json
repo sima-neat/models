@@ -384,7 +384,19 @@
           }
         },
         "metrics": {"$ref": "#/$defs/accuracyMetricNames"},
-        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"}
+        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"},
+        "reference": {
+          "description": "Published scores of the source model, in the units accuracy.py reports, to compare with each measurement.",
+          "type": "object", "additionalProperties": false, "required": ["source", "metrics"],
+          "properties": {
+            "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+            "metrics": {
+              "type": "object", "minProperties": 1,
+              "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+              "additionalProperties": {"type": "number"}
+            }
+          }
+        }
       }
     },
     "accuracyMetricNames": {

@@ -79,7 +79,14 @@ accuracy:
     dataset: {id: coco-2017, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
     metrics: [coco_map, coco_ap50, coco_ap75]
     required_metrics: [coco_map]
+    reference:
+      source: https://github.com/roboflow/rf-detr/blob/<commit>/README.md
+      metrics: {coco_map: 0.530, coco_ap50: 0.721}
 ```
+
+The optional `reference` records the source model's published scores, copied
+by hand from a pinned page, so each measurement can be compared with them. Give
+each value in the unit `accuracy.py` reports.
 
 The rules:
 
@@ -89,6 +96,8 @@ The rules:
   build profile, so the accuracy stage runs on the MPKs of one build.
 - `status` is `ready` or `provisional`.
 - `required_metrics` must be listed in `metrics`.
+- `reference.metrics` must be listed in `metrics`, and `reference.source` is an
+  HTTPS URL.
 
 Optional `scripts/requirements-accuracy.txt` pins extra wheels. They install
 into a separate folder beside PyNeat's environment, never into it.
@@ -163,13 +172,15 @@ ResNet-50's `calibration.py`, needs that file beside it.
 [`accuracy-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/accuracy-result.schema.json).
 It wraps the script output with the model, build profile, entry, the SHA-256 of
 each MPK, the dataset identity, the SHA-256 of `accuracy.py`, and the source
-revision.
+revision. Each metric named in the entry's `reference` carries that published
+score as its `reference`.
 
 CI publishes it as a `model_accuracy` registry run under the result
 component's compile run. The run records the accuracy stage key and carries an
 `accuracy-result` artifact, an `accuracy/<entry-id>` test result, and one
-`model.accuracy.<metric>` measurement per metric. The model browser shows one
-tile per metric with the evaluated sample count.
+`model.accuracy.<metric>` measurement per metric. The model browser shows the
+first four metrics as tiles and lists the rest in a table, each with its
+published score when the entry records one, and the evaluated sample count.
 
 ## Recorded accuracy
 

@@ -217,7 +217,24 @@ fidelity:
     offset: 50
     samples: 50
   outputs: [dets, labels]
-accuracy: []
+accuracy:
+- id: coco_accuracy
+  scope: {type: package, package: default}
+  build_profiles: [modalix_int8_bf16]
+  engine: devkit_script
+  status: ready
+  result_component: transformer
+  dataset:
+    id: coco-2017
+    variant: mini
+    sha256: abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78
+    size_bytes: 462182592
+  metrics: [coco_map, coco_ap50, coco_ap75, coco_ap_small, coco_ap_medium, coco_ap_large,
+    coco_ar1, coco_ar10, coco_ar100, coco_ar_small, coco_ar_medium, coco_ar_large]
+  required_metrics: [coco_map]
+  reference:
+    source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
+    metrics: {coco_map: 0.565, coco_ap50: 0.751}
 benchmark:
 - id: backbone_modalix
   scope: {type: component, component: backbone}

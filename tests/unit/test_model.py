@@ -341,6 +341,13 @@ def test_devkit_accuracy_needs_no_benchmark_entry(tmp_path: Path) -> None:
     validate_model(directory, model, SCHEMA)
 
 
+def test_devkit_accuracy_accepts_a_published_reference(tmp_path: Path) -> None:
+    directory, model = _model_with_accuracy_script(tmp_path)
+    reference = {"source": "https://example.com/card", "metrics": {"score": 0.5}}
+    model["accuracy"] = [_devkit_accuracy_entry(reference=reference)]
+    validate_model(directory, model, SCHEMA)
+
+
 def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -> None:
     directory, model = _model_with_accuracy_script(tmp_path)
     model["accuracy"] = [
@@ -356,6 +363,14 @@ def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -
         ([_devkit_accuracy_entry(result_component="second_model")], "result_component 'second_model'"),
         ([_devkit_accuracy_entry(required_metrics=["missing"])], "required_metrics are not declared"),
         ([_devkit_accuracy_entry(metrics=["Score"])], "not valid under any of the given schemas"),
+        (
+            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"other": 0.5}})],
+            "reference metrics are not declared in metrics: other",
+        ),
+        (
+            [_devkit_accuracy_entry(reference={"source": "http://example.com/card", "metrics": {"score": 0.5}})],
+            "not valid under any of the given schemas",
+        ),
         (
             [
                 _devkit_accuracy_entry(),

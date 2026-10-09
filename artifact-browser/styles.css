@@ -365,6 +365,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .accuracy-metric span { color: var(--ink-faint); font-size: 11px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
 .accuracy-metric strong { color: var(--ink); font: 600 23px/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
 .accuracy-metric small { color: var(--ink-muted); font-size: 12px; }
+.accuracy-section .benchmark-measurements table { min-width: 0; }
 .accuracy-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0 0; }
 .fidelity-scope { margin: -3px 0 16px; color: var(--ink-muted); font-size: 13px; }
 .fidelity-scope strong { color: var(--ink); font-weight: 700; }

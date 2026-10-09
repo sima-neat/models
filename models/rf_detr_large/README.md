@@ -6,9 +6,9 @@ RF-DETR Large is a COCO object detector that accepts a normalized 704×704 RGB
 image and produces 300 boxes with 91 class scores. The Modalix package splits
 inference into independently deployable backbone and transformer components.
 Applications must select the 300 highest-scoring backbone proposals and gather
-their boxes on the A65 before invoking the transformer. Published fidelity
-measurements diagnose the compiled tensor pipeline but do not constitute
-detection-accuracy qualification.
+their boxes on the A65 before invoking the transformer. Detection accuracy is
+measured as COCO mAP on a Modalix DevKit over the full COCO 2017 validation
+split.
 
 ## Usage
 
@@ -71,6 +71,18 @@ detections, so fidelity does not gate publication.
 The benchmark script measures each MPK separately with three trials of 1,000
 samples. CI runs the backbone and transformer sequentially on one Modalix board
 and publishes one benchmark result for each component.
+
+On the same board and MPKs, `scripts/accuracy.py` then measures the 12 COCO
+bounding-box AP and AR metrics on all 5,000 val2017 images. The `coco_accuracy`
+result is published as an accuracy run under the transformer's compile run, and
+the model browser shows it with the build beside Roboflow's
+[published scores](https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md) for the source model: mAP 50–95 0.565 and AP50 0.751.
+
+The script resizes each image to 704×704 with bilinear sampling and applies
+ImageNet normalization, runs the backbone, the CPU proposal bridge, and the
+transformer, and keeps the 300 highest-scoring box and class pairs with a score
+of at least 0.001. Boxes are clipped to the image, as in RF-DETR's current
+postprocessor.
 
 ## Source and license
 
@@ -172,3 +184,22 @@ calibrates the transformer, and writes:
 
 The published ONNX is retained for reuse. Partition graphs, intermediate
 tensors, generated models, and reports must remain outside Git.
+
+### DevKit accuracy
+
+The `coco_accuracy` accuracy entry declares the COCO 2017 `mini` dataset
+archive, the published metrics, and Roboflow's reference scores. On a Modalix
+DevKit, run the accuracy stage on the output of
+`scripts/run_model_compilation.sh` above, setting `REGISTRY_PYTHON` to a Python
+that has the full Model Registry tooling and Dataset Registry:
+
+```bash
+scripts/run_model_accuracy.sh models/rf_detr_large modalix_int8_bf16 \
+  /tmp/rf-detr /media/nvme/neat-tests/rf-detr-accuracy
+```
+
+The script installs `scripts/requirements-accuracy.txt` beside PyNeat's
+environment, extracts the archive under `/media/nvme/neat-tests/`, and removes
+both when it exits. See
+[Accuracy on the DevKit](../../docs/local-accuracy-development.md#accuracy-on-the-devkit)
+for the result format and publication.

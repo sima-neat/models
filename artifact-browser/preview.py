@@ -212,9 +212,23 @@ def _devkit_accuracy_result(index: int) -> dict | None:
             "available_samples": 5000,
         },
         "metrics": {
-            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher"},
-            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher"},
-            "coco_ap75": {"value": 0.5017, "unit": "ratio", "direction": "higher"},
+            "coco_map": {"value": 0.4694, "unit": "ratio", "direction": "higher", "reference": 0.530},
+            "coco_ap50": {"value": 0.6537, "unit": "ratio", "direction": "higher", "reference": 0.721},
+            **{
+                name: {"value": value, "unit": "ratio", "direction": "higher"}
+                for name, value in {
+                    "coco_ap75": 0.5017,
+                    "coco_ap_small": 0.2687,
+                    "coco_ap_medium": 0.5132,
+                    "coco_ap_large": 0.6571,
+                    "coco_ar1": 0.3611,
+                    "coco_ar10": 0.6012,
+                    "coco_ar100": 0.6593,
+                    "coco_ar_small": 0.4598,
+                    "coco_ar_medium": 0.7121,
+                    "coco_ar_large": 0.8340,
+                }.items()
+            },
         },
         "execution": {"core_version": "3.0.0", "script_sha256": "c" * 64, "models_commit": "a" * 40},
     }

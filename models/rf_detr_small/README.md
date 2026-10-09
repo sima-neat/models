@@ -69,11 +69,13 @@ The benchmark script measures each MPK separately with three trials of 1,000
 samples. CI runs the backbone and transformer sequentially on one Modalix board
 and publishes one benchmark result for each component.
 
-On the same board and MPKs, `scripts/accuracy.py` then measures COCO detection
-accuracy on all 5,000 val2017 images. The current build scores mAP 50–95
-0.469, AP50 0.654, and AP75 0.502. The `coco_accuracy` result is published as
-an accuracy run under the transformer's compile run, and the model browser
-shows it with the build.
+On the same board and MPKs, `scripts/accuracy.py` then measures the 12 COCO
+bounding-box AP and AR metrics on all 5,000 val2017 images. The current build
+scores mAP 50–95 0.469, AP50 0.654, and AP75 0.502; Roboflow's
+[published scores](https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md) for the source model are mAP 50–95 0.530 and AP50
+0.721. The `coco_accuracy` result is published as an accuracy run under the
+transformer's compile run, and the model browser shows it with the build beside
+the published scores.
 
 The script resizes each image to 512×512 with bilinear sampling and applies
 ImageNet normalization, runs the backbone, the CPU proposal bridge, and the
@@ -186,10 +188,10 @@ tensors, generated models, and reports must remain outside Git.
 ### DevKit accuracy
 
 The `coco_accuracy` accuracy entry declares the COCO 2017 `mini` dataset
-archive and the published metrics. On a Modalix DevKit, run the accuracy stage
-on the output of `scripts/run_model_compilation.sh` above, setting
-`REGISTRY_PYTHON` to a Python that has the full Model Registry tooling and
-Dataset Registry:
+archive, the published metrics, and Roboflow's reference scores. On a Modalix
+DevKit, run the accuracy stage on the output of
+`scripts/run_model_compilation.sh` above, setting `REGISTRY_PYTHON` to a Python
+that has the full Model Registry tooling and Dataset Registry:
 
 ```bash
 scripts/run_model_accuracy.sh models/rf_detr_small modalix_int8_bf16 \
