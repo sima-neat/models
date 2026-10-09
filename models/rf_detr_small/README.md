@@ -7,8 +7,8 @@ image and produces 300 boxes with 91 class scores. The Modalix package splits
 inference into independently deployable backbone and transformer components.
 Applications must select the 300 highest-scoring backbone proposals and gather
 their boxes on the A65 before invoking the transformer. Detection accuracy is
-qualified by COCO mAP measured on a Modalix DevKit over the full COCO 2017
-validation split.
+measured as COCO mAP on a Modalix DevKit over the full COCO 2017 validation
+split.
 
 ## Usage
 
