@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -105,6 +108,28 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble
+
+
+def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> None:
+    shutil.copytree(BROWSER, tmp_path / "artifact-browser")
+    (tmp_path / "website" / "scripts").mkdir(parents=True)
+    (tmp_path / "website" / "build").mkdir()
+    shutil.copy(PORTAL_ASSEMBLER, tmp_path / "website" / "scripts" / PORTAL_ASSEMBLER.name)
+
+    subprocess.run(
+        ["node", str(tmp_path / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_SHA": "a" * 40},
+    )
+
+    portal = tmp_path / "website" / "portal-build"
+    modules = sorted(portal.glob("*.aaaaaaaaaaaa.js"))
+    assert {path.name.split(".")[0] for path in modules} >= {"app", "downloads", "branch-builds"}
+    for module in modules:
+        for specifier in re.findall(r"[\"'](\./[\w.-]+\.js)[\"']", module.read_text(encoding="utf-8")):
+            assert ".aaaaaaaaaaaa.js" in specifier, f"{module.name} imports {specifier}"
+            assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
 
 
 def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:

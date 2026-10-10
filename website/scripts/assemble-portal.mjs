@@ -34,13 +34,18 @@ browserHtml = browserHtml
   .replace('src="app.js"', `src="app.${revision}.js"`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
-const applicationPath = join(output, `app.${revision}.js`);
-const application = readFileSync(applicationPath, 'utf8')
-  .replace('./benchmark-adapters.js', `./benchmark-adapters.${revision}.js`)
-  .replace('./branch-builds.js', `./branch-builds.${revision}.js`)
-  .replace('./downloads.js', `./downloads.${revision}.js`)
-  .replace('./markdown.js', `./markdown.${revision}.js`);
-writeFileSync(applicationPath, application);
+const modules = fingerprintedAssets.filter((asset) => asset !== 'styles');
+const localImport = /(["'])\.\/([\w-]+)\.js\1/g;
+for (const asset of modules) {
+  const path = join(output, `${asset}.${revision}.js`);
+  const source = readFileSync(path, 'utf8').replace(localImport, (_, quote, name) => {
+    if (!modules.includes(name)) {
+      throw new Error(`${asset}.js imports ./${name}.js, which is not a fingerprinted asset; add it to fingerprintedAssets`);
+    }
+    return `${quote}./${name}.${revision}.js${quote}`;
+  });
+  writeFileSync(path, source);
+}
 
 console.log(`Assembled Model Registry portal at ${output}`);
 console.log(`Catalog: ${routeBase}/`);
