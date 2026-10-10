@@ -21,6 +21,8 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
         "taxonomies/**",
     ):
         assert f'      - "{path}"' in text
+    assert '      - "website/**"' in text.split("  push:")[0]
+    assert '      - "website/**"' not in text.split("  push:")[1]
     assert "packaging/model-registry/build.sh" in text
     assert "artifact_folder: model-registry" in text
     assert text.count("artifact_namespace: models-utils") == 2

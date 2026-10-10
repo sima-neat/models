@@ -9,7 +9,8 @@
     "serve": "docusaurus serve",
     "serve:portal": "docusaurus serve --dir portal-build --port 4173 --no-open",
     "clear": "docusaurus clear",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "smoke:portal": "node scripts/smoke-portal.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",
@@ -27,6 +28,7 @@
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
     "@types/react": "^19.0.0",
+    "playwright": "1.63.0",
     "typescript": "~6.0.2"
   },
   "browserslist": {

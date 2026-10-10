@@ -36,6 +36,19 @@ npm run serve:portal --prefix website
 Open <http://localhost:4173> for the catalog and
 <http://localhost:4173/docs> for the developer guide.
 
+The deployed catalog is the assembled `website/portal-build/`, where every
+module is renamed with the revision. `preview.py` serves the unrenamed sources,
+so check the assembled build before a pull request. CI runs the same check:
+
+```bash
+npx --prefix website playwright install chromium
+npm run smoke:portal --prefix website
+```
+
+It serves `portal-build/` against the preview API fixture in Chromium and fails
+when a module or stylesheet does not load, the page throws or logs an error, or
+the model list or a variant page does not render.
+
 To preview the complete ResNet-50 accuracy and schema-v4 benchmark UI without a
 registry or DevKit connection, run:
 
