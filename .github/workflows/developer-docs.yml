@@ -1,30 +1,12 @@
 name: Developer Docs Validation
 
+# The orchestrator calls this on every push, before planning compilations; a manual run checks one ref.
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/developer-docs.yml"
-      - "artifact-browser/**"
-      - "docs/**"
-      - "tests/browser/**"
-      - "website/**"
-  push:
-    branches:
-      - develop
-    paths:
-      - ".github/workflows/developer-docs.yml"
-      - "artifact-browser/**"
-      - "docs/**"
-      - "tests/browser/**"
-      - "website/**"
+  workflow_call: {}
   workflow_dispatch: {}
 
 permissions:
   contents: read
-
-concurrency:
-  group: developer-docs-validation-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

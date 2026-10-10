@@ -331,7 +331,8 @@ def test_developer_docs_workflow_runs_browser_tests_and_smoke_tests_the_portal()
     workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     runs = [step.get("run") for step in workflow["jobs"]["build"]["steps"]]
 
-    assert "tests/browser/**" in workflow["on"]["pull_request"]["paths"]
+    # The orchestrator calls this check on every push; it has no push or pull-request trigger of its own.
+    assert set(workflow["on"]) == {"workflow_call", "workflow_dispatch"}
     assert "node --test tests/browser/*.test.mjs" in runs
     assert runs.index("npm run smoke:portal") > runs.index("npm run build:portal")
     assert "npx playwright install --with-deps chromium" in runs

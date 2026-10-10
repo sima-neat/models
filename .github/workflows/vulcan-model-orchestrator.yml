@@ -171,6 +171,12 @@ jobs:
             echo "Declared compile invocations: $(jq '.compile.include | length' <<< "$plan")."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # A portal that does not build or load stops the run before anything compiles or publishes.
+  portal:
+    name: Check the model browser portal
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/developer-docs.yml
+
   resolve-vulcan-config:
     name: Resolve Vulcan publication config
     needs: select
@@ -185,7 +191,7 @@ jobs:
 
   plan:
     name: Plan compilations and DevKit stages against the registry
-    needs: select
+    needs: [select, portal]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}

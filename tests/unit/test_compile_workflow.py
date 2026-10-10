@@ -109,6 +109,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
 
     assert set(jobs) == {
         "select",
+        "portal",
         "resolve-vulcan-config",
         "plan",
         "authorize-runner-classes",
@@ -252,11 +253,20 @@ def test_new_branches_inherit_the_resolved_base_branch_catalog() -> None:
     assert jobs["compile"]["with"]["base_branch"] == "${{ needs.select.outputs.base_branch }}"
 
 
+def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
+    jobs = load(WORKFLOW)["jobs"]
+
+    assert jobs["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
+    assert "portal" in jobs["plan"]["needs"]
+    # Without a status function, plan runs only when portal succeeded; every later job needs plan.
+    assert "always()" not in jobs["plan"]["if"] and "cancelled()" not in jobs["plan"]["if"]
+
+
 def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
     plan_job = load(WORKFLOW)["jobs"]["plan"]
     plan = step(plan_job, "Compare stage keys with published runs")
 
-    assert plan_job["needs"] == "select"
+    assert plan_job["needs"] == ["select", "portal"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert "permissions" not in plan_job
     assert plan["env"]["REGISTRY_READ_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}"
