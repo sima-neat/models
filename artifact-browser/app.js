@@ -1216,8 +1216,16 @@ const ACCURACY_METRIC_LABELS = {
   coco_ar_medium: "AR medium",
   coco_ar_large: "AR large",
 };
-// The first metrics a result reports are shown as tiles; any further metrics are listed in a table.
+// The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;
+
+// The registry does not preserve a result's metric order, so known metrics follow the label order and
+// any others follow them in the order they arrive.
+function orderedAccuracyMetrics(report) {
+  const known = Object.keys(ACCURACY_METRIC_LABELS);
+  const rank = (name) => (known.includes(name) ? known.indexOf(name) : known.length);
+  return Object.entries(report.metrics || {}).sort(([left], [right]) => rank(left) - rank(right));
+}
 
 function accuracyPanel(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
   const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
@@ -1248,14 +1256,14 @@ function publishedAccuracyValue(metric) {
 }
 
 function accuracyMetricTiles(report) {
-  return Object.entries(report.metrics || {}).slice(0, ACCURACY_SUMMARY_TILES).map(([name, metric], index) => {
+  return orderedAccuracyMetrics(report).slice(0, ACCURACY_SUMMARY_TILES).map(([name, metric], index) => {
     const published = publishedAccuracyValue(metric);
     return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
   }).join("");
 }
 
 function accuracyMetricTable(report) {
-  const rows = Object.entries(report.metrics || {}).slice(ACCURACY_SUMMARY_TILES).map(([name, metric]) => (
+  const rows = orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES).map(([name, metric]) => (
     `<tr><th scope="row">${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</th><td>${escapeHtml(accuracyMetricValue(metric))}</td><td>${escapeHtml(publishedAccuracyValue(metric) || "—")}</td></tr>`
   )).join("");
   if (!rows) return "";

@@ -779,6 +779,31 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert '"suite": "accuracy"' in preview
 
 
+def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_returns() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    start = script.index("const ACCURACY_METRIC_LABELS = {")
+    end = script.index("function accuracyPanel(")
+    # The registry returned RF-DETR Small's published metrics in this order.
+    metrics = ["coco_ar1", "coco_map", "coco_ap50", "coco_ap75", "coco_ar10", "coco_ar100", "coco_ap_large",
+               "coco_ap_small", "coco_ar_large", "coco_ar_small", "coco_ap_medium", "coco_ar_medium"]
+    report = {"metrics": {name: {"value": 0.5} for name in ["custom_b", *metrics, "custom_a"]}}
+    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script[start:end] + order],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == [
+        "coco_map", "coco_ap50", "coco_ap75", "coco_ap_small", "coco_ap_medium", "coco_ap_large",
+        "coco_ar1", "coco_ar10", "coco_ar100", "coco_ar_small", "coco_ar_medium", "coco_ar_large",
+        "custom_b", "custom_a",
+    ]
+    assert "orderedAccuracyMetrics(report).slice(0, ACCURACY_SUMMARY_TILES)" in script
+    assert "orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES)" in script
+
+
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
