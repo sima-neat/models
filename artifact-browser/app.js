@@ -972,13 +972,29 @@ function renderComparisonTable(variants) {
   </table></div>`;
 }
 
+// A history entry holds only the runs on screen, so a search or page boundary can split a build;
+// compare every component of each selected build.
+async function completeVariantGroup(group) {
+  const cached = state.variantCache.get(group.key);
+  return { ...group, runs: cached ? cached.runs : await variantBuildRuns(group.anchor, api) };
+}
+
 async function openComparison() {
-  const groups = comparisonGroups();
-  if (groups.length < 2) return;
-  elements["compare-title"].textContent = `Compare ${groups.length} variants`;
+  const selected = comparisonGroups();
+  if (selected.length < 2) return;
+  elements["compare-title"].textContent = `Compare ${selected.length} variants`;
   elements["compare-description"].textContent = "Each component is listed under its variant. Empty benchmark cells mean that measurement is unavailable.";
   elements["compare-content"].innerHTML = `<div class="comparison-loading" role="status"><span class="spinner"></span> Loading artifact and benchmark data…</div>`;
   elements["compare-dialog"].showModal();
+  let groups;
+  try {
+    groups = await Promise.all(selected.map(completeVariantGroup));
+  } catch (error) {
+    if (elements["compare-dialog"].open) {
+      elements["compare-content"].innerHTML = `<p class="muted-message">Could not load every component of the selected variants. ${escapeHtml(error.message)}</p>`;
+    }
+    return;
+  }
   const runs = groups.flatMap((group) => group.runs);
   const entries = await mapWithConcurrency(runs, 6, loadComparisonEntry);
   let offset = 0;
@@ -1607,7 +1623,7 @@ function renderDetail(variant) {
   const run = variant.anchor;
   const details = variant.details;
   const allTests = details.flatMap((detail) => detail.tests.test_results || []);
-  const inputs = uniqueBy(details.map((detail) => detail.provenance.inputs?.[0]).filter(Boolean), (input) => input.sha256 || input.name);
+  const inputs = uniqueBy(details.flatMap((detail) => detail.provenance.inputs || []), (input) => input.sha256 || input.name);
   const model = variant.modelId || run.run_type;
   const catalogModel = catalogModelForRun(run);
   const displayName = catalogModel?.display_name || model;

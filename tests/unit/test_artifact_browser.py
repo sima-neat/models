@@ -848,6 +848,9 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert "return [...state.compareSelection.values()]" in script
     assert 'elements["compare-button"].disabled = selectedCount < 2' in script
     assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
+    # A filtered or paged history entry may hold part of a build; comparison resolves every component.
+    assert "groups = await Promise.all(selected.map(completeVariantGroup));" in script
+    assert "cached ? cached.runs : await variantBuildRuns(group.anchor, api)" in script
     assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
     assert "adaptBenchmarkResult(detail.benchmark.result)" in script
     assert '<th scope="col">Artifact size</th>' in script
@@ -1071,6 +1074,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert all(render_detail.count(marker) == 1 for marker in order)
     # One accuracy panel for the variant, from whichever component carries it.
     assert ")).find(Boolean) || \"\"" in render_detail
+    assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
