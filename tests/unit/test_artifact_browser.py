@@ -347,9 +347,12 @@ def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
 def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
 
-    assert "navigationId === state.navigationId && state.selectedId) await selectRun(state.selectedId, { updateUrl: false });" in script
+    assert "if (navigationId !== state.navigationId) return;" in script
+    assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false, expand: linkedRun });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in script
-    assert "state.detailCache.get(runId)?.summary?.run" in script
+    # A linked build off the current page registers itself so it can still be compared.
+    assert "state.variantGroups.set(variant.key, variant);" in script
+    assert "state.variantGroups.get(key) || state.compareSelection.get(key)" in script
 
 
 def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
@@ -361,25 +364,25 @@ def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
     assert "/catalogs/${encodeURIComponent(run.commit_sha)}?${query}" in script
     assert "payload.catalog?.document?.models" in script
     assert 'state.catalogMode === "runs"' in select_run
-    assert "await loadHistoricalCatalogModel(detail.summary.run)" in select_run
+    assert "await loadHistoricalCatalogModel(anchor)" in select_run
 
 
 def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
 
-    assert 'const currentPackage = fullPackageForRun(detail.summary.run);' in select_run
-    assert 'detail.packageSummary?.run?.id !== currentPackage.run_id' in select_run
-    assert 'currentPackage.run_id !== requestedPackageId' in select_run
-    assert 'detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);' in select_run
+    assert 'const currentPackage = variantPackage(variant.runs);' in select_run
+    assert 'variant.packageSummary?.run?.id !== currentPackage.run_id' in select_run
+    assert '(cached || currentPackage.run_id !== variant.requestedPackageId)' in select_run
+    assert 'variant.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);' in select_run
 
 
 def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
-    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+    write_url = script.split("function writeVariantUrl(", 1)[1].split("async function selectRun(", 1)[0]
 
-    assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in select_run
-    assert 'url.searchParams.set("branch", branch);' not in select_run
+    assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in write_url
+    assert 'url.searchParams.set("branch", branch);' not in write_url
     assert 'state.urlBranch = link.has("branch")' in script
 
 
@@ -397,7 +400,7 @@ def test_browser_history_restores_category_filters_and_empty_detail() -> None:
 
     assert 'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""])' in initialize
     assert "state.taxonomy = null" in initialize
-    assert "if (state.selectedId) detailSkeleton();\n  else showEmptyDetail();" in initialize
+    assert "if (state.selectedId || linkedVariant) detailSkeleton();\n  else showEmptyDetail();" in initialize
     assert "if (state.taxonomy) populateCategoryFilters();" in initialize
     assert 'window.addEventListener("popstate", () => {' in script
 
@@ -560,13 +563,11 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
-    assert "function buildIdentity(run)" in script
-    assert "metadata.build_profile_id || metadata.variant_id" in script
-    assert 'component !== "model"' in script
-    assert '`${profile} · ${component}`' in script
-    assert '"Build identity unavailable"' in script
+    assert "function profileLabel(run)" in script
+    assert 'run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable"' in script
+    assert 'components.length > 1 || components[0] !== "model" ? components.join(" · ") : ""' in script
+    assert '<small>${escapeHtml(profileLabel(run))}</small>' in script
     assert '"default artifact"' not in script
-    assert "const build = buildIdentity(run);" in script
     assert "run.metadata?.build_profile_id, run.metadata?.component_id" in script
     assert '"build_profile_id": variant_id' in preview
     assert '"component_id": "model"' in preview
@@ -608,13 +609,13 @@ def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert "const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup)" in script
+    assert "const hasBenchmark = details.some((detail) => detail.benchmark);" in script
     assert (
-        'data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results"'
+        'data-scroll-benchmark aria-label="Jump to component benchmarks" data-tooltip="Jump to component benchmarks"'
         in script
     )
-    assert 'id="benchmark-section" class="benchmark-section" tabindex="-1"' in script
-    assert 'querySelector("#benchmark-section")' in script
+    assert 'id="components-section" class="component-section" tabindex="-1"' in script
+    assert 'querySelector("#components-section")' in script
     assert 'benchmark.scrollIntoView({' in script
     assert 'matchMedia("(prefers-reduced-motion: reduce)").matches' in script
     assert ".benchmark-shortcut:focus-visible" in styles
@@ -659,7 +660,7 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
     assert 'artifact.artifact_type === "model-pack"' in script
     assert "artifacts: modelPackArtifacts(summary?.artifacts)" in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
-    assert "const primaryArtifact = artifacts[0]" in script
+    assert 'artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
     assert '|| artifacts[0]' not in script
 
 
@@ -752,13 +753,12 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
-    assert "accuracyKeyForRun(summary.run).then(devkitAccuracy)" in script
-    # History mode has no catalog loaded, so the key comes from the catalog at the run's own revision.
-    assert (
-        'state.catalogMode === "runs" ? await loadHistoricalCatalogModel(run) : catalogModelForRun(run)'
-        in script
-    )
-    assert "model?.builds?.find((build) => build.run_id === run.id)?.validation_fingerprint" in script
+    # One accuracy key per variant: the component build that carries it names every MPK it measured.
+    assert "accuracyKeyForRuns(runs).then(devkitAccuracy)" in script
+    # History mode has no catalog loaded, so the key comes from the catalog at the build's own revision.
+    assert 'const current = state.catalogMode === "runs" ? null : catalogModelForRun(runs[0]);' in script
+    assert "return keyIn(await loadHistoricalCatalogModel(runs[0]));" in script
+    assert "runIds.has(build.run_id) && build.validation_fingerprint" in script
     assert 'run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1"' in script
     assert "return await api(`/v1/runs/${run.id}/accuracy/latest`)" in script
     assert "api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`)" in script
@@ -843,13 +843,18 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert 'id="compare-dialog" class="compare-dialog"' in html
     assert 'aria-labelledby="compare-title" aria-describedby="compare-description"' in html
     assert "compareSelection: new Map()" in script
-    assert 'data-compare-run-id="${run.id}"' in script
+    assert 'data-compare-variant="${escapeHtml(group.key)}"' in script
+    assert "data-compare-run-id" not in script
     assert "return [...state.compareSelection.values()]" in script
     assert 'elements["compare-button"].disabled = selectedCount < 2' in script
     assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
     assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
     assert "adaptBenchmarkResult(detail.benchmark.result)" in script
     assert '<th scope="col">Artifact size</th>' in script
+    # Each variant gets a header row and one row per component; measurements are never combined.
+    assert '<th scope="col">Variant / component</th>' in script
+    assert '<tr class="comparison-variant"><th scope="rowgroup" colspan="4">' in script
+    assert ".comparison-table tbody tr.comparison-variant th" in styles
     assert "data-comparison-metric" in script
     assert "benchmark?.measurements[field]" in script
     assert 'elements["compare-dialog"].showModal()' in script
@@ -874,12 +879,13 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert 'class="detail-variant-tabs" role="tablist"' in script
     assert 'class="detail-variant-tab" type="button" role="tab"' in script
     assert '<strong>Variants</strong>' in script
-    assert '<span>Components</span>' in script
     assert '"<b>Current</b>"' in script
-    assert 'class="detail-component-tabs" role="group"' in script
+    assert "detail-component-tabs" not in script
+    assert "detail-component-tabs" not in styles
     assert 'class="detail-compare-select compare-select"' in script
+    assert '"Add variant to comparison"' in script
     assert "activeProfileByModel: new Map()" in script
-    assert "activeComponentByProfile: new Map()" in script
+    assert "activeComponentByProfile" not in script
     assert "function selectedCatalogBuild(" in script
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
@@ -892,8 +898,8 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     render_model_row = script.split("function renderModelRow(", 1)[1].split("function renderModels(", 1)[0]
     assert 'role="tablist"' not in render_model_row
     assert "data-compare-run-id" not in render_model_row
-    assert "const [activeProfile, activeBuilds] = profiles.find(" in script
-    assert "componentId(build) === requestedComponent" in script
+    assert "const selected = profile === variant.profile;" in script
+    assert "profiles.find(([id]) => id === requestedProfile) || profiles[0]" in script
     assert '("rf_detr_small", "modalix_int8_bf16", "backbone"' in preview
     assert '("rf_detr_small", "modalix_int8_bf16", "transformer"' in preview
 
@@ -1047,3 +1053,28 @@ assert.match(calls[1], /cursor=page-2/);
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
+
+
+def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    render_detail = script.split("function renderDetail(variant)", 1)[1].split("function errorPanel(", 1)[0]
+    component_row = script.split("function componentRow(detail, open)", 1)[1].split("function ", 1)[0]
+
+    # Build-level sections render once per variant, in the page order.
+    order = [
+        "detailBuildSwitcher(variant)", "documentationPanel(catalogModel)", "<h3>Full Package</h3>",
+        "<h3>Build provenance</h3>", "sourceInputPanel(inputs)", "licensePanel(license)", "${accuracyMarkup}",
+        'id="components-section"',
+    ]
+    positions = [render_detail.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    assert all(render_detail.count(marker) == 1 for marker in order)
+    # One accuracy panel for the variant, from whichever component carries it.
+    assert ")).find(Boolean) || \"\"" in render_detail
+    assert "(input) => input.sha256 || input.name" in render_detail
+    assert "componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))" in render_detail
+    assert "component latencies do not add up to end-to-end latency" in render_detail
+    # Per-component facts live in the row, never on the page.
+    for marker in ['keyValue("Run ID"', 'keyValue("Fingerprint"', "fidelityPanel(tests, run.id)", "${body}"]:
+        assert marker in component_row
+        assert marker not in render_detail

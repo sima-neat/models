@@ -226,12 +226,6 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .detail-variant-tab[aria-selected="true"]::before { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--blue); content: ""; }
 .detail-variant-tab b { padding-left: 8px; border-left: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); color: var(--blue); font: 700 9px var(--font-body); letter-spacing: .06em; text-transform: uppercase; }
 .detail-variant-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.detail-component-row { display: grid; gap: 7px; margin-top: 14px; }
-.detail-component-row > span { color: var(--ink-faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.detail-component-tabs { width: fit-content; display: flex; padding: 2px; border: 1px solid var(--line); background: var(--surface); }
-.detail-component-tabs button { padding: 5px 9px; border: 0; color: var(--ink-faint); background: transparent; font: 500 11px var(--font-mono); cursor: pointer; }
-.detail-component-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px rgb(0 0 0 / 10%); }
-.detail-component-tabs button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 .detail-compare-select { width: fit-content; display: flex; align-items: center; gap: 8px; margin-top: 15px; color: var(--ink-soft); font-size: 12px; }
 .detail-compare-select b { font-weight: 600; }
 .model-source-link, .huggingface-source-link, .benchmark-shortcut, .artifact-download-shortcut, .mpk-validation-mark { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink-soft); background: var(--surface-raised); transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease; }
@@ -286,6 +280,27 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .source-block span { color: var(--ink-faint); font-size: 13px; }
 .source-block code { overflow: hidden; color: var(--ink-faint); font: 13px var(--font-mono); text-overflow: ellipsis; }
 .muted-message { color: var(--ink-faint); font-size: 14px; }
+.component-list { border-top: 1px solid var(--line); }
+.component-row { padding: 0; border-top: 0; }
+.component-row > summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); align-items: start; gap: 10px 14px; position: relative; padding: 14px 4px 14px 20px; }
+.component-row > summary::before { content: "▸"; position: absolute; top: 15px; left: 4px; color: var(--ink-faint); font-size: 11px; }
+.component-row[open] > summary::before { content: "▾"; }
+.component-row > summary:hover { background: var(--surface); }
+.component-row > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.component-row > summary strong { grid-column: 1 / -1; overflow: hidden; font: 600 13px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.component-stat { min-width: 0; display: grid; gap: 4px; overflow: hidden; color: var(--ink); font: 500 13px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.component-stat small { overflow: hidden; color: var(--ink-faint); font: 700 10px var(--font-body); letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; }
+.component-body { padding: 4px 0 22px; }
+.component-body > details { margin-top: 18px; }
+.component-body .fidelity-section { margin-top: 22px; padding-bottom: 0; }
+.component-benchmark { margin-top: 22px; }
+.component-benchmark h4 { display: flex; justify-content: space-between; margin: 0 0 12px; font-size: 13px; letter-spacing: .055em; text-transform: uppercase; }
+.component-benchmark h4 span { color: var(--ink-faint); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.component-section > .muted-message { margin: 14px 0 0; font-size: 13px; }
+.run-identity small.run-components { color: var(--ink-faint); font: 12px var(--font-mono); }
+.comparison-table tbody tr.comparison-variant th { position: static; background: var(--surface); }
+.comparison-table tbody tr.comparison-variant th small { display: inline; margin: 0 0 0 10px; }
+.comparison-table tbody tr.comparison-variant th strong { display: inline; }
 .model-documentation { position: relative; }
 .model-documentation .detail-section-title { margin-bottom: 12px; }
 .model-documentation-body { color: var(--ink-soft); font-size: 15px; line-height: 1.7; }

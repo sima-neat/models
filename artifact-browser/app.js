@@ -1,7 +1,7 @@
 import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
-import { allPages, branchModels } from "./branch-builds.js";
+import { allPages, branchModels, runProfile, variantBuildKey, variantBuildRuns, variantBuilds } from "./branch-builds.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
@@ -61,6 +61,11 @@ const state = {
   preferredBranch: null,
   urlBranch: false,
   detailCache: new Map(),
+  // Variant builds by build key, the selected one, and builds that can be selected for comparison.
+  variantCache: new Map(),
+  selectedVariantKey: null,
+  variantGroups: new Map(),
+  expandedRuns: new Set(),
   historicalCatalogModels: new Map(),
   documentationCache: new Map(),
   expandedDocumentationModelId: null,
@@ -68,7 +73,6 @@ const state = {
   comparisonCache: new Map(),
   compareSelection: new Map(),
   activeProfileByModel: new Map(),
-  activeComponentByProfile: new Map(),
   taxonomy: null,
   detailLayout: readDetailLayout(),
   trialMetric: "latency_avg_ms",
@@ -200,12 +204,13 @@ function huggingFaceSourceLink(input = {}) {
   return { href, label: href.replace(/^https:\/\//, "") };
 }
 
-function sourceInputPanel(input) {
-  return `<section><div class="detail-section-title"><h3>Source input</h3></div><div class="source-block">
+function sourceInputPanel(inputs) {
+  if (!inputs.length) return "";
+  return `<section><div class="detail-section-title"><h3>Source input</h3></div>${inputs.map((input) => `<div class="source-block">
     <strong>${escapeHtml(input.name)}</strong>
     <p>${escapeHtml(input.source_reference || input.input_type)}</p>
     <div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div>
-  </div></section>`;
+  </div>`).join("")}</section>`;
 }
 
 function formatDate(value, includeTime = true) {
@@ -272,10 +277,15 @@ async function devkitAccuracy(accuracyKey) {
   }
 }
 
-// History mode lists runs without a catalog, so the key comes from the catalog at the run's revision.
-async function accuracyKeyForRun(run) {
-  const model = state.catalogMode === "runs" ? await loadHistoricalCatalogModel(run) : catalogModelForRun(run);
-  return model?.builds?.find((build) => build.run_id === run.id)?.validation_fingerprint;
+// Only the build of the component that reports the result carries the key. A build missing from the
+// current catalog, as in history mode, takes it from the catalog at the build's revision.
+async function accuracyKeyForRuns(runs) {
+  const runIds = new Set(runs.map((run) => run.id));
+  const keyIn = (model) => model?.builds?.find((build) => runIds.has(build.run_id) && build.validation_fingerprint)
+    ?.validation_fingerprint;
+  const current = state.catalogMode === "runs" ? null : catalogModelForRun(runs[0]);
+  if (current?.builds?.some((build) => runIds.has(build.run_id))) return keyIn(current);
+  return keyIn(await loadHistoricalCatalogModel(runs[0]));
 }
 
 async function apiText(path) {
@@ -570,14 +580,6 @@ function taxonomyLabel(section, id) {
   return state.taxonomy?.[section]?.[id]?.display_name || id || "";
 }
 
-function buildIdentity(run) {
-  const metadata = run.metadata || {};
-  const profile = metadata.build_profile_id || metadata.variant_id;
-  const component = metadata.component_id;
-  if (profile && component && component !== "model") return `${profile} · ${component}`;
-  return profile || component || "Build identity unavailable";
-}
-
 function catalogMode() {
   return state.catalogMode === "models";
 }
@@ -592,6 +594,11 @@ function buildProfileId(build) {
 
 function componentId(build) {
   return build.component_id || "model";
+}
+
+// The "model" component, else the first, opens a variant page.
+function anchorBuild(builds) {
+  return builds.find((item) => componentId(item) === "model") || builds[0];
 }
 
 function modelCategory(model, name, fallback) {
@@ -720,13 +727,7 @@ function activeModelBuild(model) {
   const requestedProfile = state.activeProfileByModel.get(model.model_id);
   const [profile, builds] = profiles.find(([id]) => id === requestedProfile) || profiles[0];
   state.activeProfileByModel.set(model.model_id, profile);
-  const componentKey = `${model.model_id}:${profile}`;
-  const requestedComponent = state.activeComponentByProfile.get(componentKey);
-  const build = builds.find((item) => componentId(item) === requestedComponent)
-    || builds.find((item) => componentId(item) === "model")
-    || builds[0];
-  state.activeComponentByProfile.set(componentKey, componentId(build));
-  return { profile, builds, build };
+  return { profile, builds, build: anchorBuild(builds) };
 }
 
 function populateFilters({ persistBranchFallback = false } = {}) {
@@ -753,7 +754,7 @@ function populateFilters({ persistBranchFallback = false } = {}) {
   updateFilterDisclosure();
 }
 
-function comparisonRuns() {
+function comparisonGroups() {
   return [...state.compareSelection.values()];
 }
 
@@ -766,50 +767,69 @@ function updateCompareAction() {
   elements["compare-button"].setAttribute(
     "aria-label",
     selectedCount < 2
-      ? `Select ${2 - selectedCount} more build${selectedCount === 1 ? "" : "s"} to compare`
-      : `Compare ${selectedCount} selected builds`,
+      ? `Select ${2 - selectedCount} more variant${selectedCount === 1 ? "" : "s"} to compare`
+      : `Compare ${selectedCount} selected variants`,
   );
 }
 
+// Grouping treats a run without a build profile as its own "default" variant; never show that as a profile.
+function profileLabel(run) {
+  return run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable";
+}
+
+function variantLabel(group) {
+  return `${group.modelId || "Unknown model"} ${profileLabel(group.anchor)}`;
+}
+
 function setComparisonSelection(checkbox) {
-  const runId = checkbox.dataset.compareRunId;
-  const run = state.runs.find((item) => item.id === runId)
-    || state.detailCache.get(runId)?.summary?.run;
-  if (!run) return null;
-  if (checkbox.checked) state.compareSelection.set(run.id, run);
-  else state.compareSelection.delete(run.id);
+  const key = checkbox.dataset.compareVariant;
+  const group = state.variantGroups.get(key) || state.compareSelection.get(key);
+  if (!group) return null;
+  if (checkbox.checked) state.compareSelection.set(key, group);
+  else state.compareSelection.delete(key);
   checkbox.closest(".run-entry")?.classList.toggle("compared", checkbox.checked);
-  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${run.metadata?.model_id || run.run_type} ${buildIdentity(run)} ${checkbox.checked ? "from" : "to"} comparison`);
+  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${variantLabel(group)} ${checkbox.checked ? "from" : "to"} comparison`);
   checkbox.closest("label")?.setAttribute("title", `${checkbox.checked ? "Remove from" : "Add to"} comparison`);
   updateCompareAction();
-  return run;
+  return group;
+}
+
+function compareCheckbox(group) {
+  const compared = state.compareSelection.has(group.key);
+  return `<input type="checkbox" data-compare-variant="${escapeHtml(group.key)}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(variantLabel(group))} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />`;
+}
+
+function componentList(runs) {
+  const components = runs.map((run) => run.metadata?.component_id || "model");
+  return components.length > 1 || components[0] !== "model" ? components.join(" · ") : "";
 }
 
 function renderHistory() {
-  const runs = filteredRuns();
-  elements["result-count"].textContent = `${runs.length}${state.hasMore ? "+" : ""} build${runs.length === 1 ? "" : "s"}`;
-  if (!runs.length) {
+  const builds = variantBuilds(filteredRuns());
+  builds.forEach((group) => state.variantGroups.set(group.key, group));
+  elements["result-count"].textContent = `${builds.length}${state.hasMore ? "+" : ""} build${builds.length === 1 ? "" : "s"}`;
+  if (!builds.length) {
     elements["result-list"].innerHTML = `<div class="no-results"><span>0</span><h3>No matching builds</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }
 
-  elements["result-list"].innerHTML = runs.map((run) => {
-    const model = run.metadata?.model_id || run.run_type.replaceAll("_", " ");
-    const build = buildIdentity(run);
-    const selected = run.id === state.selectedId;
-    const compared = state.compareSelection.has(run.id);
-    if (compared) state.compareSelection.set(run.id, run);
-    const compareLabel = `${model} ${build}`;
+  elements["result-list"].innerHTML = builds.map((group) => {
+    const run = group.anchor;
+    const model = group.modelId || run.run_type.replaceAll("_", " ");
+    const selected = group.key === state.selectedVariantKey || group.runs.some((item) => item.id === state.selectedId);
+    const compared = state.compareSelection.has(group.key);
+    if (compared) state.compareSelection.set(group.key, group);
+    const components = componentList(group.runs);
     return `<div class="run-entry${compared ? " compared" : ""}">
       <label class="compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
-        <input type="checkbox" data-compare-run-id="${run.id}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(compareLabel)} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />
+        ${compareCheckbox(group)}
         <span aria-hidden="true">✓</span>
       </label>
       <button class="run-row${selected ? " selected" : ""}" type="button" data-run-id="${run.id}" aria-pressed="${selected}">
-      <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small></span>
+      <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(profileLabel(run))}</small>${components ? `<small class="run-components">${escapeHtml(components)}</small>` : ""}</span>
       <span class="run-branch"><small>Branch</small>${escapeHtml(branchName(run.git_ref))}</span>
       <span class="run-compiler"><small>Compiler</small>${escapeHtml(run.toolchain_version || "—")}</span>
-      <span class="run-date"><small>${escapeHtml(shortSha(run.commit_sha))}</small>${escapeHtml(formatDate(run.finished_at || run.created_at))}</span>
+      <span class="run-date"><small>${escapeHtml(shortSha(run.commit_sha))}</small>${escapeHtml(formatDate(group.time || run.created_at))}</span>
       <span class="row-arrow">${icons.arrow}</span>
       </button>
     </div>`;
@@ -881,10 +901,7 @@ async function loadComparisonEntry(run) {
 
   const request = Promise.all([
     api(`/v1/runs/${run.id}`).catch(() => null),
-    api(`/v1/runs/${run.id}/benchmarks/latest`).catch((error) => {
-      if (error.status === 404) return null;
-      return null;
-    }),
+    api(`/v1/runs/${run.id}/benchmarks/latest`).catch(() => null),
   ]).then(([summary, benchmark]) => comparisonEntryFromDetail(run, { summary, benchmark }));
   state.comparisonCache.set(run.id, request);
   return request;
@@ -904,7 +921,10 @@ async function mapWithConcurrency(items, limit, mapper) {
   return results;
 }
 
-function renderComparisonTable(entries) {
+// Each component is measured on its own; the CPU stage between components is not, so component
+// measurements are listed per component and never added up.
+function renderComparisonTable(variants) {
+  const entries = variants.flatMap((variant) => variant.entries);
   const available = [...new Set(entries.flatMap(({ benchmark }) => Object.keys(benchmark?.measurements || {})))]
     .filter((key) => entries.some(({ benchmark }) => benchmark?.measurements[key]?.status === "measured"))
     .sort((left, right) => {
@@ -919,47 +939,56 @@ function renderComparisonTable(entries) {
     ? entries.map(({ benchmark }) => benchmark?.measurements[field]).find(Boolean)
     : null;
   const definition = field ? metricDefinition(field, sampleMetric) : null;
-  const rows = entries.map(({ run, artifacts, benchmark }) => {
-    const model = run.metadata?.model_id || run.run_type?.replaceAll("_", " ") || "Unknown model";
-    const build = buildIdentity(run);
-    const artifactBytes = artifacts.reduce((total, artifact) => (
-      total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
-    ), 0);
-    return `<tr>
-      <th scope="row"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(build)}</small><small>${escapeHtml(benchmark?.workload || "No benchmark")}</small></th>
-      <td>${escapeHtml(branchName(run.git_ref))}</td>
-      <td>${escapeHtml(run.toolchain_version || "—")}</td>
-      <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
-      <td>${field ? comparisonMetric(benchmark?.measurements[field], definition) : '<span class="comparison-unavailable">—</span>'}</td>
-    </tr>`;
+  const groups = variants.map(({ group, entries: variantEntries }) => {
+    const run = variantEntries[0]?.run || group.anchor;
+    const heading = `<tr class="comparison-variant"><th scope="rowgroup" colspan="4"><strong>${escapeHtml(group.modelId || "Unknown model")}</strong><small>${escapeHtml(profileLabel(run))}</small><small>${escapeHtml(branchName(run.git_ref))} · ${escapeHtml(run.toolchain_version || "—")} · ${escapeHtml(shortSha(run.commit_sha))}</small></th></tr>`;
+    const rows = variantEntries.map(({ run: componentRun, artifacts, benchmark }) => {
+      const artifactBytes = artifacts.reduce((total, artifact) => (
+        total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
+      ), 0);
+      return `<tr>
+        <th scope="row">${escapeHtml(componentRun.metadata?.component_id || "model")}</th>
+        <td>${escapeHtml(benchmark?.workload || "No benchmark")}</td>
+        <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
+        <td>${field ? comparisonMetric(benchmark?.measurements[field], definition) : '<span class="comparison-unavailable">—</span>'}</td>
+      </tr>`;
+    }).join("");
+    return `<tbody>${heading}${rows}</tbody>`;
   }).join("");
   const options = available.map((key) => {
     const item = metricDefinition(key);
     return `<option value="${escapeHtml(key)}"${key === field ? " selected" : ""}>${escapeHtml(item.label)}</option>`;
   }).join("");
   const note = definition
-    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`}`
+    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`} · per component`
     : "No shared measurements are available";
   return `<div class="comparison-measurement-bar"><div class="comparison-measurement-control"><label class="chart-control"><span>Compare by</span><select data-comparison-metric>${options}</select></label><p>${escapeHtml(note)}</p></div></div>
   <div class="comparison-table-wrap"><table class="comparison-table">
-    <caption class="sr-only">Artifact sizes and benchmark measurements for ${entries.length} builds</caption>
+    <caption class="sr-only">Artifact sizes and benchmark measurements for the components of ${variants.length} variants</caption>
     <thead><tr>
-      <th scope="col">Model / build</th><th scope="col">Branch</th><th scope="col">Compiler</th>
+      <th scope="col">Variant / component</th><th scope="col">Workload</th>
       <th scope="col">Artifact size</th><th scope="col">${escapeHtml(definition?.label || "Measurement")}</th>
-    </tr></thead><tbody>${rows}</tbody>
+    </tr></thead>${groups}
   </table></div>`;
 }
 
 async function openComparison() {
-  const runs = comparisonRuns();
-  if (runs.length < 2) return;
-  elements["compare-title"].textContent = `Compare ${runs.length} build${runs.length === 1 ? "" : "s"}`;
-  elements["compare-description"].textContent = "Showing your selected builds. Empty benchmark cells mean that measurement is unavailable.";
+  const groups = comparisonGroups();
+  if (groups.length < 2) return;
+  elements["compare-title"].textContent = `Compare ${groups.length} variants`;
+  elements["compare-description"].textContent = "Each component is listed under its variant. Empty benchmark cells mean that measurement is unavailable.";
   elements["compare-content"].innerHTML = `<div class="comparison-loading" role="status"><span class="spinner"></span> Loading artifact and benchmark data…</div>`;
   elements["compare-dialog"].showModal();
+  const runs = groups.flatMap((group) => group.runs);
   const entries = await mapWithConcurrency(runs, 6, loadComparisonEntry);
-  state.comparisonEntries = entries;
-  if (elements["compare-dialog"].open) elements["compare-content"].innerHTML = renderComparisonTable(entries);
+  let offset = 0;
+  const variants = groups.map((group) => {
+    const variantEntries = entries.slice(offset, offset + group.runs.length);
+    offset += group.runs.length;
+    return { group, entries: variantEntries };
+  });
+  state.comparisonEntries = variants;
+  if (elements["compare-dialog"].open) elements["compare-content"].innerHTML = renderComparisonTable(variants);
 }
 
 function detailSkeleton() {
@@ -970,71 +999,114 @@ function showEmptyDetail() {
   elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to choose a variant, inspect provenance, and download a verified build.</p></div>`;
 }
 
-async function selectRun(runId, { updateUrl = true } = {}) {
+async function loadRunDetail(runId) {
+  if (state.detailCache.has(runId)) return state.detailCache.get(runId);
+  const optional = (request) => request.catch((error) => {
+    if (error.status === 404) return null;
+    throw error;
+  });
+  const [summary, provenance, tests, benchmark, accuracy] = await Promise.all([
+    api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`), api(`/v1/runs/${runId}/test-results`),
+    optional(api(`/v1/runs/${runId}/benchmarks/latest`)), optional(api(`/v1/runs/${runId}/accuracy/latest`)),
+  ]);
+  // Builds measured before accuracy became its own run carry it on the benchmark run.
+  const benchmarkTests = benchmark?.benchmark_run?.id
+    ? await api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
+    : null;
+  const detail = { summary, provenance, tests, benchmark, benchmarkTests, accuracy };
+  state.detailCache.set(runId, detail);
+  return detail;
+}
+
+// The current catalog lists the latest build of each variant; any other build's components are found
+// among the branch's compile runs.
+async function variantRuns(run) {
+  const model = state.models.find((item) => item.model_id === run.metadata?.model_id);
+  const build = model?.builds.find((item) => item.run_id === run.id);
+  if (!build) return variantBuildRuns(run, api);
+  return model.builds.filter((item) => buildProfileId(item) === buildProfileId(build))
+    .map((item) => runFromCatalogBuild(model, item));
+}
+
+function variantPackage(runs) {
+  return runs.map(fullPackageForRun).find(Boolean) || null;
+}
+
+async function loadVariant(anchor) {
+  const key = variantBuildKey(anchor);
+  if (state.variantCache.has(key)) return state.variantCache.get(key);
+  const componentRuns = await variantRuns(anchor);
+  const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
+  const runs = details.map((detail) => detail.summary.run);
+  const packageRun = variantPackage(componentRuns);
+  const [devkit, packageSummary] = await Promise.all([
+    accuracyKeyForRuns(runs).then(devkitAccuracy),
+    packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : null,
+  ]);
+  const variant = {
+    key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, devkit, packageSummary,
+    requestedPackageId: packageRun?.run_id || null,
+  };
+  state.variantCache.set(key, variant);
+  return variant;
+}
+
+function currentVariant() {
+  return state.variantCache.get(state.selectedVariantKey) || null;
+}
+
+function deleteVariantParams(url) {
+  ["run", "model", "variant"].forEach((name) => url.searchParams.delete(name));
+}
+
+function writeVariantUrl(run) {
+  const url = new URL(location.href);
+  const modelId = run.metadata?.model_id;
+  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  deleteVariantParams(url);
+  if (modelId && profile) {
+    url.searchParams.set("model", modelId);
+    url.searchParams.set("variant", profile);
+  }
+  // The latest build is addressed by its variant; any other build is pinned by one of its runs.
+  if (!catalogMode() || !modelId || !profile) url.searchParams.set("run", run.id);
+  // An explicit empty branch preserves the All branches view on refresh.
+  url.searchParams.set("branch", elements["branch-filter"].value);
+  history.pushState({}, "", url);
+}
+
+// Opens the variant build that `runId` belongs to; `expand` opens that run's component row.
+async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   const catalogRun = state.runs.find((run) => run.id === runId);
-  const previousRun = state.runs.find((run) => run.id === state.selectedId)
-    || state.detailCache.get(state.selectedId)?.summary?.run;
-  if (previousRun?.metadata?.model_id !== catalogRun?.metadata?.model_id) {
+  const previousModelId = currentVariant()?.modelId;
+  if (previousModelId !== catalogRun?.metadata?.model_id) {
     state.expandedDocumentationModelId = null;
     state.documentationRequestId += 1;
   }
   state.selectedId = runId;
-  if (catalogRun?.metadata?.model_id) {
-    const modelId = catalogRun.metadata.model_id;
-    const profile = catalogRun.metadata.build_profile_id || catalogRun.metadata.variant_id || "default";
-    state.activeProfileByModel.set(modelId, profile);
-    state.activeComponentByProfile.set(`${modelId}:${profile}`, catalogRun.metadata.component_id || "model");
-  }
+  state.expandedRuns = new Set(expand ? [runId] : []);
+  if (catalogRun?.metadata?.model_id) state.activeProfileByModel.set(catalogRun.metadata.model_id, runProfile(catalogRun));
   renderRuns();
   detailSkeleton();
-  if (updateUrl) {
-    const url = new URL(location.href);
-    url.searchParams.set("run", runId);
-    // An explicit empty branch preserves the All branches view on refresh.
-    url.searchParams.set("branch", elements["branch-filter"].value);
-    history.pushState({}, "", url);
-  }
+  if (updateUrl && catalogRun) writeVariantUrl(catalogRun);
   try {
-    let detail = state.detailCache.get(runId);
-    let requestedPackageId = null;
-    if (!detail) {
-      const packageRun = catalogRun && fullPackageForRun(catalogRun);
-      requestedPackageId = packageRun?.run_id || null;
-      const [summary, provenance, tests, metrics, benchmark, accuracy, packageSummary] = await Promise.all([
-        api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`),
-        api(`/v1/runs/${runId}/test-results`), api(`/v1/runs/${runId}/metrics`),
-        api(`/v1/runs/${runId}/benchmarks/latest`).catch((error) => {
-          if (error.status === 404) return null;
-          throw error;
-        }),
-        api(`/v1/runs/${runId}/accuracy/latest`).catch((error) => {
-          if (error.status === 404) return null;
-          throw error;
-        }),
-        packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : Promise.resolve(null),
-      ]);
-      const [benchmarkTests, devkit] = await Promise.all([
-        // Builds measured before accuracy became its own run carry it on the benchmark run.
-        benchmark?.benchmark_run?.id
-          ? api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
-          : null,
-        accuracyKeyForRun(summary.run).then(devkitAccuracy),
-      ]);
-      detail = { summary, provenance, tests, metrics, benchmark, benchmarkTests, accuracy, devkit, packageSummary };
-      state.detailCache.set(runId, detail);
+    const anchor = (await loadRunDetail(runId)).summary.run;
+    const cached = state.variantCache.has(variantBuildKey(anchor));
+    const variant = await loadVariant(anchor);
+    const currentPackage = variantPackage(variant.runs);
+    // A cached variant may gain package context later; avoid retrying a fetch from this selection.
+    if (currentPackage && variant.packageSummary?.run?.id !== currentPackage.run_id
+      && (cached || currentPackage.run_id !== variant.requestedPackageId)) {
+      variant.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
     }
-    const currentPackage = fullPackageForRun(detail.summary.run);
-    // A cached run may gain package context later; avoid retrying a fetch from this selection.
-    if (currentPackage && detail.packageSummary?.run?.id !== currentPackage.run_id
-      && currentPackage.run_id !== requestedPackageId) {
-      detail.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
-    }
-    if (state.catalogMode === "runs") await loadHistoricalCatalogModel(detail.summary.run);
+    if (state.catalogMode === "runs") await loadHistoricalCatalogModel(anchor);
     if (state.selectedId === runId) {
+      state.selectedVariantKey = variant.key;
+      renderRuns();
       const linkedBranch = new URLSearchParams(location.search).get("branch");
-      if (linkedBranch && branchName(detail.summary.run.git_ref) !== linkedBranch) {
+      if (linkedBranch && branchName(anchor.git_ref) !== linkedBranch) {
         elements["detail-pane"].innerHTML = errorPanel("This run belongs to a different branch than the link specifies.", "Branch and run do not match", { closable: true });
-      } else renderDetail(detail);
+      } else renderDetail(variant);
     }
   } catch (error) {
     if (state.selectedId === runId) {
@@ -1174,25 +1246,72 @@ function temperatureChart(series) {
   return `<figure class="temperature-chart benchmark-chart"><figcaption><span class="chart-title">Temperature ${legacy ? "change" : "over benchmark"}</span><span class="chart-series-label">${escapeHtml(selected.label)}</span></figcaption><p class="chart-note">${legacy ? "Start/end snapshots only" : `${samples.length} samples`} · ${minimum.toFixed(1)}–${maximum.toFixed(1)} °C</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Temperature in degrees Celsius for ${escapeHtml(selected.label)}"><g class="chart-grid">${grid}${ticks}</g><path class="temperature-line" d="${path}"/><g class="temperature-points">${points}</g></svg><table class="sr-only"><caption>Temperature samples for ${escapeHtml(selected.label)}</caption><thead><tr><th>Elapsed time</th><th>Temperature in degrees Celsius</th></tr></thead><tbody>${samples.map((sample) => `<tr><td>${((sample.timestamp - startTime) / 1000).toFixed(1)} seconds</td><td>${sample.celsius}</td></tr>`).join("")}</tbody></table></figure>`;
 }
 
-function benchmarkPanel(payload) {
-  if (!payload) return `<section><div class="detail-section-title"><h3>Benchmark</h3></div><p class="muted-message">No completed benchmark is linked to this compilation yet.</p></section>`;
+// The component row shows these measurements; its expanded body shows the rest.
+const ROW_METRICS = ["latency_avg_ms", "throughput_fps", "avg_power_watts"];
+
+function componentBenchmark(payload) {
+  if (!payload) return { benchmark: null, body: `<p class="muted-message">No completed benchmark is linked to this component yet.</p>` };
   const adapted = adaptBenchmarkResult(payload.result);
   if (adapted.kind === "unsupported") {
-    return `<section id="benchmark-section" tabindex="-1"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${escapeHtml(adapted.schemaVersion)}</span></div><p class="muted-message">This benchmark schema is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}</section>`;
+    return { benchmark: null, body: `<p class="muted-message">This benchmark schema (v${escapeHtml(adapted.schemaVersion)}) is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}` };
   }
-  if (adapted.kind !== "supported") return "";
+  if (adapted.kind !== "supported") return { benchmark: null, body: "" };
   const benchmark = adapted.value;
   const summary = SUMMARY_METRICS
-    .filter((key) => benchmark.measurements[key])
+    .filter((key) => !ROW_METRICS.includes(key) && benchmark.measurements[key])
     .map((key) => metricCard(key, benchmark.measurements[key]))
     .join("");
-  return `<section id="benchmark-section" class="benchmark-section" tabindex="-1"><div class="detail-section-title"><h3>Benchmark</h3><span>Schema v${benchmark.schemaVersion}</span></div>
-    <div class="benchmark-summary">${summary}</div>
+  return { benchmark, body: `<div class="component-benchmark"><h4>Benchmark <span>Schema v${benchmark.schemaVersion}</span></h4>
+    ${summary ? `<div class="benchmark-summary">${summary}</div>` : ""}
     ${trialChart(benchmark.trials, benchmark.measurements)}
     ${temperatureChart(benchmark.temperatureSeries)}
     ${measurementTable(benchmark.measurements)}
     <dl class="benchmark-context">${keyValue("Workload", benchmark.workload)}${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
-  </section>`;
+  </div>` };
+}
+
+function componentStat(label, value) {
+  return `<span class="component-stat"><small>${escapeHtml(label)}</small>${escapeHtml(value)}</span>`;
+}
+
+function rowMetric(benchmark, key) {
+  const metric = benchmark?.measurements[key];
+  const display = metricDisplay(metric, metricDefinition(key, metric));
+  return display ? `${display.value.toFixed(display.digits)} ${display.unit}` : "—";
+}
+
+function compileDuration(run) {
+  return run.metadata?.compile_timing?.scope === "compile_recipe"
+    ? formatDuration(run.metadata.compile_timing.started_at, run.metadata.compile_timing.finished_at)
+    : "Not recorded";
+}
+
+function componentRow(detail, open) {
+  const run = detail.summary.run;
+  const component = run.metadata?.component_id || "model";
+  const artifacts = modelPackArtifacts(detail.summary.artifacts);
+  const tests = detail.tests.test_results || [];
+  const parameters = detail.provenance.parameters?.parameters?.compile_parameters || {};
+  const { benchmark, body } = componentBenchmark(detail.benchmark);
+  const mpkBytes = artifacts.reduce((total, artifact) => total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0), 0);
+  const artifactRows = artifacts.length
+    ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
+    : keyValue("SHA-256", "No artifact metadata was registered for this run.");
+  return `<details class="component-row" data-component-run-id="${escapeHtml(run.id)}"${open ? " open" : ""}>
+    <summary><strong>${escapeHtml(component)}</strong>${componentStat("MPK", mpkBytes ? formatBytes(mpkBytes) : "—")}${ROW_METRICS.map((key) => componentStat(metricDefinition(key).label, rowMetric(benchmark, key))).join("")}</summary>
+    <div class="component-body">
+      <dl class="key-grid">
+        ${artifactRows}
+        ${keyValue("Run ID", run.id, { copy: true, mono: true })}
+        ${keyValue("Fingerprint", run.run_fingerprint, { copy: true, mono: true })}
+        ${keyValue("Compile recipe duration", compileDuration(run))}
+        ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
+      </dl>
+      ${body}
+      ${fidelityPanel(tests, run.id)}
+      ${Object.keys(parameters).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters, null, 2))}</pre></details>` : ""}
+    </div>
+  </details>`;
 }
 
 function percentage(value, { signed = false } = {}) {
@@ -1400,13 +1519,13 @@ function documentationPanel(model) {
 }
 
 async function toggleDocumentation(button) {
-  const detail = state.detailCache.get(state.selectedId);
-  const model = detail ? catalogModelForRun(detail.summary.run) : null;
+  const variant = currentVariant();
+  const model = variant ? catalogModelForRun(variant.anchor) : null;
   const documentation = model?.documentation;
   if (!model || !documentation) return;
   if (state.expandedDocumentationModelId === model.model_id) {
     state.expandedDocumentationModelId = null;
-    renderDetail(detail);
+    renderDetail(variant);
     elements["detail-pane"].querySelector("[data-documentation-toggle]")?.focus();
     return;
   }
@@ -1422,9 +1541,9 @@ async function toggleDocumentation(button) {
       if (digest !== documentation.artifact_sha256) throw new Error("The model card checksum did not match the catalog.");
       state.documentationCache.set(cacheKey, markdown);
     }
-    if (requestId !== state.documentationRequestId || state.selectedId !== detail.summary.run.id) return;
+    if (requestId !== state.documentationRequestId || state.selectedVariantKey !== variant.key) return;
     state.expandedDocumentationModelId = model.model_id;
-    renderDetail(detail);
+    renderDetail(variant);
     elements["detail-pane"].querySelector(".documentation-collapse")?.focus();
   } catch (error) {
     if (requestId === state.documentationRequestId) {
@@ -1450,121 +1569,95 @@ function compilerFilteredBuilds(model) {
     : model.builds;
 }
 
-function selectedCatalogBuild(modelId, profileId, requestedComponent = null) {
+function selectedCatalogBuild(modelId, profileId) {
   const model = state.models.find((item) => item.model_id === modelId);
   if (!model) return null;
-  const builds = compilerFilteredBuilds(model).filter((build) => buildProfileId(build) === profileId);
-  const componentKey = `${modelId}:${profileId}`;
-  const component = requestedComponent || state.activeComponentByProfile.get(componentKey);
-  const build = builds.find((item) => componentId(item) === component)
-    || builds.find((item) => componentId(item) === "model")
-    || builds[0];
-  if (!build) return null;
-  state.activeProfileByModel.set(modelId, profileId);
-  state.activeComponentByProfile.set(componentKey, componentId(build));
-  return build;
+  const build = anchorBuild(compilerFilteredBuilds(model).filter((build) => buildProfileId(build) === profileId));
+  if (build) state.activeProfileByModel.set(modelId, profileId);
+  return build || null;
 }
 
-function detailBuildSwitcher(run) {
-  const model = catalogModelForRun(run);
-  if (!model) return "";
-  if (!model.builds.some((build) => build.run_id === run.id)) return "";
-  const availableModel = { ...model, builds: compilerFilteredBuilds(model) };
-  const profiles = profileGroups(availableModel);
-  if (!profiles.length) return "";
-  const requestedProfile = run.metadata?.build_profile_id || run.metadata?.variant_id;
-  const [activeProfile, activeBuilds] = profiles.find(([profile]) => profile === requestedProfile) || profiles[0];
-  const requestedComponent = run.metadata?.component_id;
-  const activeComponent = componentId(
-    activeBuilds.find((build) => componentId(build) === requestedComponent) || activeBuilds[0],
-  );
-  const compared = state.compareSelection.has(run.id);
-  const label = `${model.display_name || model.model_id} ${activeProfile} ${activeComponent}`;
+// Variant tabs switch between the latest builds in the current catalog, so a build reached from
+// history shows none.
+function detailBuildSwitcher(variant) {
+  const model = catalogMode() ? state.models.find((item) => item.model_id === variant.modelId) : null;
+  const inCatalog = model?.builds.some((build) => variant.runs.some((run) => run.id === build.run_id));
+  const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
+  const compared = state.compareSelection.has(variant.key);
   const tabs = profiles.map(([profile]) => {
-    const selected = profile === activeProfile;
-    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" aria-controls="detail-build-panel" tabindex="${selected ? "0" : "-1"}"><span>${escapeHtml(profile)}</span>${selected ? "<b>Current</b>" : ""}</button>`;
+    const selected = profile === variant.profile;
+    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}"><span>${escapeHtml(profile)}</span>${selected ? "<b>Current</b>" : ""}</button>`;
   }).join("");
-  const components = activeBuilds.length > 1 ? `<div class="detail-component-row"><span>Components</span><div class="detail-component-tabs" role="group" aria-label="${escapeHtml(activeProfile)} components">${activeBuilds.map((build) => {
-    const component = componentId(build);
-    return `<button type="button" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(activeProfile)}" data-detail-component-id="${escapeHtml(component)}" aria-pressed="${component === activeComponent}">${escapeHtml(component)}</button>`;
-  }).join("")}</div></div>` : "";
-  return `<section class="detail-build-switcher" aria-label="Build selection">
-    <div class="detail-switcher-heading"><strong>Variants</strong><span>${profiles.length} variant${profiles.length === 1 ? "" : "s"}</span></div>
-    <div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>
-    <div id="detail-build-panel" role="tabpanel">${components}</div>
+  return `<section class="detail-build-switcher" aria-label="Variant selection">
+    ${profiles.length ? `<div class="detail-switcher-heading"><strong>Variants</strong><span>${profiles.length} variant${profiles.length === 1 ? "" : "s"}</span></div>
+    <div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<div class="detail-switcher-heading"><strong>Variant</strong><span>${escapeHtml(profileLabel(variant.anchor))}</span></div>`}
     <label class="detail-compare-select compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
-      <input type="checkbox" data-compare-run-id="${run.id}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(label)} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />
-      <span aria-hidden="true">✓</span><b>${compared ? "Selected for comparison" : "Add build to comparison"}</b>
+      ${compareCheckbox(variant)}
+      <span aria-hidden="true">✓</span><b>${compared ? "Selected for comparison" : "Add variant to comparison"}</b>
     </label>
   </section>`;
 }
 
-function renderDetail(detail) {
-  const run = detail.summary.run;
-  const artifacts = modelPackArtifacts(detail.summary.artifacts);
-  const provenance = detail.provenance;
-  const parameters = provenance.parameters?.parameters || {};
-  const input = provenance.inputs?.[0];
-  const tests = detail.tests.test_results || [];
-  const model = run.metadata?.model_id || run.run_type;
+function uniqueBy(items, key) {
+  return [...new Map(items.map((item) => [key(item), item])).values()];
+}
+
+function renderDetail(variant) {
+  state.variantGroups.set(variant.key, variant);
+  const run = variant.anchor;
+  const details = variant.details;
+  const allTests = details.flatMap((detail) => detail.tests.test_results || []);
+  const inputs = uniqueBy(details.map((detail) => detail.provenance.inputs?.[0]).filter(Boolean), (input) => input.sha256 || input.name);
+  const model = variant.modelId || run.run_type;
   const catalogModel = catalogModelForRun(run);
   const displayName = catalogModel?.display_name || model;
-  const precision = parameters.compile_parameters?.precision;
+  const precisions = uniqueBy(details.map((detail) => detail.provenance.parameters?.parameters?.compile_parameters?.precision)
+    .filter(Boolean), (precision) => precision);
   const categories = run.model_categories || {};
   const license = run.metadata?.license;
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
-  const benchmarkMarkup = benchmarkPanel(detail.benchmark);
-  const accuracyMarkup = accuracyPanel(detail.accuracy, tests, detail.benchmarkTests?.test_results || [], detail.devkit);
-  const fidelityMarkup = fidelityPanel(tests, run.id);
-  const hasBenchmark = Boolean(detail.benchmark && benchmarkMarkup);
-  const primaryArtifact = artifacts[0];
-  const fullPackage = fullPackageForRun(run);
-  const packageArtifact = (detail.packageSummary?.artifacts || []).find((item) => item.artifact_type === "model-package");
-  const huggingFaceSource = input ? huggingFaceSourceLink(input) : null;
+  const accuracyMarkup = details.map((detail) => accuracyPanel(
+    detail.accuracy, detail.tests.test_results || [], detail.benchmarkTests?.test_results || [], variant.devkit,
+  )).find(Boolean) || "";
+  const hasBenchmark = details.some((detail) => detail.benchmark);
+  const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
+  // Every component's MPK must pass validation for the build to carry the mark.
+  const validated = details.every((detail) => mpkValidationMark(detail.tests.test_results || []));
+  const fullPackage = variantPackage(variant.runs);
+  const packageArtifact = (variant.packageSummary?.artifacts || []).find((item) => item.artifact_type === "model-package");
+  const huggingFaceSource = inputs.map(huggingFaceSourceLink).find(Boolean);
+  const builtAt = Math.max(...variant.runs.map((item) => Date.parse(item.finished_at || item.created_at || "") || 0));
+  const singleComponent = details.length === 1;
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
     <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${fullPackage ? `<button class="artifact-download-shortcut" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}" aria-label="Download full package" data-tooltip="Download full package">${icons.download}</button>` : primaryArtifact ? `<button class="artifact-download-shortcut" type="button" data-download-variant="${run.id}" data-run-id="${run.id}" aria-label="Download individual components" data-tooltip="Download individual components">${icons.download}</button>` : ""}${mpkValidationMark(tests)}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to benchmark results" data-tooltip="Jump to benchmark results">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
-    ${detailBuildSwitcher(run)}
-    <div class="detail-tags">${precision ? detailTag(icons.precision, precision, "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
+    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${fullPackage ? `<button class="artifact-download-shortcut" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}" aria-label="Download full package" data-tooltip="Download full package">${icons.download}</button>` : hasArtifacts ? `<button class="artifact-download-shortcut" type="button" data-download-variant="${run.id}" data-run-id="${run.id}" aria-label="Download individual components" data-tooltip="Download individual components">${icons.download}</button>` : ""}${validated ? mpkValidationMark(allTests) : ""}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to component benchmarks" data-tooltip="Jump to component benchmarks">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
+    ${detailBuildSwitcher(variant)}
+    <div class="detail-tags">${precisions.length ? detailTag(icons.precision, precisions.join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
 
     ${documentationPanel(catalogModel)}
-
-    <section class="artifact-section"><div class="detail-section-title"><h3>Artifacts</h3><span>${artifacts.length}</span></div>
-      ${artifacts.length ? artifacts.map((artifact) => `<dl class="artifact-metadata">
-        <div><dt>File size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd></div>
-        <div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(artifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(artifact.sha256)}" aria-label="Copy artifact checksum">${icons.copy}</button></dd></div>
-      </dl>`).join("") : `<p class="muted-message">No artifact metadata was registered for this run.</p>`}
-    </section>
 
     ${fullPackage ? `<section class="artifact-section"><div class="detail-section-title"><h3>Full Package</h3><button class="text-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">Download ZIP</button></div>${packageArtifact ? `<dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}<p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></section>` : ""}
 
     <section><div class="detail-section-title"><h3>Build provenance</h3></div><dl class="key-grid">
       ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
       ${keyValue("Branch", branchName(run.git_ref))}
-      ${keyValue("Built", formatDate(run.finished_at || run.created_at))}
-      ${keyValue("Compile recipe duration", run.metadata?.compile_timing?.scope === "compile_recipe"
-        ? formatDuration(run.metadata.compile_timing.started_at, run.metadata.compile_timing.finished_at)
-        : "Not recorded")}
-      ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
+      ${keyValue("Built", formatDate(builtAt || run.created_at))}
       ${keyValue("Target", run.target_platform)}
       ${keyValue("Compiler", run.toolchain_version)}
-      ${keyValue("Run ID", run.id, { copy: true, mono: true })}
-      ${keyValue("Fingerprint", run.run_fingerprint, { copy: true, mono: true })}
     </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</section>
 
-    ${input ? sourceInputPanel(input) : ""}
+    ${sourceInputPanel(inputs)}
 
     ${licensePanel(license)}
 
     ${accuracyMarkup}
 
-    ${fidelityMarkup}
-
-    ${benchmarkMarkup}
-
-    ${Object.keys(parameters.compile_parameters || {}).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters.compile_parameters, null, 2))}</pre></details>` : ""}
+    <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Components</h3><span>${details.length}</span></div>
+      <div class="component-list">${details.map((detail) => componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))).join("")}</div>
+      ${singleComponent ? "" : `<p class="muted-message">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
+    </section>
   </div>`;
   elements["detail-pane"].querySelector('.detail-variant-tab[aria-selected="true"]')
     ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1799,11 +1892,13 @@ async function initialize() {
   elements.search.value = link.get("q") || "";
   elements["history-filter"].checked = link.get("history") === "1";
   state.selectedId = link.get("run");
+  const linkedVariant = link.get("model") && link.get("variant")
+    ? { modelId: link.get("model"), profile: link.get("variant") } : null;
   state.categorySelection = Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""]),
   );
   state.taxonomy = null;
-  if (state.selectedId) detailSkeleton();
+  if (state.selectedId || linkedVariant) detailSkeleton();
   else showEmptyDetail();
   state.urlBranch = link.has("branch");
   state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
@@ -1878,7 +1973,29 @@ async function initialize() {
     }
   }
 
-  if (navigationId === state.navigationId && state.selectedId) await selectRun(state.selectedId, { updateUrl: false });
+  if (navigationId !== state.navigationId) return;
+  const linkedRun = Boolean(state.selectedId);
+  if (!linkedRun && linkedVariant) {
+    state.selectedId = latestVariantRun(linkedVariant)?.id || null;
+    if (!state.selectedId) {
+      const branch = elements["branch-filter"].value || "any branch";
+      elements["detail-pane"].innerHTML = errorPanel(`No completed ${linkedVariant.profile} build of ${linkedVariant.modelId} was found on ${branch}.`, "Variant not found", { closable: true });
+      return;
+    }
+  }
+  if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false, expand: linkedRun });
+}
+
+// The latest build of a variant: the current catalog lists only latest builds, and history lists the
+// newest runs first.
+function latestVariantRun({ modelId, profile }) {
+  const matches = state.runs.filter((run) => run.metadata?.model_id === modelId && runProfile(run) === profile);
+  if (catalogMode()) {
+    const model = state.models.find((item) => item.model_id === modelId);
+    const build = model && selectedCatalogBuild(modelId, profile);
+    return build ? matches.find((run) => run.id === build.run_id) : null;
+  }
+  return matches[0] ? variantBuilds(matches)[0].anchor : null;
 }
 
 elements["theme-toggle"].addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
@@ -1900,6 +2017,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
   state.selectedId = null;
+  state.selectedVariantKey = null;
   state.models = [];
   state.runs = [];
   state.branchRuns = [];
@@ -1909,7 +2027,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   showEmptyDetail();
   const url = new URL(location.href);
   url.searchParams.set("branch", state.preferredBranch);
-  url.searchParams.delete("run");
+  deleteVariantParams(url);
   history.pushState({}, "", url);
   updateFilterDisclosure();
   try {
@@ -1974,9 +2092,10 @@ elements["clear-filters"].addEventListener("click", async () => {
   writeBranchPreference(state.preferredBranch);
   const resetUrl = new URL(location.href);
   resetUrl.searchParams.set("branch", resetBranch);
-  resetUrl.searchParams.delete("run");
+  deleteVariantParams(resetUrl);
   history.pushState({}, "", resetUrl);
   state.selectedId = null;
+  state.selectedVariantKey = null;
   showEmptyDetail();
   elements["compiler-filter"].value = "";
   elements["history-filter"].checked = false;
@@ -2001,7 +2120,7 @@ elements["result-list"].addEventListener("click", (event) => {
   if (event.target.closest('[data-action="retry"]')) initialize();
 });
 elements["result-list"].addEventListener("change", (event) => {
-  const checkbox = event.target.closest("[data-compare-run-id]");
+  const checkbox = event.target.closest("[data-compare-variant]");
   if (!checkbox) return;
   setComparisonSelection(checkbox);
 });
@@ -2021,19 +2140,9 @@ elements["detail-pane"].addEventListener("click", (event) => {
     toggleDocumentation(documentationToggle);
     return;
   }
-  const variant = event.target.closest("[data-detail-profile-id]:not([data-detail-component-id])");
-  if (variant) {
-    const build = selectedCatalogBuild(variant.dataset.detailModelId, variant.dataset.detailProfileId);
-    if (build) selectRun(build.run_id);
-    return;
-  }
-  const component = event.target.closest("[data-detail-component-id]");
-  if (component) {
-    const build = selectedCatalogBuild(
-      component.dataset.detailModelId,
-      component.dataset.detailProfileId,
-      component.dataset.detailComponentId,
-    );
+  const variantTab = event.target.closest("[data-detail-profile-id]");
+  if (variantTab) {
+    const build = selectedCatalogBuild(variantTab.dataset.detailModelId, variantTab.dataset.detailProfileId);
     if (build) selectRun(build.run_id);
     return;
   }
@@ -2049,7 +2158,7 @@ elements["detail-pane"].addEventListener("click", (event) => {
   if (download?.dataset.download === "package") downloadPackage(download.dataset.runId);
   else if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
   if (event.target.closest("[data-scroll-benchmark]")) {
-    const benchmark = elements["detail-pane"].querySelector("#benchmark-section");
+    const benchmark = elements["detail-pane"].querySelector("#components-section");
     if (benchmark) {
       benchmark.focus({ preventScroll: true });
       benchmark.scrollIntoView({
@@ -2063,28 +2172,32 @@ elements["detail-pane"].addEventListener("click", (event) => {
     state.detailLayout = state.detailLayout === "focused" ? "balanced" : "focused";
     try { localStorage.setItem(DETAIL_LAYOUT_KEY, state.detailLayout); } catch { /* Storage is optional. */ }
     applyDetailLayout();
-    if (state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
+    if (currentVariant()) renderDetail(currentVariant());
     return;
   }
   if (event.target.closest(".close-detail")) {
     state.selectedId = null;
+    state.selectedVariantKey = null;
     const url = new URL(location.href);
-    url.searchParams.delete("run");
+    deleteVariantParams(url);
     history.pushState({}, "", url);
     renderRuns();
     showEmptyDetail();
   }
 });
 elements["detail-pane"].addEventListener("change", (event) => {
-  const checkbox = event.target.closest("[data-compare-run-id]");
+  const checkbox = event.target.closest("[data-compare-variant]");
   if (checkbox) {
-    const run = setComparisonSelection(checkbox);
-    if (run && state.selectedId) renderDetail(state.detailCache.get(state.selectedId));
+    const group = setComparisonSelection(checkbox);
+    if (group && currentVariant()) {
+      renderDetail(currentVariant());
+      renderRuns();
+    }
     return;
   }
   const trialMetric = event.target.closest("[data-trial-metric]");
   if (trialMetric && trialMetric.value) {
-    const detail = state.detailCache.get(state.selectedId);
+    const detail = state.detailCache.get(trialMetric.closest("[data-component-run-id]")?.dataset.componentRunId);
     const benchmark = adaptBenchmarkResult(detail?.benchmark?.result);
     const chart = trialMetric.closest(".trial-chart");
     if (!chart || benchmark.kind !== "supported") return;
@@ -2099,6 +2212,13 @@ elements["detail-pane"].addEventListener("change", (event) => {
     return;
   }
 });
+// Re-rendering the page keeps the component rows the reader opened.
+elements["detail-pane"].addEventListener("toggle", (event) => {
+  const row = event.target.closest?.("[data-component-run-id]");
+  if (!row || row !== event.target) return;
+  if (row.open) state.expandedRuns.add(row.dataset.componentRunId);
+  else state.expandedRuns.delete(row.dataset.componentRunId);
+}, true);
 elements["detail-pane"].addEventListener("keydown", (event) => {
   const tab = event.target.closest('[role="tab"]');
   if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;

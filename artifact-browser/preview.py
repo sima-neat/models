@@ -39,7 +39,19 @@ PREVIEW_RUNS = (
     ),
     ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.3", 104_312_000),
     ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.3", 168_774_000),
+    # An older build of the same variant, so build history shows two builds of two components each.
+    ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.2", 104_298_000),
+    ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.2", 168_701_000),
 )
+
+
+def _build_index(index: int) -> int:
+    """The first run of the same model, profile, branch, and compiler; its components share one workflow."""
+    model_id, variant_id, _, branch, compiler, _ = PREVIEW_RUNS[index]
+    return next(
+        position for position, other in enumerate(PREVIEW_RUNS)
+        if (other[0], other[1], other[3], other[4]) == (model_id, variant_id, branch, compiler)
+    )
 
 
 def _read_result() -> dict:
@@ -49,7 +61,8 @@ def _read_result() -> dict:
 def _run(index: int = 0) -> dict:
     model_id, variant_id, component_id, branch, compiler, _ = PREVIEW_RUNS[index]
     run_id = RUN_ID if index == 0 else f"74b48a12-6088-42a0-b881-5925a5272f{index:02x}"
-    commit = COMMIT if index == 0 else hashlib.sha256(f"preview-commit-{index}".encode()).hexdigest()
+    build = _build_index(index)
+    commit = COMMIT if build == 0 else hashlib.sha1(f"preview-commit-{build}".encode()).hexdigest()
     architecture = "resnet_50" if "resnet" in model_id else model_id
     task = "image_classification" if model_id == "resnet_50" else "object_detection"
     return {
@@ -70,6 +83,7 @@ def _run(index: int = 0) -> dict:
             "model_id": model_id,
             "build_profile_id": variant_id,
             "component_id": component_id,
+            "github_run_id": f"preview-workflow-{build}",
             "model_name": model_id,
             "license": {
                 "spdx": "Apache-2.0",
@@ -191,7 +205,7 @@ def _accuracy_run_id(index: int) -> str:
 def _devkit_accuracy_result(index: int) -> dict | None:
     """Schema-2 accuracy measured on the DevKit and published as its own model_accuracy run."""
     model_id, variant_id, component_id, _, _, _ = PREVIEW_RUNS[index]
-    if model_id != "detr_resnet50":
+    if model_id != "detr_resnet50" and (model_id, component_id) != ("rf_detr_small", "transformer"):
         return None
     return {
         "schema_version": 2,
@@ -234,6 +248,45 @@ def _devkit_accuracy_result(index: int) -> dict | None:
     }
 
 
+def _catalog_models(runs: list[dict]) -> list[dict]:
+    """Catalog model entries whose builds are the given compile runs."""
+    grouped: dict[str, dict] = {}
+    for run in runs:
+        model_id = run["metadata"]["model_id"]
+        model = grouped.setdefault(model_id, {
+            "model_id": model_id,
+            "display_name": model_id.replace("_", " ").title(),
+            "description": f"Verified {model_id.replace('_', ' ')} builds for Modalix deployment.",
+            "catalog_revision": run["commit_sha"],
+            "model_type": run["model_type"],
+            "architecture_id": run["architecture_id"],
+            "architecture_paradigm": run["architecture_paradigm"],
+            "tasks": run["tasks"],
+            "input_modalities": run["input_modalities"],
+            "output_modalities": run["output_modalities"],
+            "model_tags": run["model_tags"],
+            "categories": run.get("model_categories", {}),
+            "builds": [],
+        })
+        model["builds"].append({
+            "run_id": run["id"],
+            "build_profile_id": run["metadata"]["build_profile_id"],
+            "component_id": run["metadata"]["component_id"],
+            "compile_invocation_id": run["metadata"]["github_run_id"],
+            "status": run["status"],
+            "commit_sha": run["commit_sha"],
+            "created_at": run["created_at"],
+            "finished_at": run["finished_at"],
+            "toolchain_name": run["toolchain_name"],
+            "toolchain_version": run["toolchain_version"],
+            "target_platform": run["target_platform"],
+            "validation_fingerprint": (
+                _accuracy_key(_run_index(run["id"])) if _devkit_accuracy_result(_run_index(run["id"])) else None
+            ),
+        })
+    return list(grouped.values())
+
+
 class PreviewHandler(SimpleHTTPRequestHandler):
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode()
@@ -268,46 +321,19 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if path == "/v1/repositories/sima-neat/models/models":
             git_ref = query.get("git_ref", ["refs/heads/main"])[0]
             compiler = query.get("toolchain_version", [""])[0]
-            grouped: dict[str, dict] = {}
-            for run in (item for item in runs if item["git_ref"] == git_ref):
-                model_id = run["metadata"]["model_id"]
-                model = grouped.setdefault(model_id, {
-                    "model_id": model_id,
-                    "display_name": model_id.replace("_", " ").title(),
-                    "description": f"Verified {model_id.replace('_', ' ')} builds for Modalix deployment.",
-                    "catalog_revision": run["commit_sha"],
-                    "model_type": run["model_type"],
-                    "architecture_id": run["architecture_id"],
-                    "architecture_paradigm": run["architecture_paradigm"],
-                    "tasks": run["tasks"],
-                    "input_modalities": run["input_modalities"],
-                    "output_modalities": run["output_modalities"],
-                    "model_tags": run["model_tags"],
-                    "categories": run.get("model_categories", {}),
-                    "builds": [],
-                })
-                model["builds"].append({
-                    "run_id": run["id"],
-                    "build_profile_id": run["metadata"]["build_profile_id"],
-                    "component_id": run["metadata"]["component_id"],
-                    "compile_invocation_id": run["metadata"].get(
-                        "compile_invocation_id", run["metadata"]["component_id"]
-                    ),
-                    "status": run["status"],
-                    "commit_sha": run["commit_sha"],
-                    "created_at": run["created_at"],
-                    "finished_at": run["finished_at"],
-                    "toolchain_name": run["toolchain_name"],
-                    "toolchain_version": run["toolchain_version"],
-                    "target_platform": run["target_platform"],
-                    "validation_fingerprint": (
-                        _accuracy_key(_run_index(run["id"])) if _devkit_accuracy_result(_run_index(run["id"])) else None
-                    ),
-                })
-            models = [model for model in grouped.values() if not compiler or any(
+            branch_models = _catalog_models([item for item in runs if item["git_ref"] == git_ref])
+            models = [model for model in branch_models if not compiler or any(
                 build["toolchain_version"] == compiler for build in model["builds"]
             )]
             self._json({"models": models, "count": len(models), "has_more": False, "next_cursor": None})
+            return
+        catalog_prefix = "/v1/repositories/sima-neat/models/catalogs/"
+        if path.startswith(catalog_prefix) and path != f"{catalog_prefix}current":
+            # The catalog at a revision lists the builds compiled at that commit.
+            commit = path.removeprefix(catalog_prefix)
+            git_ref = query.get("git_ref", [""])[0]
+            builds = [item for item in runs if item["commit_sha"] == commit and item["git_ref"] == git_ref]
+            self._json({"catalog": {"document": {"models": _catalog_models(builds)}}})
             return
         if path == "/v1/repositories/sima-neat/models/branches":
             branches = sorted({item["git_ref"] for item in runs})
@@ -413,7 +439,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "version": "1",
                     "summary": accuracy,
                 })
-            if index == 0:
+            if index == 0 or PREVIEW_RUNS[index][:3] == ("rf_detr_small", "modalix_int8_bf16", "transformer"):
                 test_results.append({
                     "suite": "correctness",
                     "name": "numerical-fidelity",

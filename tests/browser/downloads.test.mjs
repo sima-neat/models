@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
 import {test} from 'node:test';
 
-const source = await readFile(new URL('../../artifact-browser/downloads.js', import.meta.url), 'utf8');
-const {variantDownloads, prepareDownloads, startDownloads} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const {variantDownloads, prepareDownloads, startDownloads} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
