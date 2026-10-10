@@ -1,4 +1,4 @@
-# RF-DETR Small 512x512
+# RF-DETR Small
 
 ## Overview
 

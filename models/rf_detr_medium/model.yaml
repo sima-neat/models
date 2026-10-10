@@ -1,6 +1,6 @@
 id: rf_detr_medium
-display_name: RF-DETR Medium 576x576
-description: RF-DETR Medium object detection split into independently deployable backbone and transformer components.
+display_name: RF-DETR Medium
+description: A mid-size RF-DETR transformer detector for COCO objects.
 model_type: vision
 tasks:
 - object_detection

@@ -1,4 +1,4 @@
-# YOLO26n-P2 Tiny Drone INT8 QAT
+# YOLO26n-P2 Tiny Drone
 
 ## Overview
 

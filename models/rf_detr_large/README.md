@@ -1,4 +1,4 @@
-# RF-DETR Large 704x704
+# RF-DETR Large
 
 ## Overview
 

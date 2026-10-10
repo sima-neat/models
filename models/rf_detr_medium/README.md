@@ -1,4 +1,4 @@
-# RF-DETR Medium 576x576
+# RF-DETR Medium
 
 ## Overview
 

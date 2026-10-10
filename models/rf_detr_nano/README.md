@@ -1,4 +1,4 @@
-# RF-DETR Nano 384x384
+# RF-DETR Nano
 
 ## Overview
 

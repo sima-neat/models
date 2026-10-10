@@ -1,4 +1,4 @@
-# SSD-MobileNet V3 Large 320x320
+# SSD-MobileNet V3 Large
 
 ## Overview
 

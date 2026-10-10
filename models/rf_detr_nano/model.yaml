@@ -1,6 +1,6 @@
 id: rf_detr_nano
-display_name: RF-DETR Nano 384x384
-description: RF-DETR Nano object detection split into independently deployable backbone and transformer components.
+display_name: RF-DETR Nano
+description: The smallest RF-DETR transformer detector for COCO objects.
 model_type: vision
 tasks:
 - object_detection

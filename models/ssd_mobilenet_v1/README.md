@@ -1,4 +1,4 @@
-# SSD-MobileNet V1 300x300
+# SSD-MobileNet V1
 
 ## Overview
 
