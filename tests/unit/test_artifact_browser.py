@@ -18,12 +18,27 @@ PORTAL_ASSEMBLER = ROOT / "website" / "scripts" / "assemble-portal.mjs"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.ts"
 DOCS_STYLES = ROOT / "website" / "src" / "css" / "custom.css"
 DOCS_THEME_TOGGLE = ROOT / "website" / "src" / "theme" / "ColorModeToggle" / "index.tsx"
+BROWSER_MODULES = (
+    "app.js", "state.js", "ui.js", "metrics.js", "api.js", "catalog-view.js", "compare-view.js", "model-view.js",
+)
+
+
+def _browser_source(*modules: str) -> str:
+    """Source of the named browser modules, or of every module when none is named."""
+    return "\n".join((BROWSER / module).read_text(encoding="utf-8") for module in modules or BROWSER_MODULES)
 
 
 def test_artifact_browser_assets_exist() -> None:
     for name in (
         "index.html",
         "app.js",
+        "state.js",
+        "ui.js",
+        "metrics.js",
+        "api.js",
+        "catalog-view.js",
+        "compare-view.js",
+        "model-view.js",
         "benchmark-adapters.js",
         "branch-builds.js",
         "downloads.js",
@@ -48,14 +63,15 @@ def test_browser_uses_the_official_sima_faceted_mark() -> None:
 
 def test_browser_calls_registry_directly_without_backend_proxy() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("state.js", "api.js")
+    browser = _browser_source()
     config = (BROWSER / "config.js").read_text(encoding="utf-8")
 
     assert 'src="config.js"' in html
     assert "MODEL_REGISTRY_CONFIG" in script
     assert "https://models-registry.stg.neat.sima.ai" in config
     assert "fetch(`${state.apiBase}${path}`" in script
-    assert "fetch(`/api${path}`" not in script
+    assert "fetch(`/api${path}`" not in browser
     assert not (BROWSER / "serve.py").exists()
 
 
@@ -150,7 +166,10 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
     assert "process.env.GITHUB_SHA" in assemble
-    for asset in ("app", "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config"):
+    for asset in (
+        "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
+        "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config",
+    ):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
     assert "fingerprintedAssets" in assemble
@@ -174,7 +193,10 @@ def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> 
 
     portal = tmp_path / "website" / "portal-build"
     modules = sorted(portal.glob("*.aaaaaaaaaaaa.js"))
-    assert {path.name.split(".")[0] for path in modules} >= {"app", "downloads", "branch-builds"}
+    assert {path.name.split(".")[0] for path in modules} >= {
+        "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
+        "downloads", "branch-builds",
+    }
     for module in modules:
         for specifier in re.findall(r"[\"'](\.\.?/[^\"'\s]*\.js)[\"']", module.read_text(encoding="utf-8")):
             assert ".aaaaaaaaaaaa.js" in specifier, f"{module.name} imports {specifier}"
@@ -195,7 +217,7 @@ def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: P
 
 
 def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("api.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
 
@@ -390,17 +412,18 @@ def test_developer_docs_use_the_catalog_theme_toggle_behavior() -> None:
 
 
 def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
+    browser = _browser_source()
 
-    assert "enrichRuns" not in script
-    assert "mapConcurrent" not in script
+    assert "enrichRuns" not in browser
+    assert "mapConcurrent" not in browser
     assert "readCachedCatalog" in script
     assert "writeCachedCatalog" in script
-    assert "state.runs[0]?.id" not in script
+    assert "state.runs[0]?.id" not in browser
 
 
 def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "api.js")
 
     assert 'const branchSnapshot = history === "latest" && branch !== "all"' in script
     assert 'const categories = branchSnapshot ? [] :' in script
@@ -411,7 +434,7 @@ def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
 
 
 def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "state.js")
     branch_change = script.split('elements["branch-filter"].addEventListener("change", async () => {', 1)[1]
     branch_change = branch_change.split('elements["compiler-filter"].addEventListener', 1)[0]
 
@@ -422,7 +445,8 @@ def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
 
 
 def test_cached_build_history_preserves_run_mode() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js")
+    browser = _browser_source()
 
     assert 'catalogMode: "runs"' in script
     assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
@@ -431,11 +455,11 @@ def test_cached_build_history_preserves_run_mode() -> None:
     assert 'payload.mode !== "runs" && Object.hasOwn(payload, "models")' in script
     assert "applyCatalog(cached, { cache: false })" in script
     assert 'return state.catalogMode === "models"' in script
-    assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in script
+    assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in browser
 
 
 def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
 
     assert "const requestId = ++state.runsRequestId" in script
     assert "if (requestId !== state.runsRequestId) return" in script
@@ -443,19 +467,20 @@ def test_concurrent_requests_do_not_overwrite_newer_selections() -> None:
 
 
 def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "compare-view.js", "model-view.js")
+    browser = _browser_source()
 
     assert "if (navigationId !== state.navigationId) return;" in script
     assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false, expand: linkedRun });" in script
-    assert "state.runs.some((run) => run.id === state.selectedId)" not in script
+    assert "state.runs.some((run) => run.id === state.selectedId)" not in browser
     # A linked build off the current page registers itself so it can still be compared.
     assert "state.variantGroups.set(variant.key, variant);" in script
     assert "state.variantGroups.get(key) || state.compareSelection.get(key)" in script
 
 
 def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
-    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+    script = _browser_source("app.js", "state.js", "api.js")
+    select_run = script.split("async function selectRun(", 1)[1].split("let pendingDownloads", 1)[0]
 
     assert "historicalCatalogModels: new Map()" in script
     assert "async function loadHistoricalCatalogModel(run)" in script
@@ -466,8 +491,8 @@ def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
 
 
 def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
-    select_run = script.split("async function selectRun(", 1)[1].split("function keyValue(", 1)[0]
+    script = _browser_source("app.js")
+    select_run = script.split("async function selectRun(", 1)[1].split("let pendingDownloads", 1)[0]
 
     assert 'const currentPackage = variantPackage(variant.runs);' in select_run
     assert 'variant.packageSummary?.run?.id !== currentPackage.run_id' in select_run
@@ -476,7 +501,7 @@ def test_cached_run_detail_backfills_package_when_catalog_context_changes() -> N
 
 
 def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
     write_url = script.split("function writeVariantUrl(", 1)[1].split("async function selectRun(", 1)[0]
 
     assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in write_url
@@ -485,15 +510,16 @@ def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
 
 
 def test_all_branches_selection_has_an_explicit_url_value() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
+    browser = _browser_source()
 
     assert 'url.searchParams.set("branch", state.preferredBranch);' in script
     assert 'resetUrl.searchParams.set("branch", resetBranch);' in script
-    assert 'searchParams.delete("branch")' not in script
+    assert 'searchParams.delete("branch")' not in browser
 
 
 def test_browser_history_restores_category_filters_and_empty_detail() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
     initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
 
     assert 'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""])' in initialize
@@ -504,7 +530,7 @@ def test_browser_history_restores_category_filters_and_empty_detail() -> None:
 
 
 def test_detail_error_can_be_retried_and_closed() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
 
     assert 'errorPanel(error.message, "Could not load this build", { closable: true })' in script
     assert "event.target.closest('[data-action=\"retry\"]') && state.selectedId" in script
@@ -512,7 +538,7 @@ def test_detail_error_can_be_retried_and_closed() -> None:
 
 
 def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js")
 
     assert 'const DEFAULT_BRANCH = "develop"' in script
     assert "sima-neat-model-branch:" in script
@@ -522,7 +548,8 @@ def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None
 
 
 def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "api.js", "catalog-view.js")
+    browser = _browser_source()
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/branches" in script
@@ -531,13 +558,13 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "writeCachedBranches" in script
     assert "loadTaxonomy(elements[\"branch-filter\"].value || DEFAULT_BRANCH)" in script
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
-    assert "knownBranches.delete(branch)" not in script
-    assert "...(payload.branches || [])" not in script
+    assert "knownBranches.delete(branch)" not in browser
+    assert "...(payload.branches || [])" not in browser
     assert 'path == "/v1/repositories/sima-neat/models/branches"' in preview
 
 
 def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "catalog-view.js")
 
     assert 'query.set("git_ref", `refs/heads/${branch}`)' in script
     assert "availableBranches" in script
@@ -547,7 +574,7 @@ def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
 
 def test_browser_has_persistent_dual_theme_and_accessibility_controls() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'data-theme="dark"' in styles
@@ -579,7 +606,8 @@ def test_browser_uses_refined_search_first_layout() -> None:
 
 def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "catalog-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="filter-toggle"' in html
@@ -590,15 +618,15 @@ def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     assert "background: var(--filter-surface)" in styles
     assert "box-shadow: 0 0 0 100vmax var(--filter-surface)" in styles
     assert 'id="status-filter"' not in html
-    assert 'class="run-status' not in script
-    assert 'class="status-label' not in script
+    assert 'class="run-status' not in browser
+    assert 'class="status-label' not in browser
     assert 'query.set("status", "completed")' in script
     assert 'run.status === "completed"' in script
 
 
 def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="history-filter" type="checkbox" role="switch"' in html
@@ -618,7 +646,7 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
 
 def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_facets() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "state.js", "catalog-view.js")
 
     for element_id in (
         "model-type-filter",
@@ -637,7 +665,7 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
 
 
 def test_category_filters_are_server_side_and_shareable() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "catalog-view.js")
 
     assert "query.set(name, value)" in script
     assert "url.searchParams.set(queryName, value)" in script
@@ -647,7 +675,7 @@ def test_category_filters_are_server_side_and_shareable() -> None:
 
 
 def test_smart_search_uses_names_and_taxonomy_labels_on_client_and_server() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "catalog-view.js")
 
     assert "normalizedSearchTerms" in script
     assert 'taxonomyLabel("tasks", id)' in script
@@ -658,21 +686,22 @@ def test_smart_search_uses_names_and_taxonomy_labels_on_client_and_server() -> N
 
 
 def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("ui.js", "catalog-view.js")
+    browser = _browser_source()
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "function profileLabel(run)" in script
     assert 'run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable"' in script
     assert 'components.length > 1 || components[0] !== "model" ? components.join(" · ") : ""' in script
     assert '<small>${escapeHtml(profileLabel(run))}</small>' in script
-    assert '"default artifact"' not in script
+    assert '"default artifact"' not in browser
     assert "run.metadata?.build_profile_id, run.metadata?.component_id" in script
     assert '"build_profile_id": variant_id' in preview
     assert '"component_id": "model"' in preview
 
 
 def test_model_card_links_to_the_exact_compiled_github_source() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert "function githubModelUrl(run, modelId)" in script
@@ -687,13 +716,14 @@ def test_model_card_links_to_the_exact_compiled_github_source() -> None:
 
 
 def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'test.name === "mpk-validation" && test.status === "passed"' in script
     assert 'class="mpk-validation-mark" tabindex="0" role="img"' in script
     assert "MPK package integrity verified: archive structure, checksum, and build provenance match." in script
-    assert '<h3>Validation</h3>' not in script
+    assert '<h3>Validation</h3>' not in browser
     assert ".detail-title-actions" in styles
     compact_controls = (
         ".model-source-link, .huggingface-source-link, .benchmark-shortcut, "
@@ -704,7 +734,7 @@ def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
 
 
 def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert "const hasBenchmark = details.some((detail) => detail.benchmark);" in script
@@ -720,7 +750,8 @@ def test_existing_benchmark_has_an_accessible_scroll_shortcut() -> None:
 
 
 def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'class="artifact-download-shortcut"' in script
@@ -731,21 +762,22 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert '<dl class="artifact-metadata">' in script
     assert '<dt>File size</dt>' in script
     assert '<dt>SHA-256</dt>' in script
-    assert 'class="download-button"' not in script
-    assert 'class="artifact-main"' not in script
+    assert 'class="download-button"' not in browser
+    assert 'class="artifact-main"' not in browser
     assert ".artifact-download-shortcut:focus-visible" in styles
 
 
 def test_package_download_dialog_uses_one_consistent_label_value_grid() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="download-kicker"' not in html
-    assert '"download-kicker"' not in script
+    assert '"download-kicker"' not in browser
     assert '<dt>File name</dt>' in script
     assert '<dt>Attribution</dt>' in script
-    assert 'Attribution: ${license.attribution}' not in script
+    assert 'Attribution: ${license.attribution}' not in browser
     assert ".download-package-info dt, .download-package-info dd" in styles
     assert ".download-package-info dt { border-right: 1px solid var(--line)" in styles
     assert ".download-package-info code { font: inherit" in styles
@@ -753,17 +785,18 @@ def test_package_download_dialog_uses_one_consistent_label_value_grid() -> None:
 
 
 def test_only_model_packs_are_presented_as_artifacts() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("api.js", "compare-view.js", "model-view.js")
+    browser = _browser_source()
 
     assert 'artifact.artifact_type === "model-pack"' in script
     assert "artifacts: modelPackArtifacts(summary?.artifacts)" in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
     assert 'artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
-    assert '|| artifacts[0]' not in script
+    assert '|| artifacts[0]' not in browser
 
 
 def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("ui.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
@@ -786,7 +819,8 @@ def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
 
 
 def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("metrics.js", "api.js", "model-view.js")
+    browser = _browser_source()
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
@@ -798,7 +832,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'class="trial-chart benchmark-chart"' in script
     assert "data-trial-metric" in script
     assert "availableTrialMetrics" in script
-    assert "data-temperature-sensor" not in script
+    assert "data-temperature-sensor" not in browser
     assert 'item.sensor.toLowerCase() === "temp1"' in script
     assert 'class="temperature-line"' in script
     assert 'role="img"' in script
@@ -814,7 +848,8 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
 
 
 def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("api.js", "model-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
@@ -829,7 +864,7 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert "dataset.evaluated_samples.toLocaleString()" in script
     assert 'class="accuracy-explainer"' in script
     assert 'summary class="accuracy-status ${statusClass}"' in script
-    assert '>?</summary>' not in script
+    assert '>?</summary>' not in browser
     assert "run the qualification profile for final accuracy reporting" in script
     assert 'const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage"' in script
     assert 'const status = qualified ? "Qualification" : "Provisional"' in script
@@ -848,7 +883,7 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
 
 
 def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_per_metric() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("api.js", "model-view.js")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     # One accuracy key per variant: the component build that carries it names every MPK it measured.
@@ -878,7 +913,7 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
 
 
 def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_returns() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
     start = script.index("const ACCURACY_METRIC_LABELS = {")
     end = script.index("function accuracyPanel(")
     # The registry returned RF-DETR Small's published metrics in this order.
@@ -903,7 +938,7 @@ def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_ret
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
@@ -934,7 +969,8 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
 
 def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("state.js", "compare-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="compare-button"' in html
@@ -942,7 +978,7 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
     assert 'aria-labelledby="compare-title" aria-describedby="compare-description"' in html
     assert "compareSelection: new Map()" in script
     assert 'data-compare-variant="${escapeHtml(group.key)}"' in script
-    assert "data-compare-run-id" not in script
+    assert "data-compare-run-id" not in browser
     assert "return [...state.compareSelection.values()]" in script
     assert 'elements["compare-button"].disabled = selectedCount < 2' in script
     assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
@@ -970,7 +1006,8 @@ def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
 
 
 def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js", "model-view.js")
+    browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
@@ -981,12 +1018,12 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert 'class="detail-variant-tab" type="button" role="tab"' in script
     assert '<strong>Variants</strong>' in script
     assert '"<b>Current</b>"' in script
-    assert "detail-component-tabs" not in script
+    assert "detail-component-tabs" not in browser
     assert "detail-component-tabs" not in styles
     assert 'class="detail-compare-select compare-select"' in script
     assert '"Add variant to comparison"' in script
     assert "activeProfileByModel: new Map()" in script
-    assert "activeComponentByProfile" not in script
+    assert "activeComponentByProfile" not in browser
     assert "function selectedCatalogBuild(" in script
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
@@ -994,7 +1031,7 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert 'branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
     assert "...state.compileRuns.map((run) => run.toolchain_version)" in script
     assert "branchName(anchor.git_ref) !== linkedBranch && !listed" in script
-    assert "payload.models.flatMap" not in script
+    assert "payload.models.flatMap" not in browser
     assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
     assert ".model-row.selected" in styles
     render_model_row = script.split("function renderModelRow(", 1)[1].split("function renderModels(", 1)[0]
@@ -1026,7 +1063,7 @@ def test_focused_model_layout_collapses_list_metadata_without_overflow() -> None
 
 def test_detail_layout_can_focus_the_selected_model() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("state.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'id="workspace"' in html
@@ -1040,7 +1077,7 @@ def test_detail_layout_can_focus_the_selected_model() -> None:
 
 
 def test_model_metadata_tags_use_semantic_icons() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("ui.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     for icon in ("branch", "precision", "compiler", "license", "modelType", "architecture", "task"):
@@ -1052,7 +1089,7 @@ def test_model_metadata_tags_use_semantic_icons() -> None:
 
 
 def test_model_license_metadata_is_rendered_with_redistribution_and_attribution() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
@@ -1073,7 +1110,7 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
     fixture_path = BROWSER / "fixtures" / "performance-result-v4.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     server = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("app.js")
 
     assert fixture["schema_version"] == 4
     assert fixture["metrics"]["mla_memory_peak_delta_mib"]["value"] == 136.5
@@ -1158,7 +1195,7 @@ assert.match(calls[1], /cursor=page-2/);
 
 
 def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None:
-    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    script = _browser_source("model-view.js")
     render_detail = script.split("function renderDetail(variant)", 1)[1].split("function errorPanel(", 1)[0]
     component_row = script.split("function componentRow(detail, open)", 1)[1].split("function ", 1)[0]
 
