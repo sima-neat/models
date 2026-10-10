@@ -110,26 +110,42 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "fingerprintedAssets" in assemble
 
 
-def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> None:
-    shutil.copytree(BROWSER, tmp_path / "artifact-browser")
-    (tmp_path / "website" / "scripts").mkdir(parents=True)
-    (tmp_path / "website" / "build").mkdir()
-    shutil.copy(PORTAL_ASSEMBLER, tmp_path / "website" / "scripts" / PORTAL_ASSEMBLER.name)
-
-    subprocess.run(
-        ["node", str(tmp_path / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
-        check=True,
+def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
+    (root / "website" / "scripts").mkdir(parents=True)
+    (root / "website" / "build").mkdir()
+    shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
+    return subprocess.run(
+        ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
         capture_output=True,
+        text=True,
         env={**os.environ, "GITHUB_SHA": "a" * 40},
     )
+
+
+def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> None:
+    shutil.copytree(BROWSER, tmp_path / "artifact-browser")
+    assert assemble_portal(tmp_path).returncode == 0
 
     portal = tmp_path / "website" / "portal-build"
     modules = sorted(portal.glob("*.aaaaaaaaaaaa.js"))
     assert {path.name.split(".")[0] for path in modules} >= {"app", "downloads", "branch-builds"}
     for module in modules:
-        for specifier in re.findall(r"[\"'](\./[\w.-]+\.js)[\"']", module.read_text(encoding="utf-8")):
+        for specifier in re.findall(r"[\"'](\.\.?/[^\"'\s]*\.js)[\"']", module.read_text(encoding="utf-8")):
             assert ".aaaaaaaaaaaa.js" in specifier, f"{module.name} imports {specifier}"
             assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
+
+
+def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: Path) -> None:
+    for specifier in ("./helpers/util.js", "../shared.js", "./unlisted.js"):
+        root = tmp_path / specifier.strip("./").replace("/", "-")
+        shutil.copytree(BROWSER, root / "artifact-browser")
+        downloads = root / "artifact-browser" / "downloads.js"
+        downloads.write_text(f'import "{specifier}";\n' + downloads.read_text(encoding="utf-8"), encoding="utf-8")
+
+        result = assemble_portal(root)
+
+        assert result.returncode != 0
+        assert f"downloads.js imports {specifier}" in result.stderr
 
 
 def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:
