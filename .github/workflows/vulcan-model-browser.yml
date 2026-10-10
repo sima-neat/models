@@ -61,6 +61,15 @@ jobs:
           DOCS_BASE_URL: /models/
         run: npm run build:portal
 
+      - name: Install Chromium
+        working-directory: website
+        run: npx playwright install --with-deps chromium
+
+      # A portal that does not load or render fails here, before anything is published.
+      - name: Smoke-test the assembled portal
+        working-directory: website
+        run: npm run smoke:portal
+
       - name: Upload static site artifact
         uses: actions/upload-artifact@v7
         with:

@@ -101,6 +101,15 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
 
 
+def test_staging_deployment_smoke_tests_the_portal_before_publishing_it() -> None:
+    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["build"]["steps"]
+    position = {step.get("run") or step.get("uses", "").split("@")[0]: index for index, step in enumerate(steps)}
+
+    assert position["npm run build:portal"] < position["npm run smoke:portal"] < position["actions/upload-artifact"]
+    assert position["npx playwright install --with-deps chromium"] < position["npm run smoke:portal"]
+
+
 def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("portal", encoding="utf-8")
     with socket.socket() as probe:
