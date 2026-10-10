@@ -140,23 +140,26 @@ from stated local evidence or the trusted staging workflow after merge.
 When the change is merged to `develop`, the push runs **Vulcan Model Orchestrator**
 on the reviewed revision:
 
-1. **Plan.** `plan-stages` compares each build's compile key with the branch
+1. **Check the portal.** The model browser is built and smoke-tested in
+   Chromium. If it fails, nothing is planned, compiled, measured, or published
+   for the revision. Every push runs this check, not only merges.
+2. **Plan.** `plan-stages` compares each build's compile key with the branch
    catalog, or the base branch's catalog for a new branch. A build compiles
    when no published run carries its key. A build that is reused but lacks a
    completed performance or accuracy run for its current stage key is queued
    for measurement only.
-2. **Authorize.** Each requested runner class is checked against the protected
+3. **Authorize.** Each requested runner class is checked against the protected
    environment specification.
-3. **Compile.** On a self-hosted compiler runner with read-only repository
+4. **Compile.** On a self-hosted compiler runner with read-only repository
    access, `scripts/run_model_compilation.sh` runs the recipe, and every MPK is
    verified with its provenance.
-4. **Publish.** A GitHub-hosted job verifies the complete component set,
+5. **Publish.** A GitHub-hosted job verifies the complete component set,
    publishes each component and its fidelity report as a compile run, starts
    the DevKit stages for a new Modalix build, assembles and publishes the
    packages the build completes, and records the build in the catalog.
-5. **Publish the catalog.** The catalog snapshot for the revision is published
+6. **Publish the catalog.** The catalog snapshot for the revision is published
    and promoted.
-6. **Measure.** For reused builds, the workflow starts only the DevKit stages
+7. **Measure.** For reused builds, the workflow starts only the DevKit stages
    they still lack.
 
 **Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`

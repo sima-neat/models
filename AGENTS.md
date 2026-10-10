@@ -58,7 +58,7 @@ in the same commit.
   compiler pin and prints an offline stage plan. Contributor code never runs on
   self-hosted runners for a pull request. `Model Registry Contributor Tool`
   runs `pytest tests/unit` and builds the `model-registry` package.
-- **Push.** Every push runs `Vulcan Model Orchestrator`. The `plan` job runs `model-registry plan-stages`, which reads the
+- **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and smoke-tests the model browser (`developer-docs.yml`); `plan` waits for it, so a portal failure stops the run. The `plan` job runs `model-registry plan-stages`, which reads the
   branch catalog (the base branch's when the branch has none) and resolves each
   stage key against the registry. `compile` calls
   `.github/workflows/vulcan-model-compile.yml` once per build to compile,

@@ -120,6 +120,7 @@ input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-r
 ```text
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branch
+     portal (in parallel): build and smoke-test the model browser; a failure stops the run here
   -> plan: compare stage keys with the branch catalog and registry runs
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
