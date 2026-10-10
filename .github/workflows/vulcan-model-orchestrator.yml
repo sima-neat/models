@@ -1,10 +1,10 @@
-name: Vulcan Model Compile
+name: Vulcan Model Orchestrator
 
 on:
   pull_request:
     paths:
-      - ".github/workflows/Vulcan-Model-Compile.yml"
-      - ".github/workflows/Vulcan-Model-Build.yml"
+      - ".github/workflows/vulcan-model-orchestrator.yml"
+      - ".github/workflows/vulcan-model-compile.yml"
       - ".github/workflows/Vulcan-Model-Benchmarking.yml"
       - "deps/**"
       - "models/**"
@@ -14,19 +14,8 @@ on:
       - "taxonomies/**"
       - "tools/model_registry/**"
       - "pyproject.toml"
+  # Every push publishes its revision's catalog; unchanged stage keys compile and measure nothing.
   push:
-    paths:
-      - ".github/workflows/Vulcan-Model-Compile.yml"
-      - ".github/workflows/Vulcan-Model-Build.yml"
-      - ".github/workflows/Vulcan-Model-Benchmarking.yml"
-      - "deps/**"
-      - "models/**"
-      - "schemas/**"
-      - "scripts/**"
-      - "training/yolo26_tiny_drone/**"
-      - "taxonomies/**"
-      - "tools/model_registry/**"
-      - "pyproject.toml"
   workflow_dispatch:
     inputs:
       environment:
@@ -362,8 +351,8 @@ jobs:
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA"
 
-  build:
-    name: Build ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+  compile:
+    name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, resolve-vulcan-config, authorize-runner-classes, initialize-catalog]
     if: >-
       !cancelled() &&
@@ -379,7 +368,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}
-    uses: ./.github/workflows/Vulcan-Model-Build.yml
+    uses: ./.github/workflows/vulcan-model-compile.yml
     with:
       entry: ${{ toJSON(matrix) }}
       vulcan_environment: ${{ needs.select.outputs.vulcan_environment }}
@@ -395,7 +384,7 @@ jobs:
 
   publish-catalog:
     name: Publish the catalog at this revision
-    needs: [select, resolve-vulcan-config, plan, initialize-catalog, build]
+    needs: [select, resolve-vulcan-config, plan, initialize-catalog, compile]
     if: >-
       !cancelled() &&
       github.event_name != 'pull_request' &&
@@ -500,7 +489,7 @@ jobs:
 
   report-partial-publication:
     name: Report failed model builds
-    needs: [plan, build, publish-catalog]
+    needs: [plan, compile, publish-catalog]
     if: >-
       always() &&
       github.event_name != 'pull_request' &&
@@ -520,7 +509,7 @@ jobs:
           gh api --paginate --slurp \
             "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             | jq '[.[].jobs[] | select(
-                (.name | startswith("Build ")) and
+                (.name | startswith("Compile ")) and
                 .conclusion != "success" and .conclusion != "skipped"
               ) | {name, conclusion, html_url}]' > "$failed"
           count="$(jq 'length' "$failed")"

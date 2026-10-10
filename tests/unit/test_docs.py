@@ -39,7 +39,7 @@ def test_developer_sidebar_includes_every_article() -> None:
 def test_contributor_docs_distinguish_pr_checks_from_trusted_automation() -> None:
     overview = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
     contributing = (ROOT / "docs" / "contributing.md").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github" / "workflows" / "Vulcan-Model-Compile.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "vulcan-model-orchestrator.yml").read_text(encoding="utf-8")
     contributing_words = " ".join(contributing.split())
 
     assert "Pull requests do **not** run recipe or surgery code" in overview

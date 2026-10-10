@@ -101,7 +101,7 @@ python models/ssd_mobilenet_v2/scripts/calibration.py \
 
 ### Compilation and validation
 
-Dispatch **Vulcan Model Compile** in staging with model
+Dispatch **Vulcan Model Orchestrator** in staging with model
 `ssd_mobilenet_v2`. Leaving the profile selection empty builds both declared
 profiles; select one profile only for focused compiler diagnosis. Compilation,
 raw-head quality validation, structural graph inspection, MPK inspection, and

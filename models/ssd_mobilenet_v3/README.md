@@ -96,7 +96,7 @@ selection and checksums without republishing the source images.
 
 ### Compilation and validation
 
-Dispatch **Vulcan Model Compile** in staging with model
+Dispatch **Vulcan Model Orchestrator** in staging with model
 `ssd_mobilenet_v3`. Leaving the profile selection empty builds both declared
 profiles; select one profile only for focused diagnosis. Compilation,
 fresh-process numerical validation, structural graph inspection, MPK

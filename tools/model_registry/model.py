@@ -20,7 +20,7 @@ SCRIPTS_DIR = "scripts"
 # A model folder holds its manifest, its documentation, and model-owned code in scripts/.
 MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR}
 STAGES = ("fidelity", "accuracy", "benchmark")
-# Vulcan-Model-Convert.yml runs these files for a model that declares `conversion`.
+# vulcan-model-convert.yml runs these files for a model that declares `conversion`.
 CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-convert.txt")
 # A devkit_script accuracy entry runs this script on the DevKit.
 ACCURACY_SCRIPT = f"{SCRIPTS_DIR}/accuracy.py"

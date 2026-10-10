@@ -1,7 +1,7 @@
-name: Vulcan Model Build
+name: Vulcan Model Compile
 
 # Compile one authorized compile invocation, publish it, update the catalog, and start its DevKit stages.
-# Vulcan-Model-Compile.yml calls this once per selected invocation, so one build never waits on another.
+# vulcan-model-orchestrator.yml calls this once per selected invocation, so one build never waits on another.
 
 on:
   workflow_call:

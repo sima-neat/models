@@ -1,5 +1,5 @@
-// The model catalog describes models; only completed compile runs prove that a
-// branch produced a build. Keep components from one workflow together.
+// A branch shows what it delivers: its catalog's builds, each with the compile run that produced it.
+// Keep components from one workflow together.
 export async function allPages(fetchPage, basePath, query, collection) {
   const items = [];
   const seen = new Set();
@@ -78,21 +78,56 @@ export async function variantBuildRuns(run, fetchPage) {
   return variantBuilds([run, ...others])[0].runs;
 }
 
+// Resolves the compile runs behind catalog builds that `knownRuns` lacks, such as builds a new
+// branch inherits. The catalog names each run and its commit; the run carries its own branch.
+export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repositoryPath) {
+  const known = new Set(knownRuns.map((run) => run.id));
+  const missing = new Map(catalogModels.flatMap((model) => model.builds || [])
+    .filter((build) => build.run_id && !known.has(build.run_id))
+    .map((build) => [build.run_id, build]));
+  const commits = [...new Set([...missing.values()].map((build) => build.commit_sha).filter(Boolean))];
+  const byCommit = await Promise.all(commits.map((commit) => allPages(fetchPage, `${repositoryPath}/runs`,
+    new URLSearchParams({ commit_sha: commit, status: "completed", run_type: "model_compile", limit: "100" }), "runs")));
+  const runs = byCommit.flat().filter((run) => missing.has(run.id));
+  // The run list omits superseded runs; a catalog may still name one.
+  const found = new Set(runs.map((run) => run.id));
+  const rest = await Promise.all([...missing.keys()].filter((id) => !found.has(id))
+    .map(async (id) => (await fetchPage(`/v1/runs/${encodeURIComponent(id)}`)).run));
+  return [...runs, ...rest];
+}
+
+// Shows the catalog's build of each model and build profile, unless `compileRuns` holds a newer
+// completed build of it, which the catalog may not record yet.
 export function branchModels(compileRuns, packageRuns, catalogModels, compiler = "") {
   const definitions = new Map(catalogModels.map((model) => [model.model_id, model]));
-  const groups = variantBuilds(compileRuns.filter((run) => {
+  const runs = compileRuns.filter((run) => {
     const meta = run.metadata || {};
     return run.status === "completed" && run.run_type === "model_compile" && meta.model_id
       && (!compiler || run.toolchain_version === compiler);
-  }));
+  });
+  const variantKey = (modelId, profile) => JSON.stringify([modelId, profile]);
 
   const latest = new Map();
-  for (const group of groups) {
-    const key = JSON.stringify([group.modelId, group.profile]);
-    const previous = latest.get(key);
-    if (!previous || group.time > previous.time || (group.time === previous.time && group.runs[0].id > previous.runs[0].id)) {
-      latest.set(key, group);
+  const runsById = new Map(runs.map((run) => [run.id, run]));
+  for (const model of catalogModels) {
+    for (const build of model.builds || []) {
+      const run = runsById.get(build.run_id);
+      if (!run) continue;
+      const key = variantKey(model.model_id, runProfile(run));
+      if (!latest.has(key)) latest.set(key, { modelId: model.model_id, profile: runProfile(run), runs: [], time: 0, catalog: true });
+      const group = latest.get(key);
+      group.runs.push(run);
+      group.time = Math.max(group.time, runTime(run));
     }
+  }
+  for (const group of variantBuilds(runs)) {
+    const key = variantKey(group.modelId, group.profile);
+    const previous = latest.get(key);
+    // A build holding every run the catalog names is the catalog's build, with all its components.
+    const isCatalogBuild = previous?.catalog && previous.runs.every((run) => group.runs.includes(run));
+    const newer = !previous || group.time > previous.time
+      || (!previous.catalog && group.time === previous.time && group.runs[0].id > previous.runs[0].id);
+    if (isCatalogBuild || newer) latest.set(key, group);
   }
 
   const models = new Map();
@@ -124,16 +159,20 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   }
 
   for (const model of models.values()) {
-    for (const run of packageRuns) {
-      const meta = run.metadata || {};
-      const components = meta.component_run_ids || {};
-      const componentIds = Object.values(components);
-      const builds = model.builds.filter((build) => build.build_profile_id === meta.build_profile_id);
-      if (run.status !== "completed" || run.run_type !== "model_package" || meta.model_id !== model.model_id
-        || !builds.length || componentIds.length !== builds.length
-        || !builds.every((build) => components[build.component_id] === build.run_id
-          && run.git_ref === build.run.git_ref && run.commit_sha === build.run.commit_sha)) continue;
-      model.packages.push({ run_id: run.id, build_profile_id: meta.build_profile_id, component_run_ids: components });
+    // A package belongs to the shown build when it bundles exactly that build's component runs.
+    const candidates = [
+      ...packageRuns.filter((run) => run.status === "completed" && run.run_type === "model_package"
+        && run.metadata?.model_id === model.model_id)
+        .map((run) => ({ run_id: run.id, build_profile_id: run.metadata.build_profile_id, component_run_ids: run.metadata.component_run_ids || {} })),
+      ...(definitions.get(model.model_id)?.packages || []),
+    ];
+    for (const item of candidates) {
+      const components = item.component_run_ids || {};
+      const builds = model.builds.filter((build) => build.build_profile_id === item.build_profile_id);
+      if (!builds.length || Object.keys(components).length !== builds.length
+        || !builds.every((build) => components[build.component_id] === build.run_id)
+        || model.packages.some((known) => known.run_id === item.run_id)) continue;
+      model.packages.push({ run_id: item.run_id, build_profile_id: item.build_profile_id, component_run_ids: components });
     }
     model.packages.sort((a, b) => {
       const left = packageRuns.find((run) => run.id === a.run_id);

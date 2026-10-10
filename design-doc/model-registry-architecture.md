@@ -118,12 +118,12 @@ input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-r
 ## CI flow
 
 ```text
-push
+push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branch
   -> plan: compare stage keys with the branch catalog and registry runs
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
-  -> build (per selected build)
+  -> compile (Vulcan Model Compile, per selected build)
        compile: run_model_compilation.sh, verify-mpk (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
   -> publish the catalog snapshot
@@ -153,14 +153,18 @@ in staging and only for Modalix targets.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Builds the merged branch changed compile again on `develop`, and
   their DevKit stages run again; builds the branch compiled are not reused.
-- **Newer push.** It cancels the running compile workflow of the same ref
+- **Newer push.** It cancels the running orchestrator of the same ref
   (manual dispatches run to completion). Builds that already published stay;
   builds left pending are planned again. Dispatched DevKit runs continue. A
   DevKit stage still running when the next plan runs has no completed run yet,
   so it is dispatched again.
-- **Model browser.** A branch's view lists only builds compiled on that branch
-  (#141); a reused build appears under the branch that compiled it. `develop`
-  compiles every build in its catalog, so its view is complete.
+- **Model browser.** A branch's view lists its catalog's builds: what the
+  branch delivers (#181). A completed build compiled on the branch that is
+  newer than the catalog entry for its model and build profile replaces that
+  entry, so a build missing from the catalog still shows. Each build keeps its
+  own compile run's branch, commit and compiler, so a reused build still names
+  the branch that compiled it. Every push publishes a catalog, so a branch that
+  changes no stage key still lists every model.
 
 ## Compile workflow trust boundary
 

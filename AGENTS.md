@@ -54,21 +54,21 @@ in the same commit.
 
 ## CI
 
-- **Pull request.** `Vulcan Model Compile` validates the catalog, taxonomy, and
+- **Pull request.** `Vulcan Model Orchestrator` validates the catalog, taxonomy, and
   compiler pin and prints an offline stage plan. Contributor code never runs on
   self-hosted runners for a pull request. `Model Registry Contributor Tool`
   runs `pytest tests/unit` and builds the `model-registry` package.
-- **Push.** The `plan` job runs `model-registry plan-stages`, which reads the
+- **Push.** Every push runs `Vulcan Model Orchestrator`. The `plan` job runs `model-registry plan-stages`, which reads the
   branch catalog (the base branch's when the branch has none) and resolves each
-  stage key against the registry. `build` calls
-  `.github/workflows/Vulcan-Model-Build.yml` once per build to compile,
+  stage key against the registry. `compile` calls
+  `.github/workflows/vulcan-model-compile.yml` once per build to compile,
   publish, and start the build's board stages. `publish-catalog` writes the
   final catalog snapshot, and `measure` starts the board stages a reused build
   still lacks.
 - **Board stages.** `Vulcan-Model-Benchmarking.yml` runs the requested
   `stages` on a DevKit and publishes performance (`model_benchmark` runs) and
   accuracy (`model_accuracy` runs) separately.
-- A newer push cancels the branch's running compile workflow; builds that
+- A newer push cancels the branch's running orchestrator; builds that
   already published stay and are reused. How branch catalogs, merges, and the
   model browser interact is in
   [branches and merges](design-doc/model-registry-architecture.md#branches-merges-and-concurrent-pushes).

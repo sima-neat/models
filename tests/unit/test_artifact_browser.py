@@ -918,8 +918,9 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
     assert "build.toolchain_version === compiler" in script
-    assert 'branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
-    assert "...state.branchRuns.map((run) => run.toolchain_version)" in script
+    assert 'branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
+    assert "...state.compileRuns.map((run) => run.toolchain_version)" in script
+    assert "branchName(anchor.git_ref) !== linkedBranch && !listed" in script
     assert "payload.models.flatMap" not in script
     assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
     assert ".model-row.selected" in styles

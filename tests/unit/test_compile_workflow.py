@@ -13,8 +13,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
-WORKFLOW = WORKFLOWS / "Vulcan-Model-Compile.yml"
-BUILD_WORKFLOW = WORKFLOWS / "Vulcan-Model-Build.yml"
+WORKFLOW = WORKFLOWS / "vulcan-model-orchestrator.yml"
+BUILD_WORKFLOW = WORKFLOWS / "vulcan-model-compile.yml"
 BENCHMARK_WORKFLOW = WORKFLOWS / "Vulcan-Model-Benchmarking.yml"
 
 
@@ -61,16 +61,15 @@ def run_jq(program: str, document: object) -> object:
 # Triggers, inputs and concurrency
 
 
-def test_changed_models_compile_on_pushes_to_every_branch() -> None:
-    workflow = load(WORKFLOW)
-    push_paths = workflow["on"]["push"]["paths"]
+def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
+    on = load(WORKFLOW)["on"]
 
-    assert "branches" not in workflow["on"]["push"]
-    assert "branches-ignore" not in workflow["on"]["push"]
-    assert workflow["on"]["pull_request"]["paths"] == push_paths
+    # A push that changes no compile input still publishes its catalog; its stage keys select no work.
+    assert "push" in on and not on["push"]
+    pull_request_paths = on["pull_request"]["paths"]
     for path in (
-        ".github/workflows/Vulcan-Model-Compile.yml",
-        ".github/workflows/Vulcan-Model-Build.yml",
+        ".github/workflows/vulcan-model-orchestrator.yml",
+        ".github/workflows/vulcan-model-compile.yml",
         ".github/workflows/Vulcan-Model-Benchmarking.yml",
         "deps/**",
         "models/**",
@@ -79,8 +78,8 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
         "tools/model_registry/**",
         "training/yolo26_tiny_drone/**",
     ):
-        assert path in push_paths
-    assert "tools/runtime/**" not in push_paths
+        assert path in pull_request_paths
+    assert "tools/runtime/**" not in pull_request_paths
 
 
 def test_production_is_an_explicit_dispatch_choice() -> None:
@@ -114,7 +113,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "plan",
         "authorize-runner-classes",
         "initialize-catalog",
-        "build",
+        "compile",
         "publish-catalog",
         "measure",
         "report-partial-publication",
@@ -168,7 +167,7 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     # The self-hosted compiler is reachable only through the build job, and only as a workflow call.
     build_workflow = load(BUILD_WORKFLOW)
     assert list(build_workflow["on"]) == ["workflow_call"]
-    assert jobs["build"]["uses"] == "./.github/workflows/Vulcan-Model-Build.yml"
+    assert jobs["compile"]["uses"] == "./.github/workflows/vulcan-model-compile.yml"
     self_hosted = [
         name for name, job in build_workflow["jobs"].items()
         if isinstance(job["runs-on"], list) and "self-hosted" in job["runs-on"]
@@ -178,7 +177,7 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
 
 @pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
 def test_trusted_events_reach_the_build(event) -> None:
-    condition = load(WORKFLOW)["jobs"]["build"]["if"]
+    condition = load(WORKFLOW)["jobs"]["compile"]["if"]
     values = {
         "!cancelled()": True,
         "github.event_name": event,
@@ -214,7 +213,7 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert select["outputs"]["model_compiler_identity"] == "${{ steps.compiler.outputs.identity }}"
     plan = step(jobs["plan"], "Compare stage keys with published runs")
     assert plan["env"]["COMPILER_IDENTITY"] == "${{ needs.select.outputs.model_compiler_identity }}"
-    build = jobs["build"]["with"]
+    build = jobs["compile"]["with"]
     assert build["model_compiler_version"] == "${{ needs.select.outputs.model_compiler_version }}"
     assert build["model_compiler_label"] == "${{ needs.select.outputs.model_compiler_label }}"
 
@@ -250,7 +249,7 @@ def test_new_branches_inherit_the_resolved_base_branch_catalog() -> None:
     plan = step(jobs["plan"], "Compare stage keys with published runs")
     assert plan["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
     assert '--base-branch "$BASE_BRANCH"' in plan["run"]
-    assert jobs["build"]["with"]["base_branch"] == "${{ needs.select.outputs.base_branch }}"
+    assert jobs["compile"]["with"]["base_branch"] == "${{ needs.select.outputs.base_branch }}"
 
 
 def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
@@ -292,7 +291,7 @@ def test_reused_build_stages_are_measured_on_modalix_only() -> None:
 def test_runner_classes_are_authorized_before_builds_are_queued() -> None:
     jobs = load(WORKFLOW)["jobs"]
     admission = jobs["authorize-runner-classes"]
-    build = jobs["build"]
+    build = jobs["compile"]
 
     assert admission["needs"] == ["select", "plan", "resolve-vulcan-config"]
     assert "needs.plan.outputs.compile_count != '0'" in admission["if"]
@@ -336,7 +335,7 @@ def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
 def test_build_allows_only_intentional_catalog_initialization_skips(
     publishable, initialize_result, expected,
 ) -> None:
-    condition = load(WORKFLOW)["jobs"]["build"]["if"]
+    condition = load(WORKFLOW)["jobs"]["compile"]["if"]
     values = {
         "!cancelled()": True,
         "github.event_name": "push",
@@ -376,8 +375,8 @@ def test_catalog_snapshot_publishes_even_when_builds_fail(
         "needs.initialize-catalog.result": initialize_result,
     }
 
-    assert "build" in job["needs"]
-    assert "needs.build.result" not in job["if"]
+    assert "compile" in job["needs"]
+    assert "needs.compile.result" not in job["if"]
     assert evaluate(job["if"], values) is expected
 
 
@@ -460,26 +459,26 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     script = step(report, "List the builds that did not publish")["run"]
     program = jq_program(script, "| jq")
 
-    assert report["needs"] == ["plan", "build", "publish-catalog"]
+    assert report["needs"] == ["plan", "compile", "publish-catalog"]
     assert report["if"].startswith("always() &&")
     assert "github.event_name != 'pull_request'" in report["if"]
     assert report["permissions"] == {"actions": "read", "contents": "read"}
-    # The filter matches the build job's name, and no other job shares its prefix.
-    assert jobs["build"]["name"].startswith("Build ")
-    assert [name for name, job in jobs.items() if job["name"].startswith("Build ")] == ["build"]
+    # The filter matches the compile job's name, and no other job shares its prefix.
+    assert jobs["compile"]["name"].startswith("Compile ")
+    assert [name for name, job in jobs.items() if job["name"].startswith("Compile ")] == ["compile"]
 
     def job(name: str, conclusion: str) -> dict:
         return {"name": name, "conclusion": conclusion, "html_url": f"https://example.test/{name}"}
 
     pages = [{"jobs": [
-        job("Build a/b (p) / Compile", "failure"),
-        job("Build a/b (p) / Publish", "skipped"),
-        job("Build c/d (p) / Publish", "cancelled"),
-        job("Build e/f (p) / Publish", "success"),
+        job("Compile a/b (p) / Compile", "failure"),
+        job("Compile a/b (p) / Publish", "skipped"),
+        job("Compile c/d (p) / Publish", "cancelled"),
+        job("Compile e/f (p) / Publish", "success"),
         job("Publish the catalog at this revision", "failure"),
     ]}]
     failed = run_jq(program, pages)
-    assert [item["name"] for item in failed] == ["Build a/b (p) / Compile", "Build c/d (p) / Publish"]
+    assert [item["name"] for item in failed] == ["Compile a/b (p) / Compile", "Compile c/d (p) / Publish"]
 
 
 # Reusable build workflow: compile on the self-hosted compiler

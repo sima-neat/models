@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Registry.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-registry.yml"
 
 
 def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> None:

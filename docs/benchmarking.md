@@ -87,7 +87,7 @@ belongs in Core before Models consumes them.
 ## CI and registry publication
 
 Model authors do not publish benchmark results directly. After a build
-compiles and publishes, the compile workflow starts **Vulcan Model
+compiles and publishes, **Vulcan Model Compile** starts **Vulcan Model
 Benchmarking** on the same branch for each build whose performance or accuracy
 stage key has no completed run. The DevKit has no publication credentials.
 

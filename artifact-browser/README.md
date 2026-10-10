@@ -84,10 +84,15 @@ publisher traffic and rejects direct public reads.
 
 The initial view loads the repository branch catalog independently from build
 runs and caches both so repeat visits can render immediately while refreshing.
-The selected branch's model cards come from completed compile runs with that
-exact `git_ref`; the model catalog supplies names and categories, not build
-membership. Components are grouped only within the same workflow build, and a
-full package appears only when its recorded component run IDs match the group.
+The selected branch's model cards show what the branch delivers: the builds in
+its catalog, including builds it inherits from its base branch. A completed
+build compiled on the branch that is newer than the catalog's build of the same
+model and build profile replaces it, so a build the catalog has not recorded
+still shows. Each build keeps the provenance of its own compile run, so an
+inherited build names the branch that compiled it. A branch without a catalog
+shows an empty state until its first push completes. Components are grouped
+only within the same workflow build, and a full package appears only when its
+recorded component run IDs match the shown build.
 Build history lists one entry per variant build, newest first, naming its
 components; an entry gains components as **Load more builds** brings in the rest of its
 build. If branch discovery is

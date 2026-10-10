@@ -137,7 +137,7 @@ from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
-When the change is merged to `develop`, the push runs **Vulcan Model Compile**
+When the change is merged to `develop`, the push runs **Vulcan Model Orchestrator**
 on the reviewed revision:
 
 1. **Plan.** `plan-stages` compares each build's compile key with the branch

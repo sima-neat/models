@@ -372,7 +372,7 @@ def test_build_fingerprint_ignores_non_transforming_registry_tooling_changes(
 ) -> None:
     first = _fingerprint(model_repository, "alpha", "2.1.3")
     ignored = [
-        model_repository / ".github" / "workflows" / "Vulcan-Model-Compile.yml",
+        model_repository / ".github" / "workflows" / "vulcan-model-orchestrator.yml",
         model_repository / "schemas" / "publication.schema.json",
         model_repository / "tools" / "model_registry" / "__init__.py",
         model_repository / "tools" / "model_registry" / "errors.py",

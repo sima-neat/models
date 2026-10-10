@@ -1,7 +1,7 @@
 import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
 
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
-import { allPages, branchModels, runProfile, variantBuildKey, variantBuildRuns, variantBuilds } from "./branch-builds.js";
+import { allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuildRuns, variantBuilds } from "./branch-builds.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 
 const config = window.MODEL_REGISTRY_CONFIG || {};
@@ -47,7 +47,7 @@ const state = {
   repository: configuredRepository,
   models: [],
   runs: [],
-  branchRuns: [],
+  compileRuns: [],
   packageRuns: [],
   catalogDefinitions: [],
   catalogMode: "runs",
@@ -313,7 +313,7 @@ function catalogCacheKey() {
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
-  return `sima-neat-model-catalog:v3:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  return `sima-neat-model-catalog:v4:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -383,7 +383,7 @@ function writeCachedCatalog() {
       mode: state.catalogMode,
       models: state.models,
       runs: state.runs,
-      branchRuns: state.branchRuns,
+      compileRuns: state.compileRuns,
       packageRuns: state.packageRuns,
       catalogDefinitions: state.catalogDefinitions,
       cursor: state.cursor,
@@ -499,18 +499,18 @@ function applyCatalog(payload, { append = false, cache = true } = {}) {
     || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
   state.catalogMode = modelsMode ? "models" : "runs";
   if (modelsMode) {
-    if (Array.isArray(payload.branchRuns)) {
-      state.branchRuns = payload.branchRuns;
+    if (Array.isArray(payload.compileRuns)) {
+      state.compileRuns = payload.compileRuns;
       state.packageRuns = payload.packageRuns || [];
       state.catalogDefinitions = payload.catalogDefinitions || [];
-      state.models = branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+      state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
     } else {
       state.models = append ? [...state.models, ...models] : models;
     }
     state.runs = state.models.flatMap((model) => (model.builds || []).map((build) => runFromCatalogBuild(model, build)));
   } else {
     state.models = [];
-    state.branchRuns = [];
+    state.compileRuns = [];
     state.packageRuns = [];
     state.catalogDefinitions = [];
     state.runs = append ? [...state.runs, ...runs] : runs;
@@ -737,7 +737,7 @@ function populateFilters({ persistBranchFallback = false } = {}) {
     ? [...state.availableBranches, preferredBranch].sort() : state.availableBranches;
   const compilers = [...new Set([
     selectedCompiler,
-    ...state.branchRuns.map((run) => run.toolchain_version),
+    ...state.compileRuns.map((run) => run.toolchain_version),
     ...state.runs.map((run) => run.toolchain_version),
   ].filter(Boolean))].sort().reverse();
   elements["branch-filter"].innerHTML = `<option value="">All branches</option>${branches.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
@@ -854,9 +854,9 @@ function renderModels() {
   const models = filteredModels();
   elements["result-count"].textContent = `${models.length}${state.hasMore ? "+" : ""} model${models.length === 1 ? "" : "s"}`;
   if (!models.length) {
-    const noBuilds = !state.branchRuns.length && elements["branch-filter"].value;
+    const noBuilds = !state.compileRuns.length && elements["branch-filter"].value;
     elements["result-list"].innerHTML = noBuilds
-      ? `<div class="no-results"><span>0</span><h3>No completed builds on this branch</h3><p>Select another branch to browse its models.</p></div>`
+      ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>Its catalog appears after its first push completes. Select another branch to browse its models.</p></div>`
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }
@@ -1120,7 +1120,9 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
       state.selectedVariantKey = variant.key;
       renderRuns();
       const linkedBranch = new URLSearchParams(location.search).get("branch");
-      if (linkedBranch && branchName(anchor.git_ref) !== linkedBranch) {
+      // A branch lists the catalog builds it inherits, so only an unlisted run from another branch mismatches.
+      const listed = state.runs.some((run) => run.id === anchor.id);
+      if (linkedBranch && branchName(anchor.git_ref) !== linkedBranch && !listed) {
         elements["detail-pane"].innerHTML = errorPanel("This run belongs to a different branch than the link specifies.", "Branch and run do not match", { closable: true });
       } else renderDetail(variant);
     }
@@ -1880,12 +1882,18 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       const [branchRuns, packageRuns, catalogDefinitions] = await Promise.all([
         allPages(api, `${base}/runs`, compileQuery, "runs"),
         allPages(api, `${base}/runs`, packageQuery, "runs"),
-        allPages(api, `${base}/models`, modelQuery, "models"),
+        // A branch has no catalog until its first orchestrator run publishes one.
+        allPages(api, `${base}/models`, modelQuery, "models").catch((error) => {
+          if (error.status === 404) return [];
+          throw error;
+        }),
       ]);
       const gitRef = `refs/heads/${branch}`;
+      const ownRuns = branchRuns.filter((run) => run.git_ref === gitRef);
+      const inheritedRuns = await catalogBuildRuns(catalogDefinitions, ownRuns, api, base);
       payload = {
         mode: "models",
-        branchRuns: branchRuns.filter((run) => run.git_ref === gitRef),
+        compileRuns: [...ownRuns, ...inheritedRuns],
         packageRuns: packageRuns.filter((run) => run.git_ref === gitRef),
         catalogDefinitions,
       };
@@ -2036,7 +2044,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.selectedVariantKey = null;
   state.models = [];
   state.runs = [];
-  state.branchRuns = [];
+  state.compileRuns = [];
   state.packageRuns = [];
   state.catalogDefinitions = [];
   elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
@@ -2063,7 +2071,7 @@ elements["branch-filter"].addEventListener("change", async () => {
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterDisclosure();
   if (branchSnapshotMode() && catalogMode()) {
-    state.models = branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+    state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
     state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
     renderRuns();
     writeCachedCatalog();

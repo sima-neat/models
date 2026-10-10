@@ -92,7 +92,7 @@ model-registry validate models/yolo26_tiny_drone
 model-registry fetch models/yolo26_tiny_drone --component model
 ```
 
-Dispatch **Vulcan Model Compile** in staging with model
+Dispatch **Vulcan Model Orchestrator** in staging with model
 `yolo26_tiny_drone`. The recipe must produce one MLA segment and preserve the
 eight-output public contract. Compilation, structural graph inspection, MPK
 inspection, accuracy evidence checks, and artifact publication must all succeed
