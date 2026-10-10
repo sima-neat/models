@@ -118,7 +118,7 @@ input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-r
 ## CI flow
 
 ```text
-push
+push or branch creation
   -> select: validate the catalog, resolve the compiler pin and base branch
   -> plan: compare stage keys with the branch catalog and registry runs
   -> authorize: check requested runner classes
@@ -148,8 +148,9 @@ in staging and only for Modalix targets.
   push. The DevKit decision looks for a completed run with the stage key from
   any branch; that key names the compile run and MPK digest, so it matches
   only a measurement of the same build.
-- **New branch.** It reuses its base's builds and compiles only the builds
-  whose keys differ.
+- **New branch.** Creating it runs the compile workflow, which publishes the
+  branch's catalog from its base's builds and compiles only the builds whose
+  keys differ. Tags publish no catalog.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Builds the merged branch changed compile again on `develop`, and
   their DevKit stages run again; builds the branch compiled are not reused.
@@ -158,9 +159,11 @@ in staging and only for Modalix targets.
   builds left pending are planned again. Dispatched DevKit runs continue. A
   DevKit stage still running when the next plan runs has no completed run yet,
   so it is dispatched again.
-- **Model browser.** A branch's view lists only builds compiled on that branch
-  (#141); a reused build appears under the branch that compiled it. `develop`
-  compiles every build in its catalog, so its view is complete.
+- **Model browser.** A branch's view is its catalog (#183): the base builds it
+  started from plus the builds it compiled, so every branch shows a complete
+  registry. A build's page names the branch that compiled it. Builds the base
+  publishes later reach the branch only through its next catalog publish. A
+  branch without a catalog shows no builds.
 
 ## Compile workflow trust boundary
 

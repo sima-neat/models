@@ -100,6 +100,16 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
 
 
+def test_staging_deployment_smoke_tests_the_published_browser() -> None:
+    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    smoke = workflow["jobs"]["smoke"]
+    steps = {step.get("run"): step for step in smoke["steps"]}
+
+    assert smoke["needs"] == "publish"
+    assert "npx playwright install --with-deps chromium" in steps
+    assert steps["npm run smoke:portal"]["env"]["SMOKE_URL"] == "https://developer-stg.sima.ai/models/"
+
+
 def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assemble = PORTAL_ASSEMBLER.read_text(encoding="utf-8")
 
@@ -558,8 +568,6 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert "Switches from models to chronological build runs." in html
     assert "Show build history" in html
     assert 'if (historical) {' in script
-    assert 'allPages(api, `${base}/runs`, compileQuery, "runs")' in script
-    assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
     assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
     assert 'query.set("run_type", "model_compile")' in script
     assert 'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
@@ -944,8 +952,6 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
     assert "build.toolchain_version === compiler" in script
-    assert 'branchModels(state.branchRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
-    assert "...state.branchRuns.map((run) => run.toolchain_version)" in script
     assert "payload.models.flatMap" not in script
     assert ".detail-variant-tab[aria-selected=\"true\"]::before" in styles
     assert ".model-row.selected" in styles
@@ -1040,58 +1046,12 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
     assert "127\\.0\\.0\\.1|localhost" in script
 
 
-def test_branch_cards_use_only_coherent_branch_runs_and_matching_packages() -> None:
+def test_branch_models_follow_every_page_of_the_listing() -> None:
     script = r"""
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const source = readFileSync('./artifact-browser/branch-builds.js', 'utf8');
-const {allPages, branchModels} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-
-const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01T12:00:00Z') => ({
-  id, run_type: 'model_compile', status: 'completed',
-  git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: workflow,
-  toolchain_version: version, target_platform: 'modalix', finished_at: time,
-  metadata: {model_id: model, build_profile_id: 'modalix_int8_bf16', component_id: component, github_run_id: workflow},
-});
-const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
-                 run('transformer', 'rf_detr_small', 'transformer', 'workflow-2')];
-const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
-             run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
-const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'modalix_int8_bf16', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
-  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16',
-   validation_fingerprint: 'stale-accuracy-key'},
-]},
-                 {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
-const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
-  git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
-  model_id: 'rf_detr_small', build_profile_id: 'modalix_int8_bf16', component_run_ids: components,
-}});
-const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transformer'}),
-                  packageRun('wrong', {backbone: 'backbone', transformer: 'old-transformer'})];
-const models = branchModels([...old, ...current], packages, catalog);
-assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
-assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
-assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_int8', 'transformer_bf16']);
-assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
-// A profile/component fallback supplies static metadata, never another build's accuracy key.
-assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
-const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'modalix_int8_bf16',
-  component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];
-assert.deepEqual(branchModels(current, [], matched)[0].builds.map(build => build.validation_fingerprint),
-                 [undefined, 'accuracy-key']);
-assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
-assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
-                 ['old-backbone', 'old-transformer']);
-const sameCompilerOld = [run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
-                         run('same-old-transformer', 'rf_detr_small', 'transformer', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
-assert.deepEqual(branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
-                 ['backbone', 'transformer']);
-assert.deepEqual(branchModels([], packages, catalog), []);
-assert.deepEqual(branchModels([{...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_benchmark'}], [], catalog), []);
-const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
-  .map(model => run(model, model, 'model', model));
-assert.equal(branchModels(develop, [], catalog).length, 6);
+const {allPages} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const calls = [];
 const definitions = await allPages(async path => {
   calls.push(path);

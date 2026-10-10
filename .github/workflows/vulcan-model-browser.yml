@@ -86,3 +86,33 @@ jobs:
       artifact_pattern: vulcan-model-browser-staging
       s3_prefix: models
       cloudfront_paths: "/models /models/*"
+
+  smoke:
+    name: Smoke-test staging model browser
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install portal dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: website
+        run: npx playwright install --with-deps chromium
+
+      # Waits until staging serves this revision, then fails if the catalog or a model page does not render.
+      - name: Load the deployed model browser
+        working-directory: website
+        env:
+          SMOKE_URL: https://developer-stg.sima.ai/models/
+        run: npm run smoke:portal

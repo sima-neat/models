@@ -43,7 +43,11 @@ PREVIEW_RUNS = (
     # An older build of the same variant, so build history shows two builds of two components each.
     ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.2", 104_298_000),
     ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.2", 168_701_000),
+    # A feature branch rebuilds one variant; its catalog keeps main's other builds.
+    ("yolo_v8n", "modalix_int8", "model", "feature/yolo-input", "2.1.3", 41_902_336),
 )
+# The branch each feature branch was created from.
+BASE_BRANCHES = {"refs/heads/feature/yolo-input": "refs/heads/main"}
 
 
 def _build_index(index: int) -> int:
@@ -249,6 +253,17 @@ def _devkit_accuracy_result(index: int) -> dict | None:
     }
 
 
+def _current_catalog_runs(runs: list[dict], git_ref: str) -> list[dict]:
+    """The latest build of each component on a branch, starting from its base branch's catalog."""
+    inherited = _current_catalog_runs(runs, BASE_BRANCHES[git_ref]) if git_ref in BASE_BRANCHES else []
+    own = sorted((run for run in runs if run["git_ref"] == git_ref), key=lambda run: run["created_at"])
+    latest = {}
+    for run in [*inherited, *own]:
+        meta = run["metadata"]
+        latest[(meta["model_id"], meta["build_profile_id"], meta["component_id"])] = run
+    return list(latest.values())
+
+
 def _catalog_models(runs: list[dict]) -> list[dict]:
     """Catalog model entries whose builds are the given compile runs."""
     grouped: dict[str, dict] = {}
@@ -268,6 +283,7 @@ def _catalog_models(runs: list[dict]) -> list[dict]:
             "model_tags": run["model_tags"],
             "categories": run.get("model_categories", {}),
             "builds": [],
+            "packages": [],
         })
         model["builds"].append({
             "run_id": run["id"],
@@ -322,7 +338,12 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if path == "/v1/repositories/sima-neat/models/models":
             git_ref = query.get("git_ref", ["refs/heads/main"])[0]
             compiler = query.get("toolchain_version", [""])[0]
-            branch_models = _catalog_models([item for item in runs if item["git_ref"] == git_ref])
+            catalog_runs = _current_catalog_runs(runs, git_ref)
+            if not catalog_runs:
+                error = {"code": "catalog_not_found", "message": "Current model catalog was not found"}
+                self._json({"error": error}, 404)
+                return
+            branch_models = _catalog_models(catalog_runs)
             models = [model for model in branch_models if not compiler or any(
                 build["toolchain_version"] == compiler for build in model["builds"]
             )]

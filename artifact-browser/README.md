@@ -47,7 +47,10 @@ npm run smoke:portal --prefix website
 
 It serves `portal-build/` against the preview API fixture in Chromium and fails
 when a module or stylesheet does not load, the page throws or logs an error, or
-the model list or a variant page does not render.
+the model list, a variant page, a build a feature branch inherited, or an empty
+branch does not render. After each staging deployment, `vulcan-model-browser.yml`
+runs the same script with `SMOKE_URL` set to the staging browser: it waits until
+staging serves the new revision, then opens the model list and its first model.
 
 To preview the complete ResNet-50 accuracy and schema-v4 benchmark UI without a
 registry or DevKit connection, run:
@@ -97,13 +100,13 @@ publisher traffic and rejects direct public reads.
 
 The initial view loads the repository branch catalog independently from build
 runs and caches both so repeat visits can render immediately while refreshing.
-The selected branch's model cards come from completed compile runs with that
-exact `git_ref`; the model catalog supplies names and categories, not build
-membership. Components are grouped only within the same workflow build, and a
-full package appears only when its recorded component run IDs match the group.
-Build history lists one entry per variant build, newest first, naming its
-components; an entry gains components as **Load more builds** brings in the rest of its
-build. If branch discovery is
+The selected branch's model cards come from that branch's current catalog: the
+builds it started from on its base branch when it was created, plus the builds
+it compiled. A build's page shows the branch that compiled it. A branch that
+has not published a catalog shows no builds. The compiler filter narrows the
+catalog's builds; older builds are in build history. Build history lists one
+entry per variant build, newest first, naming its components; an entry gains
+components as **Load more builds** brings in the rest of its build. If branch discovery is
 temporarily unavailable, the browser keeps saved branches and can infer
 additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.

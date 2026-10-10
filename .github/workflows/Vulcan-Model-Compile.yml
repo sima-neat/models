@@ -27,6 +27,9 @@ on:
       - "taxonomies/**"
       - "tools/model_registry/**"
       - "pyproject.toml"
+  # A new branch publishes its own catalog from the base branch's builds, even when it changes no
+  # model inputs; builds whose compile keys differ compile as on a push.
+  create:
   workflow_dispatch:
     inputs:
       environment:
@@ -63,7 +66,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# A newer push supersedes a running push or pull-request run on the same ref; the next run plans the
+# A newer push or branch creation supersedes a running run on the same ref; the next run plans the
 # builds the cancelled one left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
@@ -74,6 +77,8 @@ concurrency:
 jobs:
   select:
     name: Validate the catalog and resolve the build environment
+    # Tags have no catalog.
+    if: github.event_name != 'create' || github.ref_type == 'branch'
     runs-on: ubuntu-latest
     outputs:
       vulcan_environment: ${{ steps.environment.outputs.vulcan_environment }}

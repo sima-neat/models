@@ -83,6 +83,20 @@ def test_changed_models_compile_on_pushes_to_every_branch() -> None:
     assert "tools/runtime/**" not in push_paths
 
 
+def test_new_branches_publish_a_catalog_but_tags_do_not() -> None:
+    workflow = load(WORKFLOW)
+    condition = workflow["jobs"]["select"]["if"]
+
+    assert workflow["on"]["create"] == ""
+    for event, ref_type, runs in (
+        ("create", "branch", True),
+        ("create", "tag", False),
+        ("push", "branch", True),
+        ("pull_request", "branch", True),
+    ):
+        assert evaluate(condition, {"github.event_name": event, "github.ref_type": ref_type}) is runs
+
+
 def test_production_is_an_explicit_dispatch_choice() -> None:
     inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
 
@@ -155,7 +169,7 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
         if name != "select":
             assert "github.event_name != 'pull_request'" in job["if"], name
     select = jobs["select"]
-    assert "if" not in select
+    assert evaluate(select["if"], {"github.event_name": "pull_request", "github.ref_type": "branch"})
     assert "permissions" not in select
     offline = step(select, "List the invocations this change can compile")
     assert offline["if"] == "github.event_name == 'pull_request'"
