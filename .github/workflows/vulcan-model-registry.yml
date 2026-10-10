@@ -6,6 +6,8 @@ on:
   pull_request:
     paths:
       - "deps/manifest.json"
+      # Portal assembly tests live in tests/unit; pushes skip website/ so docs changes do not publish a package.
+      - "website/**"
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"

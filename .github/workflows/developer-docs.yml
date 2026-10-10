@@ -6,6 +6,7 @@ on:
       - ".github/workflows/developer-docs.yml"
       - "artifact-browser/**"
       - "docs/**"
+      - "tests/browser/**"
       - "website/**"
   push:
     branches:
@@ -14,6 +15,7 @@ on:
       - ".github/workflows/developer-docs.yml"
       - "artifact-browser/**"
       - "docs/**"
+      - "tests/browser/**"
       - "website/**"
   workflow_dispatch: {}
 
@@ -56,3 +58,14 @@ jobs:
           DOCS_SITE_URL: https://developer-stg.sima.ai
           DOCS_BASE_URL: /models/
         run: npm run build:portal
+
+      - name: Test browser modules
+        run: node --test tests/browser/*.test.mjs
+
+      - name: Install Chromium
+        working-directory: website
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke-test the assembled portal in Chromium
+        working-directory: website
+        run: npm run smoke:portal

@@ -281,6 +281,16 @@ def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
     assert not any("pages" in step.get("uses", "") for step in build["steps"])
 
 
+def test_developer_docs_workflow_runs_browser_tests_and_smoke_tests_the_portal() -> None:
+    workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    runs = [step.get("run") for step in workflow["jobs"]["build"]["steps"]]
+
+    assert "tests/browser/**" in workflow["on"]["pull_request"]["paths"]
+    assert "node --test tests/browser/*.test.mjs" in runs
+    assert runs.index("npm run smoke:portal") > runs.index("npm run build:portal")
+    assert "npx playwright install --with-deps chromium" in runs
+
+
 def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
 
