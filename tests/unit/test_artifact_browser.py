@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -98,6 +99,42 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     build = workflow["jobs"]["build"]
     assert build["steps"][-1]["with"]["path"] == "website/portal-build/"
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
+
+
+def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("portal", encoding="utf-8")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = subprocess.Popen(
+        ["python3", str(BROWSER / "preview.py"), "--root", str(tmp_path), "--port", str(port)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        server.stdout.readline()
+        base = f"http://127.0.0.1:{port}"
+        status = {}
+        for request in (
+            "/fixtures/performance-result-v4.json",
+            "/fixtures/../../README.md",
+            "/fixtures/%2e%2e/%2e%2e/README.md",
+            "/fixtures/../../../../../../etc/hosts",
+        ):
+            # Raw request lines keep the ".." that an HTTP client would normalize away.
+            response = subprocess.run(
+                ["curl", "-s", "--path-as-is", "-o", os.devnull, "-w", "%{http_code}", f"{base}{request}"],
+                capture_output=True, text=True, check=True,
+            )
+            status[request] = response.stdout
+    finally:
+        server.kill()
+
+    assert status == {
+        "/fixtures/performance-result-v4.json": "200",
+        "/fixtures/../../README.md": "404",
+        "/fixtures/%2e%2e/%2e%2e/README.md": "404",
+        "/fixtures/../../../../../../etc/hosts": "404",
+    }
 
 
 def test_combined_portal_fingerprints_mutable_browser_assets() -> None:

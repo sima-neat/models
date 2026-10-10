@@ -7,10 +7,11 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
@@ -510,9 +511,11 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def translate_path(self, path: str) -> str:
-        # The fixtures stay in artifact-browser/ when --root serves an assembled portal.
-        if urlparse(path).path.startswith("/fixtures/"):
-            return str(BROWSER / urlparse(path).path.lstrip("/"))
+        # The fixtures stay in artifact-browser/ when --root serves an assembled portal. Normalizing
+        # first resolves "..", so a path that leaves the fixtures is served from the root, or not at all.
+        request = posixpath.normpath(unquote(urlparse(path).path))
+        if request.startswith("/fixtures/"):
+            return str(BROWSER / request.lstrip("/"))
         return super().translate_path(path)
 
     def log_message(self, message: str, *args: object) -> None:
