@@ -35,12 +35,13 @@ browserHtml = browserHtml
 writeFileSync(join(output, 'index.html'), browserHtml);
 
 const modules = fingerprintedAssets.filter((asset) => asset !== 'styles');
-const localImport = /(["'])\.\/([\w-]+)\.js\1/g;
+const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {
   const path = join(output, `${asset}.${revision}.js`);
-  const source = readFileSync(path, 'utf8').replace(localImport, (_, quote, name) => {
+  const source = readFileSync(path, 'utf8').replace(relativeImport, (_, quote, specifier) => {
+    const name = specifier.match(/^\.\/([\w-]+)\.js$/)?.[1];
     if (!modules.includes(name)) {
-      throw new Error(`${asset}.js imports ./${name}.js, which is not a fingerprinted asset; add it to fingerprintedAssets`);
+      throw new Error(`${asset}.js imports ${specifier}, which is not a fingerprinted asset; browser modules sit in artifact-browser/ and are listed in fingerprintedAssets`);
     }
     return `${quote}./${name}.${revision}.js${quote}`;
   });
