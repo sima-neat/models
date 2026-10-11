@@ -1,6 +1,6 @@
 id: yolo26n_pose
 display_name: YOLO26n-pose
-description: Ultralytics YOLO26 Nano pose estimation of COCO persons with 17 keypoints at 640x640.
+description: The smallest YOLO26 pose estimator for people and their 17 COCO keypoints.
 model_type: vision
 tasks:
 - pose_estimation

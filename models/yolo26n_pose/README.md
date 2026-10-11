@@ -1,5 +1,7 @@
 # YOLO26n-pose
 
+![YOLO26n-pose model hero](hero.png)
+
 ## Overview
 
 YOLO26n-pose is the Nano edition of Ultralytics' YOLO26 pose estimator. It
