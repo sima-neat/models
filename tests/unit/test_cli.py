@@ -62,7 +62,7 @@ def test_validate_models_checks_every_manifest(capsys) -> None:
     result = main(["validate-models", "--repository", str(ROOT), "--json"])
     assert result == 0
     output = capsys.readouterr().out
-    assert '"model_count": 9' in output
+    assert f'"model_count": {len(list((ROOT / "models").glob("*/model.yaml")))}' in output
     assert '"ssd_mobilenet_v3"' in output
     assert '"valid": true' in output
 
