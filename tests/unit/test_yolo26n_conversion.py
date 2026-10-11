@@ -91,4 +91,4 @@ def test_source_must_be_the_pinned_checkpoint():
     model = yaml.safe_load((ROOT / "models/yolo26n/model.yaml").read_text(encoding="utf-8"))
     converter.validate_source(model["conversion"]["default"]["source"])
     with pytest.raises(ValueError, match="yolo26n.pt"):
-        converter.validate_source({"type": "file", "uri": "hf://models/Ultralytics/YOLO26@main/yolo26s.pt"})
+        converter.validate_source({"type": "file", "uri": "hf://models/Ultralytics/YOLO26@main/yolo26n-seg.pt"})
