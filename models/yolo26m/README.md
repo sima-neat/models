@@ -1,4 +1,4 @@
-# YOLO26m
+# YOLO26m-det
 
 ## Overview
 
