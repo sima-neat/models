@@ -31,7 +31,7 @@ section, and model-owned code lives in `scripts/` beside it:
 models/<model-id>/
   model.yaml
   README.md
-  hero.png      optional
+  hero.png      1200x480 catalog card image
   scripts/      compile.py, performance.py, accuracy.py, convert.py, and helpers
 ```
 

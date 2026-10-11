@@ -35,7 +35,7 @@ artifact-browser/          Model browser and its local preview server (preview.p
 deps/                      Repository-wide toolchain and DevKit runtime pins
 design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
-models/<model-id>/         model.yaml, README.md, optional hero.png, and model code in scripts/
+models/<model-id>/         model.yaml, README.md, hero.png, and model code in scripts/
 packaging/model-registry/  Build and installer for the author-safe sima-cli package
 schemas/                   Model, composition, package, and result JSON Schemas
 scripts/                   Stage runner scripts and CI helpers

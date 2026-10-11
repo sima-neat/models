@@ -19,8 +19,25 @@ than decoration or dashboard density.
 Refined minimalism with generous space and progressive disclosure. Light and
 dark themes remain supported. Search is the dominant action; advanced facets
 stay collapsed until requested. Avoid crowded toolbars, repeated status
-indicators, card-heavy layouts, and decorative effects that compete with model
-information.
+indicators, and decorative effects that compete with model information.
+
+The catalog is a grid of model cards because people recognize a model by what
+it does before they know its name. Each card carries one thing per role: the
+model's hero illustration, its name, a one-line description, and its tasks. A
+card states what the model is, not how a build measured; numbers, precision,
+and build state belong on the model page, where they have context. Card
+borders and fills mark the cards as the objects to choose; the model page
+itself uses sections and rules instead of nested cards.
+
+The model page reads at a glance first and expands on request. Each section
+shows its key facts directly; longer detail sits behind one kind of control: a
+full-width row between thin rules, the label on the left, an optional short
+summary, and a › on the right that turns down when the row opens, like a
+settings list. No other expand control exists, so anything that opens looks
+and behaves the same.
+
+Actions and links look different. An action (download, copy) is a
+button with an icon. Blue text ending in ↗ is a link that leaves the browser.
 
 ## Design Principles
 
@@ -31,3 +48,5 @@ information.
 4. Search across names and sanctioned category labels using plain language.
 5. Preserve accessible labels, keyboard operation, responsive behavior, and
    reduced-motion support while simplifying the interface.
+6. Show the answer before the evidence: key numbers first, then one row to
+   open for the rest.

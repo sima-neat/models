@@ -1,4 +1,6 @@
-# SSD-MobileNet V1 300x300
+# SSD-MobileNet V1
+
+![SSD-MobileNet V1 model hero](hero.png)
 
 ## Overview
 

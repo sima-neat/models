@@ -1,4 +1,6 @@
-# RF-DETR Nano 384x384
+# RF-DETR Nano
+
+![RF-DETR Nano model hero](hero.png)
 
 ## Overview
 

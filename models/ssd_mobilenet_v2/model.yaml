@@ -1,6 +1,6 @@
 id: ssd_mobilenet_v2
-display_name: SSD-MobileNet V2 300x300
-description: COCO SSD-MobileNet V2 raw box and class predictor heads for Neat-owned decode and NMS.
+display_name: SSD-MobileNet V2
+description: A lightweight single-shot COCO detector built on MobileNet V2.
 model_type: vision
 tasks:
 - object_detection

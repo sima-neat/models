@@ -1,4 +1,6 @@
-# SSD-MobileNet V3 Large 320x320
+# SSD-MobileNet V3 Large
+
+![SSD-MobileNet V3 Large model hero](hero.png)
 
 ## Overview
 

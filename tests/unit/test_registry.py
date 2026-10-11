@@ -78,14 +78,16 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     )
 
     assert set(receipts) == set(load_models(ROOT))
-    assert len(store.objects) == len(receipts)
-    assert len(calls) == len(receipts) * 4
+    assert len(store.objects) == len(receipts) * 2
+    assert len(calls) == len(receipts) * 5
     for model_id, receipt in receipts.items():
         assert receipt["format"] == "markdown"
         assert receipt["artifact_name"] == "readme"
         assert receipt["source_path"] == f"models/{model_id}/README.md"
         assert receipt["source_commit"] == "a" * 40
-        assert "hero" not in receipt
+        assert receipt["hero"]["artifact_name"] == "hero"
+        assert receipt["hero"]["media_type"] == "image/png"
+        assert receipt["hero"]["source_path"] == f"models/{model_id}/hero.png"
         assert 50 <= len(receipt["overview_markdown"].split()) <= 120
     assert all("feat%2Fmodel%20cards" in key for _, key, _, _ in store.objects)
     artifact_calls = [call for call in calls if call[0:2] != ("POST", "/v1/runs") and "/artifacts/" in call[1]]
@@ -93,54 +95,10 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     assert all(call[2]["parameters"]["overview_markdown"] in {
         receipt["overview_markdown"] for receipt in receipts.values()
     } for call in parameter_calls)
-    assert all("hero" not in call[2]["parameters"] for call in parameter_calls)
-    assert {call[2]["artifact_type"] for call in artifact_calls} == {"model-readme"}
-    assert {call[2]["media_type"] for call in artifact_calls} == {"text/markdown; charset=utf-8"}
+    assert all(call[2]["parameters"]["hero"]["markdown_path"] == "hero.png" for call in parameter_calls)
+    assert {call[2]["artifact_type"] for call in artifact_calls} == {"model-readme", "model-readme-hero"}
+    assert {call[2]["media_type"] for call in artifact_calls} == {"text/markdown; charset=utf-8", "image/png"}
     assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
-
-
-def test_publish_model_documentation_includes_an_available_optional_hero(tmp_path: Path, monkeypatch) -> None:
-    readme = tmp_path / "models" / "fixture" / "README.md"
-    hero = readme.with_name("hero.png")
-    readme.parent.mkdir(parents=True)
-    readme.write_text("# Fixture\n", encoding="utf-8")
-    hero.write_bytes(b"png")
-    calls: list[tuple[str, str, dict | None, str]] = []
-
-    monkeypatch.setattr(
-        "model_registry.registry.load_models",
-        lambda _: {"fixture": {"display_name": "Fixture"}},
-    )
-    monkeypatch.setattr(
-        "model_registry.registry.load_model_documentation",
-        lambda *_args, **_kwargs: {
-            "readme_sha256": hashlib.sha256(readme.read_bytes()).hexdigest(),
-            "path": readme,
-            "source_path": "models/fixture/README.md",
-            "overview_markdown": " ".join(f"word{index}" for index in range(50)),
-            "hero": {
-                "artifact_name": "hero", "markdown_path": "hero.png",
-                "alt_text": "Fixture model hero", "sha256": hashlib.sha256(b"png").hexdigest(),
-                "media_type": "image/png", "source_path": "models/fixture/hero.png", "path": hero,
-            },
-        },
-    )
-
-    receipts = publish_model_documentation(
-        repository=tmp_path, api_url="https://writer.example.invalid", aws_region="us-west-2",
-        bucket="model-artifacts", kms_key_id=None, environment="staging", branch="develop",
-        git_sha="a" * 40, github_run_url="https://github.example.invalid/actions/runs/123",
-        request=lambda method, path, body, key: (
-            calls.append((method, path, body, key))
-            or ({"run_id": "00000000-0000-4000-8000-000000000001"} if path == "/v1/runs" else {})
-        ),
-        artifact_store=FakeStore(),
-    )
-
-    assert receipts["fixture"]["hero"]["source_path"] == "models/fixture/hero.png"
-    assert any(call[1].endswith("/artifacts/hero") for call in calls)
-    parameter_call = next(call for call in calls if call[1].endswith("/parameters"))
-    assert parameter_call[2]["parameters"]["hero"]["markdown_path"] == "hero.png"
 
 
 def test_publish_model_documentation_keys_bind_create_request_identity() -> None:

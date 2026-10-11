@@ -15,7 +15,9 @@ from model_registry.registry import RegistryPublicationError, build_catalog_snap
 from model_registry.stage_keys import (
     COMPILE_TOOLING,
     _compile_consumed_fidelity,
+    accuracy_key,
     compile_key,
+    performance_key,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -397,6 +399,36 @@ def test_build_fingerprint_ignores_model_documentation_and_board_stage_scripts(m
     (model_dir / "scripts" / "performance.py").write_text("report = model.benchmark()\n", encoding="utf-8")
 
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
+
+
+def test_build_fingerprint_ignores_display_name_and_description(model_repository: Path) -> None:
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    first = _fingerprint(model_repository, "alpha", "2.1.3")
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["display_name"] = "Renamed Fixture"
+    model["description"] = "A rewritten one-line catalog description."
+    manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
+
+    assert _fingerprint(model_repository, "alpha", "2.1.3") == first
+
+
+def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description."}
+    builds = {
+        component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
+        for component_id in ("backbone", "transformer")
+    }
+
+    for component_id in ("backbone", "transformer"):
+        assert performance_key(
+            ROOT, renamed, "modalix_int8_bf16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+        ) == performance_key(
+            ROOT, model, "modalix_int8_bf16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+        )
+    assert accuracy_key(ROOT, renamed, "modalix_int8_bf16", builds) == accuracy_key(
+        ROOT, model, "modalix_int8_bf16", builds
+    )
 
 
 def _declare_benchmark(manifest: Path, note: str) -> None:

@@ -108,7 +108,30 @@ Conventions the code relies on:
 ## Model browser
 
 Before changing `artifact-browser/`, read its
-[design context](artifact-browser/DESIGN.md).
+[design context](artifact-browser/DESIGN.md) and
+[README](artifact-browser/README.md#how-the-page-is-built). What users see is in
+[docs/model-browser.md](docs/model-browser.md); update it with any visible
+change.
+
+- Make every expandable area a `disclosure()` row from `ui.js`. Raw
+  `<details>` elements fail `tests/unit/test_artifact_browser.py`.
+- Keep the glance-first page: key facts in the section, the rest in one row.
+  Actions are icon buttons; blue text with ↗ is only for external links.
+- Compare and show component measurements per component; never add them up
+  or mark one component best against a different component.
+- Keep rendering every published benchmark schema version, and let unknown
+  metrics fall through to Other measurements rather than hiding them.
+- Keep the preview data-driven. `preview.py` builds its catalog from
+  `models/`; never add a model, name, or README to it by hand. It needs the
+  repository installed (`python -m pip install .`) or `PYTHON` pointing at
+  such an interpreter.
+- Add a new module to `fingerprintedAssets` in
+  `website/scripts/assemble-portal.mjs`.
+- Before a push, run `python -m pytest tests/unit/test_artifact_browser.py`,
+  `node --test tests/browser/*.test.mjs`, and `npm run typecheck`,
+  `npm run build:portal`, and `npm run smoke:portal` with `--prefix website`,
+  then look at the changed pages in `preview.py` at desktop and phone width,
+  light and dark.
 
 ## Model README requirements
 
@@ -116,7 +139,7 @@ Every top-level registry entry under `models/<model_id>` must contain a
 `README.md`. The README begins with the following structure:
 
 1. `# <display name>`
-2. An optional `![<display name> model hero](hero.png)`
+2. `![<display name> model hero](hero.png)`
 3. `## Overview`
 4. `## Usage`
 5. `## Model interface`
@@ -169,7 +192,7 @@ Nested documentation such as training or QAT guides may use a structure suited
 to that workflow, but the top-level README should link to it from the relevant
 standard section.
 
-When supplied, the hero must be a regular (non-symlinked) 1200x480 PNG no
+Every model has a hero: a regular (non-symlinked) 1200x480 PNG no
 larger than 2 MiB. The registry's strict PNG profile permits `IHDR`, optional
 `PLTE`, `IDAT`, `IEND`, and optional validated `tIME` or `tRNS` ancillary
 chunks. Keep it legible in light and dark themes, avoid embedding essential
@@ -180,6 +203,6 @@ an image outside the model directory.
 
 When changing model behavior, interfaces, supported builds, qualification
 evidence, installation steps, or redistribution terms, update the owning
-README and any existing hero image in the same change. A README- or hero-only edit is
+README and the hero image in the same change. A README- or hero-only edit is
 documentation or catalog metadata; it must not change compilation, validation,
 benchmark, or artifact fingerprints.

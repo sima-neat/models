@@ -520,19 +520,18 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
     if not lines or lines[0] != f"# {display_name}":
         raise ValidationError(f"model README H1 must exactly match display_name {display_name!r}: {readme}")
     hero_path = model_dir / HERO_FILENAME
-    hero = _load_hero(model_dir, display_name, repository) if hero_path.exists() or hero_path.is_symlink() else None
-    if hero is None:
-        valid_preamble = len(lines) >= 3 and lines[1] == "" and lines[2] == "## Overview"
-        expected_preamble = "H1, blank line, and ## Overview"
-    else:
-        expected_hero = f"![{hero['alt_text']}]({hero['markdown_path']})"
-        valid_preamble = (
-            len(lines) >= 5 and lines[1] == "" and lines[2] == expected_hero
-            and lines[3] == "" and lines[4] == "## Overview"
-        )
-        expected_preamble = f"H1, blank line, {expected_hero}, blank line, and ## Overview"
+    if not hero_path.exists() and not hero_path.is_symlink():
+        raise ValidationError(f"model hero image is required: {hero_path}")
+    hero = _load_hero(model_dir, display_name, repository)
+    expected_hero = f"![{hero['alt_text']}]({hero['markdown_path']})"
+    valid_preamble = (
+        len(lines) >= 5 and lines[1] == "" and lines[2] == expected_hero
+        and lines[3] == "" and lines[4] == "## Overview"
+    )
     if not valid_preamble:
-        raise ValidationError(f"model README must begin with {expected_preamble}: {readme}")
+        raise ValidationError(
+            f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
+        )
 
     sections, has_invalid_heading = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
@@ -574,7 +573,6 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         "size_bytes": len(payload),
         "source_path": source_path,
         "path": readme,
+        "hero": hero,
     }
-    if hero is not None:
-        documentation["hero"] = hero
     return documentation
