@@ -196,7 +196,8 @@ def _source_graph(*, unfolded: bool = False) -> onnx.ModelProto:
         return _initializer(inits, name, value)
 
     def weights(name, *shape):
-        return constant(name, rng.normal(size=shape).astype(np.float32))
+        # Small weights keep the head's Exp outputs finite.
+        return constant(name, (0.3 * rng.normal(size=shape)).astype(np.float32))
 
     nodes = [
         # The views are stacked to [1, 2, 3, H, W] and flattened to a batch of two.
