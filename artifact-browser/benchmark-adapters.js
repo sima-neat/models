@@ -80,7 +80,7 @@ function common(result) {
   return {
     schemaVersion: result.schema_version,
     workload: result.schema_version === 5
-      ? `Core default MPK · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
+      ? `${result.configuration?.workload?.selection === "mpk_default" ? "Core default MPK" : result.configuration?.workload?.selection || "Unknown workload"} · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
       : "Historical benchmark configuration",
     status: result.status,
     tool: [result.tool?.name, result.tool?.version].filter((part) => typeof part === "string" && part).join(" "),

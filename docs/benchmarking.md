@@ -64,10 +64,12 @@ results; their numbers are not a measured combined pipeline.
 ## Workload and measurements
 
 The workload is the default route Core selects from the MPK, with Core's
-synthetic inputs and default benchmark options. Model scripts must use those
-defaults. CI records the input shapes, batch size, preprocessing,
-postprocessing, and sample count separately, using Core's model-inspection API;
-that step loads the MPK but runs no inference.
+synthetic inputs and default benchmark options. A script that configures the
+model, such as YOLO26's box decoder, adds its selection and postprocessing to
+its report, and CI records them in place of the defaults. CI records the input
+shapes, batch size, preprocessing, postprocessing, and sample count separately,
+using Core's model-inspection API; that step loads the MPK but runs no
+inference.
 
 Default-MPK results are a baseline of their own. Do not compare them with
 historical YOLO measurements that configured image preprocessing and

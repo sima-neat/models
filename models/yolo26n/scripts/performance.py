@@ -22,4 +22,8 @@ with open(args.output, "w", encoding="utf-8") as output:
         "fps": report.fps,
         "avg_power_watts": report.avg_power_watts,
         "energy_joules": report.energy_joules,
+        "workload": {
+            "selection": "YoloV26 box decoder, top 100",
+            "postprocess": model.info().selection.selected_post_kind,
+        },
     }, output, allow_nan=False)

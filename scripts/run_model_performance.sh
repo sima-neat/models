@@ -61,8 +61,9 @@ for component in "${components[@]}"; do
   PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     --mpk "$archive" --output "$output/core-benchmark.json" 2>&1 | tee "$output/benchmark.log"
 
-  # Record the default workload Core benchmarked, separately from the measured report fields.
-  "$PYNEAT_PYTHON" - "$output/performance-test.json" <<'PY'
+  # Record the workload Core benchmarked, separately from the measured report fields. A script that
+  # configures the model reports its selection and postprocessing; otherwise the MPK default applies.
+  "$PYNEAT_PYTHON" - "$output/performance-test.json" "$output/core-benchmark.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -85,6 +86,7 @@ manifest["workload"] = {
     "inputs": [{"shape": spec.shape, "dtype": spec.dtypes[0].name} for spec in model.input_specs()],
     "preprocess": info.selection.preprocess_graph,
     "postprocess": info.selection.selected_post_kind,
+    **json.loads(Path(sys.argv[2]).read_text()).get("workload", {}),
 }
 path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
