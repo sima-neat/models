@@ -1,0 +1,250 @@
+"""Measure YOLO26n-pose COCO keypoint and person-box AP and AR with its MPK on a Modalix board."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import random
+import sys
+import time
+from collections import deque
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import numpy as np
+import pyneat
+from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
+from faster_coco_eval import COCO, COCOeval_faster
+
+ANNOTATIONS = "annotations/person_keypoints_val2017.json"
+IMAGES = "val2017"
+KEYPOINTS = 17
+STRIDES = (8, 16, 32)
+# Ultralytics' COCO-pose validation set: the val2017 images with at least one person whose keypoints are labelled.
+SCORED_IMAGES = 2346
+# Ultralytics' end-to-end selection and validation settings: the best 300 anchors scoring above 0.001. With one
+# class, its second top-k over anchor/class pairs keeps the same anchors.
+TOP_K = 300
+SCORE_THRESHOLD = 0.001
+# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
+# decoder skips its sigmoid.
+LOGIT_FLOOR = -7.0
+# Metric name in model.yaml -> (COCOeval_faster iouType, stats_as_dict label). Keypoint scoring keeps the 20
+# highest-scoring people per image and has no small-object range.
+METRICS = {
+    "coco_keypoint_map": ("keypoints", "AP_all"),
+    "coco_keypoint_ap50": ("keypoints", "AP_50"),
+    "coco_keypoint_ap75": ("keypoints", "AP_75"),
+    "coco_keypoint_ap_medium": ("keypoints", "AP_medium"),
+    "coco_keypoint_ap_large": ("keypoints", "AP_large"),
+    "coco_keypoint_ar": ("keypoints", "AR_all"),
+    "coco_keypoint_ar50": ("keypoints", "AR_50"),
+    "coco_keypoint_ar75": ("keypoints", "AR_75"),
+    "coco_keypoint_ar_medium": ("keypoints", "AR_medium"),
+    "coco_keypoint_ar_large": ("keypoints", "AR_large"),
+    "coco_person_box_map": ("bbox", "AP_all"),
+    "coco_person_box_ap50": ("bbox", "AP_50"),
+}
+MAX_DETECTIONS = {"keypoints": [20], "bbox": [1, 10, 100]}
+# Images decode on worker threads while the MPK runs; OpenCV releases the GIL while it decodes and resizes.
+WORKERS = 4
+PREFETCH = 8
+# The MPK returns bbox_0..2, class_logit_0..2 then keypoint_0..2 in NHWC. Anchors are the grid-cell centres of
+# each level, row-major from stride 8 to stride 32, as Ultralytics' make_anchors lays them out.
+GRIDS = [IMAGE_SIZE // stride for stride in STRIDES]
+OUTPUT_SHAPES = [(1, size, size, channels) for channels in (4, 1, KEYPOINTS * 3) for size in GRIDS]
+ANCHORS = np.concatenate(
+    [np.stack(np.meshgrid(np.arange(size) + 0.5, np.arange(size) + 0.5), axis=-1).reshape(-1, 2) for size in GRIDS]
+)
+ANCHOR_STRIDES = np.repeat(STRIDES, [size * size for size in GRIDS])[:, None]
+
+
+def tensor_options() -> pyneat.ModelOptions:
+    options = pyneat.ModelOptions()
+    options.preprocess.kind = pyneat.InputKind.Tensor
+    # The script already letterboxed and scaled the image; Neat still quantizes and tessellates.
+    options.preprocess.resize.enable = pyneat.AutoFlag.Off
+    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
+    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
+    return options
+
+
+def prefetched(load: Callable, items: Sequence) -> Iterator:
+    """Yield load(item) in order, keeping at most PREFETCH items in flight."""
+    with ThreadPoolExecutor(WORKERS) as pool:
+        pending = deque(pool.submit(load, item) for item in items[:PREFETCH])
+        for item in items[PREFETCH:]:
+            yield pending.popleft().result()
+            pending.append(pool.submit(load, item))
+        while pending:
+            yield pending.popleft().result()
+
+
+def scored_image_ids(ground_truth: COCO) -> list[int]:
+    """Return the images with at least one person whose keypoints are labelled."""
+    annotations = ground_truth.dataset["annotations"]
+    labelled = {annotation["image_id"] for annotation in annotations if annotation["num_keypoints"]}
+    if len(labelled) != SCORED_IMAGES:
+        raise SystemExit(f"expected {SCORED_IMAGES} images with labelled keypoints, found {len(labelled)}")
+    return sorted(labelled)
+
+
+def image_points(points: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Map x, y points from the letterboxed input onto the original image."""
+    gain, _, (left, top, _, _) = letterbox_geometry(width, height)
+    return (np.asarray(points, dtype=np.float64) - [left, top]) / gain
+
+
+def image_boxes(boxes: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Map x1, y1, x2, y2 boxes from the letterboxed input onto the original image and clip them to it."""
+    mapped = image_points(boxes.reshape(-1, 2), width, height).reshape(-1, 4)
+    mapped[:, 0::2] = mapped[:, 0::2].clip(0, width)
+    mapped[:, 1::2] = mapped[:, 1::2].clip(0, height)
+    return mapped
+
+
+def sigmoid(logits: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(logits, -80, 80)))
+
+
+def top(values: np.ndarray, count: int) -> np.ndarray:
+    """Indices of the count largest values, largest first, ties in index order, like a stable descending sort."""
+    chosen = np.arange(len(values))
+    if len(values) > count:
+        cutoff = np.partition(values, len(values) - count)[len(values) - count]
+        above = np.flatnonzero(values > cutoff)
+        chosen = np.sort(np.concatenate([above, np.flatnonzero(values == cutoff)[: count - len(above)]]))
+    return chosen[np.argsort(-values[chosen], kind="stable")]
+
+
+def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int, category: int) -> list[dict]:
+    """Return COCO results with a box, 17 keypoints and a score for each selected person in one image.
+
+    Selects people as the exported Ultralytics head does: the TOP_K anchors by person score that score above
+    SCORE_THRESHOLD. Only logits above LOGIT_FLOOR are ranked, which leaves the selection unchanged.
+    """
+    shapes = [output.shape for output in outputs]
+    if shapes != OUTPUT_SHAPES:
+        raise ValueError(f"unexpected MPK outputs: {shapes}")
+    distances = np.concatenate([output.reshape(-1, 4) for output in outputs[:3]])
+    logits = np.concatenate([output.reshape(-1) for output in outputs[3:6]])
+    keypoints = np.concatenate([output.reshape(-1, KEYPOINTS, 3) for output in outputs[6:]])
+    # A NaN or +inf logit could be selected; a -inf one scores 0 and is never kept.
+    if not (np.isfinite(distances).all() and np.isfinite(logits).all() and np.isfinite(keypoints).all()):
+        raise ValueError("MPK output contains non-finite values")
+    live = np.flatnonzero(logits > LOGIT_FLOOR)
+    scores = sigmoid(logits[live])
+    picked = top(scores, TOP_K)
+    picked = picked[scores[picked] > SCORE_THRESHOLD]
+    anchor, scores = live[picked], scores[picked]
+    centres, strides = ANCHORS[anchor], ANCHOR_STRIDES[anchor]
+    # Box side distances are in grid cells: left and top from the anchor, then right and bottom.
+    corners = np.hstack([centres - distances[anchor, :2], centres + distances[anchor, 2:]])
+    x1, y1, x2, y2 = image_boxes(corners * strides, width, height).T
+    # Keypoint channels interleave x, y and a visibility logit; x and y are grid-cell offsets from the anchor.
+    people = keypoints[anchor]
+    xy = image_points(((people[..., :2] + centres[:, None]) * strides[:, None]).reshape(-1, 2), width, height)
+    points = np.concatenate([xy.reshape(-1, KEYPOINTS, 2), sigmoid(people[..., 2:])], axis=2)
+    points = points.reshape(len(anchor), KEYPOINTS * 3)
+    return [
+        {
+            "image_id": image_id,
+            "category_id": category,
+            "bbox": [float(x1[i]), float(y1[i]), float(x2[i] - x1[i]), float(y2[i] - y1[i])],
+            "keypoints": points[i].tolist(),
+            "score": float(scores[i]),
+        }
+        for i in range(len(anchor))
+    ]
+
+
+def score(ground_truth: COCO, results: COCO, iou_type: str, image_ids: list[int]) -> dict[str, float]:
+    """Score one iouType and return its declared metrics; COCOeval reports -1 for an empty object-size range."""
+    scorer = COCOeval_faster(ground_truth, results, iou_type, print_function=log)
+    if list(scorer.params.maxDets) != MAX_DETECTIONS[iou_type]:
+        raise ValueError(f"expected {iou_type} maxDets {MAX_DETECTIONS[iou_type]}, got {scorer.params.maxDets}")
+    scorer.params.imgIds = image_ids
+    scorer.evaluate()
+    scorer.accumulate()
+    scorer.summarize()
+    labelled = scorer.stats_as_dict
+    stats = {name: float(labelled[label]) for name, (kind, label) in METRICS.items() if kind == iou_type}
+    empty = [name for name, value in stats.items() if value < 0]
+    if empty:
+        raise SystemExit(f"no ground-truth objects to score for: {', '.join(empty)}")
+    return stats
+
+
+def parse_mpks(values: list[str]) -> Path:
+    mpks = dict(value.split("=", 1) for value in values)
+    if set(mpks) != {"model"}:
+        raise SystemExit("--mpk must name exactly model=<path>")
+    return Path(mpks["model"])
+
+
+def log(*values: object) -> None:
+    print(*values, file=sys.stderr, flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
+    parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/keypoints directory")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
+    args = parser.parse_args(argv)
+
+    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
+    with contextlib.redirect_stdout(io.StringIO()):
+        ground_truth = COCO(str(args.dataset / ANNOTATIONS))
+    available = scored_image_ids(ground_truth)
+    image_ids = sorted(random.Random(0).sample(available, args.limit)) if args.limit else available
+    records = ground_truth.loadImgs(image_ids)
+    categories = ground_truth.getCatIds()
+    if len(categories) != 1:
+        raise SystemExit(f"expected the single COCO person category, found {categories}")
+
+    runner = None
+    detections: list[dict] = []
+    started = time.monotonic()
+    image_dir = args.dataset / IMAGES
+    images = prefetched(lambda record: preprocess_image((image_dir / record["file_name"]).read_bytes()), records)
+    for count, (record, image) in enumerate(zip(records, images), start=1):
+        tensor = pyneat.Tensor.from_numpy(image, copy=False)
+        if runner is None:
+            runner = model.build([tensor])
+        outputs = [output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)]
+        detections += decode(outputs, record["id"], record["width"], record["height"], categories[0])
+        if count == 1 or count % 250 == 0 or count == len(records):
+            log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
+    inference_seconds = time.monotonic() - started
+
+    if not detections:
+        raise SystemExit("the model produced no detections")
+    started = time.monotonic()
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = ground_truth.loadRes(detections)
+    stats = score(ground_truth, results, "keypoints", image_ids) | score(ground_truth, results, "bbox", image_ids)
+    scoring_seconds = time.monotonic() - started
+
+    result = {
+        "core_version": pyneat.__version__,
+        "dataset": {"split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available)},
+        "metrics": {name: {"value": stats[name], "unit": "ratio", "direction": "higher"} for name in METRICS},
+        "details": {
+            "detections": len(detections),
+            "inference_seconds": round(inference_seconds, 1),
+            "scoring_seconds": round(scoring_seconds, 1),
+        },
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({name: round(item["value"], 4) for name, item in result["metrics"].items()}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
