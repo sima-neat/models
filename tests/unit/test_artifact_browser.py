@@ -6,9 +6,14 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
+from model_registry.model import load_models
 
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER = ROOT / "artifact-browser"
@@ -126,18 +131,51 @@ def test_staging_deployment_smoke_tests_the_portal_before_publishing_it() -> Non
     assert position["npx playwright install --with-deps chromium"] < position["npm run smoke:portal"]
 
 
-def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("portal", encoding="utf-8")
+@contextmanager
+def _preview(root: Path) -> Iterator[str]:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     server = subprocess.Popen(
-        ["python3", str(BROWSER / "preview.py"), "--root", str(tmp_path), "--port", str(port)],
+        [sys.executable, str(BROWSER / "preview.py"), "--root", str(root), "--port", str(port)],
         stdout=subprocess.PIPE, text=True,
     )
     try:
         server.stdout.readline()
-        base = f"http://127.0.0.1:{port}"
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.kill()
+
+
+def _get_json(url: str) -> dict | list:
+    with urllib.request.urlopen(url) as response:
+        return json.load(response)
+
+
+def test_preview_serves_the_models_this_repository_declares(tmp_path: Path) -> None:
+    models = load_models(ROOT)
+    api = "/v1/repositories/sima-neat/models"
+    with _preview(tmp_path) as base:
+        entries = _get_json(f"{base}{api}/models")["models"]
+        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
+        build = entries[0]["builds"][0]
+        provenance = _get_json(f"{base}/v1/runs/{build['run_id']}/provenance")
+
+    assert sorted(entry["model_id"] for entry in entries) == sorted(models)
+    for entry in entries:
+        model = models[entry["model_id"]]
+        assert entry["display_name"] == model["display_name"]
+        assert entry["description"] == model["description"]
+        assert entry["builds"]
+        assert entry["documentation"]["hero"]["alt_text"]
+    assert sorted(model["id"] for model in catalog["catalog"]["document"]["models"]) == sorted(models)
+    assert provenance["run"]["id"] == build["run_id"]
+    assert provenance["run"]["metadata"]["build_profile_id"] == build["build_profile_id"]
+
+
+def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("portal", encoding="utf-8")
+    with _preview(tmp_path) as base:
         status = {}
         for request in (
             "/fixtures/performance-result-v4.json",
@@ -151,8 +189,6 @@ def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -
                 capture_output=True, text=True, check=True,
             )
             status[request] = response.stdout
-    finally:
-        server.kill()
 
     assert status == {
         "/fixtures/performance-result-v4.json": "200",
@@ -550,7 +586,6 @@ def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None
 def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     script = _browser_source("app.js", "api.js", "catalog-view.js")
     browser = _browser_source()
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/branches" in script
     assert "branchCatalogCacheKey" in script
@@ -560,7 +595,6 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
     assert "knownBranches.delete(branch)" not in browser
     assert "...(payload.branches || [])" not in browser
-    assert 'path == "/v1/repositories/sima-neat/models/branches"' in preview
 
 
 def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
@@ -693,7 +727,6 @@ def test_smart_search_uses_names_and_taxonomy_labels_on_client_and_server() -> N
 def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() -> None:
     script = _browser_source("ui.js", "catalog-view.js")
     browser = _browser_source()
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "function profileLabel(run)" in script
     assert 'run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable"' in script
@@ -701,8 +734,6 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     assert '<small>${escapeHtml(profileLabel(run))}</small>' in script
     assert '"default artifact"' not in browser
     assert "run.metadata?.build_profile_id, run.metadata?.component_id" in script
-    assert '"build_profile_id": variant_id' in preview
-    assert '"component_id": "model"' in preview
 
 
 def test_model_card_links_to_the_exact_compiled_github_source() -> None:
@@ -809,7 +840,6 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
 def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
     script = _browser_source("ui.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "function trustedHuggingFaceUrl" in script
     assert 'url.hostname !== "huggingface.co"' in script
@@ -826,7 +856,6 @@ def test_source_input_links_to_the_original_hugging_face_model_card() -> None:
     assert 'fill="#FFD21E"' in script
     assert ".huggingface-source-link:focus-visible" in styles
     assert ".huggingface-source-link svg { width: 20px; height: 19px; }" in styles
-    assert "https://huggingface.co/onnx-community/resnet-50-ONNX" in preview
 
 
 def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
@@ -862,7 +891,6 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     script = _browser_source("api.js", "model-view.js")
     browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert 'api(`/v1/runs/${runId}/accuracy/latest`)' in script
     assert 'payload?.result || fallback?.summary' in script
@@ -887,15 +915,10 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert ".accuracy-explainer-card" in styles
     assert ".accuracy-explainer:hover > .accuracy-explainer-card" in styles
     assert ".accuracy-explainer[open] > .accuracy-explainer-card" in styles
-    assert '"evaluated_samples": 500' in preview
-    assert '"top1_accuracy": 0.762' in preview
-    assert '"suite": "accuracy"' in preview
-    assert 'parts[3:] == ["accuracy", "latest"]' in preview
 
 
 def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_per_metric() -> None:
     script = _browser_source("api.js", "model-view.js")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     # One accuracy key per variant: the component build that carries it names every MPK it measured.
     assert "accuracyKeyForRuns(runs).then(devkitAccuracy)" in script
@@ -916,11 +939,8 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert ".slice(ACCURACY_SUMMARY_TILES)" in script
     assert "Published ${published}" in script
     assert '<th scope="col">Published</th>' in script
-    assert '"reference": 0.530' in preview
     # Units come from the published result, so the formatted value is escaped before insertion.
     assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
-    assert '"engine": "devkit_script"' in preview
-    assert '"suite": "accuracy"' in preview
 
 
 def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_returns() -> None:
@@ -951,7 +971,6 @@ def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_ret
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert 'item.name === "numerical-fidelity"' in script
     assert "fidelityPanel(tests, run.id)" in script
@@ -975,7 +994,6 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert "report.dataset?.id" in panel
     assert ".fidelity-output" not in styles
     assert ".fidelity-summary" not in styles
-    assert '"name": "numerical-fidelity"' in preview
 
 
 def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
@@ -1032,7 +1050,6 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js", "model-view.js")
     browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "models: []" in script
     assert "function profileGroups(model)" in script
@@ -1068,8 +1085,6 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "compareModels" in script.split("function renderModels(", 1)[1].split("\nfunction ", 1)[0]
     assert "const selected = profile === variant.profile;" in script
     assert "profiles.find(([id]) => id === requestedProfile) || profiles[0]" in script
-    assert '("rf_detr_small", "modalix_int8_bf16", "backbone"' in preview
-    assert '("rf_detr_small", "modalix_int8_bf16", "transformer"' in preview
 
 
 def test_catalog_and_model_page_are_full_page_views() -> None:
@@ -1117,7 +1132,6 @@ def test_model_metadata_tags_use_semantic_icons() -> None:
 def test_model_license_metadata_is_rendered_with_redistribution_and_attribution() -> None:
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
-    preview = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
 
     assert "const license = run.metadata?.license" in script
     assert "function licensePanel(license)" in script
@@ -1127,8 +1141,6 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
-    assert '"spdx": "Apache-2.0"' in preview
-    assert '"redistribution": "allowed"' in preview
 
 
 def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin() -> None:
@@ -1145,9 +1157,6 @@ def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin
     assert fixture["metrics"]["preview_only_extension_metric"]["details"]["synthetic"] is True
     assert len(fixture["trials"]) == 3
     assert 'apiBase: location.origin' in server
-    assert 'parts[3:] == ["benchmarks", "latest"]' in server
-    assert "PREVIEW_RUNS = (" in server
-    assert "range(len(PREVIEW_RUNS))" in server
     assert "127\\.0\\.0\\.1|localhost" in script
 
 

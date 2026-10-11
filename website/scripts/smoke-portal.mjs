@@ -13,7 +13,7 @@ const port = Number(process.env.SMOKE_PORT || 8766);
 const pageAssets = new Set(['document', 'script', 'stylesheet']);
 
 function startPreview() {
-  const server = spawn('python3', [preview, '--root', portal, '--port', String(port)], {
+  const server = spawn(process.env.PYTHON || 'python3', [preview, '--root', portal, '--port', String(port)], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const ready = new Promise((resolve, reject) => {

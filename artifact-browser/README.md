@@ -45,24 +45,25 @@ npx --prefix website playwright install chromium
 npm run smoke:portal --prefix website
 ```
 
-It serves `portal-build/` against the preview API fixture in Chromium and fails
+It serves `portal-build/` against the local preview API in Chromium and fails
 when a module or stylesheet does not load, the page throws or logs an error, or
-the model list or a variant page does not render.
+the model list or a variant page does not render. The preview API needs the
+registry tooling, so run it with a Python that has the repository installed
+(`python -m pip install .`), or point `PYTHON` at one.
 
-To preview the complete ResNet-50 accuracy and schema-v4 benchmark UI without a
-registry or DevKit connection, run:
+To preview the browser without a registry or DevKit connection, run:
 
 ```bash
 python3 artifact-browser/preview.py
 ```
 
-Open the URL printed by the script. The local server provides a realistic model
-catalog with fourteen builds spanning multiple models, build profiles, branches,
-artifact sizes, accuracy evidence, and benchmark availability states. The
-initial ResNet-50 INT8 build uses the 500-image local accuracy result so the
-sample scope, reference comparison, and provisional status can be reviewed.
-The catalog intentionally overflows
-the comparison dialog so sticky headers and vertical scrolling can be checked.
+Open the URL printed by the script. The local API builds its catalog from
+`models/` with the registry tooling, so it shows the models, build profiles,
+packages, READMEs, heroes, provenance, and accuracy and fidelity declarations
+this checkout defines; a model added or removed there appears or disappears
+without changes to the preview. Only what a board or the registry would produce
+is synthetic: run IDs, timestamps, sizes, and measured values. Two catalog
+revisions give every variant an older build in its history.
 The base three-trial result fixture is stored in
 `artifact-browser/fixtures/performance-result-v4.json` and can be edited to
 exercise other metric values or availability states. Its
