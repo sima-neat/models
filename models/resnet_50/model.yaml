@@ -1,6 +1,6 @@
 id: resnet_50
 display_name: ResNet-50
-description: ImageNet-1k image classification using the ONNX Community conversion of microsoft/resnet-50.
+description: Classifies an image into one of the 1,000 ImageNet classes.
 model_type: vision
 tasks:
 - image_classification

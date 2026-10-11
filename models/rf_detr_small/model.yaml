@@ -1,6 +1,6 @@
 id: rf_detr_small
-display_name: RF-DETR Small 512x512
-description: RF-DETR Small object detection split into independently deployable backbone and transformer components.
+display_name: RF-DETR Small
+description: A compact RF-DETR transformer detector for COCO objects.
 model_type: vision
 tasks:
 - object_detection

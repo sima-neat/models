@@ -1,6 +1,6 @@
 id: rf_detr_large
-display_name: RF-DETR Large 704x704
-description: RF-DETR Large object detection split into independently deployable backbone and transformer components.
+display_name: RF-DETR Large
+description: The largest RF-DETR transformer detector here, for COCO objects.
 model_type: vision
 tasks:
 - object_detection

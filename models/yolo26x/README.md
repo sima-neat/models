@@ -1,5 +1,7 @@
 # YOLO26x-det
 
+![YOLO26x-det model hero](hero.png)
+
 ## Overview
 
 YOLO26x is the Extra-Large edition of Ultralytics' YOLO26 object detector for

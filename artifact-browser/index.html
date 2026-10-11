@@ -36,7 +36,8 @@
           <span>Model Registry</span>
         </a>
         <nav class="product-nav" aria-label="Model Registry">
-          <span aria-current="page">Models</span>
+          <a id="nav-models" href="./" aria-current="page">Models</a>
+          <a id="nav-compare" href="./?view=compare">Compare</a>
           <a href="./docs">Developer docs</a>
         </nav>
       </div>
@@ -49,79 +50,63 @@
     <main id="main">
       <h1 class="sr-only">Model Registry</h1>
 
-      <section class="toolbar" aria-label="Search and filter models">
-        <div class="toolbar-primary">
-          <label class="search-field">
-          <span class="sr-only">Search models</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15A7.5 7.5 0 1 1 4 11.5a7.5 7.5 0 0 1 15 0Z" /></svg>
-          <input id="search" type="search" placeholder="Search models, tasks, or architectures…" autocomplete="off" />
-          <kbd>/</kbd>
-          </label>
-          <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-drawer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10m-7 5h4" /></svg>
-            <span>Filters</span><span id="filter-count" class="filter-count" hidden>0</span>
-          </button>
-        </div>
-        <div id="filter-drawer" class="filter-drawer" hidden>
-          <div class="filters">
-          <label><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
-          <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
-          <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
-          <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
-          <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
-          <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
-          <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
-          <div class="toggle-filter">
-            <span>Build history</span>
-            <label class="switch-row">
-              <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
-              <i aria-hidden="true"></i><b>Show build history</b>
-            </label>
-            <small id="history-filter-help">Switches from models to chronological build runs.</small>
-          </div>
-          <button id="clear-filters" class="text-button" type="button">Clear</button>
-          </div>
-        </div>
-      </section>
+      <section id="workspace" class="workspace" data-view="catalog">
+        <div class="catalog-view">
+          <header class="catalog-intro">
+            <h2 id="result-title" tabindex="-1">Models</h2>
+            <p>Compiled for Modalix and measured on a DevKit. Pick a model, check its speed and accuracy, and download it for Neat.</p>
+          </header>
 
-      <section id="workspace" class="workspace">
-        <div class="results-pane">
-          <div class="section-heading">
-            <h2 id="result-title">Models</h2>
-            <div class="result-heading-actions">
-              <span id="result-count" aria-live="polite">—</span>
-              <button id="compare-button" class="compare-button" type="button" disabled>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M16 4v16M4 8h8m0 8H4m8-5h8m-8 6h8" /></svg>
-                <span id="compare-label">Compare selected</span>
-                <span id="compare-count" class="compare-count" hidden>0</span>
-              </button>
+          <section class="toolbar" aria-label="Search and filter models">
+            <label class="search-field">
+              <span class="sr-only">Search models</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15A7.5 7.5 0 1 1 4 11.5a7.5 7.5 0 0 1 15 0Z" /></svg>
+              <input id="search" type="search" placeholder="Search models, tasks, or architectures…" autocomplete="off" />
+              <kbd>/</kbd>
+            </label>
+            <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-drawer">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10m-7 5h4" /></svg>
+              <span>Filters</span><span id="filter-count" class="filter-count" hidden>0</span>
+            </button>
+          </section>
+
+          <div class="catalog-layout">
+            <aside id="filter-drawer" class="filter-drawer" data-open="false" aria-label="Filters">
+              <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
+              <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
+              <details id="more-filters" class="more-filters disclosure">
+                <summary><span class="disclosure-label">More filters</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
+                <div class="more-filters-body disclosure-body">
+                  <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
+                  <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
+                  <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
+                  <label><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
+                  <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
+                  <div class="toggle-filter">
+                    <span>Build history</span>
+                    <label class="switch-row">
+                      <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
+                      <i aria-hidden="true"></i><b>Show build history</b>
+                    </label>
+                    <small id="history-filter-help">Switches from models to chronological build runs.</small>
+                  </div>
+                </div>
+              </details>
+              <button id="clear-filters" class="text-button" type="button">Clear filters</button>
+            </aside>
+
+            <div class="results-pane">
+              <p id="result-count" class="result-count" aria-live="polite">—</p>
+              <div id="result-list" class="result-list" aria-busy="true"></div>
+              <button id="load-more" class="load-more" type="button" hidden>Load more models</button>
             </div>
           </div>
-          <div id="result-list" class="result-list" aria-busy="true"></div>
-          <button id="load-more" class="load-more" type="button" hidden>Load more models</button>
         </div>
-        <aside id="detail-pane" class="detail-pane" aria-label="Selected artifact details">
-          <div class="detail-empty">
-            <h2>No model selected</h2>
-            <p>Select a model to choose a variant, inspect provenance, and download a verified build.</p>
-          </div>
-        </aside>
+
+        <article id="detail-pane" class="detail-pane" aria-label="Model details" tabindex="-1"></article>
+        <section id="compare-pane" class="compare-pane" aria-label="Compare builds" tabindex="-1"></section>
       </section>
     </main>
-
-    <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title" aria-describedby="compare-description">
-      <div class="compare-dialog-shell">
-        <header class="compare-dialog-header">
-          <div>
-            <p class="kicker">Model comparison</p>
-            <h2 id="compare-title">Compare builds</h2>
-            <p id="compare-description">Artifact and benchmark measurements for the selected builds.</p>
-          </div>
-          <button id="compare-close" class="compare-close" type="button" aria-label="Close comparison">×</button>
-        </header>
-        <div id="compare-content" class="compare-content" aria-live="polite"></div>
-      </div>
-    </dialog>
 
     <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-title" aria-describedby="download-description">
       <h2 id="download-title">Download components</h2>

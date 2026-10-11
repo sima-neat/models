@@ -1,5 +1,7 @@
 # YOLO26s-det
 
+![YOLO26s-det model hero](hero.png)
+
 ## Overview
 
 YOLO26s is the Small edition of Ultralytics' YOLO26 object detector for the 80

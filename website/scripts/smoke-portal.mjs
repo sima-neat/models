@@ -13,7 +13,7 @@ const port = Number(process.env.SMOKE_PORT || 8766);
 const pageAssets = new Set(['document', 'script', 'stylesheet']);
 
 function startPreview() {
-  const server = spawn('python3', [preview, '--root', portal, '--port', String(port)], {
+  const server = spawn(process.env.PYTHON || 'python3', [preview, '--root', portal, '--port', String(port)], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const ready = new Promise((resolve, reject) => {
@@ -60,8 +60,8 @@ try {
   const browser = await chromium.launch();
   try {
     const checks = [
-      ['model list', new URL('/', variantUrl), '#result-list .model-row'],
-      ['variant page', variantUrl, '#components-section .component-row'],
+      ['model list', new URL('/', variantUrl), '#result-list .model-card'],
+      ['variant page', variantUrl, '#components-section .component-performance'],
     ];
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);
