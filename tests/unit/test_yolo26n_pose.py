@@ -315,7 +315,7 @@ def test_decode_returns_no_people_when_none_clears_the_threshold(monkeypatch: py
     accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
     outputs = _board_outputs(accuracy)
     assert accuracy.decode(outputs, 1, 640, 640, 1) == []
-    # Above LOGIT_FLOOR, so ranked, but sigmoid(-6.95) is just below SCORE_THRESHOLD.
+    # sigmoid(-6.95) is just below SCORE_THRESHOLD.
     outputs[5][0, :2, :2, 0] = -6.95
 
     assert accuracy.decode(outputs, 1, 640, 640, 1) == []
@@ -361,12 +361,6 @@ def test_top_cuts_a_stable_descending_sort(monkeypatch: pytest.MonkeyPatch) -> N
     for size, count in [(0, 5), (4, 5), (5, 5), (1000, 300), (1000, 1)]:
         values = rng.integers(0, 7, size).astype(np.float32)
         np.testing.assert_array_equal(accuracy.top(values, count), np.argsort(-values, kind="stable")[:count])
-
-
-def test_logit_floor_cannot_reach_the_score_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
-    accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
-
-    assert accuracy.sigmoid(np.float32(accuracy.LOGIT_FLOOR)) < accuracy.SCORE_THRESHOLD
 
 
 @pytest.mark.parametrize(("output", "value"), [(0, np.nan), (0, np.inf), (4, np.nan), (4, np.inf), (7, np.nan)])

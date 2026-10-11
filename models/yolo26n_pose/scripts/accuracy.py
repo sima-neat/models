@@ -29,9 +29,6 @@ SCORED_IMAGES = 2346
 # class, its second top-k over anchor/class pairs keeps the same anchors.
 TOP_K = 300
 SCORE_THRESHOLD = 0.001
-# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
-# decoder skips its sigmoid.
-LOGIT_FLOOR = -7.0
 # Metric name in model.yaml -> (COCOeval_faster iouType, stats_as_dict label). Keypoint scoring keeps the 20
 # highest-scoring people per image and has no small-object range.
 METRICS = {
@@ -124,7 +121,7 @@ def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int
     """Return COCO results with a box, 17 keypoints and a score for each selected person in one image.
 
     Selects people as the exported Ultralytics head does: the TOP_K anchors by person score that score above
-    SCORE_THRESHOLD. Only logits above LOGIT_FLOOR are ranked, which leaves the selection unchanged.
+    SCORE_THRESHOLD.
     """
     shapes = [output.shape for output in outputs]
     if shapes != OUTPUT_SHAPES:
@@ -135,11 +132,10 @@ def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int
     # A NaN or +inf logit could be selected; a -inf one scores 0 and is never kept.
     if not (np.isfinite(distances).all() and np.isfinite(logits).all() and np.isfinite(keypoints).all()):
         raise ValueError("MPK output contains non-finite values")
-    live = np.flatnonzero(logits > LOGIT_FLOOR)
-    scores = sigmoid(logits[live])
-    picked = top(scores, TOP_K)
-    picked = picked[scores[picked] > SCORE_THRESHOLD]
-    anchor, scores = live[picked], scores[picked]
+    scores = sigmoid(logits)
+    anchor = top(scores, TOP_K)
+    anchor = anchor[scores[anchor] > SCORE_THRESHOLD]
+    scores = scores[anchor]
     centres, strides = ANCHORS[anchor], ANCHOR_STRIDES[anchor]
     # Box side distances are in grid cells: left and top from the anchor, then right and bottom.
     corners = np.hstack([centres - distances[anchor, :2], centres + distances[anchor, 2:]])
