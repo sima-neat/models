@@ -346,6 +346,8 @@ const ACCURACY_METRIC_LABELS = {
   coco_keypoint_ar_large: "Keypoint AR large",
   coco_person_box_map: "Person box mAP 50–95",
   coco_person_box_ap50: "Person box AP50",
+  abs_rel: "AbsRel",
+  delta1: "δ1",
 };
 // The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;

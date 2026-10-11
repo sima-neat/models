@@ -1071,6 +1071,25 @@ def test_pose_accuracy_metrics_lead_with_keypoint_map() -> None:
     assert 'coco_keypoint_map: "Keypoint mAP 50–95"' in script
 
 
+def test_depth_accuracy_metrics_are_labelled_and_lead_with_abs_rel() -> None:
+    script = _browser_source("model-view.js")
+    start = script.index("const ACCURACY_METRIC_LABELS = {")
+    end = script.index("function accuracyPanel(")
+    report = {"metrics": {"delta1": {"value": 0.96}, "abs_rel": {"value": 0.07}}}
+    probe = (
+        f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)})"
+        ".map(([name]) => [name, ACCURACY_METRIC_LABELS[name]])));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script[start:end] + probe],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == [["abs_rel", "AbsRel"], ["delta1", "δ1"]]
+
+
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
