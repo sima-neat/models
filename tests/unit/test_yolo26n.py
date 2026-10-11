@@ -270,6 +270,63 @@ def test_decode_keeps_at_most_the_top_300_pairs(monkeypatch: pytest.MonkeyPatch)
     assert len(rows) == accuracy.TOP_K == 300
 
 
+def _full_selection_rows(accuracy: ModuleType, outputs: list[np.ndarray], categories: np.ndarray) -> np.ndarray:
+    """Decode with a sigmoid over every logit and two stable sorts, the straightforward form of the selection."""
+    distances = np.concatenate([output.reshape(-1, 4) for output in outputs[:3]])
+    scores = accuracy.sigmoid(np.concatenate([output.reshape(-1, 80) for output in outputs[3:]]))
+    anchors = np.argsort(-scores.max(axis=1), kind="stable")[:300]
+    pairs = scores[anchors].ravel()
+    order = np.argsort(-pairs, kind="stable")[:300]
+    order = order[pairs[order] > 0.001]
+    anchor, label = anchors[order // 80], order % 80
+    centres = accuracy.ANCHORS[anchor]
+    corners = np.hstack([centres - distances[anchor, :2], centres + distances[anchor, 2:]])
+    x1, y1, x2, y2 = accuracy.image_boxes(corners * accuracy.ANCHOR_STRIDES[anchor], 640, 427).T
+    return np.stack([np.full(order.shape, 9), x1, y1, x2 - x1, y2 - y1, pairs[order], categories[label]], axis=1)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_decode_matches_the_full_sigmoid_selection(monkeypatch: pytest.MonkeyPatch, seed: int) -> None:
+    accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
+    rng = np.random.default_rng(seed)
+    outputs = [rng.uniform(0, 6, shape).astype(np.float32) for shape in accuracy.OUTPUT_SHAPES[:3]]
+    for shape in accuracy.OUTPUT_SHAPES[3:]:
+        logits = rng.normal(-10, 3, shape)
+        hot = rng.random(shape[:-1]) < 0.03
+        logits[hot] += rng.uniform(3, 30, (hot.sum(), 80))
+        # INT8 steps make ties; logits above about 17 all score exactly 1.0 in float32.
+        outputs.append((np.round(logits / 0.15) * 0.15).astype(np.float32))
+    categories = np.arange(80) + 1
+
+    rows = accuracy.decode(outputs, 9, 640, 427, categories)
+
+    np.testing.assert_array_equal(rows, _full_selection_rows(accuracy, outputs, categories))
+
+
+def test_top_cuts_a_stable_descending_sort(monkeypatch: pytest.MonkeyPatch) -> None:
+    accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
+    rng = np.random.default_rng(0)
+    for size, count in [(0, 5), (4, 5), (5, 5), (1000, 300), (1000, 1)]:
+        values = rng.integers(0, 7, size).astype(np.float32)
+        np.testing.assert_array_equal(accuracy.top(values, count), np.argsort(-values, kind="stable")[:count])
+
+
+def test_logit_floor_cannot_reach_the_score_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
+
+    assert accuracy.sigmoid(np.float32(accuracy.LOGIT_FLOOR)) < accuracy.SCORE_THRESHOLD
+
+
+@pytest.mark.parametrize(("output", "value"), [(0, np.nan), (0, np.inf), (4, np.nan), (4, np.inf)])
+def test_decode_rejects_non_finite_outputs(monkeypatch: pytest.MonkeyPatch, output: int, value: float) -> None:
+    accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
+    outputs = _board_outputs(accuracy)
+    outputs[output][0, 1, 2, 3] = value
+
+    with pytest.raises(ValueError, match="non-finite"):
+        accuracy.decode(outputs, 1, 640, 640, np.arange(80) + 1)
+
+
 def test_decode_rejects_another_output_layout(monkeypatch: pytest.MonkeyPatch) -> None:
     accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
     outputs = [output.transpose(0, 3, 1, 2) for output in _board_outputs(accuracy)]

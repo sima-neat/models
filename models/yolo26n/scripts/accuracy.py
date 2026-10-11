@@ -26,6 +26,9 @@ STRIDES = (8, 16, 32)
 # Ultralytics' end-to-end selection and validation settings: the best 300 anchor/class pairs scoring above 0.001.
 TOP_K = 300
 SCORE_THRESHOLD = 0.001
+# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
+# decoder skips its sigmoid.
+LOGIT_FLOOR = -7.0
 # Metric name in model.yaml -> COCOeval_faster.stats_as_dict label. With maxDets [1, 10, 100], AR_all,
 # AR_second and AR_third are the recall at 1, 10 and 100 detections per image.
 METRICS = {
@@ -86,30 +89,49 @@ def image_boxes(boxes: np.ndarray, width: int, height: int) -> np.ndarray:
     return mapped
 
 
+def sigmoid(logits: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(logits, -80, 80)))
+
+
+def top(values: np.ndarray, count: int) -> np.ndarray:
+    """Indices of the count largest values, largest first, ties in index order, like a stable descending sort."""
+    chosen = np.arange(len(values))
+    if len(values) > count:
+        cutoff = np.partition(values, len(values) - count)[len(values) - count]
+        above = np.flatnonzero(values > cutoff)
+        chosen = np.sort(np.concatenate([above, np.flatnonzero(values == cutoff)[: count - len(above)]]))
+    return chosen[np.argsort(-values[chosen], kind="stable")]
+
+
 def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int, categories: np.ndarray) -> np.ndarray:
     """Return COCO result rows [image_id, x, y, w, h, score, category_id] for one image.
 
     Selects detections as the exported Ultralytics head does: the TOP_K anchors by best class score, then the
-    TOP_K best anchor/class pairs among them.
+    TOP_K best anchor/class pairs among them that score above SCORE_THRESHOLD. Only logits above LOGIT_FLOOR
+    are ranked, which leaves the selection unchanged.
     """
     shapes = [output.shape for output in outputs]
     if shapes != OUTPUT_SHAPES:
         raise ValueError(f"unexpected MPK outputs: {shapes}")
     distances = np.concatenate([output.reshape(-1, 4) for output in outputs[:3]])
     logits = np.concatenate([output.reshape(-1, CLASSES) for output in outputs[3:]])
-    if not (np.isfinite(distances).all() and np.isfinite(logits).all()):
+    best = logits.max(axis=1)
+    # A NaN or +inf logit reaches its anchor's maximum; a -inf one scores 0 and is never kept.
+    if not (np.isfinite(distances).all() and np.isfinite(best).all()):
         raise ValueError("MPK output contains non-finite values")
-    scores = 1.0 / (1.0 + np.exp(-np.clip(logits, -80, 80)))
-    anchors = np.argsort(-scores.max(axis=1), kind="stable")[:TOP_K]
-    pairs = scores[anchors].ravel()
-    order = np.argsort(-pairs, kind="stable")[:TOP_K]
-    order = order[pairs[order] > SCORE_THRESHOLD]
-    anchor, label = anchors[order // CLASSES], order % CLASSES
+    live_anchors = np.flatnonzero(best > LOGIT_FLOOR)
+    anchors = live_anchors[top(sigmoid(best[live_anchors]), TOP_K)]
+    pair_logits = logits[anchors].ravel()
+    live_pairs = np.flatnonzero(pair_logits > LOGIT_FLOOR)
+    scores = sigmoid(pair_logits[live_pairs])
+    picked = top(scores, TOP_K)
+    picked = picked[scores[picked] > SCORE_THRESHOLD]
+    anchor, label = anchors[live_pairs[picked] // CLASSES], live_pairs[picked] % CLASSES
     # Box side distances are in grid cells: left and top from the anchor, then right and bottom.
     corners = np.hstack([ANCHORS[anchor] - distances[anchor, :2], ANCHORS[anchor] + distances[anchor, 2:]])
     x1, y1, x2, y2 = image_boxes(corners * ANCHOR_STRIDES[anchor], width, height).T
-    ids = np.full(order.shape, image_id)
-    return np.stack([ids, x1, y1, x2 - x1, y2 - y1, pairs[order], categories[label]], axis=1)
+    ids = np.full(picked.shape, image_id)
+    return np.stack([ids, x1, y1, x2 - x1, y2 - y1, scores[picked], categories[label]], axis=1)
 
 
 def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
