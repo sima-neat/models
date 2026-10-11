@@ -1,6 +1,6 @@
 id: yolo26l
 display_name: YOLO26l-det
-description: Ultralytics YOLO26 Large object detection for the 80 COCO classes at 640x640.
+description: A large YOLO26 detector for COCO objects.
 model_type: vision
 tasks:
 - object_detection

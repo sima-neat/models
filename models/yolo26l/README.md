@@ -1,5 +1,7 @@
 # YOLO26l-det
 
+![YOLO26l-det model hero](hero.png)
+
 ## Overview
 
 YOLO26l is the Large edition of Ultralytics' YOLO26 object detector for the 80
