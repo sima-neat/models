@@ -94,13 +94,7 @@ components:
     - op: transpose
       parameters: {from: HWC, to: CHW}
   postprocessing:
-    pipeline:
-    - op: yolo26_boxdecode
-      parameters:
-        num_classes: 80
-        strides: [8, 16, 32]
-        score_threshold: 0.25
-        nms_iou_threshold: 1.0
+    pipeline: []
   surgery:
     type: python
     entrypoint: scripts/surgery.py:prepare_model

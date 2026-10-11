@@ -287,7 +287,6 @@ def test_model_declares_the_cut_interface_and_both_builds() -> None:
     assert [(item["name"], item["shape"]) for item in entrypoint["inputs"]] == [("images", surgery.INPUT_SHAPE)]
     assert {item["name"]: item["shape"] for item in entrypoint["outputs"]} == surgery.OUTPUT_SHAPES
     assert [item["name"] for item in entrypoint["outputs"]] == surgery.OUTPUTS
-    assert component["postprocessing"]["pipeline"][0]["parameters"]["strides"] == list(surgery.STRIDES)
     assert component["surgery"]["entrypoint"] == "scripts/surgery.py:prepare_model"
     assert component["recipe"] == "scripts/compile.py"
     assert {profile["id"]: profile["components"][0]["artifact_suffix"] for profile in model["build_profiles"]} == {

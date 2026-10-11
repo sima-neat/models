@@ -23,11 +23,8 @@ sima-cli models download \
 
 Use `--variant modalix_bf16` for the BF16 build.
 
-The MPK returns raw head tensors. `model.yaml` declares Neat's `yolo26_boxdecode`
-postprocessing for them with 80 classes, strides 8, 16, and 32, a score
-threshold of 0.25, and an NMS IoU threshold of 1.0, which turns suppression off.
-To reproduce the published accuracy, decode them as described below;
-`scripts/accuracy.py` contains a reference decoder.
+The MPK returns raw head tensors. Decode them in the application as described
+below; `scripts/accuracy.py` contains a reference decoder.
 
 ## Model interface
 
@@ -54,9 +51,6 @@ with the highest class score, then the 300 highest-scoring cell and class pairs
 among them. Finally, subtract the letterbox padding, divide by the letterbox
 scale, and clip each box to the original image. Class index `i` is the `i`-th
 COCO category ID in ascending order.
-
-Neat's `yolo26_boxdecode` keeps only the best class for each cell, so its
-detections differ from this selection.
 
 ## Available builds
 
