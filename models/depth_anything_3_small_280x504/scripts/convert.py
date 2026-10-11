@@ -265,7 +265,7 @@ def convert(source, output_dir):
                 do_constant_folding=True,
                 dynamo=False,
             )
-    del network
+    del network, exported
     fold_constants(output)
     validate_export(output)
 

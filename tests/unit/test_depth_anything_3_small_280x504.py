@@ -144,6 +144,22 @@ def test_calibration_pairs_consecutive_frames_of_the_calibration_drives(
         calibration.calibration_pairs(archive, 1)
 
 
+def test_calibration_sample_is_fixed_by_the_seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calibration = load_module("calibration")
+    drive_a, drive_b = "drive_a_drive_0001_sync", "drive_b_drive_0002_sync"
+    monkeypatch.setattr(calibration, "CALIBRATION_DRIVES", (drive_a, drive_b))
+    archive = tmp_path / "kitti.tgz"
+    _kitti_archive(archive, {drive_a: list(range(10)), drive_b: [0, 1]})
+
+    pairs = calibration.calibration_pairs(archive, 3)
+
+    assert [(Path(first).name, Path(second).name) for first, second in pairs] == [
+        (frame(drive_a, 6), frame(drive_a, 7)),
+        (frame(drive_b, 0), frame(drive_b, 1)),
+        (frame(drive_a, 0), frame(drive_a, 1)),
+    ]
+
+
 def test_calibration_images_return_both_views_as_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cv2 = pytest.importorskip("cv2")
     calibration = load_module("calibration")
@@ -447,6 +463,12 @@ def test_compile_recipe_reproduces_the_qualified_compiler_settings() -> None:
         "rms_norm_use_fp32_intermediates=False",
         "layout_search_effort_level=0",
         "enable_filter_sharing=False",
+        "batch_size=1",
+        "preserve=True",
+        "deployable=True",
+        "use_power_limits=False",
+        "max_mla_power=None",
+        "retained_temporary_directory_name=None",
         'parser.add_argument("--dataset", type=Path, required=True',
     ):
         assert setting in source, setting
