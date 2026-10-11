@@ -86,7 +86,8 @@ def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     assert 'class="brand" href="./"' in html
     assert 'class="brand" href="/"' not in html
     assert '<nav class="product-nav" aria-label="Model Registry">' in html
-    assert '<span aria-current="page">Models</span>' in html
+    assert '<a id="nav-models" href="./" aria-current="page">Models</a>' in html
+    assert '<a id="nav-compare" href="./?view=compare">Compare</a>' in html
     assert '<a href="./docs">Developer docs</a>' in html
     assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
     assert '>GitHub</a>' not in html
@@ -261,13 +262,10 @@ def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None
     assert 'headers: { Accept: "text/markdown" }' in script
     assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
     assert 'crypto.subtle.digest("SHA-256"' in script
-    assert "state.documentationCache.set(cacheKey, markdown)" in script
-    assert 'aria-expanded="${expanded}"' in script
-    assert "Read full model card" in script
-    assert "Show overview only" in script
+    assert "state.documentationCache.set(documentationKey(documentation), markdown)" in script
+    assert 'disclosure("model-card", "Full model card", modelCardBody(documentation)' in script
     assert "documentationHeroUrl" in script
     assert "documentation.hero?.markdown_path" in script
-    assert "linear-gradient(to bottom, transparent" in styles
     assert ".model-card-hero" in styles
     assert "SAFE_LINK" in renderer
     assert "escapeHtml" in renderer
@@ -275,6 +273,40 @@ def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None
     assert "resolveDocumentationLink" in renderer
     assert 'loading="lazy"' in renderer
     assert "export function renderMarkdown" in renderer
+
+
+def test_full_model_card_starts_after_the_overview_the_page_already_shows() -> None:
+    script = _browser_source("model-view.js")
+    start = script.index("function modelCardRemainder(")
+    end = script.index("function modelCardBody(")
+    readme = "# Model\n\n![Model hero](hero.png)\n\n## Overview\n\nShown above.\n\n## Usage\n\nRun it.\n"
+    cases = json.dumps([readme, "# Model\n\nText"])
+    probe = f"console.log(JSON.stringify({cases}.map(modelCardRemainder)));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script[start:end] + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == ["## Usage\n\nRun it.\n", None]
+
+
+def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
+    browser = _browser_source()
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+    # One helper renders every expandable row on the model page; the catalog's More filters copies its markup.
+    assert browser.count("<details") == 1
+    assert '<details class="disclosure" data-disclosure=' in browser
+    assert '<details id="more-filters" class="more-filters disclosure">' in html
+    assert html.count("<details") == 1
+    assert '<span class="disclosure-label">More filters</span><svg class="chevron"' in html
+    assert ".disclosure[open] > summary > .chevron { transform: rotate(90deg); }" in styles
+    # Re-rendering keeps the rows the reader opened, keyed by the row rather than by its section.
+    assert "state.openDisclosures.has(key)" in browser
+    assert "if (event.target.open) state.openDisclosures.add(key);" in browser
+    assert "state.openDisclosures.add(`component:${runId}`)" in browser
+    for removed in ["expandedRuns", "expandedBenchmarks", "expandedDocumentationModelId", "data-documentation-toggle"]:
+        assert removed not in browser
 
 
 def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit() -> None:
@@ -509,9 +541,6 @@ def test_linked_run_loads_independently_of_the_current_catalog_page() -> None:
     assert "if (navigationId !== state.navigationId) return;" in script
     assert "if (state.selectedId) await selectRun(state.selectedId, { updateUrl: false, expand: linkedRun });" in script
     assert "state.runs.some((run) => run.id === state.selectedId)" not in browser
-    # A linked build off the current page registers itself so it can still be compared.
-    assert "state.variantGroups.set(variant.key, variant);" in script
-    assert "state.variantGroups.get(key) || state.compareSelection.get(key)" in script
 
 
 def test_historical_model_cards_load_from_the_run_catalog_revision() -> None:
@@ -649,7 +678,7 @@ def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     assert 'id="filter-toggle"' in html
     assert 'aria-expanded="false"' in html
     assert 'id="filter-drawer" class="filter-drawer" data-open="false"' in html
-    assert '<details id="more-filters" class="more-filters">' in html
+    assert '<details id="more-filters" class="more-filters disclosure">' in html
     assert html.index('id="task-filter"') < html.index('id="more-filters"') < html.index('id="branch-filter"')
     assert 'if (moreFiltersActive()) elements["more-filters"].open = true;' in script
     assert 'id="filter-count"' in html
@@ -799,10 +828,13 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert "sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch" in script
     # The CLI fetches the catalog build, so an older build from history offers no command.
     assert '${catalogModelOfVariant(variant) ? `<button class="cli-action"' in script
-    assert ">Download individual components</button>" in script
-    assert '<dl class="artifact-metadata">' in script
-    assert '<dt>File size</dt>' in script
+    # Details lead with the package card: size, checksum, and both downloads as icon buttons.
+    assert "${icons.download}<span>Download package</span>" in script
+    assert "${icons.download}<span>Download components</span>" in script
+    assert '<dl class="package-facts">' in script
+    assert '<dt>Size</dt>' in script
     assert '<dt>SHA-256</dt>' in script
+    assert "Download individual components" not in browser
     assert 'class="download-button"' not in browser
     assert 'class="artifact-main"' not in browser
     assert "artifact-download-shortcut" not in browser
@@ -831,7 +863,6 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
     browser = _browser_source()
 
     assert 'artifact.artifact_type === "model-pack"' in script
-    assert "artifacts: modelPackArtifacts(summary?.artifacts)" in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
     assert 'artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
     assert '|| artifacts[0]' not in browser
@@ -869,20 +900,22 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert "Object.entries(result.metrics || {})" in adapters
     assert "Object.entries(trial)" in adapters
     assert "/benchmarks/latest" in script
-    assert 'class="trial-chart benchmark-chart"' in script
-    assert "data-trial-metric" in script
-    assert "availableTrialMetrics" in script
-    assert "data-temperature-sensor" not in browser
+    # Benchmark details group the measurements into cards; unknown metrics land in Other measurements.
+    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload)' in script
+    for group in ['["speed", "Speed"', '["heat", "Power & heat"', '["memory", "MLA memory"', '["startup", "Startup"']:
+        assert group in script
+    assert 'metricGroup("other", "Other measurements"' in script
+    assert "Not reported by this runtime:" in script
+    assert "data-trial-metric" not in browser
+    assert "trialChart" not in browser
     assert 'item.sensor.toLowerCase() === "temp1"' in script
-    assert 'class="temperature-line"' in script
+    assert 'class="sparkline"' in script
     assert 'role="img"' in script
-    assert 'class="sr-only"' in script
-    assert ".chart-points circle" in styles
-    assert ".temperature-line" in styles
+    assert ".sparkline-line" in styles
+    assert '.metric-group[data-group="heat"]' in styles
     assert "temperature_samples" in adapters
     assert "sensor_id" in adapters
     assert "fallbackMetricLabel" in script
-    assert 'class="benchmark-measurements"' in script
     assert "mla_memory_peak_delta_mib" in script
     assert "time_to_first_inference_ms" in script
 
@@ -901,20 +934,18 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     assert "Candidate top-1" in script
     assert "Reference ${percentage(reference.top1_accuracy)}" in script
     assert "dataset.evaluated_samples.toLocaleString()" in script
-    assert 'class="accuracy-explainer"' in script
-    assert 'summary class="accuracy-status ${statusClass}"' in script
-    assert '>?</summary>' not in browser
+    # The status is a plain badge; its explanation sits in the Evaluation details row.
+    assert '<span class="status-badge ${statusClass}">${status}</span>' in script
+    assert 'disclosure("accuracy", "Evaluation details", details, coverageLabel)' in script
+    assert "accuracy-explainer" not in browser
     assert "run the qualification profile for final accuracy reporting" in script
     assert 'const coverageLabel = fullCoverage ? "Full coverage" : "Sampled coverage"' in script
     assert 'const status = qualified ? "Qualification" : "Provisional"' in script
     assert 'report.validation?.status !== "provisional"' in script
-    assert 'class="accuracy-status ${statusClass}"' in script
     assert ".accuracy-summary" in styles
-    assert ".accuracy-status.provisional" in styles
-    assert ".accuracy-status.qualification" in styles
-    assert ".accuracy-explainer-card" in styles
-    assert ".accuracy-explainer:hover > .accuracy-explainer-card" in styles
-    assert ".accuracy-explainer[open] > .accuracy-explainer-card" in styles
+    assert ".status-badge.provisional" in styles
+    assert ".status-badge.qualification" in styles
+    assert ".accuracy-explainer" not in styles
 
 
 def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_per_metric() -> None:
@@ -982,8 +1013,8 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert '<span>${escapeHtml(metric.name)} · Normalized RMSE</span>' in panel
     assert '<table>' not in panel
     assert panel.index('class="benchmark-summary"') < panel.index('class="muted-message"')
-    assert "<details><summary>Evaluation details</summary>" in panel
-    assert '<details open' not in panel
+    assert "<details" not in panel
+    assert "${icons.download}<span>Download JSON</span>" in panel
     assert 'Number(metric.cosine_similarity).toFixed(4)' in panel
     assert 'Number(metric.normalized_rmse).toFixed(4)' in panel
     assert "Mean absolute error" not in panel
@@ -996,54 +1027,63 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert ".fidelity-summary" not in styles
 
 
-def test_models_can_be_selected_and_compared_in_an_accessible_dialog() -> None:
+def test_compare_is_a_page_of_three_pickers_over_one_table() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
-    script = _browser_source("state.js", "compare-view.js")
+    script = _browser_source("state.js", "compare-view.js", "app.js")
     browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert 'id="compare-button"' in html
-    assert 'id="compare-dialog" class="compare-dialog"' in html
-    assert 'aria-labelledby="compare-title" aria-describedby="compare-description"' in html
-    assert "compareSelection: new Map()" in script
-    assert 'data-compare-variant="${escapeHtml(group.key)}"' in script
-    assert "data-compare-run-id" not in browser
-    assert "return [...state.compareSelection.values()]" in script
-    # Selection lives in a tray that appears only while builds are selected, up to three builds.
-    assert '<div id="compare-tray" class="compare-tray" hidden>' in html
-    assert 'elements["compare-tray"].hidden = selectedCount === 0;' in script
+    assert '<section id="compare-pane" class="compare-pane" aria-label="Compare builds"' in html
+    # Builds are picked on the Compare page, not selected while browsing.
+    for removed in ("compare-dialog", "compare-tray", "catalog-compare", "data-compare-variant", "compareSelection"):
+        assert removed not in html + browser + styles
     assert "export const MAX_COMPARED_BUILDS = 3;" in script
-    assert "state.compareSelection.size >= MAX_COMPARED_BUILDS" in script
-    assert "[hidden] { display: none !important; }" in styles
-    # The best value is marked per component, in text as well as weight.
-    assert ".filter(([, values]) => values.length > 1)" in script
-    assert 'definition.direction === "neutral") return new Map();' in script
+    assert 'comparePicks: ["", "", ""]' in script
+    assert '<select data-pick="${index}"><option value="">Choose a build</option>' in script
+    # The picks live in the link, so a comparison can be shared and survives reload and Back.
+    assert 'params.getAll("build")' in script
+    assert 'url.searchParams.set("view", "compare");' in script
+    assert 'if (compareLink) state.comparePicks = picksFromUrl(link);' in script
+    # The model page the reader came from fills the first empty picker.
+    assert "if (viewed && !state.comparePicks.includes(viewed) && empty >= 0)" in script
+    rows = ("Throughput", "Latency", "Board power", "Energy per inference", "Headline metric", "Published")
+    for row in (f'"{label}"' for label in rows):
+        assert row in script
     assert '<span class="sr-only"> (best)</span>' in script
-    # Equal-looking values are equally best: compare at the displayed precision.
-    assert "return Number(display.value.toFixed(display.digits));" in script
-    assert 'elements["compare-button"].disabled = selectedCount < 2' in script
-    assert "mapWithConcurrency(runs, 6, loadComparisonEntry)" in script
-    # A filtered or paged history entry may hold part of a build; comparison resolves every component.
-    assert "groups = await Promise.all(selected.map(completeVariantGroup));" in script
-    assert "cached ? cached.runs : await variantBuildRuns(group.anchor, api)" in script
-    assert 'api(`/v1/runs/${run.id}/benchmarks/latest`)' in script
-    assert "adaptBenchmarkResult(detail.benchmark.result)" in script
-    assert '<th scope="col">Artifact size</th>' in script
-    # Each variant gets a header row and one row per component; measurements are never combined.
-    assert '<th scope="col">Variant / component</th>' in script
-    assert '<tr class="comparison-variant"><th scope="rowgroup" colspan="4">' in script
-    assert ".comparison-table tbody tr.comparison-variant th" in styles
-    assert "data-comparison-metric" in script
-    assert "benchmark?.measurements[field]" in script
-    assert 'elements["compare-dialog"].showModal()' in script
-    assert ".comparison-table-wrap" in styles
-    assert 'class="comparison-measurement-control"' in script
-    assert ".comparison-measurement-bar { display: flex; flex: 0 0 auto; justify-content: flex-end" in styles
-    assert ".compare-content { min-height: 0; flex: 1; display: flex; overflow: hidden" in styles
-    assert ".comparison-table thead th { position: sticky; top: 0; z-index: 2" in styles
-    assert "height: min(820px, calc(100vh - 50px))" in styles
-    assert "position: sticky; left: 0" in styles
-    assert ".compare-select input:focus-visible + span" in styles
+    # Screen-reader labels are absolutely positioned; the table box must clip them on a phone.
+    assert ".compare-table-wrap { position: relative; overflow-x: auto; }" in styles
+    assert '.workspace:not([data-view="compare"]) .compare-pane { display: none; }' in styles
+
+
+def test_compare_bolds_a_value_only_against_the_same_component() -> None:
+    metrics = _browser_source("metrics.js").replace("export ", "")
+    script = _browser_source("compare-view.js")
+    # measuredText and bestValues, without the benchmark adapter between them.
+    measured = script[script.index("function measuredText("):script.index("// Each component is measured on its own")]
+    best = script[script.index("// A single-component build competes"):script.index("function performanceCell(")]
+
+    def build(**latencies: float | None) -> dict:
+        return {"components": [
+            {"component": component, "measurements": {} if value is None else {
+                "latency_avg_ms": {"status": "measured", "value": value, "unit": "ms"},
+            }}
+            for component, value in latencies.items()
+        ]}
+
+    columns = [
+        build(backbone=31.6, transformer=22.7),
+        build(backbone=17.9, transformer=39.7),
+        build(model=12.9),
+        build(model=8.4),
+        build(encoder=5.0, decoder=None),
+    ]
+    probe = f"console.log(JSON.stringify(Object.fromEntries(bestValues({json.dumps(columns)}, 'latency_avg_ms'))));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", metrics + measured + best + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    # Lower latency wins within each component; an encoder no other build has gets no mark.
+    assert json.loads(result.stdout) == {"backbone": 17.9, "transformer": 22.7, "model": 8.4}
 
 
 def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() -> None:
@@ -1060,8 +1100,7 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "<b>Current</b>" not in browser
     assert "detail-component-tabs" not in browser
     assert "detail-component-tabs" not in styles
-    assert 'class="detail-compare-select compare-select"' in script
-    assert '"Add variant to comparison"' in script
+    assert "Add variant to comparison" not in browser
     assert "activeProfileByModel: new Map()" in script
     assert "activeComponentByProfile" not in browser
     assert "function selectedCatalogBuild(" in script
@@ -1095,19 +1134,21 @@ def test_catalog_and_model_page_are_full_page_views() -> None:
 
     assert '<section id="workspace" class="workspace" data-view="catalog">' in html
     view_rule = (
-        '.workspace[data-view="catalog"] .detail-pane, .workspace[data-view="model"] .catalog-view { display: none; }'
+        '.workspace:not([data-view="catalog"]) .catalog-view, .workspace:not([data-view="model"]) .detail-pane, '
+        '.workspace:not([data-view="compare"]) .compare-pane { display: none; }'
     )
     assert view_rule in styles
     assert "export function showView(view)" in script
     assert "elements.workspace.dataset.view = view;" in script
     # Returning to the catalog restores where the reader was in the list.
-    assert 'if (view === "model") catalogScrollY = window.scrollY;' in script
+    assert 'if (current === "catalog") catalogScrollY = window.scrollY;' in script
     assert 'window.scrollTo({ top: view === "catalog" ? catalogScrollY : 0 });' in script
     assert '<nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">' in script
     assert "detail-layout" not in browser
     assert "detail-layout" not in styles
     # Focus follows the view, and Back restores the catalog position rather than the browser's own guess.
-    assert 'elements[view === "model" ? "detail-pane" : "result-title"].focus({ preventScroll: true });' in script
+    assert 'if (focusWasHidden) elements[VIEWS[view][1]].focus({ preventScroll: true });' in script
+    assert 'elements[navigation[0]].setAttribute("aria-current", "page");' in script
     assert '<h2 id="result-title" tabindex="-1">Models</h2>' in html
     assert 'history.scrollRestoration = "manual";' in script
     assert 'if (!elements["result-list"].querySelector(".model-card, .run-entry")) {' in script
@@ -1136,8 +1177,9 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert "const license = run.metadata?.license" in script
     assert "function licensePanel(license)" in script
     assert 'detailTag(icons.license, license.spdx, "license")' in script
-    assert 'keyValue("SPDX", license.spdx' in script
-    assert 'keyValue("Redistribution", redistribution)' in script
+    assert '<p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>' in script
+    assert "<span>${escapeHtml(redistribution)}</span></p>" in script
+    assert "`Redistribution ${license.redistribution}`" in script
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
@@ -1232,21 +1274,22 @@ assert.match(calls[1], /cursor=page-2/);
 def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None:
     script = _browser_source("model-view.js")
     render_detail = script.split("function renderDetail(variant)", 1)[1].split("function errorPanel(", 1)[0]
-    component_row = script.split("function componentRow(detail, open)", 1)[1].split("function ", 1)[0]
+    component_row = script.split("function componentRow(detail, single)", 1)[1].split("function ", 1)[0]
 
     # Build-level sections render once per variant, in the page order.
     order = [
-        "detailBuildSwitcher(variant)", 'id="components-section"', "${accuracyMarkup}", "${documentationMarkup}",
-        "<h4>Full package</h4>", "<h4>Build provenance</h4>", "sourceInputPanel(inputs)", "licensePanel(license)",
+        "detailBuildSwitcher(variant)", "${overviewMarkup}", 'id="components-section"', "${accuracyMarkup}",
+        "packageCard(variant,", 'disclosure("provenance", "Build provenance"', "sourceInputPanel(inputs)",
+        "licensePanel(license)",
     ]
     positions = [render_detail.index(marker) for marker in order]
     assert positions == sorted(positions)
     assert all(render_detail.count(marker) == 1 for marker in order)
     # One accuracy panel for the variant, from whichever component carries it.
-    assert ")).find(Boolean) || \"\"" in render_detail
+    assert "accuracyPanel(variantAccuracyReport(variant))" in render_detail
     assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
-    assert "componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))" in render_detail
+    assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
     assert "details.map((detail) => componentPerformance(detail, !singleComponent))" in render_detail
     # Per-component facts live in the row, never on the page.
@@ -1257,6 +1300,6 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "componentBenchmark(" not in component_row
     component_performance = script.split("function componentPerformance(detail, named)", 1)[1].split("function ", 1)[0]
     assert "componentBenchmark(detail.benchmark, run.id)" in component_performance
-    # A re-render keeps the benchmark disclosures the reader opened.
-    assert '${state.expandedBenchmarks.has(runId) ? " open" : ""}' in script
-    assert "state.expandedBenchmarks.add(benchmark)" in _browser_source("app.js")
+    # A component row is a disclosure keyed by its run, with compile parameters nested inside it.
+    assert 'disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta)' in component_row
+    assert 'disclosure(`parameters:${run.id}`, "Compile parameters"' in component_row

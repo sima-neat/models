@@ -1,11 +1,10 @@
 import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
 import {
   config, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
-  categoryFilters, catalogMode, branchSnapshotMode, currentVariant,
+  categoryFilters, catalogMode, branchSnapshotMode, currentVariant, showView,
 } from "./state.js";
 import { icons, escapeHtml, branchName, showToast } from "./ui.js";
 import { formatBytes } from "./metrics.js";
@@ -18,11 +17,9 @@ import {
   populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount,
   setFilterDrawer, updateFilterDisclosure, applyCatalog, loadBranches, renderRuns,
 } from "./catalog-view.js";
+import { renderComparison, picksFromUrl, writePicksToUrl, pickKey } from "./compare-view.js";
 import {
-  setComparisonSelection, renderComparisonTable, openComparison, updateCompareAction,
-} from "./compare-view.js";
-import {
-  detailSkeleton, showEmptyDetail, trialChart, toggleDocumentation, renderDetail, errorPanel,
+  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel,
 } from "./model-view.js";
 
 function writeCategoryFilterUrl() {
@@ -63,15 +60,17 @@ function setTheme(theme) {
   elements["theme-toggle"].title = `Switch to ${dark ? "light" : "dark"} mode`;
 }
 
-function deleteVariantParams(url) {
-  ["run", "model", "variant"].forEach((name) => url.searchParams.delete(name));
+// The page a link opens: a model page (`run`, or `model` and `variant`), the Compare page (`view` and
+// `build`), or the catalog when none is set.
+function deletePageParams(url) {
+  ["run", "model", "variant", "view", "build"].forEach((name) => url.searchParams.delete(name));
 }
 
 function writeVariantUrl(run) {
   const url = new URL(location.href);
   const modelId = run.metadata?.model_id;
   const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
-  deleteVariantParams(url);
+  deletePageParams(url);
   if (modelId && profile) {
     url.searchParams.set("model", modelId);
     url.searchParams.set("variant", profile);
@@ -83,16 +82,17 @@ function writeVariantUrl(run) {
   history.pushState({}, "", url);
 }
 
-// Opens the variant build that `runId` belongs to; `expand` opens that run's component row.
+// Opens the variant build that `runId` belongs to; `expand` opens that run's component row. Rows the
+// reader opened stay open across the variants of one model.
 async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   const catalogRun = state.runs.find((run) => run.id === runId);
   const previousModelId = currentVariant()?.modelId;
   if (previousModelId !== catalogRun?.metadata?.model_id) {
-    state.expandedDocumentationModelId = null;
+    state.openDisclosures = new Set();
     state.documentationRequestId += 1;
   }
   state.selectedId = runId;
-  state.expandedRuns = new Set(expand ? [runId] : []);
+  if (expand) state.openDisclosures.add(`component:${runId}`);
   if (catalogRun?.metadata?.model_id) state.activeProfileByModel.set(catalogRun.metadata.model_id, runProfile(catalogRun));
   renderRuns();
   detailSkeleton();
@@ -348,13 +348,19 @@ async function initialize() {
   elements.search.value = link.get("q") || "";
   elements["history-filter"].checked = link.get("history") === "1";
   state.selectedId = link.get("run");
+  const compareLink = link.get("view") === "compare";
+  // Other pages keep the picks, so returning to Compare finds them.
+  if (compareLink) state.comparePicks = picksFromUrl(link);
   const linkedVariant = link.get("model") && link.get("variant")
     ? { modelId: link.get("model"), profile: link.get("variant") } : null;
   state.categorySelection = Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""]),
   );
   state.taxonomy = null;
-  if (state.selectedId || linkedVariant) detailSkeleton();
+  if (compareLink) {
+    showView("compare");
+    elements["compare-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span></div>`;
+  } else if (state.selectedId || linkedVariant) detailSkeleton();
   else showEmptyDetail();
   state.urlBranch = link.has("branch");
   state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
@@ -434,6 +440,10 @@ async function initialize() {
   }
 
   if (navigationId !== state.navigationId) return;
+  if (compareLink) {
+    await renderComparison();
+    return;
+  }
   const linkedRun = Boolean(state.selectedId);
   if (!linkedRun && linkedVariant) {
     state.selectedId = latestVariantRun(linkedVariant)?.id || null;
@@ -487,7 +497,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   showEmptyDetail();
   const url = new URL(location.href);
   url.searchParams.set("branch", state.preferredBranch);
-  deleteVariantParams(url);
+  deletePageParams(url);
   history.pushState({}, "", url);
   updateFilterDisclosure();
   try {
@@ -552,7 +562,7 @@ elements["clear-filters"].addEventListener("click", async () => {
   writeBranchPreference(state.preferredBranch);
   const resetUrl = new URL(location.href);
   resetUrl.searchParams.set("branch", resetBranch);
-  deleteVariantParams(resetUrl);
+  deletePageParams(resetUrl);
   history.pushState({}, "", resetUrl);
   state.selectedId = null;
   state.selectedVariantKey = null;
@@ -579,33 +589,46 @@ elements["result-list"].addEventListener("click", (event) => {
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
   if (event.target.closest('[data-action="retry"]')) initialize();
 });
-elements["result-list"].addEventListener("change", (event) => {
-  const checkbox = event.target.closest("[data-compare-variant]");
-  if (!checkbox) return;
-  setComparisonSelection(checkbox);
-});
-elements["compare-button"].addEventListener("click", () => {
-  openComparison().catch((error) => {
-    elements["compare-dialog"].close();
-    showToast(error.message, true);
-  });
-});
-elements["compare-clear"].addEventListener("click", () => {
-  state.compareSelection.clear();
+function returnToCatalog() {
+  state.selectedId = null;
+  state.selectedVariantKey = null;
+  const url = new URL(location.href);
+  deletePageParams(url);
+  history.pushState({}, "", url);
   renderRuns();
-  updateCompareAction();
-  if (currentVariant() && elements["detail-pane"].querySelector(".detail-content")) renderDetail(currentVariant());
+  showEmptyDetail();
+}
+elements["nav-models"].addEventListener("click", (event) => {
+  event.preventDefault();
+  returnToCatalog();
 });
-elements["compare-close"].addEventListener("click", () => elements["compare-dialog"].close());
-elements["compare-dialog"].addEventListener("click", (event) => {
-  if (event.target === elements["compare-dialog"]) elements["compare-dialog"].close();
+// The Compare page adds the model page the reader came from to its first empty picker.
+elements["nav-compare"].addEventListener("click", (event) => {
+  event.preventDefault();
+  if (elements.workspace.dataset.view === "compare") return;
+  const variant = elements.workspace.dataset.view === "model" ? currentVariant() : null;
+  const viewed = variant?.modelId && variant.profile ? pickKey(variant.modelId, variant.profile) : "";
+  const empty = state.comparePicks.indexOf("");
+  if (viewed && !state.comparePicks.includes(viewed) && empty >= 0) state.comparePicks[empty] = viewed;
+  const url = new URL(location.href);
+  deletePageParams(url);
+  url.searchParams.set("view", "compare");
+  writePicksToUrl(url);
+  history.pushState({}, "", url);
+  renderComparison();
+});
+elements["compare-pane"].addEventListener("change", (event) => {
+  const picker = event.target.closest("[data-pick]");
+  if (!picker) return;
+  state.comparePicks[Number(picker.dataset.pick)] = picker.value;
+  const url = new URL(location.href);
+  writePicksToUrl(url);
+  history.replaceState({}, "", url);
+  renderComparison();
+  // The pickers render again with the page; keep the reader on the one they changed.
+  elements["compare-pane"].querySelector(`[data-pick="${picker.dataset.pick}"]`)?.focus();
 });
 elements["detail-pane"].addEventListener("click", (event) => {
-  const documentationToggle = event.target.closest("[data-documentation-toggle]");
-  if (documentationToggle) {
-    toggleDocumentation(documentationToggle);
-    return;
-  }
   const variantTab = event.target.closest("[data-detail-profile-id]");
   if (variantTab) {
     const build = selectedCatalogBuild(variantTab.dataset.detailModelId, variantTab.dataset.detailProfileId);
@@ -635,55 +658,15 @@ elements["detail-pane"].addEventListener("click", (event) => {
     }
     return;
   }
-  if (event.target.closest(".close-detail")) {
-    state.selectedId = null;
-    state.selectedVariantKey = null;
-    const url = new URL(location.href);
-    deleteVariantParams(url);
-    history.pushState({}, "", url);
-    renderRuns();
-    showEmptyDetail();
-  }
+  if (event.target.closest(".close-detail")) returnToCatalog();
 });
-elements["detail-pane"].addEventListener("change", (event) => {
-  const checkbox = event.target.closest("[data-compare-variant]");
-  if (checkbox) {
-    const group = setComparisonSelection(checkbox);
-    if (group && currentVariant()) {
-      renderDetail(currentVariant());
-      renderRuns();
-    }
-    return;
-  }
-  const trialMetric = event.target.closest("[data-trial-metric]");
-  if (trialMetric && trialMetric.value) {
-    const detail = state.detailCache.get(trialMetric.closest("[data-component-run-id]")?.dataset.componentRunId);
-    const benchmark = adaptBenchmarkResult(detail?.benchmark?.result);
-    const chart = trialMetric.closest(".trial-chart");
-    if (!chart || benchmark.kind !== "supported") return;
-    state.trialMetric = trialMetric.value;
-    const template = document.createElement("template");
-    template.innerHTML = trialChart(benchmark.value.trials, benchmark.value.measurements);
-    // Preserve the focused selector and surrounding detail DOM. Re-rendering the
-    // detail pane scrolls its selected variant into view, away from this chart.
-    for (const selector of [".chart-note", "svg", "table"]) {
-      chart.querySelector(selector).replaceWith(template.content.querySelector(selector));
-    }
-    return;
-  }
-});
-// Re-rendering the page keeps the component rows the reader opened.
+// Re-rendering the page keeps the rows the reader opened; opening the full model card loads it.
 elements["detail-pane"].addEventListener("toggle", (event) => {
-  const benchmark = event.target.dataset?.benchmarkRunId;
-  if (benchmark) {
-    if (event.target.open) state.expandedBenchmarks.add(benchmark);
-    else state.expandedBenchmarks.delete(benchmark);
-    return;
-  }
-  const row = event.target.closest?.("[data-component-run-id]");
-  if (!row || row !== event.target) return;
-  if (row.open) state.expandedRuns.add(row.dataset.componentRunId);
-  else state.expandedRuns.delete(row.dataset.componentRunId);
+  const key = event.target.dataset?.disclosure;
+  if (!key) return;
+  if (event.target.open) state.openDisclosures.add(key);
+  else state.openDisclosures.delete(key);
+  if (key === "model-card" && event.target.open) loadModelCard();
 }, true);
 elements["detail-pane"].addEventListener("keydown", (event) => {
   const tab = event.target.closest('[role="tab"]');
@@ -695,12 +678,6 @@ elements["detail-pane"].addEventListener("keydown", (event) => {
       : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
   event.preventDefault();
   tabs[next].click();
-});
-elements["compare-content"].addEventListener("change", (event) => {
-  const comparisonMetric = event.target.closest("[data-comparison-metric]");
-  if (!comparisonMetric || !comparisonMetric.value) return;
-  state.comparisonMetric = comparisonMetric.value;
-  elements["compare-content"].innerHTML = renderComparisonTable(state.comparisonEntries);
 });
 elements["load-more"].addEventListener("click", () => loadRuns({
   append: true,

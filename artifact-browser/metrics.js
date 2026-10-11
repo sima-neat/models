@@ -1,28 +1,25 @@
 // Metric definitions and value formatting.
 export const METRIC_DEFINITIONS = {
-  latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower", summary: true },
+  latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
-  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher", summary: true },
-  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower", summary: true },
+  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
+  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   energy_joules: { label: "Benchmark energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
   energy_per_inference_joules: {
-    label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower", summary: true,
+    label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower",
   },
   model_load_ms: { label: "Model load", unit: "ms", digits: 1, scale: 1, direction: "lower" },
   time_to_first_inference_ms: {
-    label: "Time to first inference", unit: "ms", digits: 1, scale: 1, direction: "lower", summary: true,
+    label: "Time to first inference", unit: "ms", digits: 1, scale: 1, direction: "lower",
   },
   mla_memory_baseline_mib: { label: "MLA memory baseline", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
   mla_memory_peak_mib: { label: "MLA memory peak", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
   mla_memory_peak_delta_mib: {
-    label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower", summary: true,
+    label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower",
   },
   mla_memory_final_mib: { label: "MLA memory final", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
 };
-export const SUMMARY_METRICS = Object.entries(METRIC_DEFINITIONS)
-  .filter(([, definition]) => definition.summary)
-  .map(([key]) => key);
 
 function fallbackMetricLabel(key) {
   const words = String(key).replace(/[._/-]+/g, " ").trim();

@@ -1,201 +1,158 @@
-// Build selection and the comparison dialog.
+// The Compare page: up to three variant builds of the branch catalog side by side.
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
-import { variantBuildRuns } from "./branch-builds.js";
-import { state, elements } from "./state.js";
-import { escapeHtml, branchName, shortSha, profileLabel, variantLabel, showToast } from "./ui.js";
-import { METRIC_DEFINITIONS, metricDefinition, metricDisplay, formatBytes } from "./metrics.js";
-import { api, mapWithConcurrency, modelPackArtifacts } from "./api.js";
-
-function comparisonGroups() {
-  return [...state.compareSelection.values()];
-}
+import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
+import { escapeHtml } from "./ui.js";
+import { metricDefinition, metricDisplay } from "./metrics.js";
+import { anchorBuild, compilerFilteredBuilds, loadRunDetail, loadVariant, profileGroups } from "./api.js";
+import { compareModels } from "./catalog-view.js";
+import { accuracyHeadline } from "./model-view.js";
 
 // Three builds fit side by side on a laptop screen and stay readable on a phone.
 export const MAX_COMPARED_BUILDS = 3;
 
-export function updateCompareAction() {
-  const selectedCount = state.compareSelection.size;
-  elements["compare-tray"].hidden = selectedCount === 0;
-  elements["compare-button"].disabled = selectedCount < 2;
-  elements["compare-label"].innerHTML = `${selectedCount === 1 ? "build" : "builds"} selected<span class="compare-limit"> · up to ${MAX_COMPARED_BUILDS}</span>`;
-  elements["compare-count"].textContent = selectedCount;
-  elements["compare-button"].setAttribute(
-    "aria-label",
-    selectedCount < 2
-      ? `Select ${2 - selectedCount} more variant${selectedCount === 1 ? "" : "s"} to compare`
-      : `Compare ${selectedCount} selected variants`,
-  );
+// A pick names a variant as `<model id>.<build profile>`, which needs no escaping in a link; the
+// catalog resolves it to that variant's current build.
+export function pickKey(modelId, profile) {
+  return `${modelId}.${profile}`;
 }
 
-export function setComparisonSelection(checkbox) {
-  const key = checkbox.dataset.compareVariant;
-  const group = state.variantGroups.get(key) || state.compareSelection.get(key);
-  if (!group) return null;
-  if (checkbox.checked && !state.compareSelection.has(key) && state.compareSelection.size >= MAX_COMPARED_BUILDS) {
-    checkbox.checked = false;
-    showToast(`Compare up to ${MAX_COMPARED_BUILDS} builds at a time. Remove one to add another.`, true);
-    return null;
-  }
-  if (checkbox.checked) state.compareSelection.set(key, group);
-  else state.compareSelection.delete(key);
-  checkbox.closest(".run-entry")?.classList.toggle("compared", checkbox.checked);
-  checkbox.setAttribute("aria-label", `${checkbox.checked ? "Remove" : "Add"} ${variantLabel(group)} ${checkbox.checked ? "from" : "to"} comparison`);
-  checkbox.closest("label")?.setAttribute("title", `${checkbox.checked ? "Remove from" : "Add to"} comparison`);
-  updateCompareAction();
-  return group;
+export function picksFromUrl(params) {
+  const picks = params.getAll("build").filter(Boolean).slice(0, MAX_COMPARED_BUILDS);
+  return Array.from({ length: MAX_COMPARED_BUILDS }, (_, index) => picks[index] || "");
 }
 
-export function compareCheckbox(group) {
-  const compared = state.compareSelection.has(group.key);
-  return `<input type="checkbox" data-compare-variant="${escapeHtml(group.key)}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(variantLabel(group))} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />`;
+export function writePicksToUrl(url) {
+  url.searchParams.delete("build");
+  state.comparePicks.filter(Boolean).forEach((pick) => url.searchParams.append("build", pick));
 }
 
-function comparisonMetric(metric, definition, best = false) {
+const PERFORMANCE_ROWS = [
+  ["throughput_fps", "Throughput"],
+  ["latency_avg_ms", "Latency"],
+  ["avg_power_watts", "Board power"],
+  ["energy_per_inference_joules", "Energy per inference"],
+];
+
+function catalogVariants() {
+  return [...state.models].sort(compareModels).flatMap((model) => (
+    profileGroups({ ...model, builds: compilerFilteredBuilds(model) }).map(([profile, builds]) => ({
+      key: pickKey(model.model_id, profile), model, profile, build: anchorBuild(builds),
+    }))
+  ));
+}
+
+function picker(index, options) {
+  const pick = state.comparePicks[index];
+  const choices = options.map((option) => (
+    `<option value="${escapeHtml(option.key)}"${option.key === pick ? " selected" : ""}>${escapeHtml(`${option.model.display_name || option.model.model_id} · ${option.profile}`)}</option>`
+  )).join("");
+  return `<label><span>Build ${index + 1}</span><select data-pick="${index}"><option value="">Choose a build</option>${choices}</select></label>`;
+}
+
+function measuredText(metric, key) {
+  const definition = metricDefinition(key, metric);
   const display = metricDisplay(metric, definition);
-  if (!display) {
-    const reason = metric?.reason ? metric.reason.replaceAll("_", " ") : "Not measured";
-    return `<span class="comparison-unavailable" title="${escapeHtml(reason)}">—</span>`;
-  }
-  const value = `${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit)}</small>`;
-  return best
-    ? `<span class="comparison-value comparison-best"><strong>${value}</strong><span class="sr-only"> (best)</span></span>`
-    : `<span class="comparison-value">${value}</span>`;
+  if (!display) return null;
+  return { number: Number(display.value.toFixed(display.digits)), text: `${display.value.toFixed(display.digits)} ${display.unit.replace("/inference", "")}`, direction: definition.direction };
 }
 
-// The best value of a measurement among builds of the same component; a single build has no best.
-function displayedValue(display) {
-  return Number(display.value.toFixed(display.digits));
+// Each component is measured on its own and the CPU stage between components is not, so a build lists
+// one value per component and never adds them up.
+function componentMeasurements(variant) {
+  return variant.details.map((detail) => {
+    const adapted = detail.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : null;
+    return {
+      component: variant.details.length > 1 ? detail.summary.run.metadata?.component_id || "model" : "model",
+      measurements: adapted?.kind === "supported" ? adapted.value.measurements : {},
+    };
+  });
 }
 
-function bestComponentValues(entries, field, definition) {
-  if (!definition || definition.direction === "neutral") return new Map();
-  const better = definition.direction === "lower" ? Math.min : Math.max;
+// A single-component build competes with other single-component builds; a component of a larger model
+// competes only with the same component of another build.
+function bestValues(columns, key) {
   const byComponent = new Map();
-  for (const { run, benchmark } of entries) {
-    const display = metricDisplay(benchmark?.measurements[field], definition);
-    if (!display) continue;
-    const component = run.metadata?.component_id || "model";
-    byComponent.set(component, [...(byComponent.get(component) || []), displayedValue(display)]);
+  let direction = "neutral";
+  for (const column of columns) {
+    for (const { component, measurements } of column.components) {
+      const value = measuredText(measurements[key], key);
+      if (!value) continue;
+      direction = value.direction;
+      byComponent.set(component, [...(byComponent.get(component) || []), value.number]);
+    }
   }
-  return new Map([...byComponent].filter(([, values]) => values.length > 1)
-    .map(([component, values]) => [component, better(...values)]));
+  if (direction === "neutral") return new Map();
+  const better = direction === "lower" ? Math.min : Math.max;
+  return new Map([...byComponent].filter(([, values]) => values.length > 1).map(([component, values]) => [component, better(...values)]));
 }
 
-function comparisonEntryFromDetail(run, detail) {
-  const summary = detail?.summary || null;
-  const adapted = detail?.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : { kind: "missing" };
-  return {
-    run: summary?.run || run,
-    artifacts: modelPackArtifacts(summary?.artifacts),
-    benchmark: adapted.kind === "supported" ? adapted.value : null,
-  };
+function performanceCell(column, key, best) {
+  if (!column.components.length) return "<td>—</td>";
+  const lines = column.components.map(({ component, measurements }) => {
+    const value = measuredText(measurements[key], key);
+    const isBest = value && best.get(component) === value.number;
+    const text = value ? `<span class="${isBest ? "best" : ""}">${escapeHtml(value.text)}${isBest ? '<span class="sr-only"> (best)</span>' : ""}</span>` : "<span>—</span>";
+    return column.components.length > 1
+      ? `<span class="compare-line"><span class="compare-component">${escapeHtml(component)}</span>${text}</span>`
+      : text;
+  });
+  return `<td>${lines.join("")}</td>`;
 }
 
-async function loadComparisonEntry(run) {
-  const detail = state.detailCache.get(run.id);
-  if (detail) return comparisonEntryFromDetail(run, detail);
-  if (state.comparisonCache.has(run.id)) return state.comparisonCache.get(run.id);
-
-  const request = Promise.all([
-    api(`/v1/runs/${run.id}`).catch(() => null),
-    api(`/v1/runs/${run.id}/benchmarks/latest`).catch(() => null),
-  ]).then(([summary, benchmark]) => comparisonEntryFromDetail(run, { summary, benchmark }));
-  state.comparisonCache.set(run.id, request);
-  return request;
-}
-
-// Each component is measured on its own; the CPU stage between components is not, so component
-// measurements are listed per component and never added up.
-export function renderComparisonTable(variants) {
-  const entries = variants.flatMap((variant) => variant.entries);
-  const available = [...new Set(entries.flatMap(({ benchmark }) => Object.keys(benchmark?.measurements || {})))]
-    .filter((key) => entries.some(({ benchmark }) => benchmark?.measurements[key]?.status === "measured"))
-    .sort((left, right) => {
-      const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
-      const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
-      if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
-      return left.localeCompare(right);
-    });
-  const field = available.includes(state.comparisonMetric) ? state.comparisonMetric : available[0];
-  if (field) state.comparisonMetric = field;
-  const sampleMetric = field
-    ? entries.map(({ benchmark }) => benchmark?.measurements[field]).find(Boolean)
-    : null;
-  const definition = field ? metricDefinition(field, sampleMetric) : null;
-  const best = bestComponentValues(entries, field, definition);
-  const isBest = (componentRun, benchmark) => {
-    const display = metricDisplay(benchmark?.measurements[field], definition);
-    return Boolean(display) && displayedValue(display) === best.get(componentRun.metadata?.component_id || "model");
-  };
-  const groups = variants.map(({ group, entries: variantEntries }) => {
-    const run = variantEntries[0]?.run || group.anchor;
-    const heading = `<tr class="comparison-variant"><th scope="rowgroup" colspan="4"><strong>${escapeHtml(modelName(group.modelId))}</strong><small>${escapeHtml(profileLabel(run))}</small><small>${escapeHtml(branchName(run.git_ref))} · ${escapeHtml(run.toolchain_version || "—")} · ${escapeHtml(shortSha(run.commit_sha))}</small></th></tr>`;
-    const rows = variantEntries.map(({ run: componentRun, artifacts, benchmark }) => {
-      const artifactBytes = artifacts.reduce((total, artifact) => (
-        total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
-      ), 0);
-      return `<tr>
-        <th scope="row">${escapeHtml(componentRun.metadata?.component_id || "model")}</th>
-        <td>${escapeHtml(benchmark?.workload || "No benchmark")}</td>
-        <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
-        <td>${field ? comparisonMetric(benchmark?.measurements[field], definition, isBest(componentRun, benchmark)) : '<span class="comparison-unavailable">—</span>'}</td>
-      </tr>`;
-    }).join("");
-    return `<tbody>${heading}${rows}</tbody>`;
+function comparisonTable(columns) {
+  const group = (title) => `<tr class="compare-group"><th scope="rowgroup" colspan="${columns.length + 1}">${escapeHtml(title)}</th></tr>`;
+  const row = (label, cells) => `<tr><th scope="row">${escapeHtml(label)}</th>${cells.join("")}</tr>`;
+  const text = (value) => `<td>${escapeHtml(value || "—")}</td>`;
+  const performance = PERFORMANCE_ROWS.map(([key, label]) => {
+    const best = bestValues(columns, key);
+    return row(label, columns.map((column) => performanceCell(column, key, best)));
   }).join("");
-  const options = available.map((key) => {
-    const item = metricDefinition(key);
-    return `<option value="${escapeHtml(key)}"${key === field ? " selected" : ""}>${escapeHtml(item.label)}</option>`;
-  }).join("");
-  const note = definition
-    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better, best in bold`} · per component`
-    : "No shared measurements are available";
-  return `<div class="comparison-measurement-bar"><div class="comparison-measurement-control"><label class="chart-control"><span>Compare by</span><select data-comparison-metric>${options}</select></label><p>${escapeHtml(note)}</p></div></div>
-  <div class="comparison-table-wrap"><table class="comparison-table">
-    <caption class="sr-only">Artifact sizes and benchmark measurements for the components of ${variants.length} variants</caption>
-    <thead><tr>
-      <th scope="col">Variant / component</th><th scope="col">Workload</th>
-      <th scope="col">Artifact size</th><th scope="col">${escapeHtml(definition?.label || "Measurement")}</th>
-    </tr></thead>${groups}
+  return `<div class="compare-table-wrap"><table class="compare-table">
+    <thead><tr><td></td>${columns.map(({ option, failed }) => `<th scope="col">${escapeHtml(option.model.display_name || option.model.model_id)}<small>${escapeHtml(failed ? "Could not load this build" : option.profile)}</small></th>`).join("")}</tr></thead>
+    <tbody>
+      ${group("Model")}
+      ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}
+      ${row("Components", columns.map(({ variant }) => text(variant ? String(variant.details.length) : "")))}
+      ${group("Performance on Modalix")}
+      ${performance}
+      ${group("Accuracy")}
+      ${row("Headline metric", columns.map(({ accuracy }) => text(accuracy && `${accuracy.label} ${accuracy.value}`)))}
+      ${row("Published", columns.map(({ accuracy }) => text(accuracy?.published)))}
+    </tbody>
   </table></div>`;
 }
 
-function modelName(modelId) {
-  const model = [...state.models, ...state.catalogDefinitions].find((item) => item.model_id === modelId);
-  return model?.display_name || modelId || "Unknown model";
+async function loadPickedVariant(option) {
+  const anchor = (await loadRunDetail(option.build.run_id)).summary.run;
+  return loadVariant(anchor);
 }
 
-// A history entry holds only the runs on screen, so a search or page boundary can split a build;
-// compare every component of each selected build.
-async function completeVariantGroup(group) {
-  const cached = state.variantCache.get(group.key);
-  return { ...group, runs: cached ? cached.runs : await variantBuildRuns(group.anchor, api) };
-}
+let compareRequestId = 0;
 
-export async function openComparison() {
-  const selected = comparisonGroups();
-  if (selected.length < 2) return;
-  elements["compare-title"].textContent = `Compare ${selected.length} variants`;
-  elements["compare-description"].textContent = "Each component is listed under its variant. Empty benchmark cells mean that measurement is unavailable.";
-  elements["compare-content"].innerHTML = `<div class="comparison-loading" role="status"><span class="spinner"></span> Loading artifact and benchmark data…</div>`;
-  elements["compare-dialog"].showModal();
-  let groups;
-  try {
-    groups = await Promise.all(selected.map(completeVariantGroup));
-  } catch (error) {
-    if (elements["compare-dialog"].open) {
-      elements["compare-content"].innerHTML = `<p class="muted-message">Could not load every component of the selected variants. ${escapeHtml(error.message)}</p>`;
-    }
+export async function renderComparison() {
+  showView("compare");
+  const requestId = ++compareRequestId;
+  const intro = `<header class="catalog-intro"><h2 id="compare-title" tabindex="-1">Compare</h2>
+    <p>Pick up to three builds. Bold marks the best value in each row. A model with several components lists each one on its own line, compared only with the same component of another build.</p></header>`;
+  if (!catalogMode()) {
+    elements["compare-pane"].innerHTML = `${intro}<p class="muted-message">Comparison lists the builds of one branch. Choose a branch under Models and turn off build history.</p>`;
     return;
   }
-  const runs = groups.flatMap((group) => group.runs);
-  const entries = await mapWithConcurrency(runs, 6, loadComparisonEntry);
-  let offset = 0;
-  const variants = groups.map((group) => {
-    const variantEntries = entries.slice(offset, offset + group.runs.length);
-    offset += group.runs.length;
-    return { group, entries: variantEntries };
+  const options = catalogVariants();
+  const picked = state.comparePicks.map((key) => options.find((option) => option.key === key)).filter(Boolean);
+  elements["compare-pane"].innerHTML = `${intro}
+    <div class="compare-picks">${state.comparePicks.map((_, index) => picker(index, options)).join("")}</div>
+    <div class="compare-results" aria-live="polite">${picked.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading builds…</p>' : '<p class="muted-message">Choose a build to start.</p>'}</div>`;
+  if (!picked.length) return;
+  const variants = await Promise.all(picked.map((option) => loadPickedVariant(option).catch(() => null)));
+  if (requestId !== compareRequestId) return;
+  const columns = picked.map((option, index) => {
+    const variant = variants[index];
+    return {
+      option, variant, failed: !variant,
+      components: variant ? componentMeasurements(variant) : [],
+      accuracy: variant ? accuracyHeadline(variant) : null,
+    };
   });
-  state.comparisonEntries = variants;
-  if (elements["compare-dialog"].open) elements["compare-content"].innerHTML = renderComparisonTable(variants);
+  elements["compare-pane"].querySelector(".compare-results").innerHTML = comparisonTable(columns);
 }

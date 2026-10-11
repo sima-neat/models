@@ -36,7 +36,8 @@
           <span>Model Registry</span>
         </a>
         <nav class="product-nav" aria-label="Model Registry">
-          <span aria-current="page">Models</span>
+          <a id="nav-models" href="./" aria-current="page">Models</a>
+          <a id="nav-compare" href="./?view=compare">Compare</a>
           <a href="./docs">Developer docs</a>
         </nav>
       </div>
@@ -73,9 +74,9 @@
             <aside id="filter-drawer" class="filter-drawer" data-open="false" aria-label="Filters">
               <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
               <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
-              <details id="more-filters" class="more-filters">
-                <summary>More filters</summary>
-                <div class="more-filters-body">
+              <details id="more-filters" class="more-filters disclosure">
+                <summary><span class="disclosure-label">More filters</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
+                <div class="more-filters-body disclosure-body">
                   <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
                   <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
                   <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
@@ -103,29 +104,9 @@
         </div>
 
         <article id="detail-pane" class="detail-pane" aria-label="Model details" tabindex="-1"></article>
+        <section id="compare-pane" class="compare-pane" aria-label="Compare builds" tabindex="-1"></section>
       </section>
-
-      <div id="compare-tray" class="compare-tray" hidden>
-        <span id="compare-label" class="compare-label">Compare</span>
-        <span id="compare-count" class="compare-count">0</span>
-        <button id="compare-clear" class="text-button" type="button">Clear</button>
-        <button id="compare-button" class="compare-button" type="button" disabled>Compare</button>
-      </div>
     </main>
-
-    <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title" aria-describedby="compare-description">
-      <div class="compare-dialog-shell">
-        <header class="compare-dialog-header">
-          <div>
-            <p class="kicker">Model comparison</p>
-            <h2 id="compare-title">Compare builds</h2>
-            <p id="compare-description">Artifact and benchmark measurements for the selected builds.</p>
-          </div>
-          <button id="compare-close" class="compare-close" type="button" aria-label="Close comparison">×</button>
-        </header>
-        <div id="compare-content" class="compare-content" aria-live="polite"></div>
-      </div>
-    </dialog>
 
     <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-title" aria-describedby="download-description">
       <h2 id="download-title">Download components</h2>

@@ -9,7 +9,6 @@ import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog, buildProfileId, componentId,
   runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl,
 } from "./api.js";
-import { updateCompareAction, compareCheckbox } from "./compare-view.js";
 
 function taxonomyOptions(section, emptyLabel) {
   const entries = state.taxonomy?.[section] || {};
@@ -250,7 +249,6 @@ function componentList(runs) {
 
 function renderHistory() {
   const builds = variantBuilds(filteredRuns());
-  builds.forEach((group) => state.variantGroups.set(group.key, group));
   elements["result-count"].textContent = `${builds.length}${state.hasMore ? "+" : ""} build${builds.length === 1 ? "" : "s"}`;
   if (!builds.length) {
     elements["result-list"].innerHTML = `<div class="no-results"><span>0</span><h3>No matching builds</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
@@ -261,14 +259,8 @@ function renderHistory() {
     const run = group.anchor;
     const model = group.modelId || run.run_type.replaceAll("_", " ");
     const selected = group.key === state.selectedVariantKey || group.runs.some((item) => item.id === state.selectedId);
-    const compared = state.compareSelection.has(group.key);
-    if (compared) state.compareSelection.set(group.key, group);
     const components = componentList(group.runs);
-    return `<div class="run-entry${compared ? " compared" : ""}">
-      <label class="compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
-        ${compareCheckbox(group)}
-        <span aria-hidden="true">✓</span>
-      </label>
+    return `<div class="run-entry">
       <button class="run-row${selected ? " selected" : ""}" type="button" data-run-id="${run.id}" aria-pressed="${selected}">
       <span class="run-identity"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(profileLabel(run))}</small>${components ? `<small class="run-components">${escapeHtml(components)}</small>` : ""}</span>
       <span class="run-branch"><small>Branch</small>${escapeHtml(branchName(run.git_ref))}</span>
@@ -290,7 +282,7 @@ function modelSortKey(model) {
   return { family, rank: sizeWord ? MODEL_SIZE_RANK[sizeWord.toLowerCase()] : 0, name };
 }
 
-function compareModels(left, right) {
+export function compareModels(left, right) {
   const a = modelSortKey(left);
   const b = modelSortKey(right);
   return a.family.localeCompare(b.family) || a.rank - b.rank || a.name.localeCompare(b.name);
@@ -343,5 +335,4 @@ export function renderRuns() {
   elements["load-more"].hidden = !state.hasMore;
   if (modelsMode) renderModels();
   else renderHistory();
-  updateCompareAction();
 }

@@ -1,5 +1,5 @@
 // Icons, escaping, labels, and toasts shared by every view.
-import { elements } from "./state.js";
+import { state, elements } from "./state.js";
 
 export const icons = {
   sun: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`,
@@ -18,6 +18,11 @@ export const icons = {
   modelType: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>`,
   architecture: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 12h4m0 0 6-5m-6 5 6 5"/></svg>`,
   task: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>`,
+  gauge: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="m12 13 4-4"/><circle cx="12" cy="13" r="1"/></svg>`,
+  thermometer: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0Z"/><path d="M12 9v6.5"/></svg>`,
+  memory: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="10" rx="1.5"/><path d="M8 7v10m4-10v10m4-10v10M7 4v3m5-3v3m5-3v3M7 17v3m5-3v3m5-3v3"/></svg>`,
+  timer: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 2M9.5 2.5h5"/></svg>`,
+  chevron: `<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`,
   license: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5M10 12h6m-6 4h6"/></svg>`,
 };
 
@@ -38,8 +43,11 @@ export function profileLabel(run) {
   return run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable";
 }
 
-export function variantLabel(group) {
-  return `${group.modelId || "Unknown model"} ${profileLabel(group.anchor)}`;
+// Every expandable area is the same full-width row: its name on the left and a chevron on the right
+// that turns down when open. Re-rendering keeps the rows the reader opened, by key.
+export function disclosure(key, label, body, meta = "") {
+  const open = state.openDisclosures.has(key);
+  return `<details class="disclosure" data-disclosure="${escapeHtml(key)}"${open ? " open" : ""}><summary><span class="disclosure-label">${escapeHtml(label)}</span>${meta ? `<span class="disclosure-meta">${escapeHtml(meta)}</span>` : ""}${icons.chevron}</summary><div class="disclosure-body">${body}</div></details>`;
 }
 
 export function showToast(message, isError = false) {

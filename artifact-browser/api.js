@@ -165,7 +165,7 @@ export function componentId(build) {
 }
 
 // The "model" component, else the first, opens a variant page.
-function anchorBuild(builds) {
+export function anchorBuild(builds) {
   return builds.find((item) => componentId(item) === "model") || builds[0];
 }
 

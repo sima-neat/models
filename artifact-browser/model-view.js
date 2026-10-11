@@ -2,16 +2,15 @@
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
-import { icons, escapeHtml, branchName, shortSha, profileLabel, showToast } from "./ui.js";
+import { icons, escapeHtml, branchName, shortSha, profileLabel, showToast, disclosure } from "./ui.js";
 import {
-  METRIC_DEFINITIONS, SUMMARY_METRICS, metricDefinition, metricDisplay, formatDate, formatDuration,
+  metricDefinition, metricDisplay, formatDate, formatDuration,
   formatBytes,
 } from "./metrics.js";
 import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
-import { compareCheckbox } from "./compare-view.js";
 
 function githubModelUrl(run, modelId) {
   const organization = String(state.repository.organization || "");
@@ -64,11 +63,12 @@ function huggingFaceSourceLink(input = {}) {
 
 function sourceInputPanel(inputs) {
   if (!inputs.length) return "";
-  return `<div class="detail-group"><h4>Source model</h4>${inputs.map((input) => `<div class="source-block">
+  const meta = inputs.map((input) => formatBytes(input.size_bytes)).join(" · ");
+  return disclosure("source", inputs.length > 1 ? "Source models" : "Source model", inputs.map((input) => `<div class="source-block">
     <strong>${escapeHtml(input.name)}</strong>
     <p>${escapeHtml(input.source_reference || input.input_type)}</p>
     <div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div>
-  </div>`).join("")}</div>`;
+  </div>`).join(""), meta);
 }
 
 export function detailSkeleton() {
@@ -90,126 +90,146 @@ function detailTag(icon, value, kind) {
   return `<span class="detail-tag detail-tag-${kind}">${icon}<span>${escapeHtml(value)}</span></span>`;
 }
 
-function metricCard(key, metric) {
+// Benchmark details group the measurements by what they tell a reader. A metric this browser does not
+// know yet still appears, under Other measurements.
+const METRIC_GROUPS = [
+  ["speed", "Speed", "gauge", ["latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "throughput_fps"]],
+  ["heat", "Power & heat", "thermometer", ["avg_power_watts", "energy_per_inference_joules", "energy_joules"]],
+  ["memory", "MLA memory", "memory", [
+    "mla_memory_baseline_mib", "mla_memory_peak_mib", "mla_memory_peak_delta_mib", "mla_memory_final_mib",
+  ]],
+  ["startup", "Startup", "timer", ["model_load_ms", "time_to_first_inference_ms"]],
+];
+
+// Inside the MLA memory card the shared prefix is implied, so its rows use shorter names.
+const GROUP_LABELS = {
+  mla_memory_baseline_mib: "Before loading",
+  mla_memory_peak_mib: "Peak",
+  mla_memory_peak_delta_mib: "Peak increase",
+  mla_memory_final_mib: "After the run",
+};
+
+function measuredValue(key, metric) {
   const definition = metricDefinition(key, metric);
   const display = metricDisplay(metric, definition);
-  const value = display ? `${display.value.toFixed(display.digits)} ${display.unit}` : "Not available";
-  const reason = !display && metric?.reason ? ` title="${escapeHtml(metric.reason.replaceAll("_", " "))}"` : "";
-  return `<div class="benchmark-metric"${reason}><span>${escapeHtml(definition.label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+  return display && { label: definition.label, text: display.value.toFixed(display.digits), unit: display.unit, value: display.value };
 }
 
-function availableTrialMetrics(trials) {
-  const fields = [...new Set(trials.flatMap((trial) => Object.keys(trial.metrics)))];
-  return fields.filter((field) => (
-    trials.filter((trial) => Number.isFinite(trial.metrics[field])).length >= 2
-  )).sort((left, right) => {
-    const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
-    const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
-    if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
-    return left.localeCompare(right);
-  });
+function metricRow({ label, text, unit }) {
+  return `<div class="metric-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(text)}<small>${escapeHtml(unit)}</small></dd></div>`;
 }
 
-export function trialChart(trials, measurements = {}) {
-  const available = availableTrialMetrics(trials);
-  if (!available.length) return "";
-  const field = available.includes(state.trialMetric) ? state.trialMetric : available[0];
-  const definition = metricDefinition(field, measurements[field]);
-  const measuredTrials = trials
-    .filter((trial) => Number.isFinite(trial.metrics[field]))
-    .map((trial) => ({ ...trial, value: trial.metrics[field] * definition.scale }));
-  const values = measuredTrials.map((trial) => trial.value);
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
-  const spread = maximum - minimum || Math.max(maximum * 0.05, 0.1);
-  const low = Math.max(0, minimum - spread * 0.2);
-  const high = maximum + spread * 0.2;
-  const width = 640;
-  const left = 70;
-  const right = 28;
-  const top = 28;
-  const row = 34;
-  const height = top + trials.length * row + 30;
-  const x = (value) => left + ((value - low) / (high - low)) * (width - left - right);
-  const grid = [0, .25, .5, .75, 1].map((fraction) => {
-    const position = left + fraction * (width - left - right);
-    const label = low + fraction * (high - low);
-    return `<line x1="${position}" y1="${top - 8}" x2="${position}" y2="${height - 25}"/><text x="${position}" y="${height - 7}">${label.toFixed(2)}</text>`;
-  }).join("");
-  const points = measuredTrials.map((trial, index) => {
-    const y = top + index * row;
-    return `<text class="trial-label" x="0" y="${y + 4}">Trial ${trial.number}</text><circle cx="${x(trial.value)}" cy="${y}" r="6"/><text class="trial-value" x="${Math.min(x(trial.value) + 11, width - 55)}" y="${y + 4}">${trial.value.toFixed(definition.digits)}</text>`;
-  }).join("");
-  const options = available.map((metric) => (
-    `<option value="${escapeHtml(metric)}"${metric === field ? " selected" : ""}>${escapeHtml(metricDefinition(metric, measurements[metric]).label)}</option>`
-  )).join("");
-  const direction = definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`;
-  return `<figure class="trial-chart benchmark-chart"><figcaption><span class="chart-title">Trial comparison</span><label class="chart-control"><span>Metric</span><select data-trial-metric>${options}</select></label></figcaption><p class="chart-note">${escapeHtml(definition.unit + direction)}</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)} for ${measuredTrials.length} benchmark trials"><g class="chart-grid">${grid}</g><g class="chart-points">${points}</g></svg><table class="sr-only"><caption>${escapeHtml(definition.label)} by benchmark trial</caption><thead><tr><th>Trial</th><th>${escapeHtml(definition.label)} in ${escapeHtml(definition.unit)}</th></tr></thead><tbody>${measuredTrials.map((trial) => `<tr><td>${trial.number}</td><td>${trial.value}</td></tr>`).join("")}</tbody></table></figure>`;
+function latencyTrials(trials, measurements) {
+  const definition = metricDefinition("latency_avg_ms", measurements.latency_avg_ms);
+  const measured = trials.filter((trial) => Number.isFinite(trial.metrics.latency_avg_ms));
+  if (measured.length < 2) return "";
+  const values = measured.map((trial) => trial.metrics.latency_avg_ms * definition.scale);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const spread = mean ? ((Math.max(...values) - Math.min(...values)) / mean) * 100 : 0;
+  const chips = measured.map((trial, index) => `<span>${trial.number} · <b>${values[index].toFixed(definition.digits)}</b></span>`).join("");
+  return `<div class="trial-chips" role="list" aria-label="Average latency per trial">${chips}</div><p class="metric-caption">Latency per trial in ${escapeHtml(definition.unit)} · spread ${spread.toFixed(1)}%</p>`;
 }
 
-function measurementTable(measurements) {
-  const entries = Object.entries(measurements)
-    .filter(([key]) => !SUMMARY_METRICS.includes(key))
-    .sort(([left], [right]) => {
-      const knownLeft = Object.keys(METRIC_DEFINITIONS).indexOf(left);
-      const knownRight = Object.keys(METRIC_DEFINITIONS).indexOf(right);
-      if (knownLeft >= 0 || knownRight >= 0) return (knownLeft < 0 ? 1000 : knownLeft) - (knownRight < 0 ? 1000 : knownRight);
-      return left.localeCompare(right);
-    });
-  if (!entries.length) return "";
-  const rows = entries.map(([key, metric]) => {
-    const definition = metricDefinition(key, metric);
-    const display = metricDisplay(metric, definition);
-    const reason = metric.reason ? metric.reason.replaceAll("_", " ") : metric.status;
-    const value = display ? `${display.value.toFixed(display.digits)} ${display.unit}` : reason;
-    return `<tr><th scope="row">${escapeHtml(definition.label)}</th><td>${escapeHtml(value)}</td><td>${escapeHtml(metric.aggregation)}</td><td>${metric.sampleCount}</td></tr>`;
-  }).join("");
-  return `<div class="benchmark-measurements"><h4>Additional measurements</h4><div class="benchmark-measurements-wrap"><table><thead><tr><th scope="col">Measurement</th><th scope="col">Value</th><th scope="col">Statistic</th><th scope="col">Samples</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
-}
-
-function temperatureChart(series) {
-  if (!series.length) return "";
+// The hottest temp1 sensor is the board's die temperature; other sensors are only used without one.
+function temperatureSamples(series) {
+  if (!series.length) return null;
   const hottest = (candidates) => [...candidates].sort((left, right) => (
     Math.max(...right.samples.map((sample) => sample.celsius))
     - Math.max(...left.samples.map((sample) => sample.celsius))
   ))[0];
   const temp1 = series.filter((item) => item.sensor.toLowerCase() === "temp1");
-  const selected = hottest(temp1.length ? temp1 : series);
+  return hottest(temp1.length ? temp1 : series);
+}
+
+function temperatureRow(selected) {
+  const samples = selected.samples;
+  return metricRow({
+    label: "Temperature",
+    text: `${samples[0].celsius.toFixed(1)} → ${samples.at(-1).celsius.toFixed(1)}`,
+    unit: "°C",
+  });
+}
+
+function temperatureSparkline(selected) {
   const samples = selected.samples;
   const temperatures = samples.map((sample) => sample.celsius);
   const startTime = Math.min(...samples.map((sample) => sample.timestamp));
-  const endTime = Math.max(...samples.map((sample) => sample.timestamp));
-  const elapsed = Math.max(endTime - startTime, 1000);
+  const elapsed = Math.max(Math.max(...samples.map((sample) => sample.timestamp)) - startTime, 1);
   const minimum = Math.min(...temperatures);
   const maximum = Math.max(...temperatures);
   const spread = maximum - minimum || 1;
-  const low = minimum - Math.max(spread * .25, .5);
-  const high = maximum + Math.max(spread * .25, .5);
-  const width = 640;
-  const height = 190;
-  const left = 48;
-  const right = 24;
-  const top = 18;
-  const bottom = 35;
-  const x = (timestamp) => left + ((timestamp - startTime) / elapsed) * (width - left - right);
-  const y = (celsius) => top + ((high - celsius) / (high - low)) * (height - top - bottom);
-  const grid = [0, .5, 1].map((fraction) => {
-    const celsius = low + (1 - fraction) * (high - low);
-    const position = top + fraction * (height - top - bottom);
-    return `<line x1="${left}" y1="${position}" x2="${width - right}" y2="${position}"/><text class="temperature-axis-label" x="${left - 8}" y="${position + 4}">${celsius.toFixed(1)}°</text>`;
-  }).join("");
-  const path = samples.map((sample, index) => `${index ? "L" : "M"}${x(sample.timestamp)} ${y(sample.celsius)}`).join(" ");
-  const points = samples.map((sample) => {
-    const label = sample.trial ? `Trial ${sample.trial}` : sample.phase;
-    return `<circle cx="${x(sample.timestamp)}" cy="${y(sample.celsius)}" r="5"><title>${escapeHtml(label)}: ${sample.celsius.toFixed(2)} °C</title></circle>`;
-  }).join("");
-  const ticks = [0, .5, 1].map((fraction) => {
-    const seconds = (elapsed * fraction) / 1000;
-    const position = left + fraction * (width - left - right);
-    return `<text x="${position}" y="${height - 8}">${seconds.toFixed(0)}s</text>`;
-  }).join("");
-  const legacy = selected.legacy && samples.length === 2;
-  return `<figure class="temperature-chart benchmark-chart"><figcaption><span class="chart-title">Temperature ${legacy ? "change" : "over benchmark"}</span><span class="chart-series-label">${escapeHtml(selected.label)}</span></figcaption><p class="chart-note">${legacy ? "Start/end snapshots only" : `${samples.length} samples`} · ${minimum.toFixed(1)}–${maximum.toFixed(1)} °C</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Temperature in degrees Celsius for ${escapeHtml(selected.label)}"><g class="chart-grid">${grid}${ticks}</g><path class="temperature-line" d="${path}"/><g class="temperature-points">${points}</g></svg><table class="sr-only"><caption>Temperature samples for ${escapeHtml(selected.label)}</caption><thead><tr><th>Elapsed time</th><th>Temperature in degrees Celsius</th></tr></thead><tbody>${samples.map((sample) => `<tr><td>${((sample.timestamp - startTime) / 1000).toFixed(1)} seconds</td><td>${sample.celsius}</td></tr>`).join("")}</tbody></table></figure>`;
+  const width = 300;
+  const height = 56;
+  const x = (timestamp) => ((timestamp - startTime) / elapsed) * width;
+  const y = (celsius) => 6 + ((maximum - celsius) / spread) * (height - 12);
+  const line = samples.map((sample, index) => `${index ? "L" : "M"}${x(sample.timestamp).toFixed(1)} ${y(sample.celsius).toFixed(1)}`).join(" ");
+  const sampleLabel = selected.legacy && samples.length === 2 ? "start and end only" : `${samples.length} samples`;
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(selected.label)} temperature from ${minimum.toFixed(1)} to ${maximum.toFixed(1)} °C over ${samples.length} samples"><path class="sparkline-area" d="${line} L${width} ${height} L0 ${height} Z"/><path class="sparkline-line" d="${line}"/></svg><p class="metric-caption">${escapeHtml(selected.label)} · ${sampleLabel}</p>`;
+}
+
+// A bar from zero to `total`: the muted part runs to `first`, the accent part from there to the end.
+function proportionBar(first, total, label, legend) {
+  const split = Math.min(Math.max(first / total, 0), 1) * 100;
+  return `<div class="metric-bar" role="img" aria-label="${escapeHtml(label)}"><svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="metric-bar-first" width="${split.toFixed(2)}" height="8"/><rect class="metric-bar-rest" x="${split.toFixed(2)}" width="${(100 - split).toFixed(2)}" height="8"/></svg></div><div class="metric-bar-legend">${legend.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+}
+
+function memoryBar(measurements) {
+  const before = measuredValue("mla_memory_baseline_mib", measurements.mla_memory_baseline_mib);
+  const peak = measuredValue("mla_memory_peak_mib", measurements.mla_memory_peak_mib);
+  if (!before || !peak || peak.value <= 0) return "";
+  return proportionBar(before.value, peak.value, `MLA memory rises from ${before.text} ${before.unit} before loading to a ${peak.text} ${peak.unit} peak`, [
+    `Before ${before.text} ${before.unit}`, `Peak ${peak.text} ${peak.unit}`,
+  ]);
+}
+
+function startupTimeline(measurements) {
+  const load = measuredValue("model_load_ms", measurements.model_load_ms);
+  const first = measuredValue("time_to_first_inference_ms", measurements.time_to_first_inference_ms);
+  if (!load || !first || first.value <= 0) return "";
+  return proportionBar(load.value, first.value, `Loading takes ${load.text} ${load.unit} of the ${first.text} ${first.unit} before the first inference`, [
+    `Load ${load.text} ${load.unit}`, `First inference ${first.text} ${first.unit}`,
+  ]);
+}
+
+function metricGroup(id, title, icon, rows, extra = "") {
+  return `<div class="metric-group" data-group="${id}"><h4><i aria-hidden="true">${icons[icon]}</i>${escapeHtml(title)}</h4><dl>${rows.join("")}</dl>${extra}</div>`;
+}
+
+function metricGroups(benchmark) {
+  const { measurements } = benchmark;
+  const rowsFor = (keys) => keys.map((key) => {
+    const value = measurements[key] && measuredValue(key, measurements[key]);
+    return value && metricRow({ ...value, label: GROUP_LABELS[key] || value.label });
+  }).filter(Boolean);
+  const temperature = temperatureSamples(benchmark.temperatureSeries);
+  const extras = {
+    speed: latencyTrials(benchmark.trials, measurements),
+    heat: temperature ? temperatureSparkline(temperature) : "",
+    memory: memoryBar(measurements),
+    startup: startupTimeline(measurements),
+  };
+  const groups = METRIC_GROUPS.map(([id, title, icon, keys]) => {
+    const rows = [...rowsFor(keys), ...(id === "heat" && temperature ? [temperatureRow(temperature)] : [])];
+    return rows.length ? { title, markup: metricGroup(id, title, icon, rows, extras[id]) } : null;
+  }).filter(Boolean);
+  const known = new Set(METRIC_GROUPS.flatMap(([, , , keys]) => keys));
+  const otherRows = rowsFor(Object.keys(measurements).filter((key) => !known.has(key)).sort());
+  if (otherRows.length) groups.push({ title: "Other", markup: metricGroup("other", "Other measurements", "benchmark", otherRows) });
+  const unavailable = Object.entries(measurements)
+    .filter(([key, metric]) => !measuredValue(key, metric))
+    .map(([key, metric]) => metricDefinition(key, metric).label);
+  return { groups, unavailable };
+}
+
+function benchmarkDetails(benchmark, payload) {
+  const { groups, unavailable } = metricGroups(benchmark);
+  const source = [`Result schema v${benchmark.schemaVersion}`, benchmark.tool].filter(Boolean).map(escapeHtml).join(" · ");
+  const raw = payload.result_artifact_url
+    ? ` · <a href="${escapeHtml(payload.result_artifact_url)}" target="_blank" rel="noreferrer">Raw result ${icons.external}</a>`
+    : "";
+  return `<div class="metric-groups">${groups.map((group) => group.markup).join("")}</div>
+    ${unavailable.length ? `<p class="metric-unavailable">Not reported by this runtime: ${escapeHtml(unavailable.join(", "))}.</p>` : ""}
+    <p class="metric-source">${source}${raw}</p>`;
 }
 
 // The performance tiles of each component, with the hint shown under each value.
@@ -241,36 +261,24 @@ function componentBenchmark(payload, runId) {
   if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
   if (adapted.kind === "unsupported") {
-    return `<p class="muted-message">This benchmark schema (v${escapeHtml(adapted.schemaVersion)}) is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}`;
+    return `<p class="muted-message">This benchmark schema (v${escapeHtml(adapted.schemaVersion)}) is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}" target="_blank" rel="noreferrer">Open raw result ${icons.external}</a>` : ""}`;
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
   const tiles = KPI_METRICS.map(([key, hint]) => kpiTile(key, benchmark.measurements[key], hint)).join("");
-  const summary = SUMMARY_METRICS
-    .filter((key) => !KPI_METRICS.some(([tile]) => tile === key) && benchmark.measurements[key])
-    .map((key) => metricCard(key, benchmark.measurements[key]))
-    .join("");
+  const { groups } = metricGroups(benchmark);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}</p>
-    <details class="benchmark-details" data-benchmark-run-id="${escapeHtml(runId)}"${state.expandedBenchmarks.has(runId) ? " open" : ""}><summary>Trials, temperature, and all measurements <span>Schema v${benchmark.schemaVersion}</span></summary><div class="component-benchmark">
-      ${summary ? `<div class="benchmark-summary">${summary}</div>` : ""}
-      ${trialChart(benchmark.trials, benchmark.measurements)}
-      ${temperatureChart(benchmark.temperatureSeries)}
-      ${measurementTable(benchmark.measurements)}
-    </div></details>`;
+    ${disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload), groups.map((group) => group.title).join(" · "))}`;
 }
 
 // A multi-component model shows each component's numbers under its name; they are never combined.
 function componentPerformance(detail, named) {
   const run = detail.summary.run;
-  return `<div class="component-performance" data-component-run-id="${escapeHtml(run.id)}">
+  return `<div class="component-performance">
     ${named ? `<h4>${escapeHtml(run.metadata?.component_id || "model")}</h4>` : ""}
     ${componentBenchmark(detail.benchmark, run.id)}
   </div>`;
-}
-
-function componentStat(label, value) {
-  return `<span class="component-stat"><small>${escapeHtml(label)}</small>${escapeHtml(value)}</span>`;
 }
 
 function compileDuration(run) {
@@ -279,7 +287,7 @@ function compileDuration(run) {
     : "Not recorded";
 }
 
-function componentRow(detail, open) {
+function componentRow(detail, single) {
   const run = detail.summary.run;
   const component = run.metadata?.component_id || "model";
   const artifacts = modelPackArtifacts(detail.summary.artifacts);
@@ -289,20 +297,17 @@ function componentRow(detail, open) {
   const artifactRows = artifacts.length
     ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
-  return `<details class="component-row" data-component-run-id="${escapeHtml(run.id)}"${open ? " open" : ""}>
-    <summary><strong>${escapeHtml(component)}</strong>${componentStat("MPK", mpkBytes ? formatBytes(mpkBytes) : "—")}${componentStat("Precision", parameters.precision || "—")}</summary>
-    <div class="component-body">
-      <dl class="key-grid">
-        ${artifactRows}
-        ${keyValue("Run ID", run.id, { copy: true, mono: true })}
-        ${keyValue("Fingerprint", run.run_fingerprint, { copy: true, mono: true })}
-        ${keyValue("Compile recipe duration", compileDuration(run))}
-        ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
-      </dl>
-      ${fidelityPanel(tests, run.id)}
-      ${Object.keys(parameters).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters, null, 2))}</pre></details>` : ""}
-    </div>
-  </details>`;
+  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision].filter(Boolean).join(" · ");
+  const body = `<dl class="key-grid">
+      ${artifactRows}
+      ${keyValue("Run ID", run.id, { copy: true, mono: true })}
+      ${keyValue("Fingerprint", run.run_fingerprint, { copy: true, mono: true })}
+      ${keyValue("Compile recipe duration", compileDuration(run))}
+      ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
+    </dl>
+    ${fidelityPanel(tests, run.id)}
+    ${Object.keys(parameters).length ? disclosure(`parameters:${run.id}`, "Compile parameters", `<pre>${escapeHtml(JSON.stringify(parameters, null, 2))}</pre>`, "JSON") : ""}`;
+  return disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta);
 }
 
 function percentage(value, { signed = false } = {}) {
@@ -313,6 +318,8 @@ function percentage(value, { signed = false } = {}) {
 
 // Display names for common accuracy metrics; any other metric shows its declared name.
 const ACCURACY_METRIC_LABELS = {
+  top1_accuracy: "Top-1",
+  top5_accuracy: "Top-5",
   coco_map: "mAP 50–95",
   coco_ap50: "AP50",
   coco_ap75: "AP75",
@@ -337,10 +344,28 @@ function orderedAccuracyMetrics(report) {
   return Object.entries(report.metrics || {}).sort(([left], [right]) => rank(left) - rank(right));
 }
 
-function accuracyPanel(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
+function accuracyReport(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
   const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
   const legacyDevkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
-  const report = devkitPayload?.result || legacyDevkit?.summary || payload?.result || fallback?.summary;
+  return devkitPayload?.result || legacyDevkit?.summary || payload?.result || fallback?.summary;
+}
+
+function variantAccuracyReport(variant) {
+  return variant.details.map((detail) => accuracyReport(
+    detail.accuracy, detail.tests.test_results || [], detail.benchmarkTests?.test_results || [], variant.devkit,
+  )).find((report) => [1, 2].includes(report?.schema_version)) || null;
+}
+
+// The first accuracy metric of a build and the source model's published score, for the Compare page.
+export function accuracyHeadline(variant) {
+  const report = variantAccuracyReport(variant);
+  if (report?.schema_version === 1) return { label: "Top-1", value: percentage(report.metrics?.candidate?.top1_accuracy), published: "" };
+  const [name, metric] = report ? orderedAccuracyMetrics(report)[0] || [] : [];
+  if (!name) return null;
+  return { label: ACCURACY_METRIC_LABELS[name] || name, value: accuracyMetricValue(metric), published: publishedAccuracyValue(metric) };
+}
+
+function accuracyPanel(report) {
   if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report), accuracyMetricTable(report));
   if (!report || report.schema_version !== 1) return "";
   const candidate = report.metrics?.candidate || {};
@@ -404,12 +429,15 @@ function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "")
   const sampleText = Number.isInteger(dataset.evaluated_samples) && Number.isInteger(dataset.available_samples)
     ? `${dataset.evaluated_samples.toLocaleString()} of ${dataset.available_samples.toLocaleString()} images`
     : "Sample count unavailable";
+  const details = `<p class="disclosure-text"><strong>${status}.</strong> ${escapeHtml(statusExplanation)}</p>
+      <p class="disclosure-text"><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p>
+      <dl class="key-grid">${contextMarkup}</dl>
+      ${tableMarkup}`;
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
-    <div class="detail-section-title"><h3>Accuracy</h3><details class="accuracy-explainer"><summary class="accuracy-status ${statusClass}" aria-label="Explain ${status.toLowerCase()} accuracy status">${status}</summary><div class="accuracy-explainer-card"><strong>${status}</strong><p>${escapeHtml(statusExplanation)}</p><p><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p></div></details></div>
+    <div class="detail-section-title"><h3>Accuracy</h3><span class="status-badge ${statusClass}">${status}</span></div>
     <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}</p>
     <div class="accuracy-summary">${metricsMarkup}</div>
-    ${tableMarkup}
-    <dl class="accuracy-context">${contextMarkup}</dl>
+    ${disclosure("accuracy", "Evaluation details", details, coverageLabel)}
   </section>`;
 }
 
@@ -426,85 +454,91 @@ function fidelityPanel(tests, runId) {
     <div class="benchmark-metric"><span>${escapeHtml(metric.name)} · Normalized RMSE</span><strong>${Number(metric.normalized_rmse).toFixed(4)}</strong></div>
   `).join("");
   const scope = report.scope === "full_pipeline" ? "Full pipeline" : "Component";
-  return `<section class="fidelity-section">
-    <div class="detail-section-title"><h3>Numerical fidelity</h3><button class="text-button" type="button" data-download="numerical-fidelity" data-run-id="${escapeHtml(runId)}">Download JSON</button></div>
+  return `<div class="fidelity-panel">
+    <div class="group-title"><h4>Numerical fidelity</h4><button class="action-button" type="button" data-download="numerical-fidelity" data-run-id="${escapeHtml(runId)}">${icons.download}<span>Download JSON</span></button></div>
     <p class="fidelity-scope"><strong>${escapeHtml(scope)}</strong> · ${escapeHtml(report.status)} · ${Number(report.samples).toLocaleString()} samples · ${escapeHtml(report.dataset?.id || "Dataset unavailable")} ${escapeHtml(report.dataset?.variant || "")}</p>
     <div class="benchmark-summary">${metrics}</div>
+    <dl class="key-grid">${keyValue("Reference", report.reference)}${keyValue("Candidate", report.candidate)}</dl>
     <p class="muted-message">Output similarity, not task accuracy. Output reordering can affect these metrics.</p>
-    <details><summary>Evaluation details</summary><dl>${keyValue("Reference", report.reference)}${keyValue("Candidate", report.candidate)}</dl></details>
-  </section>`;
+  </div>`;
 }
 
 function licensePanel(license) {
   if (!license?.spdx) return "";
-  const redistribution = license.redistribution
-    ? license.redistribution.charAt(0).toUpperCase() + license.redistribution.slice(1)
-    : "Unknown";
-  return `<section id="license-section" class="license-section" tabindex="-1"><div class="detail-section-title"><h3>License</h3><span>${escapeHtml(license.spdx)}</span></div><dl class="key-grid">
-    ${keyValue("SPDX", license.spdx, { copy: true, mono: true })}
-    ${keyValue("Redistribution", redistribution)}
-  </dl>${license.attribution ? `<p class="license-attribution"><strong>Attribution</strong>${escapeHtml(license.attribution)}</p>` : ""}</section>`;
-}
-
-function documentationPanel(model) {
-  const documentation = model?.documentation;
-  if (!documentation?.overview_markdown || !documentation?.run_id || !documentation?.artifact_sha256) return "";
-  const expanded = state.expandedDocumentationModelId === model.model_id;
-  const cacheKey = `${documentation.run_id}:${documentation.artifact_sha256}`;
-  const fullMarkdown = state.documentationCache.get(cacheKey);
-  const heroUrl = documentationHeroUrl(documentation);
-  const resolveImage = (source) => source === documentation.hero?.markdown_path ? heroUrl : null;
-  const resolveLink = (source) => resolveDocumentationLink(documentation, source);
-  const overviewHero = heroUrl
-    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
-    : "";
-  const body = expanded && fullMarkdown
-    ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage, resolveLink })
-    : `${overviewHero}${renderMarkdown(documentation.overview_markdown, { resolveLink })}`;
-  const label = expanded ? "Show overview only" : "Read full model card";
-  return `<section id="model-documentation" class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title" tabindex="-1">
-    <div class="detail-section-title"><h3 id="model-documentation-title">Model card</h3>${expanded ? `<button class="documentation-collapse" type="button" data-documentation-toggle aria-expanded="true" aria-controls="model-documentation-body">${label}</button>` : ""}</div>
-    <div id="model-documentation-body" class="model-documentation-body">${body}</div>
-    <div class="documentation-disclosure${expanded ? " expanded" : ""}">
-      <button type="button" data-documentation-toggle aria-expanded="${expanded}" aria-controls="model-documentation-body">${label}<span aria-hidden="true">${expanded ? "↑" : "↓"}</span></button>
-    </div>
+  const redistribution = license.redistribution ? `Redistribution ${license.redistribution}` : "Redistribution not recorded";
+  return `<section id="license-section" class="license-section" tabindex="-1"><div class="detail-section-title"><h3>License</h3></div>
+    <p class="license-line"><strong>${escapeHtml(license.spdx)}</strong><span>${escapeHtml(redistribution)}</span></p>
+    ${license.attribution ? `<p class="license-attribution">${escapeHtml(license.attribution)}</p>` : ""}
   </section>`;
 }
 
-export async function toggleDocumentation(button) {
-  const variant = currentVariant();
-  const model = variant ? catalogModelForRun(variant.anchor) : null;
+function documentationKey(documentation) {
+  return `${documentation.run_id}:${documentation.artifact_sha256}`;
+}
+
+// The README's title, hero, and Overview are already on the page, so the full card starts at the section
+// after Overview. The registry rejects a README without that opening.
+function modelCardRemainder(markdown) {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const overview = lines.findIndex((line) => /^##\s+Overview\s*$/.test(line));
+  const next = overview < 0 ? -1 : lines.findIndex((line, index) => index > overview && /^##\s/.test(line));
+  return next < 0 ? null : lines.slice(next).join("\n");
+}
+
+function modelCardBody(documentation) {
+  const markdown = state.documentationCache.get(documentationKey(documentation));
+  if (markdown === undefined) return `<p class="muted-message" data-model-card-pending>Loading model card…</p>`;
+  const remainder = modelCardRemainder(markdown);
+  const heroUrl = documentationHeroUrl(documentation);
+  return `<div class="model-documentation-body">${renderMarkdown(remainder ?? markdown, {
+    stripTitle: remainder === null,
+    resolveImage: (source) => (source === documentation.hero?.markdown_path ? heroUrl : null),
+    resolveLink: (source) => resolveDocumentationLink(documentation, source),
+  })}</div>`;
+}
+
+function overviewSection(model) {
   const documentation = model?.documentation;
-  if (!model || !documentation) return;
-  if (state.expandedDocumentationModelId === model.model_id) {
-    state.expandedDocumentationModelId = null;
-    renderDetail(variant);
-    elements["detail-pane"].querySelector("[data-documentation-toggle]")?.focus();
+  if (!documentation?.overview_markdown) return "";
+  const heroUrl = documentationHeroUrl(documentation);
+  const hero = heroUrl
+    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
+    : "";
+  const fullCard = documentation.run_id && documentation.artifact_sha256
+    ? disclosure("model-card", "Full model card", modelCardBody(documentation), "README")
+    : "";
+  return `<section id="overview-section" class="overview-section" tabindex="-1" aria-labelledby="overview-title">
+    <div class="detail-section-title"><h3 id="overview-title">Overview</h3></div>
+    ${hero}
+    <div class="model-documentation-body">${renderMarkdown(documentation.overview_markdown, { resolveLink: (source) => resolveDocumentationLink(documentation, source) })}</div>
+    ${fullCard}
+  </section>`;
+}
+
+// Fetches the README behind an open Full model card row, verifies it against the catalog checksum, and
+// fills the row. A row that already shows the card is left alone.
+export async function loadModelCard() {
+  const variant = currentVariant();
+  const documentation = variant ? catalogModelForRun(variant.anchor)?.documentation : null;
+  const body = () => elements["detail-pane"].querySelector('[data-disclosure="model-card"] > .disclosure-body');
+  if (!documentation || !body()?.querySelector("[data-model-card-pending]")) return;
+  const requestId = ++state.documentationRequestId;
+  try {
+    const markdown = await apiText(`/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(documentation.artifact_name || "readme")}/content`);
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(markdown)))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (digest !== documentation.artifact_sha256) throw new Error("The model card checksum did not match the catalog.");
+    state.documentationCache.set(documentationKey(documentation), markdown);
+  } catch (error) {
+    if (requestId !== state.documentationRequestId) return;
+    const target = body();
+    if (target) target.innerHTML = `<p class="muted-message" data-model-card-pending>The model card could not be loaded. Close and reopen this row to try again.</p>`;
+    showToast(error.message, true);
     return;
   }
-  const cacheKey = `${documentation.run_id}:${documentation.artifact_sha256}`;
-  const requestId = ++state.documentationRequestId;
-  button.disabled = true;
-  button.textContent = "Loading model card…";
-  try {
-    if (!state.documentationCache.has(cacheKey)) {
-      const markdown = await apiText(`/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(documentation.artifact_name || "readme")}/content`);
-      const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(markdown)))]
-        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-      if (digest !== documentation.artifact_sha256) throw new Error("The model card checksum did not match the catalog.");
-      state.documentationCache.set(cacheKey, markdown);
-    }
-    if (requestId !== state.documentationRequestId || state.selectedVariantKey !== variant.key) return;
-    state.expandedDocumentationModelId = model.model_id;
-    renderDetail(variant);
-    elements["detail-pane"].querySelector(".documentation-collapse")?.focus();
-  } catch (error) {
-    if (requestId === state.documentationRequestId) {
-      button.disabled = false;
-      button.textContent = "Read full model card";
-      showToast(error.message, true);
-    }
-  }
+  if (requestId !== state.documentationRequestId || state.selectedVariantKey !== variant.key) return;
+  const target = body();
+  if (target) target.innerHTML = modelCardBody(documentation);
 }
 
 // Variant tabs switch between the latest builds in the current catalog, so a build reached from
@@ -519,7 +553,6 @@ function detailBuildSwitcher(variant) {
   const model = catalogModelOfVariant(variant);
   const inCatalog = Boolean(model);
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
-  const compared = state.compareSelection.has(variant.key);
   const tabs = profiles.map(([profile]) => {
     const selected = profile === variant.profile;
     return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(profile)}</button>`;
@@ -527,10 +560,6 @@ function detailBuildSwitcher(variant) {
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
     ${profiles.length ? `<div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<span class="detail-variant-single">${escapeHtml(profileLabel(variant.anchor))}</span>`}
-    <label class="detail-compare-select compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
-      ${compareCheckbox(variant)}
-      <span aria-hidden="true">✓</span><b>${compared ? "Selected for comparison" : "Add variant to comparison"}</b>
-    </label>
   </section>`;
 }
 
@@ -553,9 +582,22 @@ function sectionNavigation(sections) {
   )).join("")}</nav>`;
 }
 
+// The package is the glance view of Details: its size and checksum, and the two ways to download it.
+function packageCard(variant, fullPackage, packageArtifact, hasArtifacts) {
+  const run = variant.anchor;
+  const components = hasArtifacts
+    ? `<button class="action-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download components</span></button>`
+    : "";
+  if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
+  return `<div class="package-card">
+    <div class="package-card-copy"><strong>Full package</strong><span>All components and declared runtime resources in one verified ZIP.</span></div>
+    ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
+    <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
+  </div>`;
+}
+
 export function renderDetail(variant) {
   showView("model");
-  state.variantGroups.set(variant.key, variant);
   const run = variant.anchor;
   const details = variant.details;
   const allTests = details.flatMap((detail) => detail.tests.test_results || []);
@@ -569,10 +611,8 @@ export function renderDetail(variant) {
   const license = run.metadata?.license;
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
-  const accuracyMarkup = details.map((detail) => accuracyPanel(
-    detail.accuracy, detail.tests.test_results || [], detail.benchmarkTests?.test_results || [], variant.devkit,
-  )).find(Boolean) || "";
-  const documentationMarkup = documentationPanel(catalogModel);
+  const accuracyMarkup = accuracyPanel(variantAccuracyReport(variant));
+  const overviewMarkup = overviewSection(catalogModel);
   const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
   // Every component's MPK must pass validation for the build to carry the mark.
   const validated = details.every((detail) => mpkValidationMark(detail.tests.test_results || []));
@@ -586,9 +626,9 @@ export function renderDetail(variant) {
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</small>` : ""}</button>`
     : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download</span></button>` : "";
   const sections = [
+    overviewMarkup && ["overview-section", "Overview"],
     ["components-section", "Performance"],
     accuracyMarkup && ["accuracy-section", "Accuracy"],
-    documentationMarkup && ["model-documentation", "Model card"],
     ["details-section", "Details"],
     license?.spdx && ["license-section", "License"],
   ].filter(Boolean);
@@ -610,6 +650,8 @@ export function renderDetail(variant) {
     ${detailBuildSwitcher(variant)}
     ${sectionNavigation(sections)}
 
+    ${overviewMarkup}
+
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, each measured on its own.</p>`}
       ${details.map((detail) => componentPerformance(detail, !singleComponent)).join("")}
@@ -618,28 +660,24 @@ export function renderDetail(variant) {
 
     ${accuracyMarkup}
 
-    ${documentationMarkup}
-
     <section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
-      ${fullPackage ? `<div class="detail-group"><h4>Full package</h4>${packageArtifact ? `<dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}<p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></div>` : ""}
-
-      <div class="detail-group"><h4>Build provenance</h4><dl class="key-grid">
-        ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
-        ${keyValue("Branch", branchName(run.git_ref))}
-        ${keyValue("Built", formatDate(builtAt || run.created_at))}
-        ${keyValue("Target", run.target_platform)}
-        ${keyValue("Compiler", run.toolchain_version)}
-      </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</div>
-
-      ${sourceInputPanel(inputs)}
-
-      <div class="detail-group"><h4>${singleComponent ? "Files and checksums" : "Components, files, and checksums"}</h4>
-        <div class="component-list">${details.map((detail) => componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))).join("")}</div>
+      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts)}
+      <div class="disclosure-list">
+        ${disclosure("provenance", "Build provenance", `<dl class="key-grid">
+          ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
+          ${keyValue("Branch", branchName(run.git_ref))}
+          ${keyValue("Built", formatDate(builtAt || run.created_at))}
+          ${keyValue("Target", run.target_platform)}
+          ${keyValue("Compiler", run.toolchain_version)}
+        </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}`, `${shortSha(run.commit_sha).slice(0, 7)} · ${branchName(run.git_ref)}`)}
+        ${sourceInputPanel(inputs)}
+        ${details.map((detail) => componentRow(detail, singleComponent)).join("")}
       </div>
     </section>
 
     ${licensePanel(license)}
   </div>`;
+  if (state.openDisclosures.has("model-card")) loadModelCard();
 }
 
 export function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {

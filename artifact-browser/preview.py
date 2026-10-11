@@ -301,19 +301,37 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
     power = round(6.5 + _fraction("power", *key) * 4.0, 3)
     model_load = round(90.0 + _fraction("load", *key) * 600.0, 1)
+    baseline = round(64.0 + _fraction("baseline", *key) * 160.0, 1)
+    delta = round(64.0 + _fraction("memory", *key) * 960.0, 1)
+    samples = result["configuration"]["samples"]
     values = {
         "latency_avg_ms": latency,
-        "latency_p50_ms": round(latency * 0.98, 3),
-        "latency_p95_ms": round(latency * 1.12, 3),
         "throughput_fps": round(1000.0 / latency, 1),
         "avg_power_watts": power,
+        "energy_joules": round(power * latency * samples / 1000.0, 2),
         "energy_per_inference_joules": round(power * latency / 1000.0, 5),
         "model_load_ms": model_load,
         "time_to_first_inference_ms": round(model_load + 180.0 + latency * 4, 1),
-        "mla_memory_peak_delta_mib": round(64.0 + _fraction("memory", *key) * 960.0, 1),
+        "mla_memory_baseline_mib": baseline,
+        "mla_memory_peak_mib": round(baseline + delta, 1),
+        "mla_memory_peak_delta_mib": delta,
+        "mla_memory_final_mib": round(baseline + delta * 0.85, 1),
     }
+    # Trials keep the template's spread around the synthetic means, so trial and summary values agree.
+    for trial in result["trials"]:
+        for name, value in trial.items():
+            template = result["metrics"].get(name, {}).get("value")
+            if name in values and isinstance(value, (int, float)) and template:
+                trial[name] = round(value * values[name] / template, 5)
     for name, value in values.items():
-        result["metrics"][name].update({"value": value, "minimum": value, "maximum": value, "standard_deviation": 0.0})
+        metric = result["metrics"][name]
+        scale = value / metric["value"]
+        metric.update({
+            "value": value,
+            "minimum": round(metric["minimum"] * scale, 5),
+            "maximum": round(metric["maximum"] * scale, 5),
+            "standard_deviation": round(metric["standard_deviation"] * scale, 5),
+        })
     return result
 
 
