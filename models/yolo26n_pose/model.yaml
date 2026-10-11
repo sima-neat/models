@@ -182,7 +182,7 @@ benchmark:
   build_profiles: [modalix_bf16, modalix_int8]
   status: pending
   target: modalix
-  reason: Establish a Core API baseline for the MPK with Neat's YOLO26 pose decoder.
+  reason: Establish a Core API baseline for the default MPK workload.
   metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
   required_metrics: [avg_power_watts, energy_per_inference_joules]
 maturity: experimental
