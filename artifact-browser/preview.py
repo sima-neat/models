@@ -46,6 +46,12 @@ PREVIEW_RUNS = (
     # An older build of the same variant, so build history shows two builds of two components each.
     ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.2", 104_298_000),
     ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.2", 168_701_000),
+    ("yolo26n", "modalix_int8", "model", "develop", "2.1.3", 12_904_331),
+    ("yolo26n", "modalix_bf16", "model", "develop", "2.1.3", 21_660_417),
+    ("yolo26s", "modalix_int8", "model", "develop", "2.1.3", 31_288_904),
+    ("yolo26m", "modalix_int8", "model", "develop", "2.1.3", 64_517_230),
+    ("yolo26l", "modalix_int8", "model", "develop", "2.1.3", 79_043_116),
+    ("yolo26x", "modalix_int8", "model", "develop", "2.1.3", 162_385_902),
 )
 
 PREVIEW_TASKS = {
@@ -83,7 +89,7 @@ def _run(index: int = 0) -> dict:
     run_id = RUN_ID if index == 0 else f"74b48a12-6088-42a0-b881-5925a5272f{index:02x}"
     build = _build_index(index)
     commit = COMMIT if build == 0 else hashlib.sha1(f"preview-commit-{build}".encode()).hexdigest()
-    architecture = "resnet_50" if "resnet" in model_id else model_id
+    architecture = "resnet_50" if "resnet" in model_id else "yolo_26" if model_id.startswith("yolo26") else model_id
     task = PREVIEW_TASKS.get(model_id, "object_detection")
     return {
         "id": run_id,
@@ -446,7 +452,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "depth_estimation": {"display_name": "Depth estimation"},
                     "semantic_segmentation": {"display_name": "Semantic segmentation"},
                 },
-                "architectures": {"resnet_50": {"display_name": "ResNet-50"}},
+                "architectures": {"resnet_50": {"display_name": "ResNet-50"}, "yolo_26": {"display_name": "YOLO26"}},
                 "architecture_paradigms": {"cnn": {"display_name": "CNN"}},
                 "modalities": {
                     "image": {"display_name": "Image"},
