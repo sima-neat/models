@@ -12,7 +12,7 @@ args = parser.parse_args()
 
 options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.YoloV26Pose
-options.top_k = 300
+options.top_k = 100
 model = pyneat.Model(args.mpk, options)
 report = model.benchmark()
 with open(args.output, "w", encoding="utf-8") as output:
@@ -22,4 +22,8 @@ with open(args.output, "w", encoding="utf-8") as output:
         "fps": report.fps,
         "avg_power_watts": report.avg_power_watts,
         "energy_joules": report.energy_joules,
+        "workload": {
+            "selection": "YoloV26Pose box decoder, top 100",
+            "postprocess": model.info().selection.selected_post_kind,
+        },
     }, output, allow_nan=False)
