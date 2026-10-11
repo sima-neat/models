@@ -1352,6 +1352,18 @@ const ACCURACY_METRIC_LABELS = {
   coco_ar_small: "AR small",
   coco_ar_medium: "AR medium",
   coco_ar_large: "AR large",
+  coco_keypoint_map: "Keypoint mAP 50–95",
+  coco_keypoint_ap50: "Keypoint AP50",
+  coco_keypoint_ap75: "Keypoint AP75",
+  coco_keypoint_ap_medium: "Keypoint AP medium",
+  coco_keypoint_ap_large: "Keypoint AP large",
+  coco_keypoint_ar: "Keypoint AR",
+  coco_keypoint_ar50: "Keypoint AR50",
+  coco_keypoint_ar75: "Keypoint AR75",
+  coco_keypoint_ar_medium: "Keypoint AR medium",
+  coco_keypoint_ar_large: "Keypoint AR large",
+  coco_person_box_map: "Person box mAP 50–95",
+  coco_person_box_ap50: "Person box AP50",
 };
 // The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;

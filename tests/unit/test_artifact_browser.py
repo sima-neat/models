@@ -902,6 +902,30 @@ def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_ret
     assert "orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES)" in script
 
 
+def test_pose_accuracy_metrics_lead_with_keypoint_map() -> None:
+    script = (BROWSER / "app.js").read_text(encoding="utf-8")
+    start = script.index("const ACCURACY_METRIC_LABELS = {")
+    end = script.index("function accuracyPanel(")
+    metrics = ["coco_person_box_ap50", "coco_keypoint_ar", "coco_keypoint_ap_large", "coco_person_box_map",
+               "coco_keypoint_ar75", "coco_keypoint_map", "coco_keypoint_ar_medium", "coco_keypoint_ap75",
+               "coco_keypoint_ar_large", "coco_keypoint_ap50", "coco_keypoint_ar50", "coco_keypoint_ap_medium"]
+    report = {"metrics": {name: {"value": 0.5} for name in metrics}}
+    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script[start:end] + order],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == [
+        "coco_keypoint_map", "coco_keypoint_ap50", "coco_keypoint_ap75", "coco_keypoint_ap_medium",
+        "coco_keypoint_ap_large", "coco_keypoint_ar", "coco_keypoint_ar50", "coco_keypoint_ar75",
+        "coco_keypoint_ar_medium", "coco_keypoint_ar_large", "coco_person_box_map", "coco_person_box_ap50",
+    ]
+    assert 'coco_keypoint_map: "Keypoint mAP 50–95"' in script
+
+
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     script = (BROWSER / "app.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
