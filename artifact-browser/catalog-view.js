@@ -273,13 +273,20 @@ function renderHistory() {
 }
 
 // Size words order a family's models from smallest to largest; other names sort alphabetically.
-const MODEL_SIZE_RANK = { nano: 1, tiny: 2, small: 3, medium: 4, large: 5 };
+const MODEL_SIZE_RANK = { nano: 1, tiny: 2, small: 3, medium: 4, large: 5, xlarge: 6 };
+// YOLO-style names carry the size as one letter after the version, as in YOLO26n-det to YOLO26x-det.
+const COMPACT_SIZE = /^([A-Za-z]+\d+)([nsmlx])(?=[-\s]|$)/;
+const COMPACT_SIZE_WORDS = { n: "nano", s: "small", m: "medium", l: "large", x: "xlarge" };
 
 function modelSortKey(model) {
   const name = model.display_name || model.model_id;
   const sizeWord = name.split(/\s+/).find((word) => MODEL_SIZE_RANK[word.toLowerCase()]);
-  const family = sizeWord ? name.replace(sizeWord, "").replace(/\s+/g, " ").trim() : name;
-  return { family, rank: sizeWord ? MODEL_SIZE_RANK[sizeWord.toLowerCase()] : 0, name };
+  if (sizeWord) {
+    return { family: name.replace(sizeWord, "").replace(/\s+/g, " ").trim(), rank: MODEL_SIZE_RANK[sizeWord.toLowerCase()], name };
+  }
+  const compact = name.match(COMPACT_SIZE);
+  if (compact) return { family: name.replace(compact[0], compact[1]), rank: MODEL_SIZE_RANK[COMPACT_SIZE_WORDS[compact[2]]], name };
+  return { family: name, rank: 0, name };
 }
 
 export function compareModels(left, right) {

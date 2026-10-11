@@ -1086,6 +1086,27 @@ def test_compare_bolds_a_value_only_against_the_same_component() -> None:
     assert json.loads(result.stdout) == {"backbone": 17.9, "transformer": 22.7, "model": 8.4}
 
 
+def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
+    script = _browser_source("catalog-view.js")
+    ordering = script[script.index("// Size words order a family"):script.index("function modelCardImage(")]
+    names = [
+        "YOLO26x-det", "RF-DETR Large", "YOLO26l-det", "YOLO26n-det", "RF-DETR Nano",
+        "YOLO26s-det", "ResNet-50", "YOLO26m-det", "RF-DETR Medium", "RF-DETR Small",
+    ]
+    models = [{"display_name": name} for name in names]
+    probe = (
+        f"console.log(JSON.stringify({json.dumps(models)}.sort(compareModels).map((model) => model.display_name)));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", ordering.replace("export ", "") + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == [
+        "ResNet-50", "RF-DETR Nano", "RF-DETR Small", "RF-DETR Medium", "RF-DETR Large",
+        "YOLO26n-det", "YOLO26s-det", "YOLO26m-det", "YOLO26l-det", "YOLO26x-det",
+    ]
+
+
 def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() -> None:
     script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js", "model-view.js")
     browser = _browser_source()
