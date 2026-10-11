@@ -37,7 +37,9 @@ the same component of another build, or between single-component builds.
 
 Selecting a card opens the model page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
-marked with › that opens in place. Sections appear in this order:
+marked with › that opens in place. A model with several build profiles shows
+one tab per profile; INT8 profiles come first and the page opens on the first
+tab, whatever order `model.yaml` declares. Sections appear in this order:
 
 1. **Overview.** The hero and the `## Overview` section of the README. The
    **Full model card** row opens the rest of the README, starting at the

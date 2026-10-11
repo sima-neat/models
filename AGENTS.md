@@ -115,6 +115,8 @@ change.
 
 - Make every expandable area a `disclosure()` row from `ui.js`. Raw
   `<details>` elements fail `tests/unit/test_artifact_browser.py`.
+- The browser lists INT8 build profiles first and opens a model on INT8;
+  `profileGroups` in `api.js` sets this, not the `model.yaml` profile order.
 - Keep the glance-first page: key facts in the section, the rest in one row.
   Actions are icon buttons; blue text with ↗ is only for external links.
 - Compare and show component measurements per component; never add them up

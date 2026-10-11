@@ -215,7 +215,9 @@ export function profileGroups(model) {
     if (!groups.has(profile)) groups.set(profile, []);
     groups.get(profile).push(build);
   });
-  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  // INT8 is the default variant, so it is listed first and opens first.
+  const rank = (profile) => (profile.includes("int8") ? 0 : 1);
+  return [...groups.entries()].sort(([left], [right]) => rank(left) - rank(right) || left.localeCompare(right));
 }
 
 export function activeModelBuild(model) {
