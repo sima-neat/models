@@ -1,5 +1,7 @@
 # RF-DETR Nano
 
+![RF-DETR Nano model hero](hero.png)
+
 ## Overview
 
 RF-DETR Nano is a COCO object detector that accepts a normalized 384×384 RGB

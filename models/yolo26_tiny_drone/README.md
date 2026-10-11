@@ -1,5 +1,7 @@
 # YOLO26n-P2 Tiny Drone
 
+![YOLO26n-P2 Tiny Drone model hero](hero.png)
+
 ## Overview
 
 YOLO26n-P2 Tiny Drone is a one-class object detector optimized for small drones

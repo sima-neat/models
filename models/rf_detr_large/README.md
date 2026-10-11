@@ -1,5 +1,7 @@
 # RF-DETR Large
 
+![RF-DETR Large model hero](hero.png)
+
 ## Overview
 
 RF-DETR Large is a COCO object detector that accepts a normalized 704×704 RGB

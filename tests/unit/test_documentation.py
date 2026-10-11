@@ -70,18 +70,27 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
         documentation = load_model_documentation(model_dir, display_name, repository=root)
         assert documentation["source_path"] == f"models/{model_dir.name}/README.md"
         assert len(documentation["readme_sha256"]) == 64
-        assert "hero" not in documentation
+        assert documentation["hero"]["source_path"] == f"models/{model_dir.name}/hero.png"
 
 
-def test_model_readme_contract_accepts_missing_optional_hero(tmp_path: Path) -> None:
+def test_model_readme_contract_requires_a_hero_image(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    (model_dir / "README.md").write_text(_readme(_overview()), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="model hero image is required"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_requires_the_hero_line(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace("![Fixture Model model hero](hero.png)\n\n", "")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
 
-    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
-
-    assert "hero" not in documentation
+    with pytest.raises(ValidationError, match="must begin with H1"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
 def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_placeholders() -> None:

@@ -1,5 +1,7 @@
 # RF-DETR Medium
 
+![RF-DETR Medium model hero](hero.png)
+
 ## Overview
 
 RF-DETR Medium is a COCO object detector that accepts a normalized 576×576 RGB

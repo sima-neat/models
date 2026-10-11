@@ -1,5 +1,7 @@
 # SSD-MobileNet V1
 
+![SSD-MobileNet V1 model hero](hero.png)
+
 ## Overview
 
 SSD-MobileNet V1 is a COCO object detector that accepts a normalized 300×300
