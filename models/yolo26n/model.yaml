@@ -1,5 +1,5 @@
 id: yolo26n
-display_name: YOLO26n
+display_name: YOLO26n-det
 description: Ultralytics YOLO26 Nano object detection for the 80 COCO classes at 640x640.
 model_type: vision
 tasks:
