@@ -51,8 +51,8 @@ takes the 300 cells with the highest score. A box's corners are the center minus
 the left and top distances and the center plus the right and bottom distances,
 multiplied by the stride. A keypoint is the center plus its x and y offsets,
 multiplied by the stride; its visibility is the sigmoid of its logit. Finally,
-subtract the letterbox padding and divide by the letterbox scale, and clip each
-box to the original image.
+subtract the letterbox padding and divide by the letterbox scale, and clip boxes
+and keypoints to the original image.
 
 ## Available builds
 

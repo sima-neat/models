@@ -90,17 +90,14 @@ def scored_image_ids(ground_truth: COCO) -> list[int]:
 
 
 def image_points(points: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Map x, y points from the letterboxed input onto the original image."""
+    """Map x, y points from the letterboxed input onto the original image and clip them to it, as Ultralytics does."""
     gain, _, (left, top, _, _) = letterbox_geometry(width, height)
-    return (np.asarray(points, dtype=np.float64) - [left, top]) / gain
+    return ((np.asarray(points, dtype=np.float64) - [left, top]) / gain).clip(0, [width, height])
 
 
 def image_boxes(boxes: np.ndarray, width: int, height: int) -> np.ndarray:
     """Map x1, y1, x2, y2 boxes from the letterboxed input onto the original image and clip them to it."""
-    mapped = image_points(boxes.reshape(-1, 2), width, height).reshape(-1, 4)
-    mapped[:, 0::2] = mapped[:, 0::2].clip(0, width)
-    mapped[:, 1::2] = mapped[:, 1::2].clip(0, height)
-    return mapped
+    return image_points(boxes.reshape(-1, 2), width, height).reshape(-1, 4)
 
 
 def sigmoid(logits: np.ndarray) -> np.ndarray:
@@ -129,7 +126,6 @@ def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int
     distances = np.concatenate([output.reshape(-1, 4) for output in outputs[:3]])
     logits = np.concatenate([output.reshape(-1) for output in outputs[3:6]])
     keypoints = np.concatenate([output.reshape(-1, KEYPOINTS, 3) for output in outputs[6:]])
-    # A NaN or +inf logit could be selected; a -inf one scores 0 and is never kept.
     if not (np.isfinite(distances).all() and np.isfinite(logits).all() and np.isfinite(keypoints).all()):
         raise ValueError("MPK output contains non-finite values")
     scores = sigmoid(logits)

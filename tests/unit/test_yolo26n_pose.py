@@ -78,12 +78,14 @@ def test_image_boxes_invert_the_letterbox_and_clip(monkeypatch: pytest.MonkeyPat
     np.testing.assert_allclose(mapped, [[10, 20, 110, 220], [0, 0, 500, 375]])
 
 
-def test_image_points_invert_the_letterbox_without_clipping(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_points_invert_the_letterbox_and_clip(monkeypatch: pytest.MonkeyPatch) -> None:
     accuracy = load_module("accuracy", monkeypatch, BOARD_MODULES)
     gain, _, (left, top, _, _) = accuracy.letterbox_geometry(500, 375)
-    original = np.array([[10.0, 20.0], [-5.0, 400.0]])
+    original = np.array([[10.0, 20.0], [-5.0, 400.0], [510.0, -3.0]])
 
-    np.testing.assert_allclose(accuracy.image_points(original * gain + [left, top], 500, 375), original)
+    mapped = accuracy.image_points(original * gain + [left, top], 500, 375)
+
+    np.testing.assert_allclose(mapped, [[10, 20], [0, 375], [500, 0]])
 
 
 def test_scored_images_are_those_with_labelled_keypoints(monkeypatch: pytest.MonkeyPatch) -> None:
