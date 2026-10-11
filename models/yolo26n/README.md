@@ -105,11 +105,13 @@ compiled MPKs and to applications that include them.
 ### Conversion
 
 The `conversion.default` entry in `model.yaml` pins the checkpoint, and
-`scripts/requirements-convert.txt` pins the export dependencies. `convert.py`
-exports with Ultralytics at opset 12 and folds constants with onnxsim, so
-surgery starts from a static graph. Ultralytics imports OpenCV, which needs the
-system `libGL.so.1`. On Linux ARM64, the shared runner script converts in a
-fresh Python 3.12 environment built from those requirements:
+`scripts/requirements-convert.txt` pins the export dependencies. They install
+Ultralytics as `ultralytics-opencv-headless`, which ships the same code as
+`ultralytics` with headless OpenCV, so conversion needs no system graphics
+libraries. `convert.py` exports with Ultralytics at opset 12 and folds constants
+with onnxsim, so surgery starts from a static graph. On Linux ARM64, the shared
+runner script converts in a fresh Python 3.12 environment built from those
+requirements:
 
 ```bash
 scripts/run_model_conversion.sh models/yolo26n default /tmp/yolo26n-export
