@@ -1,6 +1,6 @@
 id: ssd_mobilenet_v3
-display_name: SSD-MobileNet V3 Large 320x320
-description: TorchVision COCO SSDLite-MobileNetV3 Large raw box and class predictor heads for Neat-owned decode and NMS.
+display_name: SSD-MobileNet V3 Large
+description: An SSDLite COCO detector built on MobileNet V3 Large.
 model_type: vision
 tasks:
 - object_detection

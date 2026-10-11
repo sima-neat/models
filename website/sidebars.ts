@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
       label: 'Contracts and reference',
       items: [
         'metadata-schema',
+        {type: 'doc', id: 'model-browser', label: 'Model browser'},
         'runner-class-requests',
         'model-taxonomy',
       ],

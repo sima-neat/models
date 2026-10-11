@@ -1,5 +1,7 @@
 # YOLO26m-det
 
+![YOLO26m-det model hero](hero.png)
+
 ## Overview
 
 YOLO26m is the Medium edition of Ultralytics' YOLO26 object detector for the 80

@@ -1,4 +1,6 @@
-# RF-DETR Large 704x704
+# RF-DETR Large
+
+![RF-DETR Large model hero](hero.png)
 
 ## Overview
 

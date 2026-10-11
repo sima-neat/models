@@ -83,6 +83,7 @@ function common(result) {
       ? `Core default MPK · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
       : "Historical benchmark configuration",
     status: result.status,
+    tool: [result.tool?.name, result.tool?.version].filter((part) => typeof part === "string" && part).join(" "),
     timestamp: result.timestamp_utc,
     measurements,
     trials: (result.trials || []).map((trial) => ({

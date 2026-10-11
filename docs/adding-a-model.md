@@ -36,7 +36,7 @@ snake-case identifier. A model directory may contain only these entries:
 ```text
 models/<model-id>/
   README.md
-  hero.png                      # optional
+  hero.png                      # 1200x480 catalog card image
   model.yaml                    # the model's only configuration file
   scripts/
     compile.py                  # compile stage: writes one MPK per component

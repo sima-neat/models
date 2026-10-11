@@ -1,6 +1,6 @@
 id: yolo26_tiny_drone
-display_name: YOLO26n-P2 Tiny Drone INT8 QAT
-description: One-class 1600px YOLO26n-P2 detector trained and quantization-aware trained for tiny drones.
+display_name: YOLO26n-P2 Tiny Drone
+description: A one-class detector for very small drones in high-resolution frames.
 model_type: vision
 tasks:
 - object_detection

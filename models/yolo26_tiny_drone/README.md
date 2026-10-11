@@ -1,4 +1,6 @@
-# YOLO26n-P2 Tiny Drone INT8 QAT
+# YOLO26n-P2 Tiny Drone
+
+![YOLO26n-P2 Tiny Drone model hero](hero.png)
 
 ## Overview
 

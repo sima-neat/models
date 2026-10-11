@@ -1,6 +1,6 @@
 id: yolo26s
 display_name: YOLO26s-det
-description: Ultralytics YOLO26 Small object detection for the 80 COCO classes at 640x640.
+description: A compact YOLO26 detector for COCO objects.
 model_type: vision
 tasks:
 - object_detection

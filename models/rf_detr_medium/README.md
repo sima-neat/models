@@ -1,4 +1,6 @@
-# RF-DETR Medium 576x576
+# RF-DETR Medium
+
+![RF-DETR Medium model hero](hero.png)
 
 ## Overview
 

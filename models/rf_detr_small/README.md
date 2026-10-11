@@ -1,4 +1,6 @@
-# RF-DETR Small 512x512
+# RF-DETR Small
+
+![RF-DETR Small model hero](hero.png)
 
 ## Overview
 

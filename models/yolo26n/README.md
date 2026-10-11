@@ -1,5 +1,7 @@
 # YOLO26n-det
 
+![YOLO26n-det model hero](hero.png)
+
 ## Overview
 
 YOLO26n is the Nano edition of Ultralytics' YOLO26 object detector for the 80

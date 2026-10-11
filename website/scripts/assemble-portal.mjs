@@ -15,7 +15,10 @@ const revision = (
   || execFileSync('git', ['rev-parse', 'HEAD'], {cwd: repository, encoding: 'utf8'}).trim()
 ).slice(0, 12);
 
-const fingerprintedAssets = ['app', 'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'styles', 'config'];
+const fingerprintedAssets = [
+  'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
+  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'styles', 'config',
+];
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
