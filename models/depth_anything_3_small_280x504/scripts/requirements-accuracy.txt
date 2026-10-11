@@ -1,0 +1,1 @@
+# accuracy.py needs only NumPy and OpenCV, which the DevKit PyNeat environment provides.
