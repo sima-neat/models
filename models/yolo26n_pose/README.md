@@ -84,8 +84,9 @@ Ultralytics' end-to-end selection, keeping up to 300 people with a score above
 does. Ultralytics' published score batches validation images as padded
 rectangles; this package always uses a 640×640 square.
 
-The benchmark script runs Neat Core's default synthetic benchmark on the MPK,
-and CI publishes one result for each build.
+The benchmark script runs Neat Core's synthetic benchmark on the MPK with Neat's
+YOLO26 pose decoder, capped at 300 detections. CI publishes one result for each
+build.
 
 ## Source and license
 

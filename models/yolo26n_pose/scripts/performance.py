@@ -1,4 +1,4 @@
-"""Benchmark one compiled MPK with Neat Core and write its report."""
+"""Benchmark one compiled MPK with Neat's YOLO26 pose decoder and write its report."""
 
 import argparse
 import json
@@ -10,7 +10,10 @@ parser.add_argument("--mpk", required=True, help="compiled model archive")
 parser.add_argument("--output", required=True, help="benchmark report JSON to write")
 args = parser.parse_args()
 
-model = pyneat.Model(args.mpk)
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.YoloV26Pose
+options.top_k = 300
+model = pyneat.Model(args.mpk, options)
 report = model.benchmark()
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
