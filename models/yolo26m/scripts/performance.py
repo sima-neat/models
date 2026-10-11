@@ -12,7 +12,7 @@ args = parser.parse_args()
 
 options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.YoloV26
-options.top_k = 300
+options.top_k = 100
 model = pyneat.Model(args.mpk, options)
 report = model.benchmark()
 with open(args.output, "w", encoding="utf-8") as output:

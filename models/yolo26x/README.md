@@ -81,7 +81,7 @@ above 0.001. Ultralytics' published score batches validation images as padded
 rectangles; this package always uses a 640×640 square.
 
 The benchmark script runs Neat Core's synthetic benchmark on the MPK with Neat's
-YOLO26 box decoder, which keeps the 300 highest-scoring candidates without a
+YOLO26 box decoder, which keeps the 100 highest-scoring candidates without a
 score threshold or NMS. CI publishes one result for each build.
 
 ## Source and license
