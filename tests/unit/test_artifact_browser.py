@@ -174,6 +174,22 @@ def test_preview_serves_the_models_this_repository_declares(tmp_path: Path) -> N
     assert provenance["run"]["metadata"]["build_profile_id"] == build["build_profile_id"]
 
 
+def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Path) -> None:
+    api = "/v1/repositories/sima-neat/models"
+    with _preview(tmp_path) as base:
+        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
+        package = next(
+            package for model in catalog["catalog"]["document"]["models"] for package in model.get("packages", [])
+        )
+        artifacts = _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
+
+    # The browser's Download finds the full package by this type, as the registry publisher writes it.
+    assert [artifact["artifact_type"] for artifact in artifacts] == ["model-package"]
+    assert artifacts[0]["media_type"] == "application/zip"
+    assert artifacts[0]["metadata"]["component_run_ids"] == package["component_run_ids"]
+    assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
+
+
 def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("portal", encoding="utf-8")
     with _preview(tmp_path) as base:

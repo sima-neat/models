@@ -539,12 +539,20 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._compile_run_api(run_id, rest, *index["builds"][run_id], compiler)
         elif run_id in index["packages"] and not rest:
             model, package = index["packages"][run_id]
+            # The same artifact shape the registry publisher records for a full package.
             self._json({"run": index["runs"][run_id], "artifacts": [{
-                "name": f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.tar.gz",
-                "artifact_type": "model-pack",
+                "name": f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip",
+                "artifact_type": "model-package",
                 "sha256": package["artifact_sha256"],
                 "size_bytes": package["size_bytes"],
-                "media_type": "application/gzip",
+                "media_type": "application/zip",
+                "metadata": {
+                    "model_id": model["id"],
+                    "build_profile_id": package["build_profile_id"],
+                    "package_id": package["package_id"],
+                    "manifest_sha256": package["package_fingerprint"],
+                    "component_run_ids": package["component_run_ids"],
+                },
             }]})
         elif run_id in index["runs"] and len(rest) == 2 and rest[0] == "artifacts":
             self._download_link()
