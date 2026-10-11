@@ -1,6 +1,6 @@
 id: yolo26s_pose
 display_name: YOLO26s-pose
-description: Ultralytics YOLO26 Small pose estimation of COCO persons with 17 keypoints at 640x640.
+description: A compact YOLO26 pose estimator for people and their 17 COCO keypoints.
 model_type: vision
 tasks:
 - pose_estimation

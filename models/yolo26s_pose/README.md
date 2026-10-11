@@ -1,5 +1,7 @@
 # YOLO26s-pose
 
+![YOLO26s-pose model hero](hero.png)
+
 ## Overview
 
 YOLO26s-pose is the Small edition of Ultralytics' YOLO26 pose estimator. It
