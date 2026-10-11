@@ -71,12 +71,10 @@ exercise other metric values or availability states. Its
 verify that unknown additive metrics render gracefully.
 
 Benchmark adapters preserve every metric that follows the result contract.
-Known metrics receive curated labels, formatting, and summary placement;
-unknown additive metrics appear automatically under Additional measurements and
-in the comparison measurement selector. Unsupported schema versions still link
-to the raw result instead of guessing at incompatible structures.
-Schema-v3 previews include model-load and time-to-first-inference measurements
-alongside steady-state latency, throughput, power, energy, and MLA memory.
+Known metrics receive curated labels, formatting, and a place in a benchmark
+group; unknown additive metrics appear automatically under Other measurements.
+Unsupported schema versions still
+link to the raw result instead of guessing at incompatible structures.
 
 ## Staging deployment
 
@@ -138,20 +136,89 @@ Selecting a model card opens its page in place of the catalog; the breadcrumb
 or the browser's Back button returns to the catalog at the same scroll position.
 A page shows one variant build: the component runs of one model and build
 profile compiled by one workflow. Its header carries the name, description,
-category tags, **Download**, and **Copy CLI command**, and the section links
-below it jump to **Performance**, **Accuracy**, **Model card**, **Details**, and
-**License**. **Performance** shows throughput, latency, board power, and energy
-per inference for each component, with trials, temperature, and all
-measurements under a disclosure. Build-level facts appear once: the full
-package, provenance, source inputs (one per distinct digest), license, and
-DevKit accuracy. **Details** lists one row per component with its MPK size and
-precision; expanding a row shows its checksum, run identity, numerical
-fidelity, and compile parameters. Components are measured on their own, so
-their latencies do not add up to end-to-end latency.
+category tags, **Download**, and **Copy CLI command**. Below it, the variant
+tabs, then section links to **Overview**,
+**Performance**, **Accuracy**, **Details**, and **License**. A section without
+data is left out.
 
-Comparison selects whole variant builds, up to three, from a tray at the bottom
-of the page. The comparison lists each component under its variant without
-combining measurements and marks the best value for each component in bold.
+The page is read at a glance first: each section shows its key facts, and
+everything longer sits in one expandable row.
+
+- **Overview** shows the hero and the README's `## Overview`. **Full model
+  card** loads the README on first open, checks its SHA-256 against the
+  catalog, and renders it from the section after Overview, because the title,
+  hero, and Overview are already on the page.
+- **Performance** shows throughput, latency, board power, and energy per
+  inference for each component. **Benchmark details** shows the speed, heat,
+  memory, and startup groups, metrics the runtime did not report, and the
+  result schema, tool, and raw-result link.
+- **Accuracy** shows the status, the first four metrics, and the scope.
+  **Evaluation details** explains status and coverage and lists the context
+  and remaining metrics.
+- **Details** shows the package card (size, SHA-256, **Download package**,
+  **Download components**), then rows for build provenance, source models (one
+  per distinct digest), and each component: checksum, run identity, numerical
+  fidelity, and a nested **Compile parameters** row.
+- **License** is one line with the SPDX identifier and redistribution, plus
+  the attribution.
+
+Components are measured on their own, so their latencies do not add up to
+end-to-end latency.
+
+## Compare page
+
+**Compare** in the top bar opens a page with three build pickers over one
+table. Each picker lists the variants of the selected branch's catalog and
+resolves to the build the model page would show. Opening Compare from a model
+page fills the first empty picker with that variant. The link records the picks
+as `view=compare&build=<model id>.<build profile>`, one `build` per picker, so
+a shared link reopens the same comparison.
+
+The table shows task, component count, throughput, latency, board power,
+energy per inference, and the headline accuracy metric with its published
+score. A multi-component build lists one line per component and never adds
+them up. Bold marks the best value among single-component builds, or among the
+same component of different builds; a row with one value has no mark. Builds
+from build history and metrics outside these rows are not comparable here;
+their model pages show them.
+
+## How the page is built
+
+The browser is plain ES modules with no build step and no framework. Each view
+renders HTML strings into its container and `app.js` handles events by
+delegation.
+
+| Module | Owns |
+| --- | --- |
+| `app.js` | Startup, routing from URL state, and event handlers |
+| `state.js` | Shared page state, configuration, and DOM element lookup |
+| `api.js` | Registry requests, caches, and catalog build selection |
+| `branch-builds.js` | Which builds a branch shows, and grouping by workflow |
+| `catalog-view.js` | Model cards, build history, search, and filters |
+| `model-view.js` | The model page |
+| `compare-view.js` | The Compare page: pickers and table |
+| `benchmark-adapters.js` | One shape for every supported result schema |
+| `metrics.js` | Metric labels, units, and formatting |
+| `downloads.js` | Component discovery for downloads |
+| `markdown.js` | The README renderer |
+| `ui.js` | Icons, escaping, toasts, and the `disclosure()` row |
+
+Every expandable area is a `disclosure(key, label, body, meta)` row from
+`ui.js`: a full-width row with the label on the left, an optional summary
+(`meta`) and a › that turns down when open. The open rows are kept in
+`state.openDisclosures` by key, so a rerender keeps them open; the set is
+cleared when the page moves to another model. A link opened with `run`
+opens that component's row (`component:<run id>`). Opening the
+`model-card` row is what triggers the README fetch.
+
+Buttons with an icon start actions (download, copy). Blue text with ↗ is
+reserved for links that leave the browser. Cards group related numbers only
+(the KPI tiles, benchmark groups, and the package); the rest of the page uses
+sections and thin rules.
+
+`website/scripts/assemble-portal.mjs` renames every module with the revision
+for the deployed portal and fails when a module imports a file missing from its
+`fingerprintedAssets` list, so add a new module there.
 
 ## Downloading model variants
 
@@ -184,9 +251,6 @@ When a catalog build declares `artifact_suffix`, the dialog and download use
 the registry artifact endpoint; deploy registry support before this consumer.
 Existing objects, checksums, and run metadata stay unchanged. Builds without a
 suffix and history downloads retain their existing filenames.
-
-Changing the trial comparison metric updates the chart in place, preserving
-scroll position, keyboard focus, and expanded detail sections.
 
 ## Duration reporting
 

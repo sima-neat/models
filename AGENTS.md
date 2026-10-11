@@ -108,7 +108,30 @@ Conventions the code relies on:
 ## Model browser
 
 Before changing `artifact-browser/`, read its
-[design context](artifact-browser/DESIGN.md).
+[design context](artifact-browser/DESIGN.md) and
+[README](artifact-browser/README.md#how-the-page-is-built). What users see is in
+[docs/model-browser.md](docs/model-browser.md); update it with any visible
+change.
+
+- Make every expandable area a `disclosure()` row from `ui.js`. Raw
+  `<details>` elements fail `tests/unit/test_artifact_browser.py`.
+- Keep the glance-first page: key facts in the section, the rest in one row.
+  Actions are icon buttons; blue text with ↗ is only for external links.
+- Compare and show component measurements per component; never add them up
+  or mark one component best against a different component.
+- Keep rendering every published benchmark schema version, and let unknown
+  metrics fall through to Other measurements rather than hiding them.
+- Keep the preview data-driven. `preview.py` builds its catalog from
+  `models/`; never add a model, name, or README to it by hand. It needs the
+  repository installed (`python -m pip install .`) or `PYTHON` pointing at
+  such an interpreter.
+- Add a new module to `fingerprintedAssets` in
+  `website/scripts/assemble-portal.mjs`.
+- Before a push, run `python -m pytest tests/unit/test_artifact_browser.py`,
+  `node --test tests/browser/*.test.mjs`, and `npm run typecheck`,
+  `npm run build:portal`, and `npm run smoke:portal` with `--prefix website`,
+  then look at the changed pages in `preview.py` at desktop and phone width,
+  light and dark.
 
 ## Model README requirements
 
