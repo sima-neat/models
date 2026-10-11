@@ -9,12 +9,14 @@ import json
 import os
 import posixpath
 import re
+import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
+MODELS = ROOT / "models"
 RUN_ID = "74b48a12-6088-42a0-b881-5925a5272fae"
 COMMIT = "244c03323cefc96a6baaa097f0a4bb008e9c39ae"
 PREVIEW_RUNS = (
@@ -29,7 +31,7 @@ PREVIEW_RUNS = (
     ("yolo_v8s", "modalix_int8", "model", "main", "2.1.3", 96_771_405),
     ("depth_anything_v2_vits", "modalix_bf16", "model", "develop", "2.1.3", 207_614_992),
     ("fcn_hrnet48", "modalix_bf16", "model", "develop", "2.1.3", 312_045_118),
-    ("midas_v21_small_256", "modalix_bf16", "model", "main", "2.1.2", 91_352_776),
+    ("midas_v21_small", "modalix_bf16", "model", "main", "2.1.2", 91_352_776),
     ("detr_resnet50", "modalix_bf16", "model", "develop", "2.1.3", 251_770_364),
     (
         "resnet_50",
@@ -45,6 +47,22 @@ PREVIEW_RUNS = (
     ("rf_detr_small", "modalix_int8_bf16", "backbone", "main", "2.1.2", 104_298_000),
     ("rf_detr_small", "modalix_int8_bf16", "transformer", "main", "2.1.2", 168_701_000),
 )
+
+PREVIEW_TASKS = {
+    "resnet_50": "image_classification",
+    "depth_anything_v2_vits": "depth_estimation",
+    "midas_v21_small": "depth_estimation",
+    "fcn_hrnet48": "semantic_segmentation",
+}
+# Names and descriptions for fixture models that have no models/<id>/model.yaml.
+PREVIEW_ONLY_MODELS = {
+    "yolo_v8n": ("YOLOv8n", "The smallest YOLOv8 detector for COCO objects."),
+    "yolo_v8s": ("YOLOv8s", "A small YOLOv8 detector for COCO objects."),
+    "depth_anything_v2_vits": ("Depth Anything V2 Small", "Estimates relative depth from a single image."),
+    "fcn_hrnet48": ("FCN HRNet-W48", "Labels every pixel with one of the Cityscapes classes."),
+    "midas_v21_small": ("MiDaS v2.1 Small", "A compact monocular depth estimator."),
+    "detr_resnet50": ("DETR ResNet-50", "A transformer detector for COCO objects."),
+}
 
 
 def _build_index(index: int) -> int:
@@ -66,7 +84,7 @@ def _run(index: int = 0) -> dict:
     build = _build_index(index)
     commit = COMMIT if build == 0 else hashlib.sha1(f"preview-commit-{build}".encode()).hexdigest()
     architecture = "resnet_50" if "resnet" in model_id else model_id
-    task = "image_classification" if model_id == "resnet_50" else "object_detection"
+    task = PREVIEW_TASKS.get(model_id, "object_detection")
     return {
         "id": run_id,
         "repository": "sima-neat/models",
@@ -250,6 +268,54 @@ def _devkit_accuracy_result(index: int) -> dict | None:
     }
 
 
+def _model_yaml_value(model_id: str, key: str) -> str | None:
+    """A top-level scalar from models/<id>/model.yaml, read without a YAML parser so the preview stays stdlib-only."""
+    path = MODELS / model_id / "model.yaml"
+    if not path.is_file():
+        return None
+    match = re.search(rf"^{key}: (.+)$", path.read_text(encoding="utf-8"), re.MULTILINE)
+    return match.group(1).strip().strip("\"'") if match else None
+
+
+def _documentation_run_id(model_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"preview-documentation/{model_id}"))
+
+
+def _documentation_files(model_id: str) -> dict[str, Path] | None:
+    files = {"readme": MODELS / model_id / "README.md", "hero": MODELS / model_id / "hero.png"}
+    return files if all(path.is_file() for path in files.values()) else None
+
+
+def _model_documentation(model_id: str) -> dict | None:
+    """The catalog documentation entry for a model in models/, shaped like the registry's published receipt."""
+    files = _documentation_files(model_id)
+    if files is None:
+        return None
+    readme = files["readme"].read_bytes()
+    hero = files["hero"].read_bytes()
+    overview = re.search(r"^## Overview\n(.*?)^## ", readme.decode("utf-8"), re.MULTILINE | re.DOTALL)
+    return {
+        "format": "markdown",
+        "overview_markdown": overview.group(1).strip() if overview else "",
+        "run_id": _documentation_run_id(model_id),
+        "artifact_name": "readme",
+        "artifact_sha256": hashlib.sha256(readme).hexdigest(),
+        "size_bytes": len(readme),
+        "media_type": "text/markdown; charset=utf-8",
+        "source_path": f"models/{model_id}/README.md",
+        "source_commit": COMMIT,
+        "hero": {
+            "artifact_name": "hero",
+            "markdown_path": "hero.png",
+            "alt_text": f"{_model_yaml_value(model_id, 'display_name')} model hero",
+            "artifact_sha256": hashlib.sha256(hero).hexdigest(),
+            "size_bytes": len(hero),
+            "media_type": "image/png",
+            "source_path": f"models/{model_id}/hero.png",
+        },
+    }
+
+
 def _catalog_models(runs: list[dict]) -> list[dict]:
     """Catalog model entries whose builds are the given compile runs."""
     grouped: dict[str, dict] = {}
@@ -257,8 +323,9 @@ def _catalog_models(runs: list[dict]) -> list[dict]:
         model_id = run["metadata"]["model_id"]
         model = grouped.setdefault(model_id, {
             "model_id": model_id,
-            "display_name": model_id.replace("_", " ").title(),
-            "description": f"Verified {model_id.replace('_', ' ')} builds for Modalix deployment.",
+            "display_name": _model_yaml_value(model_id, "display_name") or PREVIEW_ONLY_MODELS[model_id][0],
+            "description": _model_yaml_value(model_id, "description") or PREVIEW_ONLY_MODELS[model_id][1],
+            "documentation": _model_documentation(model_id),
             "catalog_revision": run["commit_sha"],
             "model_type": run["model_type"],
             "architecture_id": run["architecture_id"],
@@ -270,6 +337,13 @@ def _catalog_models(runs: list[dict]) -> list[dict]:
             "categories": run.get("model_categories", {}),
             "builds": [],
         })
+        # A catalog names one build per profile and component; runs are listed newest first.
+        if any(
+            (build["build_profile_id"], build["component_id"])
+            == (run["metadata"]["build_profile_id"], run["metadata"]["component_id"])
+            for build in model["builds"]
+        ):
+            continue
         model["builds"].append({
             "run_id": run["id"],
             "build_profile_id": run["metadata"]["build_profile_id"],
@@ -294,6 +368,20 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         body = json.dumps(payload, separators=(",", ":")).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _documentation_content(self, run_id: str, artifact_name: str) -> None:
+        model_id = next((item[0] for item in PREVIEW_RUNS if _documentation_run_id(item[0]) == run_id), None)
+        files = _documentation_files(model_id) if model_id else None
+        if files is None or artifact_name not in files:
+            self._json({"error": {"code": "artifact_not_found", "message": "No documentation artifact"}}, 404)
+            return
+        body = files[artifact_name].read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png" if artifact_name == "hero" else "text/markdown; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -352,7 +440,12 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if path == "/v1/repositories/sima-neat/models/catalogs/current":
             self._json({"catalog": {"document": {"taxonomy": {
                 "model_types": {"vision": {"display_name": "Vision"}},
-                "tasks": {"image_classification": {"display_name": "Image classification"}},
+                "tasks": {
+                    "image_classification": {"display_name": "Image classification"},
+                    "object_detection": {"display_name": "Object detection"},
+                    "depth_estimation": {"display_name": "Depth estimation"},
+                    "semantic_segmentation": {"display_name": "Semantic segmentation"},
+                },
                 "architectures": {"resnet_50": {"display_name": "ResNet-50"}},
                 "architecture_paradigms": {"cnn": {"display_name": "CNN"}},
                 "modalities": {
@@ -374,6 +467,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         if path.startswith("/v1/runs/"):
             parts = path.strip("/").split("/")
             requested_run_id = parts[2] if len(parts) >= 3 else ""
+            if len(parts) == 6 and parts[3] == "artifacts" and parts[5] == "content":
+                self._documentation_content(requested_run_id, parts[4])
+                return
             index = _run_index(requested_run_id)
             benchmark_index = next(
                 (item for item in range(len(PREVIEW_RUNS)) if _benchmark_run_id(item) == requested_run_id), None

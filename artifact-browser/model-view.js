@@ -1,7 +1,7 @@
-// Model detail panel: performance, accuracy, documentation, provenance, and license.
+// Model page: performance, accuracy, model card, build details, and license.
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
-import { state, elements, catalogMode, currentVariant } from "./state.js";
+import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, showToast } from "./ui.js";
 import {
   METRIC_DEFINITIONS, SUMMARY_METRICS, metricDefinition, metricDisplay, formatDate, formatDuration,
@@ -9,7 +9,7 @@ import {
 } from "./metrics.js";
 import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
-  compilerFilteredBuilds,
+  compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
 import { compareCheckbox } from "./compare-view.js";
 
@@ -64,19 +64,21 @@ function huggingFaceSourceLink(input = {}) {
 
 function sourceInputPanel(inputs) {
   if (!inputs.length) return "";
-  return `<section><div class="detail-section-title"><h3>Source input</h3></div>${inputs.map((input) => `<div class="source-block">
+  return `<div class="detail-group"><h4>Source model</h4>${inputs.map((input) => `<div class="source-block">
     <strong>${escapeHtml(input.name)}</strong>
     <p>${escapeHtml(input.source_reference || input.input_type)}</p>
     <div><span>${escapeHtml(formatBytes(input.size_bytes))}</span><code>${escapeHtml(input.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(input.sha256)}" aria-label="Copy source checksum">${icons.copy}</button></div>
-  </div>`).join("")}</section>`;
+  </div>`).join("")}</div>`;
 }
 
 export function detailSkeleton() {
+  showView("model");
   elements["detail-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span><span></span></div>`;
 }
 
 export function showEmptyDetail() {
-  elements["detail-pane"].innerHTML = `<div class="detail-empty"><h2>No model selected</h2><p>Select a model to choose a variant, inspect provenance, and download a verified build.</p></div>`;
+  elements["detail-pane"].innerHTML = "";
+  showView("catalog");
 }
 
 function keyValue(label, value, { copy = false, mono = false } = {}) {
@@ -210,38 +212,65 @@ function temperatureChart(series) {
   return `<figure class="temperature-chart benchmark-chart"><figcaption><span class="chart-title">Temperature ${legacy ? "change" : "over benchmark"}</span><span class="chart-series-label">${escapeHtml(selected.label)}</span></figcaption><p class="chart-note">${legacy ? "Start/end snapshots only" : `${samples.length} samples`} · ${minimum.toFixed(1)}–${maximum.toFixed(1)} °C</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Temperature in degrees Celsius for ${escapeHtml(selected.label)}"><g class="chart-grid">${grid}${ticks}</g><path class="temperature-line" d="${path}"/><g class="temperature-points">${points}</g></svg><table class="sr-only"><caption>Temperature samples for ${escapeHtml(selected.label)}</caption><thead><tr><th>Elapsed time</th><th>Temperature in degrees Celsius</th></tr></thead><tbody>${samples.map((sample) => `<tr><td>${((sample.timestamp - startTime) / 1000).toFixed(1)} seconds</td><td>${sample.celsius}</td></tr>`).join("")}</tbody></table></figure>`;
 }
 
-// The component row shows these measurements; its expanded body shows the rest.
-const ROW_METRICS = ["latency_avg_ms", "throughput_fps", "avg_power_watts"];
+// The performance tiles of each component, with the hint shown under each value.
+const KPI_METRICS = [
+  ["throughput_fps", "Inferences per second"],
+  ["latency_avg_ms", "Average per inference"],
+  ["avg_power_watts", "Whole board, while running"],
+  ["energy_per_inference_joules", "Board power ÷ throughput"],
+];
 
-function componentBenchmark(payload) {
-  if (!payload) return { benchmark: null, body: `<p class="muted-message">No completed benchmark is linked to this component yet.</p>` };
+function kpiTile(key, metric, hint) {
+  const definition = metricDefinition(key, metric);
+  const display = metricDisplay(metric, definition);
+  if (!display) return "";
+  return `<div class="kpi"><span>${escapeHtml(definition.label)}</span><strong>${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit.replace("/inference", ""))}</small></strong><small>${escapeHtml(hint)}</small></div>`;
+}
+
+function benchmarkContext(benchmark) {
+  return [
+    benchmark.workload,
+    benchmark.platformVersion && `Platform ${benchmark.platformVersion}`,
+    benchmark.neatVersion && `Neat ${benchmark.neatVersion}`,
+    Number.isFinite(benchmark.samples) && `${benchmark.samples.toLocaleString()} samples per trial`,
+    benchmark.timestamp && `Measured ${formatDate(benchmark.timestamp, false)}`,
+  ].filter(Boolean).join(" · ");
+}
+
+function componentBenchmark(payload, runId) {
+  if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
   if (adapted.kind === "unsupported") {
-    return { benchmark: null, body: `<p class="muted-message">This benchmark schema (v${escapeHtml(adapted.schemaVersion)}) is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}` };
+    return `<p class="muted-message">This benchmark schema (v${escapeHtml(adapted.schemaVersion)}) is newer than this browser can render.</p>${payload.result_artifact_url ? `<a class="external-link" href="${escapeHtml(payload.result_artifact_url)}">Open raw result ${icons.external}</a>` : ""}`;
   }
-  if (adapted.kind !== "supported") return { benchmark: null, body: "" };
+  if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
+  const tiles = KPI_METRICS.map(([key, hint]) => kpiTile(key, benchmark.measurements[key], hint)).join("");
   const summary = SUMMARY_METRICS
-    .filter((key) => !ROW_METRICS.includes(key) && benchmark.measurements[key])
+    .filter((key) => !KPI_METRICS.some(([tile]) => tile === key) && benchmark.measurements[key])
     .map((key) => metricCard(key, benchmark.measurements[key]))
     .join("");
-  return { benchmark, body: `<div class="component-benchmark"><h4>Benchmark <span>Schema v${benchmark.schemaVersion}</span></h4>
-    ${summary ? `<div class="benchmark-summary">${summary}</div>` : ""}
-    ${trialChart(benchmark.trials, benchmark.measurements)}
-    ${temperatureChart(benchmark.temperatureSeries)}
-    ${measurementTable(benchmark.measurements)}
-    <dl class="benchmark-context">${keyValue("Workload", benchmark.workload)}${keyValue("Samples / trial", benchmark.samples)}${keyValue("Platform", benchmark.platformVersion)}${keyValue("Neat", benchmark.neatVersion)}${keyValue("Measured", formatDate(benchmark.timestamp))}</dl>
-  </div>` };
+  return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
+    <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}</p>
+    <details class="benchmark-details" data-benchmark-run-id="${escapeHtml(runId)}"${state.expandedBenchmarks.has(runId) ? " open" : ""}><summary>Trials, temperature, and all measurements <span>Schema v${benchmark.schemaVersion}</span></summary><div class="component-benchmark">
+      ${summary ? `<div class="benchmark-summary">${summary}</div>` : ""}
+      ${trialChart(benchmark.trials, benchmark.measurements)}
+      ${temperatureChart(benchmark.temperatureSeries)}
+      ${measurementTable(benchmark.measurements)}
+    </div></details>`;
+}
+
+// A multi-component model shows each component's numbers under its name; they are never combined.
+function componentPerformance(detail, named) {
+  const run = detail.summary.run;
+  return `<div class="component-performance" data-component-run-id="${escapeHtml(run.id)}">
+    ${named ? `<h4>${escapeHtml(run.metadata?.component_id || "model")}</h4>` : ""}
+    ${componentBenchmark(detail.benchmark, run.id)}
+  </div>`;
 }
 
 function componentStat(label, value) {
   return `<span class="component-stat"><small>${escapeHtml(label)}</small>${escapeHtml(value)}</span>`;
-}
-
-function rowMetric(benchmark, key) {
-  const metric = benchmark?.measurements[key];
-  const display = metricDisplay(metric, metricDefinition(key, metric));
-  return display ? `${display.value.toFixed(display.digits)} ${display.unit}` : "—";
 }
 
 function compileDuration(run) {
@@ -256,13 +285,12 @@ function componentRow(detail, open) {
   const artifacts = modelPackArtifacts(detail.summary.artifacts);
   const tests = detail.tests.test_results || [];
   const parameters = detail.provenance.parameters?.parameters?.compile_parameters || {};
-  const { benchmark, body } = componentBenchmark(detail.benchmark);
   const mpkBytes = artifacts.reduce((total, artifact) => total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0), 0);
   const artifactRows = artifacts.length
     ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
   return `<details class="component-row" data-component-run-id="${escapeHtml(run.id)}"${open ? " open" : ""}>
-    <summary><strong>${escapeHtml(component)}</strong>${componentStat("MPK", mpkBytes ? formatBytes(mpkBytes) : "—")}${ROW_METRICS.map((key) => componentStat(metricDefinition(key).label, rowMetric(benchmark, key))).join("")}</summary>
+    <summary><strong>${escapeHtml(component)}</strong>${componentStat("MPK", mpkBytes ? formatBytes(mpkBytes) : "—")}${componentStat("Precision", parameters.precision || "—")}</summary>
     <div class="component-body">
       <dl class="key-grid">
         ${artifactRows}
@@ -271,7 +299,6 @@ function componentRow(detail, open) {
         ${keyValue("Compile recipe duration", compileDuration(run))}
         ${keyValue("Registry publication duration", formatDuration(run.started_at, run.finished_at))}
       </dl>
-      ${body}
       ${fidelityPanel(tests, run.id)}
       ${Object.keys(parameters).length ? `<details><summary>Compile parameters <span>JSON</span></summary><pre>${escapeHtml(JSON.stringify(parameters, null, 2))}</pre></details>` : ""}
     </div>
@@ -413,16 +440,10 @@ function licensePanel(license) {
   const redistribution = license.redistribution
     ? license.redistribution.charAt(0).toUpperCase() + license.redistribution.slice(1)
     : "Unknown";
-  return `<section class="license-section"><div class="detail-section-title"><h3>License</h3><span>${escapeHtml(license.spdx)}</span></div><dl class="key-grid">
+  return `<section id="license-section" class="license-section" tabindex="-1"><div class="detail-section-title"><h3>License</h3><span>${escapeHtml(license.spdx)}</span></div><dl class="key-grid">
     ${keyValue("SPDX", license.spdx, { copy: true, mono: true })}
     ${keyValue("Redistribution", redistribution)}
   </dl>${license.attribution ? `<p class="license-attribution"><strong>Attribution</strong>${escapeHtml(license.attribution)}</p>` : ""}</section>`;
-}
-
-function documentationHeroUrl(documentation) {
-  const hero = documentation?.hero;
-  if (!hero?.artifact_name || !hero?.artifact_sha256 || !documentation?.run_id) return null;
-  return `${state.apiBase}/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(hero.artifact_name)}/content`;
 }
 
 function documentationPanel(model) {
@@ -441,7 +462,7 @@ function documentationPanel(model) {
     ? renderMarkdown(fullMarkdown, { stripTitle: true, resolveImage, resolveLink })
     : `${overviewHero}${renderMarkdown(documentation.overview_markdown, { resolveLink })}`;
   const label = expanded ? "Show overview only" : "Read full model card";
-  return `<section class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title">
+  return `<section id="model-documentation" class="model-documentation${expanded ? " expanded" : ""}" aria-labelledby="model-documentation-title" tabindex="-1">
     <div class="detail-section-title"><h3 id="model-documentation-title">Model card</h3>${expanded ? `<button class="documentation-collapse" type="button" data-documentation-toggle aria-expanded="true" aria-controls="model-documentation-body">${label}</button>` : ""}</div>
     <div id="model-documentation-body" class="model-documentation-body">${body}</div>
     <div class="documentation-disclosure${expanded ? " expanded" : ""}">
@@ -488,18 +509,24 @@ export async function toggleDocumentation(button) {
 
 // Variant tabs switch between the latest builds in the current catalog, so a build reached from
 // history shows none.
-function detailBuildSwitcher(variant) {
+// The catalog model whose current build is this variant, or null for an older or history-only build.
+function catalogModelOfVariant(variant) {
   const model = catalogMode() ? state.models.find((item) => item.model_id === variant.modelId) : null;
-  const inCatalog = model?.builds.some((build) => variant.runs.some((run) => run.id === build.run_id));
+  return model?.builds.some((build) => variant.runs.some((run) => run.id === build.run_id)) ? model : null;
+}
+
+function detailBuildSwitcher(variant) {
+  const model = catalogModelOfVariant(variant);
+  const inCatalog = Boolean(model);
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
   const compared = state.compareSelection.has(variant.key);
   const tabs = profiles.map(([profile]) => {
     const selected = profile === variant.profile;
-    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}"><span>${escapeHtml(profile)}</span>${selected ? "<b>Current</b>" : ""}</button>`;
+    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(profile)}</button>`;
   }).join("");
   return `<section class="detail-build-switcher" aria-label="Variant selection">
-    ${profiles.length ? `<div class="detail-switcher-heading"><strong>Variants</strong><span>${profiles.length} variant${profiles.length === 1 ? "" : "s"}</span></div>
-    <div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<div class="detail-switcher-heading"><strong>Variant</strong><span>${escapeHtml(profileLabel(variant.anchor))}</span></div>`}
+    <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
+    ${profiles.length ? `<div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<span class="detail-variant-single">${escapeHtml(profileLabel(variant.anchor))}</span>`}
     <label class="detail-compare-select compare-select" title="${compared ? "Remove from" : "Add to"} comparison">
       ${compareCheckbox(variant)}
       <span aria-hidden="true">✓</span><b>${compared ? "Selected for comparison" : "Add variant to comparison"}</b>
@@ -511,7 +538,23 @@ function uniqueBy(items, key) {
   return [...new Map(items.map((item) => [key(item), item])).values()];
 }
 
+function targetName(run) {
+  const target = run.target_platform || "";
+  return target ? target.charAt(0).toUpperCase() + target.slice(1) : "the target";
+}
+
+function cliDownloadCommand(variant) {
+  return `sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch ${branchName(variant.anchor.git_ref)}`;
+}
+
+function sectionNavigation(sections) {
+  return `<nav class="subnav" aria-label="Model page sections">${sections.map(([id, label]) => (
+    `<button type="button" data-scroll-to="${id}">${label}</button>`
+  )).join("")}</nav>`;
+}
+
 export function renderDetail(variant) {
+  showView("model");
   state.variantGroups.set(variant.key, variant);
   const run = variant.anchor;
   const details = variant.details;
@@ -529,7 +572,7 @@ export function renderDetail(variant) {
   const accuracyMarkup = details.map((detail) => accuracyPanel(
     detail.accuracy, detail.tests.test_results || [], detail.benchmarkTests?.test_results || [], variant.devkit,
   )).find(Boolean) || "";
-  const hasBenchmark = details.some((detail) => detail.benchmark);
+  const documentationMarkup = documentationPanel(catalogModel);
   const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
   // Every component's MPK must pass validation for the build to carry the mark.
   const validated = details.every((detail) => mpkValidationMark(detail.tests.test_results || []));
@@ -538,40 +581,67 @@ export function renderDetail(variant) {
   const huggingFaceSource = inputs.map(huggingFaceSourceLink).find(Boolean);
   const builtAt = Math.max(...variant.runs.map((item) => Date.parse(item.finished_at || item.created_at || "") || 0));
   const singleComponent = details.length === 1;
+  const backLabel = elements["result-title"].textContent || "Models";
+  const downloadAction = fullPackage
+    ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</small>` : ""}</button>`
+    : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download</span></button>` : "";
+  const sections = [
+    ["components-section", "Performance"],
+    accuracyMarkup && ["accuracy-section", "Accuracy"],
+    documentationMarkup && ["model-documentation", "Model card"],
+    ["details-section", "Details"],
+    license?.spdx && ["license-section", "License"],
+  ].filter(Boolean);
 
   elements["detail-pane"].innerHTML = `<div class="detail-content">
-    <div class="detail-topline"><button class="detail-layout-toggle" type="button" aria-pressed="${state.detailLayout === "focused"}" title="Give the selected model more space">${state.detailLayout === "focused" ? "Show wider list" : "Focus model"}</button><button class="close-detail" type="button" aria-label="Close details">×</button></div>
-    <div class="detail-title"><div class="detail-title-copy"><p class="kicker">${escapeHtml(run.target_platform || "Model artifact")}</p><h2>${escapeHtml(displayName)}</h2>${displayName !== model ? `<p>${escapeHtml(model)}</p>` : ""}</div><div class="detail-title-actions">${fullPackage ? `<button class="artifact-download-shortcut" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}" aria-label="Download full package" data-tooltip="Download full package">${icons.download}</button>` : hasArtifacts ? `<button class="artifact-download-shortcut" type="button" data-download-variant="${run.id}" data-run-id="${run.id}" aria-label="Download individual components" data-tooltip="Download individual components">${icons.download}</button>` : ""}${validated ? mpkValidationMark(allTests) : ""}${hasBenchmark ? `<button class="benchmark-shortcut" type="button" data-scroll-benchmark aria-label="Jump to component benchmarks" data-tooltip="Jump to component benchmarks">${icons.benchmark}</button>` : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div></div>
+    <nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">${escapeHtml(backLabel)}</button><span aria-hidden="true">/</span><span aria-current="page">${escapeHtml(displayName)}</span></nav>
+    <header class="detail-title">
+      <div class="detail-title-copy">
+        <h2>${escapeHtml(displayName)}</h2>
+        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
+        ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
+      </div>
+      <div class="detail-title-actions">
+        ${downloadAction}
+        ${catalogModelOfVariant(variant) ? `<button class="cli-action" type="button" data-copy="${escapeHtml(cliDownloadCommand(variant))}">${icons.copy}<span>Copy CLI command</span></button>` : ""}
+        <div class="detail-links">${validated ? mpkValidationMark(allTests) : ""}${huggingFaceSource ? `<a class="huggingface-source-link" href="${escapeHtml(huggingFaceSource.href)}" target="_blank" rel="noreferrer" aria-label="Open source ONNX model card on Hugging Face" data-tooltip="Open source ONNX model card on Hugging Face">${icons.huggingFace}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+      </div>
+    </header>
     ${detailBuildSwitcher(variant)}
-    <div class="detail-tags">${precisions.length ? detailTag(icons.precision, precisions.join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}${categories.model_type ? detailTag(icons.modelType, categories.model_type, "model-type") : ""}${categories.architecture?.id ? detailTag(icons.architecture, categories.architecture.id, "architecture") : ""}${(categories.tasks || []).map((task) => detailTag(icons.task, task, "task")).join("")}</div>
+    ${sectionNavigation(sections)}
 
-    ${documentationPanel(catalogModel)}
-
-    ${fullPackage ? `<section class="artifact-section"><div class="detail-section-title"><h3>Full Package</h3><button class="text-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">Download ZIP</button></div>${packageArtifact ? `<dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}<p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></section>` : ""}
-
-    <section><div class="detail-section-title"><h3>Build provenance</h3></div><dl class="key-grid">
-      ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
-      ${keyValue("Branch", branchName(run.git_ref))}
-      ${keyValue("Built", formatDate(builtAt || run.created_at))}
-      ${keyValue("Target", run.target_platform)}
-      ${keyValue("Compiler", run.toolchain_version)}
-    </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</section>
-
-    ${sourceInputPanel(inputs)}
-
-    ${licensePanel(license)}
+    <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
+      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, each measured on its own.</p>`}
+      ${details.map((detail) => componentPerformance(detail, !singleComponent)).join("")}
+      ${singleComponent ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
+    </section>
 
     ${accuracyMarkup}
 
-    <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Components</h3><span>${details.length}</span></div>
-      <div class="component-list">${details.map((detail) => componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))).join("")}</div>
-      ${singleComponent ? "" : `<p class="muted-message">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
+    ${documentationMarkup}
+
+    <section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
+      ${fullPackage ? `<div class="detail-group"><h4>Full package</h4>${packageArtifact ? `<dl class="artifact-metadata"><div><dt>File size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}<p class="muted-message">Includes all components and declared runtime resources.</p><button class="text-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">Download individual components</button></div>` : ""}
+
+      <div class="detail-group"><h4>Build provenance</h4><dl class="key-grid">
+        ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}
+        ${keyValue("Branch", branchName(run.git_ref))}
+        ${keyValue("Built", formatDate(builtAt || run.created_at))}
+        ${keyValue("Target", run.target_platform)}
+        ${keyValue("Compiler", run.toolchain_version)}
+      </dl>${run.ci_run_url ? `<a class="external-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">Open GitHub workflow ${icons.external}</a>` : ""}</div>
+
+      ${sourceInputPanel(inputs)}
+
+      <div class="detail-group"><h4>${singleComponent ? "Files and checksums" : "Components, files, and checksums"}</h4>
+        <div class="component-list">${details.map((detail) => componentRow(detail, singleComponent || state.expandedRuns.has(detail.summary.run.id))).join("")}</div>
+      </div>
     </section>
+
+    ${licensePanel(license)}
   </div>`;
-  elements["detail-pane"].querySelector('.detail-variant-tab[aria-selected="true"]')
-    ?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 export function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {
-  return `<div class="error-state">${closable ? `<button class="close-detail" type="button" aria-label="Close details">×</button>` : ""}<span>!</span><p class="kicker">Connection error</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><button type="button" data-action="retry">Try again</button></div>`;
+  return `<div class="error-state">${closable ? `<nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">Back to models</button></nav>` : ""}<span>!</span><p class="kicker">Connection error</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><button type="button" data-action="retry">Try again</button></div>`;
 }

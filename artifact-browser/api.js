@@ -58,6 +58,13 @@ export async function apiText(path) {
   return body;
 }
 
+// The catalog card and the model card show the hero image published with the model README.
+export function documentationHeroUrl(documentation) {
+  const hero = documentation?.hero;
+  if (!hero?.artifact_name || !hero?.artifact_sha256 || !documentation?.run_id) return null;
+  return `${state.apiBase}/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(hero.artifact_name)}/content`;
+}
+
 function catalogCacheKey() {
   const repo = state.repository;
   const history = elements["history-filter"].checked ? "history" : "latest";

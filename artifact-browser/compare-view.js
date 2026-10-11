@@ -2,7 +2,7 @@
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { variantBuildRuns } from "./branch-builds.js";
 import { state, elements } from "./state.js";
-import { escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
+import { escapeHtml, branchName, shortSha, profileLabel, variantLabel, showToast } from "./ui.js";
 import { METRIC_DEFINITIONS, metricDefinition, metricDisplay, formatBytes } from "./metrics.js";
 import { api, mapWithConcurrency, modelPackArtifacts } from "./api.js";
 
@@ -10,12 +10,15 @@ function comparisonGroups() {
   return [...state.compareSelection.values()];
 }
 
+// Three builds fit side by side on a laptop screen and stay readable on a phone.
+export const MAX_COMPARED_BUILDS = 3;
+
 export function updateCompareAction() {
   const selectedCount = state.compareSelection.size;
+  elements["compare-tray"].hidden = selectedCount === 0;
   elements["compare-button"].disabled = selectedCount < 2;
-  elements["compare-label"].textContent = "Compare selected";
+  elements["compare-label"].innerHTML = `${selectedCount === 1 ? "build" : "builds"} selected<span class="compare-limit"> · up to ${MAX_COMPARED_BUILDS}</span>`;
   elements["compare-count"].textContent = selectedCount;
-  elements["compare-count"].hidden = selectedCount === 0;
   elements["compare-button"].setAttribute(
     "aria-label",
     selectedCount < 2
@@ -28,6 +31,11 @@ export function setComparisonSelection(checkbox) {
   const key = checkbox.dataset.compareVariant;
   const group = state.variantGroups.get(key) || state.compareSelection.get(key);
   if (!group) return null;
+  if (checkbox.checked && !state.compareSelection.has(key) && state.compareSelection.size >= MAX_COMPARED_BUILDS) {
+    checkbox.checked = false;
+    showToast(`Compare up to ${MAX_COMPARED_BUILDS} builds at a time. Remove one to add another.`, true);
+    return null;
+  }
   if (checkbox.checked) state.compareSelection.set(key, group);
   else state.compareSelection.delete(key);
   checkbox.closest(".run-entry")?.classList.toggle("compared", checkbox.checked);
@@ -42,13 +50,35 @@ export function compareCheckbox(group) {
   return `<input type="checkbox" data-compare-variant="${escapeHtml(group.key)}" aria-label="${compared ? "Remove" : "Add"} ${escapeHtml(variantLabel(group))} ${compared ? "from" : "to"} comparison"${compared ? " checked" : ""} />`;
 }
 
-function comparisonMetric(metric, definition) {
+function comparisonMetric(metric, definition, best = false) {
   const display = metricDisplay(metric, definition);
   if (!display) {
     const reason = metric?.reason ? metric.reason.replaceAll("_", " ") : "Not measured";
     return `<span class="comparison-unavailable" title="${escapeHtml(reason)}">—</span>`;
   }
-  return `<span class="comparison-value">${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit)}</small></span>`;
+  const value = `${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit)}</small>`;
+  return best
+    ? `<span class="comparison-value comparison-best"><strong>${value}</strong><span class="sr-only"> (best)</span></span>`
+    : `<span class="comparison-value">${value}</span>`;
+}
+
+// The best value of a measurement among builds of the same component; a single build has no best.
+function displayedValue(display) {
+  return Number(display.value.toFixed(display.digits));
+}
+
+function bestComponentValues(entries, field, definition) {
+  if (!definition || definition.direction === "neutral") return new Map();
+  const better = definition.direction === "lower" ? Math.min : Math.max;
+  const byComponent = new Map();
+  for (const { run, benchmark } of entries) {
+    const display = metricDisplay(benchmark?.measurements[field], definition);
+    if (!display) continue;
+    const component = run.metadata?.component_id || "model";
+    byComponent.set(component, [...(byComponent.get(component) || []), displayedValue(display)]);
+  }
+  return new Map([...byComponent].filter(([, values]) => values.length > 1)
+    .map(([component, values]) => [component, better(...values)]));
 }
 
 function comparisonEntryFromDetail(run, detail) {
@@ -92,9 +122,14 @@ export function renderComparisonTable(variants) {
     ? entries.map(({ benchmark }) => benchmark?.measurements[field]).find(Boolean)
     : null;
   const definition = field ? metricDefinition(field, sampleMetric) : null;
+  const best = bestComponentValues(entries, field, definition);
+  const isBest = (componentRun, benchmark) => {
+    const display = metricDisplay(benchmark?.measurements[field], definition);
+    return Boolean(display) && displayedValue(display) === best.get(componentRun.metadata?.component_id || "model");
+  };
   const groups = variants.map(({ group, entries: variantEntries }) => {
     const run = variantEntries[0]?.run || group.anchor;
-    const heading = `<tr class="comparison-variant"><th scope="rowgroup" colspan="4"><strong>${escapeHtml(group.modelId || "Unknown model")}</strong><small>${escapeHtml(profileLabel(run))}</small><small>${escapeHtml(branchName(run.git_ref))} · ${escapeHtml(run.toolchain_version || "—")} · ${escapeHtml(shortSha(run.commit_sha))}</small></th></tr>`;
+    const heading = `<tr class="comparison-variant"><th scope="rowgroup" colspan="4"><strong>${escapeHtml(modelName(group.modelId))}</strong><small>${escapeHtml(profileLabel(run))}</small><small>${escapeHtml(branchName(run.git_ref))} · ${escapeHtml(run.toolchain_version || "—")} · ${escapeHtml(shortSha(run.commit_sha))}</small></th></tr>`;
     const rows = variantEntries.map(({ run: componentRun, artifacts, benchmark }) => {
       const artifactBytes = artifacts.reduce((total, artifact) => (
         total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0)
@@ -103,7 +138,7 @@ export function renderComparisonTable(variants) {
         <th scope="row">${escapeHtml(componentRun.metadata?.component_id || "model")}</th>
         <td>${escapeHtml(benchmark?.workload || "No benchmark")}</td>
         <td><span class="comparison-value">${escapeHtml(artifactBytes ? formatBytes(artifactBytes) : "—")}</span></td>
-        <td>${field ? comparisonMetric(benchmark?.measurements[field], definition) : '<span class="comparison-unavailable">—</span>'}</td>
+        <td>${field ? comparisonMetric(benchmark?.measurements[field], definition, isBest(componentRun, benchmark)) : '<span class="comparison-unavailable">—</span>'}</td>
       </tr>`;
     }).join("");
     return `<tbody>${heading}${rows}</tbody>`;
@@ -113,7 +148,7 @@ export function renderComparisonTable(variants) {
     return `<option value="${escapeHtml(key)}"${key === field ? " selected" : ""}>${escapeHtml(item.label)}</option>`;
   }).join("");
   const note = definition
-    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better`} · per component`
+    ? `${definition.unit}${definition.direction === "neutral" ? "" : ` · ${definition.direction} is better, best in bold`} · per component`
     : "No shared measurements are available";
   return `<div class="comparison-measurement-bar"><div class="comparison-measurement-control"><label class="chart-control"><span>Compare by</span><select data-comparison-metric>${options}</select></label><p>${escapeHtml(note)}</p></div></div>
   <div class="comparison-table-wrap"><table class="comparison-table">
@@ -123,6 +158,11 @@ export function renderComparisonTable(variants) {
       <th scope="col">Artifact size</th><th scope="col">${escapeHtml(definition?.label || "Measurement")}</th>
     </tr></thead>${groups}
   </table></div>`;
+}
+
+function modelName(modelId) {
+  const model = [...state.models, ...state.catalogDefinitions].find((item) => item.model_id === modelId);
+  return model?.display_name || modelId || "Unknown model";
 }
 
 // A history entry holds only the runs on screen, so a search or page boundary can split a build;

@@ -60,8 +60,8 @@ try {
   const browser = await chromium.launch();
   try {
     const checks = [
-      ['model list', new URL('/', variantUrl), '#result-list .model-row'],
-      ['variant page', variantUrl, '#components-section .component-row'],
+      ['model list', new URL('/', variantUrl), '#result-list .model-card'],
+      ['variant page', variantUrl, '#components-section .component-performance'],
     ];
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);

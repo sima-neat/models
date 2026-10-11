@@ -1,13 +1,13 @@
 // Model catalog and build history: filters, search, and the result list.
 import { branchModels, variantBuilds } from "./branch-builds.js";
 import {
-  DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode,
+  DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel } from "./ui.js";
 import { formatDate } from "./metrics.js";
 import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog, buildProfileId, componentId,
-  runFromCatalogBuild, profileGroups, activeModelBuild,
+  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl,
 } from "./api.js";
 import { updateCompareAction, compareCheckbox } from "./compare-view.js";
 
@@ -64,15 +64,27 @@ export function activeFilterCount() {
   ].filter(Boolean).length;
 }
 
+// The filter rail is always shown on wide screens; on narrow screens the toggle opens it.
 export function setFilterDrawer(open) {
-  elements["filter-drawer"].hidden = !open;
+  elements["filter-drawer"].dataset.open = String(open);
   elements["filter-toggle"].setAttribute("aria-expanded", String(open));
+}
+
+// Filters outside Task and Architecture sit under "More filters", which opens when one of them is set.
+function moreFiltersActive() {
+  const current = categoryFilters();
+  return Boolean(
+    current.model_type || current.architecture_paradigm || current.input_modality
+    || (elements["branch-filter"].value && elements["branch-filter"].value !== DEFAULT_BRANCH)
+    || elements["compiler-filter"].value || elements["history-filter"].checked,
+  );
 }
 
 export function updateFilterDisclosure() {
   const count = activeFilterCount();
   elements["filter-count"].textContent = String(count);
   elements["filter-count"].hidden = count === 0;
+  if (moreFiltersActive()) elements["more-filters"].open = true;
 }
 
 export function applyCatalog(payload, { append = false, cache = true } = {}) {
@@ -134,10 +146,6 @@ export async function loadBranches() {
 function normalizedSearchTerms(value) {
   return value.normalize("NFKD").toLowerCase().replace(/[._/-]+/g, " ")
     .replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
-}
-
-function taxonomyLabel(section, id) {
-  return state.taxonomy?.[section]?.[id]?.display_name || id || "";
 }
 
 function runSearchDocument(run) {
@@ -272,17 +280,43 @@ function renderHistory() {
   }).join("");
 }
 
-function renderModelRow(model) {
+// Size words order a family's models from smallest to largest; other names sort alphabetically.
+const MODEL_SIZE_RANK = { nano: 1, tiny: 2, small: 3, medium: 4, large: 5 };
+
+function modelSortKey(model) {
+  const name = model.display_name || model.model_id;
+  const sizeWord = name.split(/\s+/).find((word) => MODEL_SIZE_RANK[word.toLowerCase()]);
+  const family = sizeWord ? name.replace(sizeWord, "").replace(/\s+/g, " ").trim() : name;
+  return { family, rank: sizeWord ? MODEL_SIZE_RANK[sizeWord.toLowerCase()] : 0, name };
+}
+
+function compareModels(left, right) {
+  const a = modelSortKey(left);
+  const b = modelSortKey(right);
+  return a.family.localeCompare(b.family) || a.rank - b.rank || a.name.localeCompare(b.name);
+}
+
+function modelCardImage(model) {
+  const heroUrl = documentationHeroUrl(model.documentation);
+  return heroUrl
+    ? `<span class="model-card-image"><img src="${escapeHtml(heroUrl)}" alt="" loading="lazy" decoding="async" /></span>`
+    : `<span class="model-card-image model-card-image-empty" aria-hidden="true"><img src="favicon.svg" alt="" /></span>`;
+}
+
+function renderModelCard(model) {
   const profiles = profileGroups(model);
   const active = activeModelBuild(model);
   const run = runFromCatalogBuild(model, active.build);
-  const selected = model.builds.some((build) => build.run_id === state.selectedId);
   const displayName = model.display_name || model.model_id;
-  const profileCount = profiles.length;
-  return `<button class="model-row${selected ? " selected" : ""}" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${run.id}" aria-current="${selected ? "true" : "false"}">
-    <span class="model-row-identity"><strong>${escapeHtml(displayName)}</strong>${displayName !== model.model_id ? `<code>${escapeHtml(model.model_id)}</code>` : ""}</span>
-    <span class="model-row-count">${profileCount}<small>variant${profileCount === 1 ? "" : "s"}</small></span>
-    <span class="row-arrow">${icons.arrow}</span>
+  const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
+  const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
+  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
+    ${modelCardImage(model)}
+    <span class="model-card-body">
+      <strong>${escapeHtml(displayName)}</strong>
+      ${model.description ? `<span class="model-card-description">${escapeHtml(model.description)}</span>` : ""}
+      <span class="model-card-tags">${tasks}<span class="model-card-variants">${escapeHtml(variants)}</span></span>
+    </span>
   </button>`;
 }
 
@@ -296,7 +330,7 @@ function renderModels() {
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }
-  elements["result-list"].innerHTML = models.map(renderModelRow).join("");
+  elements["result-list"].innerHTML = [...models].sort(compareModels).map(renderModelCard).join("");
 }
 
 export function renderRuns() {
@@ -305,6 +339,7 @@ export function renderRuns() {
   elements["result-title"].textContent = modelsMode ? "Models" : runTitle;
   elements["load-more"].textContent = modelsMode ? "Load more models" : "Load more builds";
   elements["result-list"].setAttribute("aria-busy", "false");
+  elements["result-list"].dataset.layout = modelsMode ? "cards" : "rows";
   elements["load-more"].hidden = !state.hasMore;
   if (modelsMode) renderModels();
   else renderHistory();

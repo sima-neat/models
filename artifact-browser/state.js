@@ -11,7 +11,6 @@ export const CATEGORY_QUERY_FIELDS = {
   "input-modality-filter": "input_modality",
 };
 const initialQuery = new URLSearchParams(location.search);
-export const DETAIL_LAYOUT_KEY = "sima-neat-model-detail-layout";
 
 export const state = {
   apiBase: configuredApiBase,
@@ -37,6 +36,7 @@ export const state = {
   selectedVariantKey: null,
   variantGroups: new Map(),
   expandedRuns: new Set(),
+  expandedBenchmarks: new Set(),
   historicalCatalogModels: new Map(),
   documentationCache: new Map(),
   expandedDocumentationModelId: null,
@@ -45,7 +45,6 @@ export const state = {
   compareSelection: new Map(),
   activeProfileByModel: new Map(),
   taxonomy: null,
-  detailLayout: readDetailLayout(),
   trialMetric: "latency_avg_ms",
   comparisonMetric: "latency_avg_ms",
   comparisonEntries: [],
@@ -57,23 +56,34 @@ export const state = {
 export const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "search", "filter-toggle",
-    "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
+    "filter-count", "filter-drawer", "more-filters", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
     "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
     "result-count", "result-list", "load-more", "detail-pane", "toast-region", "workspace",
-    "compare-button", "compare-label", "compare-count", "compare-dialog", "compare-close", "compare-content",
+    "compare-tray", "compare-button", "compare-label", "compare-count", "compare-clear", "compare-dialog", "compare-close", "compare-content",
     "compare-title", "compare-description",
     "download-dialog", "download-title", "download-description", "download-package-info",
     "download-list", "download-confirm", "download-cancel", "download-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
-function readDetailLayout() {
-  try { return localStorage.getItem(DETAIL_LAYOUT_KEY) === "focused" ? "focused" : "balanced"; }
-  catch { return "balanced"; }
+// The workspace shows either the model catalog or one model page; returning to the catalog restores
+// where the reader left it.
+export function taxonomyLabel(section, id) {
+  return state.taxonomy?.[section]?.[id]?.display_name || id || "";
 }
 
-export function applyDetailLayout() {
-  elements.workspace.dataset.detailLayout = state.detailLayout;
+let catalogScrollY = 0;
+
+export function showView(view) {
+  if (elements.workspace.dataset.view === view) return;
+  if (view === "model") catalogScrollY = window.scrollY;
+  const hidden = elements.workspace.querySelector(view === "model" ? ".catalog-view" : ".detail-pane");
+  // A re-render may already have removed the focused element, leaving focus on the body.
+  const focusWasHidden = document.activeElement === document.body || hidden.contains(document.activeElement);
+  elements.workspace.dataset.view = view;
+  window.scrollTo({ top: view === "catalog" ? catalogScrollY : 0 });
+  // Focus left inside the hidden view would fall to the page body; land it at the start of the shown view.
+  if (focusWasHidden) elements[view === "model" ? "detail-pane" : "result-title"].focus({ preventScroll: true });
 }
 
 export function categoryFilters() {

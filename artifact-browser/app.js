@@ -4,8 +4,8 @@ import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
 import {
-  config, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, DETAIL_LAYOUT_KEY, state, elements,
-  applyDetailLayout, categoryFilters, catalogMode, branchSnapshotMode, currentVariant,
+  config, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
+  categoryFilters, catalogMode, branchSnapshotMode, currentVariant,
 } from "./state.js";
 import { icons, escapeHtml, branchName, showToast } from "./ui.js";
 import { formatBytes } from "./metrics.js";
@@ -18,7 +18,9 @@ import {
   populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount,
   setFilterDrawer, updateFilterDisclosure, applyCatalog, loadBranches, renderRuns,
 } from "./catalog-view.js";
-import { setComparisonSelection, renderComparisonTable, openComparison } from "./compare-view.js";
+import {
+  setComparisonSelection, renderComparisonTable, openComparison, updateCompareAction,
+} from "./compare-view.js";
 import {
   detailSkeleton, showEmptyDetail, trialChart, toggleDocumentation, renderDetail, errorPanel,
 } from "./model-view.js";
@@ -357,11 +359,15 @@ async function initialize() {
   state.urlBranch = link.has("branch");
   state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
-  elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
+  // Returning to the catalog keeps the cards on screen while they reload, so the restored scroll position holds.
+  if (!elements["result-list"].querySelector(".model-card, .run-entry")) {
+    elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
+  }
 
   const validApiOrigin = /^https:\/\/[^/]+$/.test(state.apiBase)
     || /^http:\/\/(?:127\.0\.0\.1|localhost)(?::[0-9]+)?$/.test(state.apiBase);
   if (!validApiOrigin || !state.repository.organization || !state.repository.name) {
+    showEmptyDetail();
     elements["result-list"].innerHTML = errorPanel("Set a valid HTTPS API origin and repository in config.js.", "Portal configuration is invalid");
     elements["result-list"].setAttribute("aria-busy", "false");
     return;
@@ -584,6 +590,12 @@ elements["compare-button"].addEventListener("click", () => {
     showToast(error.message, true);
   });
 });
+elements["compare-clear"].addEventListener("click", () => {
+  state.compareSelection.clear();
+  renderRuns();
+  updateCompareAction();
+  if (currentVariant() && elements["detail-pane"].querySelector(".detail-content")) renderDetail(currentVariant());
+});
 elements["compare-close"].addEventListener("click", () => elements["compare-dialog"].close());
 elements["compare-dialog"].addEventListener("click", (event) => {
   if (event.target === elements["compare-dialog"]) elements["compare-dialog"].close();
@@ -611,22 +623,16 @@ elements["detail-pane"].addEventListener("click", (event) => {
   const download = event.target.closest("[data-download]");
   if (download?.dataset.download === "package") downloadPackage(download.dataset.runId);
   else if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
-  if (event.target.closest("[data-scroll-benchmark]")) {
-    const benchmark = elements["detail-pane"].querySelector("#components-section");
-    if (benchmark) {
-      benchmark.focus({ preventScroll: true });
-      benchmark.scrollIntoView({
+  const sectionLink = event.target.closest("[data-scroll-to]");
+  if (sectionLink) {
+    const section = elements["detail-pane"].querySelector(`#${sectionLink.dataset.scrollTo}`);
+    if (section) {
+      section.focus({ preventScroll: true });
+      section.scrollIntoView({
         behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
         block: "start",
       });
     }
-    return;
-  }
-  if (event.target.closest(".detail-layout-toggle")) {
-    state.detailLayout = state.detailLayout === "focused" ? "balanced" : "focused";
-    try { localStorage.setItem(DETAIL_LAYOUT_KEY, state.detailLayout); } catch { /* Storage is optional. */ }
-    applyDetailLayout();
-    if (currentVariant()) renderDetail(currentVariant());
     return;
   }
   if (event.target.closest(".close-detail")) {
@@ -668,6 +674,12 @@ elements["detail-pane"].addEventListener("change", (event) => {
 });
 // Re-rendering the page keeps the component rows the reader opened.
 elements["detail-pane"].addEventListener("toggle", (event) => {
+  const benchmark = event.target.dataset?.benchmarkRunId;
+  if (benchmark) {
+    if (event.target.open) state.expandedBenchmarks.add(benchmark);
+    else state.expandedBenchmarks.delete(benchmark);
+    return;
+  }
   const row = event.target.closest?.("[data-component-run-id]");
   if (!row || row !== event.target) return;
   if (row.open) state.expandedRuns.add(row.dataset.componentRunId);
@@ -695,7 +707,8 @@ elements["load-more"].addEventListener("click", () => loadRuns({
   branch: elements["branch-filter"].value,
 }).catch((error) => showToast(error.message, true)));
 document.addEventListener("keydown", (event) => {
-  if (event.key === "/" && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+  if (event.key === "/" && elements.workspace.dataset.view === "catalog"
+    && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
     event.preventDefault();
     elements.search.focus();
   }
@@ -706,7 +719,8 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-applyDetailLayout();
+// The page restores the catalog position itself; browser restoration would reset it after Back.
+history.scrollRestoration = "manual";
 initialize();
 window.addEventListener("popstate", () => {
   // Rehydrate branch and selection from the URL, never from the last local choice.

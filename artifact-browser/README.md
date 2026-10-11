@@ -113,9 +113,11 @@ temporarily unavailable, the browser keeps saved branches and can infer
 additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
-model, build-profile, and component names together with category names; secondary branch,
-compiler, type, task, architecture, paradigm, and input facets are collapsed by
-default and display an active-filter count when used.
+model, build-profile, and component names together with category names. Task and
+architecture filters sit beside the cards; branch, compiler, type, paradigm, and
+input filters stay under **More filters**, which opens when one of them is active.
+On narrow screens the filters move into a drawer whose button shows the
+active-filter count.
 The branch filter defaults to `develop`. A branch selected by the user is saved per
 registry and repository in browser storage. Shared links include `branch` and
 `model` and `variant` (the build profile), which open the latest build of that
@@ -131,15 +133,24 @@ completed builds.
 
 ## Variant pages
 
+Selecting a model card opens its page in place of the catalog; the breadcrumb
+or the browser's Back button returns to the catalog at the same scroll position.
 A page shows one variant build: the component runs of one model and build
-profile compiled by one workflow. Build-level facts appear once: the model card,
-full package, provenance, source inputs (one per distinct digest), license, and
-DevKit accuracy. The **Components** section has one row per component with its
-MPK size, latency, throughput, and power; expanding a row shows its checksum,
-run identity, benchmark detail, numerical fidelity, and compile parameters.
-Components are measured on their own, so their latencies do not add up to
-end-to-end latency. Comparison selects whole variant builds and lists each
-component under its variant without combining measurements.
+profile compiled by one workflow. Its header carries the name, description,
+category tags, **Download**, and **Copy CLI command**, and the section links
+below it jump to **Performance**, **Accuracy**, **Model card**, **Details**, and
+**License**. **Performance** shows throughput, latency, board power, and energy
+per inference for each component, with trials, temperature, and all
+measurements under a disclosure. Build-level facts appear once: the full
+package, provenance, source inputs (one per distinct digest), license, and
+DevKit accuracy. **Details** lists one row per component with its MPK size and
+precision; expanding a row shows its checksum, run identity, numerical
+fidelity, and compile parameters. Components are measured on their own, so
+their latencies do not add up to end-to-end latency.
+
+Comparison selects whole variant builds, up to three, from a tray at the bottom
+of the page. The comparison lists each component under its variant without
+combining measurements and marks the best value for each component in bold.
 
 ## Downloading model variants
 
@@ -163,7 +174,7 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory artifact-browser
 ```
 
 Open <http://127.0.0.1:4174/?run=53bfaa91-8b75-4bdb-afc2-83019a61f514>
-and click the model download icon to review the RF-DETR component dialog.
+and click **Download** to review the RF-DETR component dialog.
 
 Run the download and variant-build checks with `node --test tests/browser/*.test.mjs`
 and the existing UI checks with `python -m pytest tests/unit/test_artifact_browser.py`.
