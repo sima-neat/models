@@ -332,6 +332,8 @@ const ACCURACY_METRIC_LABELS = {
   coco_ar_small: "AR small",
   coco_ar_medium: "AR medium",
   coco_ar_large: "AR large",
+  abs_rel: "AbsRel",
+  delta1: "δ1",
 };
 // The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;

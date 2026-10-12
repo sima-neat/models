@@ -1,0 +1,9 @@
+torch==2.8.0
+numpy==1.26.4
+einops==0.8.2
+omegaconf==2.4.0
+addict==2.4.0
+safetensors==0.8.0
+onnx==1.17.0
+onnxruntime==1.21.1
+onnxsim==0.7.3
