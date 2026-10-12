@@ -65,7 +65,8 @@ jobs:
       # complete component group before this job is queued.
       - build-profile-id-${{ fromJSON(inputs.entry).build_profile_id }}
       - component-id-${{ fromJSON(inputs.entry).component_id }}
-    timeout-minutes: 90
+    # Large models compile for hours; the limit only stops a stalled compile.
+    timeout-minutes: 360
     env:
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
