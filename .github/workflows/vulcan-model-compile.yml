@@ -332,7 +332,7 @@ jobs:
           BENCHMARK_COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}
         run: |
           set -euo pipefail
-          gh workflow run Vulcan-Model-Benchmarking.yml \
+          output="$(gh workflow run vulcan-model-benchmarking.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "$GITHUB_REF_NAME" \
             -f environment=staging \
@@ -343,8 +343,10 @@ jobs:
             -f build_profile_id="$BUILD_PROFILE_ID" \
             -f compile_invocation_id="$COMPILE_INVOCATION_ID" \
             -f component_ids="$BENCHMARK_COMPONENT_IDS" \
-            -f stages="$STAGES"
-          echo "Started $STAGES for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID." >> "$GITHUB_STEP_SUMMARY"
+            -f stages="$STAGES")"
+          run_url="$(grep -Eom1 'https://[^[:space:]]+/actions/runs/[0-9]+' <<< "$output" || true)"
+          echo "DevKit run for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID ($STAGES): ${run_url:-link unavailable}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Assemble the packages this build completes
         id: packages

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "vulcan-model-orchestrator.yml"
 BUILD_WORKFLOW = WORKFLOWS / "vulcan-model-compile.yml"
-BENCHMARK_WORKFLOW = WORKFLOWS / "Vulcan-Model-Benchmarking.yml"
+BENCHMARK_WORKFLOW = WORKFLOWS / "vulcan-model-benchmarking.yml"
 
 
 def load(path: Path) -> dict:
@@ -70,7 +70,7 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     for path in (
         ".github/workflows/vulcan-model-orchestrator.yml",
         ".github/workflows/vulcan-model-compile.yml",
-        ".github/workflows/Vulcan-Model-Benchmarking.yml",
+        ".github/workflows/vulcan-model-benchmarking.yml",
         "deps/**",
         "models/**",
         "scripts/**",
@@ -445,7 +445,7 @@ def test_reused_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
     assert job["permissions"] == {"actions": "write", "contents": "read"}
     assert job["strategy"]["fail-fast"] == "false"
     assert job["strategy"]["matrix"] == "${{ fromJSON(needs.plan.outputs.measure_matrix) }}"
-    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in start["run"]
+    assert "gh workflow run vulcan-model-benchmarking.yml" in start["run"]
     assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
     # The job has no checkout, so gh cannot infer the repository from a git remote.
     assert all(not item.get("uses", "").startswith("actions/checkout") for item in job["steps"])
@@ -686,7 +686,7 @@ def test_new_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
 
     # A failed dispatch leaves the build published; the next run plans the missing stages.
     assert start["continue-on-error"] == "true"
-    assert "gh workflow run Vulcan-Model-Benchmarking.yml" in start["run"]
+    assert "gh workflow run vulcan-model-benchmarking.yml" in start["run"]
     assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
     assert '--repo "$GITHUB_REPOSITORY"' in start["run"]
     assert '--ref "$GITHUB_REF_NAME"' in start["run"]
@@ -698,6 +698,52 @@ def test_new_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
     assert start["env"]["BENCHMARK_COMPONENT_IDS"] == (
         "${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}"
     )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "name"),
+    [
+        (WORKFLOW, "measure", "Start the stages a reused build still lacks"),
+        (BUILD_WORKFLOW, "publish", "Start the DevKit stages"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("gh_output", "link"),
+    [
+        ("https://github.com/sima-neat/models/actions/runs/123\n", "https://github.com/sima-neat/models/actions/runs/123"),
+        ("", "link unavailable"),
+    ],
+)
+def test_stage_dispatch_logs_the_devkit_run_link(
+    tmp_path: Path, workflow: Path, job: str, name: str, gh_output: str, link: str
+) -> None:
+    start = step(load(workflow)["jobs"][job], name)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(f"#!/bin/sh\nprintf '{gh_output}'\n", encoding="utf-8")
+    (bin_dir / "gh").chmod(0o755)
+    summary = tmp_path / "summary.md"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "GITHUB_REPOSITORY": "sima-neat/models",
+        "GITHUB_RUN_ID": "77",
+        "GITHUB_SHA": "0" * 40,
+        "GITHUB_REF_NAME": "develop",
+        "MODEL_ID": "alpha",
+        "BUILD_PROFILE_ID": "int8",
+        "COMPILE_INVOCATION_ID": "default",
+        "STAGES": "performance,accuracy",
+        "COMPONENT_IDS": "model",
+        "BENCHMARK_COMPONENT_IDS": "model",
+    }
+
+    result = subprocess.run(["bash", "-c", start["run"]], env=env, check=True, capture_output=True, text=True)
+
+    line = f"DevKit run for alpha/int8/default (performance,accuracy): {link}\n"
+    assert result.stdout == line
+    assert summary.read_text(encoding="utf-8") == line
 
 
 def test_packages_and_catalog_update_only_for_publishable_builds() -> None:

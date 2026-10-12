@@ -51,7 +51,7 @@ PERFORMANCE_FINGERPRINT_VERSION = 2
 ACCURACY_FINGERPRINT_VERSION = 1
 # The workflow sets up the board run and benchmark_publication shapes the published run.
 BOARD_STAGE_TOOLING = (
-    ".github/workflows/Vulcan-Model-Benchmarking.yml",
+    ".github/workflows/vulcan-model-benchmarking.yml",
     "tools/model_registry/benchmark_publication.py",
 )
 PERFORMANCE_TOOLING = (

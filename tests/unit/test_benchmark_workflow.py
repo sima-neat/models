@@ -9,7 +9,7 @@ import yaml
 from model_registry.stage_keys import ACCURACY_TOOLING, PERFORMANCE_TOOLING
 
 ROOT = Path(__file__).resolve().parents[2]
-BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "Vulcan-Model-Benchmarking.yml"
+BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
 MEASURE_PERFORMANCE = "${{ contains(format(',{0},', inputs.stages), ',performance,') }}"
 MEASURE_ACCURACY = "${{ contains(format(',{0},', inputs.stages), ',accuracy,') }}"
 PUBLISH_PERFORMANCE = "${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}"

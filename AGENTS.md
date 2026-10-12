@@ -66,7 +66,7 @@ in the same commit.
   publish, and start the build's board stages. `publish-catalog` writes the
   final catalog snapshot, and `measure` starts the board stages a reused build
   still lacks.
-- **Board stages.** `Vulcan-Model-Benchmarking.yml` runs the requested
+- **Board stages.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` on a DevKit and publishes performance (`model_benchmark` runs) and
   accuracy (`model_accuracy` runs) separately.
 - A newer push cancels the branch's running orchestrator; builds that
