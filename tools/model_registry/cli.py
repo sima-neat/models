@@ -18,7 +18,7 @@ from .fetch import Fetcher, resolve_dataset
 from .fidelity_config import find_fidelity_config
 from .model import component_for, load_and_validate_model, load_models, profile_component_for
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_stages, resolve_base_branch
+from .stage_plan import plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -101,7 +101,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stages.add_argument("--repository", type=Path, default=Path.cwd())
     stages.add_argument("--compiler-version", required=True)
     stages.add_argument("--branch", required=True)
-    stages.add_argument("--base-branch", help="read this branch's catalog when the branch has none")
+    stages.add_argument("--base-branches", help="comma-separated branches whose catalogs builds may come from")
     stages.add_argument("--read-api-url", help="public artifact-registry API; omit with --offline")
     stages.add_argument("--offline", action="store_true", help="read no registry state; select every invocation")
     stages.add_argument("--models", help="comma-separated model IDs; every model when omitted")
@@ -118,12 +118,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     authorize.add_argument("--repository-name", required=True)
     authorize.add_argument("--environment", required=True)
 
-    base = subcommands.add_parser("resolve-base", help="resolve the closest base branch and merge base")
+    base = subcommands.add_parser("resolve-base", help="list the base branches whose catalogs builds may come from")
     base.add_argument("--repository", type=Path, default=Path.cwd())
     base.add_argument("--current-branch", required=True)
     base.add_argument("--head", required=True)
     base.add_argument("--preferred-branch")
-    base.add_argument("--default-branch", default="develop")
 
     compiler = subcommands.add_parser("resolve-compiler", help="resolve the repository-wide Model Compiler dependency")
     compiler.add_argument("--repository", type=Path, default=Path.cwd())
@@ -330,7 +329,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--kms-key-id")
     publish_catalog_parser.add_argument("--environment", required=True)
     publish_catalog_parser.add_argument("--branch", required=True)
-    publish_catalog_parser.add_argument("--base-branch", help="reuse this catalog when the target branch has none")
+    publish_catalog_parser.add_argument(
+        "--base-branches", help="comma-separated branches whose catalogs builds may come from"
+    )
     publish_catalog_parser.add_argument("--git-sha", required=True)
     publish_catalog_parser.add_argument("--github-run-url")
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
@@ -526,6 +527,10 @@ def _id_list(value: str | None, option: str) -> list[str] | None:
     return items
 
 
+def _branch_list(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
 def _matrix(args: argparse.Namespace) -> int:
     models = load_models(args.repository)
     result = build_matrix(
@@ -551,7 +556,7 @@ def _plan_stages(args: argparse.Namespace) -> int:
         read=None if args.offline else _public_registry_json,
         read_api_url=args.read_api_url,
         branch=args.branch,
-        base_branch=args.base_branch,
+        base_branches=_branch_list(args.base_branches),
         model_ids=_id_list(args.models, "--models"),
         profile_ids=_id_list(args.profiles, "--profiles"),
         component_ids=_id_list(args.components, "--components"),
@@ -580,14 +585,13 @@ def _authorize_runner_matrix(args: argparse.Namespace) -> int:
 
 
 def _resolve_base(args: argparse.Namespace) -> int:
-    result = resolve_base_branch(
+    base_branches = resolve_base_branches(
         args.repository,
         current_branch=args.current_branch,
         head=args.head,
         preferred_branch=args.preferred_branch,
-        default_branch=args.default_branch,
     )
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    print(json.dumps({"base_branches": base_branches}, sort_keys=True, separators=(",", ":")))
     return 0
 
 
@@ -858,7 +862,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         kms_key_id=args.kms_key_id,
         environment=args.environment,
         branch=args.branch,
-        base_branch=args.base_branch,
+        base_branches=_branch_list(args.base_branches),
         git_sha=args.git_sha,
         github_run_url=args.github_run_url,
     )

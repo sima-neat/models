@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import copy
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
+from model_registry.errors import ValidationError
 from model_registry.model import load_models
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot
 from model_registry.stage_keys import (
@@ -17,7 +19,13 @@ from model_registry.stage_keys import (
     PERFORMANCE_TOOLING,
     compile_key,
 )
-from model_registry.stage_plan import applicable_stages, plan_stages, resolve_base_branch
+from model_registry.stage_plan import (
+    applicable_stages,
+    is_long_lived,
+    merge_catalog_sources,
+    plan_stages,
+    resolve_base_branches,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -27,67 +35,9 @@ COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
 
 
-def test_resolve_base_prefers_explicit_branch_and_returns_merge_base(tmp_path: Path) -> None:
-    remote = tmp_path / "remote.git"
-    repository = tmp_path / "repository"
-    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
-    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
-    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
-    (repository / "base.txt").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "base"], cwd=repository, check=True)
-    subprocess.run(["git", "branch", "-M", "develop"], cwd=repository, check=True)
-    subprocess.run(["git", "push", "-q", "origin", "develop"], cwd=repository, check=True)
-    base_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
-    ).stdout.strip()
-    subprocess.run(["git", "switch", "-qc", "feature/model"], cwd=repository, check=True)
-    (repository / "model.txt").write_text("model\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "model"], cwd=repository, check=True)
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-    result = resolve_base_branch(
-        repository,
-        current_branch="feature/model",
-        head=head,
-        preferred_branch="develop",
-    )
-
-    assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
-    assert resolve_base_branch(repository, current_branch="feature/model", head=head) == result
-
-
-def test_resolve_base_preserves_explicit_base_with_same_branch_name(tmp_path: Path) -> None:
-    remote = tmp_path / "remote.git"
-    repository = tmp_path / "repository"
-    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
-    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
-    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
-    (repository / "base.txt").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repository, check=True)
-    subprocess.run(["git", "commit", "-qm", "base"], cwd=repository, check=True)
-    subprocess.run(["git", "branch", "-M", "develop"], cwd=repository, check=True)
-    subprocess.run(["git", "push", "-q", "origin", "develop"], cwd=repository, check=True)
-    base_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-    result = resolve_base_branch(
-        repository,
-        current_branch="develop",
-        head=base_sha,
-        preferred_branch="develop",
-    )
-
-    assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
-
-
-def test_resolve_base_ignores_feature_branches(tmp_path: Path) -> None:
+@pytest.fixture
+def branch_repository(tmp_path: Path):
+    """A clone whose origin has develop, a release branch, and feature branches cut from each."""
     remote = tmp_path / "remote.git"
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
@@ -105,24 +55,152 @@ def test_resolve_base_ignores_feature_branches(tmp_path: Path) -> None:
             ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    commit("develop", "base")
+    heads = {"develop": commit("develop", "base")}
     shared = commit("feat/a", "shared")
     commit("feat/a", "a")
-    feature = commit("feat/a", "a-fix")
-    commit("feat/b", "b", shared)
-    commit("develop", "develop-moved", "origin/develop")
-    commit("release-1.0", "release", "origin/develop")
-    release_feature = commit("feat/r", "r")
+    heads["feat/a"] = commit("feat/a", "a-fix")
+    heads["feat/b"] = commit("feat/b", "b", shared)
+    heads["develop"] = commit("develop", "develop-moved", "origin/develop")
+    heads["release-1.0"] = commit("release-1.0", "release", "origin/develop")
+    heads["feat/r"] = commit("feat/r", "r")
+    return repository, heads
 
-    def base(branch: str, head: str, preferred: str | None = None) -> str:
-        return resolve_base_branch(repository, current_branch=branch, head=head, preferred_branch=preferred)[
-            "base_branch"
-        ]
 
-    # feat/b is 3 commits from feat/a, develop is 4: only base branches qualify.
-    assert base("feat/a", feature) == "develop"
-    assert base("feat/r", release_feature) == "release-1.0"
-    assert base("feat/r", release_feature, preferred="feat/a") == "feat/a"
+def test_resolve_base_branches_orders_base_branches_by_distance(branch_repository) -> None:
+    repository, heads = branch_repository
+
+    def bases(branch: str) -> list[str]:
+        return resolve_base_branches(repository, current_branch=branch, head=heads[branch])
+
+    # feat/b shares a commit with feat/a but is a sibling feature branch, never a base.
+    assert bases("feat/a") == ["develop", "release-1.0"]
+    assert bases("feat/r") == ["release-1.0", "develop"]
+    # A base branch is not its own base; its own catalog is read separately.
+    assert bases("develop") == ["release-1.0"]
+    assert bases("release-1.0") == ["develop"]
+
+
+def test_resolve_base_branches_without_other_base_branches_is_empty(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
+    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "base"], cwd=repository, check=True)
+    subprocess.run(["git", "branch", "-M", "develop"], cwd=repository, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "develop"], cwd=repository, check=True)
+
+    assert resolve_base_branches(repository, current_branch="develop", head="HEAD") == []
+
+
+def test_resolve_base_branches_uses_an_explicit_base(branch_repository) -> None:
+    repository, heads = branch_repository
+
+    def bases(branch: str, preferred: str) -> list[str]:
+        return resolve_base_branches(repository, current_branch=branch, head=heads[branch], preferred_branch=preferred)
+
+    assert bases("feat/r", "feat/a") == ["feat/a"]
+    assert bases("develop", "develop") == []
+    with pytest.raises(ValidationError, match="'feat/missing' was not fetched"):
+        bases("feat/a", "feat/missing")
+
+
+@pytest.mark.parametrize(
+    ("branch", "long_lived"),
+    [
+        ("develop", True),
+        ("main", True),
+        ("release-1.0", True),
+        ("integration/vision", True),
+        ("feat/a", False),
+        ("fix/develop", False),
+    ],
+)
+def test_long_lived_branches(branch: str, long_lived: bool) -> None:
+    assert is_long_lived(branch) is long_lived
+
+
+def _source(*profiles: tuple[str, str, str], model_id: str = "x") -> dict:
+    """A catalog document with one build and one package per (profile, compile key, origin)."""
+    return {"models": [{
+        "id": model_id,
+        "builds": [
+            {"build_profile_id": profile, "component_id": "model", "compile_fingerprint": key, "run_id": origin}
+            for profile, key, origin in profiles
+        ],
+        "packages": [
+            {"build_profile_id": profile, "package_id": "default", "run_id": origin}
+            for profile, _, origin in profiles
+        ],
+    }]}
+
+
+MERGE_MATRIX = [
+    {"model_id": "x", "build_profile_id": profile, "component_ids": ["model"], "build_fingerprint": key}
+    for profile, key in (("p1", "k1"), ("p2", "k2"))
+]
+
+
+def _origins(document: dict) -> dict[tuple[str, str], str]:
+    return {
+        (kind, item["build_profile_id"]): item["run_id"]
+        for model in document["models"]
+        for kind in ("builds", "packages")
+        for item in model[kind]
+    }
+
+
+def test_merge_takes_each_profile_from_the_first_source_carrying_its_keys() -> None:
+    # The branch compiled p1, then merged a develop that recompiled p2.
+    own = _source(("p1", "k1", "own"), ("p2", "old", "own"))
+    develop = _source(("p1", "old", "develop"), ("p2", "k2", "develop"))
+
+    merged = merge_catalog_sources([own, develop], MERGE_MATRIX)
+
+    assert _origins(merged) == {
+        ("builds", "p1"): "own",
+        ("packages", "p1"): "own",
+        ("builds", "p2"): "develop",
+        ("packages", "p2"): "develop",
+    }
+
+
+def test_merge_prefers_earlier_sources_when_several_match() -> None:
+    merged = merge_catalog_sources(
+        [_source(("p1", "k1", "own")), _source(("p1", "k1", "develop"), ("p2", "k2", "develop"))], MERGE_MATRIX
+    )
+
+    assert _origins(merged)[("builds", "p1")] == "own"
+    assert _origins(merged)[("builds", "p2")] == "develop"
+
+
+def test_merge_keeps_the_first_unmatched_profile_and_drops_models_outside_head() -> None:
+    own = _source(("p1", "stale", "own"))
+    develop = _source(("p1", "older", "develop"))
+    removed = _source(("p1", "k1", "removed"), model_id="removed")
+
+    merged = merge_catalog_sources([own, develop, removed], MERGE_MATRIX)
+
+    # The planner still sees p1's prior build, at a key that no longer matches, and compiles it.
+    assert [model["id"] for model in merged["models"]] == ["x"]
+    assert _origins(merged) == {("builds", "p1"): "own", ("packages", "p1"): "own"}
+    assert merge_catalog_sources([], MERGE_MATRIX) is None
+
+
+def test_merge_requires_every_component_key_of_a_profile() -> None:
+    matrix = [{"model_id": "x", "build_profile_id": "p1", "component_ids": ["a", "b"], "build_fingerprint": "k1"}]
+    partial = {"models": [{"id": "x", "builds": [
+        {"build_profile_id": "p1", "component_id": "a", "compile_fingerprint": "k1", "run_id": "own"},
+    ]}]}
+    complete = {"models": [{"id": "x", "builds": [
+        {"build_profile_id": "p1", "component_id": component, "compile_fingerprint": "k1", "run_id": "develop"}
+        for component in ("a", "b")
+    ]}]}
+
+    merged = merge_catalog_sources([partial, complete], matrix)
+
+    assert [build["run_id"] for build in merged["models"][0]["builds"]] == ["develop", "develop"]
 
 
 # Stage planning runs against a copy of resnet_50: modalix_bf16 declares only performance,
@@ -204,15 +282,32 @@ class FakeRegistry:
         ]
 
 
-def _plan(repository: Path, registry: FakeRegistry | None, **kwargs) -> dict:
+def _plan(repository: Path, registry: FakeRegistry | None, branch: str = BRANCH, **kwargs) -> dict:
     return plan_stages(
         repository,
         compiler_version=COMPILER_VERSION,
         read=registry.read if registry is not None else None,
         read_api_url=READ_API,
-        branch=BRANCH,
+        branch=branch,
         **kwargs,
     )
+
+
+def _catalog_reads(registry: FakeRegistry) -> list[str]:
+    return [
+        unquote(url.rsplit("git_ref=", 1)[1]).removeprefix("refs/heads/")
+        for url in registry.urls
+        if "/catalogs/current?" in url
+    ]
+
+
+def _stale(document: dict, profile_id: str) -> dict:
+    """The catalog as published before the profile's compile key changed."""
+    stale = copy.deepcopy(document)
+    for build in stale["models"][0]["builds"]:
+        if build["build_profile_id"] == profile_id:
+            build["compile_fingerprint"] = "0" * 64
+    return stale
 
 
 def _selected(plan: dict, stage: str) -> list[tuple[str, list[str], list[str]]]:
@@ -403,24 +498,59 @@ def test_branch_without_catalog_plans_against_base_branch_catalog(stage_reposito
     registry = FakeRegistry({"develop": document}, _published_runs(document))
     _edit(stage_repository, "scripts/accuracy.py")
 
-    plan = _plan(stage_repository, registry, base_branch="develop")
+    plan = _plan(stage_repository, registry, base_branches=["develop"])
 
     assert plan["catalog_found"] is True
     assert plan["compile"]["include"] == []
     assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
-    catalog_reads = [url for url in registry.urls if "/catalogs/current?" in url]
-    assert [url.rsplit("git_ref=", 1)[1] for url in catalog_reads] == [
-        "refs%2Fheads%2Ffeat%2Fstages",
-        "refs%2Fheads%2Fdevelop",
-    ]
+    assert _catalog_reads(registry) == [BRANCH, "develop"]
     assert all(url.startswith(f"{READ_API}/v1/repositories/sima-neat/models/") for url in registry.urls)
 
 
-@pytest.mark.parametrize("base_branch", [None, "develop"])
-def test_no_catalog_compiles_everything(stage_repository: Path, base_branch: str | None) -> None:
+def test_feature_branch_reuses_its_own_and_base_builds(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    # The branch compiled bf16, then merged a develop that recompiled int8.
+    registry = FakeRegistry(
+        {BRANCH: _stale(document, "modalix_int8"), "develop": _stale(document, "modalix_bf16")},
+        _published_runs(document),
+    )
+
+    plan = _plan(stage_repository, registry, base_branches=["develop", "release-1.0"])
+
+    assert plan["compile"]["include"] == []
+    assert plan["measure"]["include"] == []
+    assert _catalog_reads(registry) == [BRANCH, "develop", "release-1.0"]
+
+
+def test_long_lived_branch_reuses_only_its_own_catalog(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry(
+        {"develop": _stale(document, "modalix_int8"), "release-1.0": document}, _published_runs(document)
+    )
+
+    plan = _plan(stage_repository, registry, branch="develop", base_branches=["release-1.0"])
+
+    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert _catalog_reads(registry) == ["develop"]
+
+
+def test_long_lived_branch_first_push_inherits_from_the_closest_base(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry(
+        {"develop": _stale(document, "modalix_int8"), "integration/vision": document}, _published_runs(document)
+    )
+
+    plan = _plan(stage_repository, registry, branch="release-1.0", base_branches=["develop", "integration/vision"])
+
+    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert _catalog_reads(registry) == ["release-1.0", "develop"]
+
+
+@pytest.mark.parametrize("base_branches", [None, [], ["develop"]])
+def test_no_catalog_compiles_everything(stage_repository: Path, base_branches: list[str] | None) -> None:
     registry = FakeRegistry({}, set())
 
-    plan = _plan(stage_repository, registry, base_branch=base_branch)
+    plan = _plan(stage_repository, registry, base_branches=base_branches)
 
     assert plan["catalog_found"] is False
     assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
@@ -450,4 +580,4 @@ def test_registry_failures_other_than_not_found_propagate(stage_repository: Path
 
     registry.read = read
     with pytest.raises(RegistryPublicationError, match="403 forbidden"):
-        _plan(stage_repository, registry, base_branch="develop")
+        _plan(stage_repository, registry, base_branches=["develop"])

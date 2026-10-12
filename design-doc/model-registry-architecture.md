@@ -119,7 +119,7 @@ input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-r
 
 ```text
 push (Vulcan Model Orchestrator, every push)
-  -> select: validate the catalog, resolve the compiler pin and base branch
+  -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
   -> plan: compare stage keys with the branch catalog and registry runs
   -> authorize: check requested runner classes
@@ -133,8 +133,7 @@ DevKit stages (per build)
   -> performance and accuracy on a DevKit, then publish each result
 ```
 
-`plan-stages` reads the branch catalog, or the base branch's catalog for a new
-branch. A build compiles when the catalog records no build with its current
+`plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
 compile key, or when a maintainer forces a rebuild. A reused build is queued
 for the DevKit stages whose keys have no completed run. DevKit stages run only
 in staging and only for Modalix targets.
@@ -145,12 +144,20 @@ in staging and only for Modalix targets.
   its own catalog in that registry, keyed by Git ref; runs are shared by every
   branch.
 - **Where each decision looks.** The compile decision compares compile keys
-  with the branch's catalog, or the base branch's catalog on a branch's first
-  push. The DevKit decision looks for a completed run with the stage key from
-  any branch; that key names the compile run and MPK digest, so it matches
-  only a measurement of the same build.
-- **New branch.** It reuses its base's builds and compiles only the builds
-  whose keys differ.
+  with the branch's prior catalog. The DevKit decision looks for a completed
+  run with the stage key from any branch; that key names the compile run and
+  MPK digest, so it matches only a measurement of the same build.
+- **Base branches.** `develop`, `main`, `release-*` and `integration/*` are
+  long-lived. `select` lists the long-lived branches that share history with
+  the head, closest first, or only the pull request or dispatch base when one
+  is given; Git does not record which branch another was cut from.
+- **Prior catalog.** A long-lived branch keeps to its own catalog; on its first
+  push it inherits from the closest base branch that has one. A feature branch
+  takes each model build profile from the first catalog whose builds carry
+  every current compile key of that profile: its own, then its base branches
+  in order. A feature branch that merged `develop` therefore reuses both its
+  own builds and the builds `develop` recompiled. A profile no catalog matches
+  compiles. A sibling feature branch is never a source.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Builds the merged branch changed compile again on `develop`, and
   their DevKit stages run again; builds the branch compiled are not reused.

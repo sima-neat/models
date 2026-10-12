@@ -240,17 +240,17 @@ def test_targeted_profile_or_component_dispatch_is_compile_only() -> None:
     assert "publishable=false" in scope["run"]
 
 
-def test_new_branches_inherit_the_resolved_base_branch_catalog() -> None:
+def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
     jobs = load(WORKFLOW)["jobs"]
     base = next(item for item in jobs["select"]["steps"] if item.get("id") == "base")
 
     assert "model-registry resolve-base" in base["run"]
-    assert "--default-branch develop" in base["run"]
+    assert ".base_branches | join(\",\")" in base["run"]
     assert base["env"]["PREFERRED_BRANCH"] == "${{ inputs.base_branch || github.event.pull_request.base.ref }}"
     plan = step(jobs["plan"], "Compare stage keys with published runs")
-    assert plan["env"]["BASE_BRANCH"] == "${{ needs.select.outputs.base_branch }}"
-    assert '--base-branch "$BASE_BRANCH"' in plan["run"]
-    assert jobs["compile"]["with"]["base_branch"] == "${{ needs.select.outputs.base_branch }}"
+    assert plan["env"]["BASE_BRANCHES"] == "${{ needs.select.outputs.base_branches }}"
+    assert '--base-branches "$BASE_BRANCHES"' in plan["run"]
+    assert jobs["compile"]["with"]["base_branches"] == "${{ needs.select.outputs.base_branches }}"
 
 
 def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
@@ -330,7 +330,7 @@ def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
     assert publish["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
     assert "model-registry publish-catalog" in publish["run"]
     assert '--selected-matrix "$matrix_file"' in publish["run"]
-    assert '--base-branch "$BASE_BRANCH"' in publish["run"]
+    assert '--base-branches "$BASE_BRANCHES"' in publish["run"]
 
 
 @pytest.mark.parametrize(
@@ -397,7 +397,7 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
     assert job["permissions"]["id-token"] == "write"
     assert "model-registry publish-catalog" in publish["run"]
     assert '--git-sha "$GITHUB_SHA"' in publish["run"]
-    assert '--base-branch "$BASE_BRANCH"' in publish["run"]
+    assert '--base-branches "$BASE_BRANCHES"' in publish["run"]
     assert '--read-api-url "$REGISTRY_READ_API_URL"' in publish["run"]
     # Each build published its own outputs; the snapshot neither downloads nor republishes them.
     assert "--compiled-dir" not in publish["run"]
@@ -712,7 +712,7 @@ def test_packages_and_catalog_update_only_for_publishable_builds() -> None:
     assert "model-registry publish-package" in packages["run"]
     assert catalog["if"] == "inputs.publishable"
     assert "--compiled-dir _compiled" in catalog["run"]
-    assert '--base-branch "$BASE_BRANCH"' in catalog["run"]
+    assert '--base-branches "$BASE_BRANCHES"' in catalog["run"]
 
 
 def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:

@@ -30,7 +30,7 @@ from .fidelity_config import find_fidelity_config, validate_fidelity_result
 from .model import compile_invocations_for, load_and_validate_model, load_models, profile_component_for
 from .source import source_identity
 from .stage_keys import accuracy_key, compile_key, performance_key
-from .stage_plan import read_current_catalog
+from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
@@ -297,6 +297,12 @@ def _selected_invocation_keys(selected_matrix: Path | None) -> set[tuple[str, st
     return selected
 
 
+def _head_matrix(root: Path, models: dict[str, Any]) -> list[JsonObject]:
+    """Every compile invocation the checkout declares, with its compile key."""
+    compiler_version = resolve_model_compiler(root)["identity"]
+    return build_matrix(models, sorted(models), repository=root, compiler_version=compiler_version)["include"]
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
@@ -317,13 +323,7 @@ def build_catalog_snapshot(
     models = load_models(root)
     taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
     taxonomy_digest = taxonomy_sha256(taxonomy)
-    compiler_version = resolve_model_compiler(root)["identity"]
-    matrix = build_matrix(
-        models,
-        sorted(models),
-        repository=root,
-        compiler_version=compiler_version,
-    )["include"]
+    matrix = _head_matrix(root, models)
     receipts = _publication_receipts(Path(compiled_dir).expanduser().resolve() if compiled_dir else None)
     package_receipts = _package_publication_receipts(
         Path(package_dir).expanduser().resolve() if package_dir else None
@@ -710,7 +710,7 @@ def publish_catalog(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
-    base_branch: str | None = None,
+    base_branches: list[str] | None = None,
     bucket: str | None = None,
     kms_key_id: str | None = None,
     environment: str | None = None,
@@ -745,7 +745,9 @@ def publish_catalog(
         )
     # Read the catalog last so another publisher has the least time to replace it
     # before the compare-and-swap POST below.
-    target_catalog, previous = read_current_catalog(read, read_api_url, branch, base_branch)
+    root = Path(repository).expanduser().resolve()
+    target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+    previous = merge_catalog_sources(sources, _head_matrix(root, load_models(root)))
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,

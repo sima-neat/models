@@ -22,9 +22,11 @@ on:
       model_compiler_label:
         required: true
         type: string
-      base_branch:
-        required: true
+      base_branches:
+        description: Comma-separated branches whose catalogs builds may come from; empty for none
+        required: false
         type: string
+        default: ""
       publishable:
         description: Whether this build updates the branch catalog
         required: true
@@ -249,7 +251,7 @@ jobs:
       ARTIFACT_BUCKET: ${{ inputs.artifact_bucket }}
       KMS_KEY_ID: ${{ inputs.artifact_kms_key_id }}
       VULCAN_ENVIRONMENT: ${{ inputs.vulcan_environment }}
-      BASE_BRANCH: ${{ inputs.base_branch }}
+      BASE_BRANCHES: ${{ inputs.base_branches }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
@@ -392,7 +394,7 @@ jobs:
               --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
               --environment "$VULCAN_ENVIRONMENT" \
               --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA" 2>"$failure"; then
+              --base-branches "$BASE_BRANCHES" --git-sha "$GITHUB_SHA" 2>"$failure"; then
               exit 0
             fi
             if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 8 )); then

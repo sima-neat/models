@@ -570,7 +570,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
         return publish_catalog(
             repository=model_repository, api_url="https://writer.example.invalid",
             read_api_url="https://reader.example.invalid", aws_region="us-west-2",
-            branch="feat/names", base_branch="develop", git_sha="b" * 40,
+            branch="feat/names", base_branches=["develop"], git_sha="b" * 40,
             request=write, read_request=read,
         )
 
@@ -599,9 +599,10 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
             "catalog": result["catalog"],
         }]
     assert reads[0].endswith("git_ref=refs%2Fheads%2Ffeat%2Fnames")
-    if source in {"target", "forbidden"}:
+    if source == "forbidden":
         assert len(reads) == 1
     else:
+        # A feature branch also reads its base branches, even with a catalog of its own.
         assert len(reads) == 2
         assert reads[1].endswith("git_ref=refs%2Fheads%2Fdevelop")
 

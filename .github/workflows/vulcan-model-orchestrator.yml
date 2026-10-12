@@ -37,7 +37,7 @@ on:
         required: false
         type: string
       base_branch:
-        description: Optional base branch whose catalog a new branch inherits
+        description: Optional branch whose catalog this branch reuses builds from, in place of the resolved base branches
         required: false
         type: string
       force_rebuild_all:
@@ -70,7 +70,7 @@ jobs:
       model_compiler_version: ${{ steps.compiler.outputs.version }}
       model_compiler_label: ${{ steps.compiler.outputs.label }}
       model_compiler_identity: ${{ steps.compiler.outputs.identity }}
-      base_branch: ${{ steps.base.outputs.base_branch }}
+      base_branches: ${{ steps.base.outputs.base_branches }}
       publishable: ${{ steps.scope.outputs.publishable }}
     steps:
       - name: Check out the repository
@@ -120,7 +120,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Model Compiler dependency: \`$identity\` (\`$label\`)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Resolve the base branch a new branch inherits from
+      - name: Resolve the base branches whose catalogs builds may come from
         id: base
         env:
           CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -136,11 +136,10 @@ jobs:
             --repository . \
             --current-branch "$CURRENT_BRANCH" \
             --head "$HEAD_SHA" \
-            --default-branch develop \
             "${preferred_args[@]}")"
-          base_branch="$(jq -er '.base_branch' <<< "$resolution")"
-          echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
-          echo "Resolved base branch: \`$base_branch\`" >> "$GITHUB_STEP_SUMMARY"
+          base_branches="$(jq -er '.base_branches | join(",")' <<< "$resolution")"
+          echo "base_branches=$base_branches" >> "$GITHUB_OUTPUT"
+          echo "Base branches: \`${base_branches:-none}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Decide whether this run updates the catalog
         id: scope
@@ -218,7 +217,7 @@ jobs:
         env:
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           COMPILER_IDENTITY: ${{ needs.select.outputs.model_compiler_identity }}
-          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           REQUESTED_MODELS: ${{ inputs.models }}
           REQUESTED_PROFILES: ${{ inputs.profiles }}
           REQUESTED_COMPONENTS: ${{ inputs.components }}
@@ -234,7 +233,7 @@ jobs:
           plan="$(model-registry plan-stages --repository . \
             --read-api-url "$REGISTRY_READ_API_URL" \
             --compiler-version "$COMPILER_IDENTITY" \
-            --branch "$GITHUB_REF_NAME" --base-branch "$BASE_BRANCH" \
+            --branch "$GITHUB_REF_NAME" --base-branches "$BASE_BRANCHES" \
             "${scope_args[@]}")"
           compile_matrix="$(jq -c '.compile' <<< "$plan")"
           # The DevKit stages run on Modalix boards only.
@@ -336,7 +335,7 @@ jobs:
           role-session-name: models-catalog-initialize-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish the pending invocation plan
         env:
-          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           SELECTED_MATRIX: ${{ needs.authorize-runner-classes.outputs.matrix }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
@@ -355,7 +354,7 @@ jobs:
             --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
             --environment "$VULCAN_ENVIRONMENT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --base-branch "$BASE_BRANCH" --git-sha "$GITHUB_SHA"
+            --base-branches "$BASE_BRANCHES" --git-sha "$GITHUB_SHA"
 
   compile:
     name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
@@ -381,7 +380,7 @@ jobs:
       runner_environment: ${{ needs.select.outputs.runner_environment }}
       model_compiler_version: ${{ needs.select.outputs.model_compiler_version }}
       model_compiler_label: ${{ needs.select.outputs.model_compiler_label }}
-      base_branch: ${{ needs.select.outputs.base_branch }}
+      base_branches: ${{ needs.select.outputs.base_branches }}
       publishable: ${{ needs.select.outputs.publishable == 'true' }}
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
@@ -427,7 +426,7 @@ jobs:
       # catalog revision the reused builds' DevKit stages read.
       - name: Publish and promote the catalog snapshot
         env:
-          BASE_BRANCH: ${{ needs.select.outputs.base_branch }}
+          BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -448,7 +447,7 @@ jobs:
             --environment "$VULCAN_ENVIRONMENT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --branch "$GITHUB_REF_NAME" \
-            --base-branch "$BASE_BRANCH" \
+            --base-branches "$BASE_BRANCHES" \
             --git-sha "$GITHUB_SHA"
 
   measure:

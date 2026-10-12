@@ -128,7 +128,7 @@ that:
 - the complete catalog, taxonomy, conversion sources, fidelity, accuracy, and
   benchmark entries, and declarative compositions are structurally valid;
 - the repository-wide Model Compiler dependency resolves;
-- the base branch was identified; and
+- the base branches were identified; and
 - the declared builds form a deterministic plan.
 
 It is **not** evidence that the recipe compiled, the MPK passed validation,
@@ -143,11 +143,11 @@ on the reviewed revision:
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, measured, or published
    for the revision. Every push runs this check, not only merges.
-2. **Plan.** `plan-stages` compares each build's compile key with the branch
-   catalog, or the base branch's catalog for a new branch. A build compiles
-   when no published run carries its key. A build that is reused but lacks a
-   completed performance or accuracy run for its current stage key is queued
-   for measurement only.
+2. **Plan.** `plan-stages` compares each build's compile key with the
+   branch's catalog and, on a feature branch, its base branches' catalogs. A
+   build compiles when no published run carries its key. A build that is
+   reused but lacks a completed performance or accuracy run for its current
+   stage key is queued for measurement only.
 3. **Authorize.** Each requested runner class is checked against the protected
    environment specification.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
