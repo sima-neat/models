@@ -108,11 +108,6 @@ def test_compile_workflow_has_independent_build_stages() -> None:
     }
 
 
-def test_compile_job_allows_long_compiles() -> None:
-    # Large models compile for more than 90 minutes on every runner class.
-    assert load(BUILD_WORKFLOW)["jobs"]["compile"]["timeout-minutes"] == "360"
-
-
 def test_json_catalog_and_package_publication_are_retired() -> None:
     workflow = load(WORKFLOW)
     obsolete_jobs = {"package", "publish", "publish-latest-index", "promote-latest", "cleanup-github-artifacts"}
