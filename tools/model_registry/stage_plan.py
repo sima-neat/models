@@ -24,6 +24,8 @@ from .stage_keys import (
 )
 
 REPOSITORY_API_PATH = "/v1/repositories/sima-neat/models"
+# Besides the default branch, branches are cut only from release and integration branches.
+BASE_BRANCH_PREFIXES = ("release-", "integration/")
 
 ReadRequest = Callable[[str], dict[str, Any]]
 
@@ -55,8 +57,9 @@ def resolve_base_branch(
 
     Git does not record the branch from which another branch was created. An
     explicit PR/dispatch base therefore wins. Otherwise, use the closest remote
-    branch by graph distance and prefer the configured integration branch for
-    ties.
+    base branch by graph distance and prefer the configured integration branch
+    for ties. Feature branches are never candidates: a sibling that shares a
+    commit would otherwise look closer than the branch both were cut from.
     """
     root = Path(repository).expanduser().resolve()
     current = current_branch.strip()
@@ -81,6 +84,8 @@ def resolve_base_branch(
     branches.pop(current, None)
     candidates: list[tuple[int, int, int, str, str, str]] = []
     for branch, ref in branches.items():
+        if branch != default_branch and not branch.startswith(BASE_BRANCH_PREFIXES):
+            continue
         try:
             merge_base = _git(root, "merge-base", head, ref)
             ahead = int(_git(root, "rev-list", "--count", f"{merge_base}..{head}"))

@@ -87,6 +87,44 @@ def test_resolve_base_preserves_explicit_base_with_same_branch_name(tmp_path: Pa
     assert result == {"base_branch": "develop", "base_sha": base_sha, "merge_base": base_sha}
 
 
+def test_resolve_base_ignores_feature_branches(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(repository)], check=True)
+    subprocess.run(["git", "config", "user.email", "models-test@example.invalid"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Models Test"], cwd=repository, check=True)
+
+    def commit(branch: str, name: str, start: str | None = None) -> str:
+        subprocess.run(["git", "switch", "-qC", branch, *([start] if start else [])], cwd=repository, check=True)
+        (repository / f"{name}.txt").write_text(f"{name}\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-qm", name], cwd=repository, check=True)
+        subprocess.run(["git", "push", "-q", "origin", branch], cwd=repository, check=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repository, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    commit("develop", "base")
+    shared = commit("feat/a", "shared")
+    commit("feat/a", "a")
+    feature = commit("feat/a", "a-fix")
+    commit("feat/b", "b", shared)
+    commit("develop", "develop-moved", "origin/develop")
+    commit("release-1.0", "release", "origin/develop")
+    release_feature = commit("feat/r", "r")
+
+    def base(branch: str, head: str, preferred: str | None = None) -> str:
+        return resolve_base_branch(repository, current_branch=branch, head=head, preferred_branch=preferred)[
+            "base_branch"
+        ]
+
+    # feat/b is 3 commits from feat/a, develop is 4: only base branches qualify.
+    assert base("feat/a", feature) == "develop"
+    assert base("feat/r", release_feature) == "release-1.0"
+    assert base("feat/r", release_feature, preferred="feat/a") == "feat/a"
+
+
 # Stage planning runs against a copy of resnet_50: modalix_bf16 declares only performance,
 # modalix_int8 declares performance and DevKit accuracy over the default package.
 PLAN_MODEL = "resnet_50"
