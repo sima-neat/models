@@ -249,7 +249,22 @@ def _verify_dataset(path: Path, dataset: dict[str, Any]) -> Path:
 
 
 def resolve_dataset(dataset: dict[str, Any], cache_dir: Path | None = None) -> Path:
-    """Resolve a declared dataset archive through dataset-registry and verify its size and digest."""
+    """Resolve a declared dataset archive through dataset-registry and verify its size and digest.
+
+    dataset-registry trusts its cache by registry path, so an archive republished at the same path
+    leaves a stale cached copy. A cached archive that differs from the declaration is removed and
+    resolved once more, which downloads the current archive.
+    """
+    path = _resolve_with_dataset_registry(dataset, cache_dir)
+    try:
+        return _verify_dataset(path, dataset)
+    except FetchError as exc:
+        print(f"{exc}; removing {path} and resolving again", file=sys.stderr)
+        path.unlink(missing_ok=True)
+    return _verify_dataset(_resolve_with_dataset_registry(dataset, cache_dir), dataset)
+
+
+def _resolve_with_dataset_registry(dataset: dict[str, Any], cache_dir: Path | None) -> Path:
     executable = shutil.which("dataset-registry")
     installed_script = Path(sys.executable).resolve().with_name("dataset-registry")
     if executable is not None:
@@ -269,4 +284,4 @@ def resolve_dataset(dataset: dict[str, Any], cache_dir: Path | None = None) -> P
     except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, TypeError) as exc:
         detail = getattr(exc, "stderr", "") or str(exc)
         raise FetchError(f"dataset-registry resolution failed: {detail.strip()}") from exc
-    return _verify_dataset(path, dataset)
+    return path
