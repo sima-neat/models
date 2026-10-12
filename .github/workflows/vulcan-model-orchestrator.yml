@@ -159,9 +159,14 @@ jobs:
     secrets: inherit
 
   # Staging serves the model browser of main and develop: the portal this run built and checked.
+  # Both branches publish to the same prefix, and a publish deletes files missing from its site, so
+  # publishes queue in one group instead of overlapping.
   publish-model-browser:
     name: Publish the staging model browser
     needs: [select, portal, resolve-vulcan-config]
+    concurrency:
+      group: ${{ github.repository }}-model-browser-staging
+      cancel-in-progress: false
     if: >-
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
       needs.select.outputs.vulcan_environment == 'staging'

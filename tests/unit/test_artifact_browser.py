@@ -113,6 +113,11 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     )
     assert job["uses"] == "sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main"
     assert job["permissions"] == {"contents": "read", "actions": "write", "id-token": "write"}
+    # One group for every branch, so publishes from main and develop never overlap.
+    assert job["concurrency"] == {
+        "group": "${{ github.repository }}-model-browser-staging",
+        "cancel-in-progress": "false",
+    }
 
     publish = job["with"]
     assert publish["bucket"] == "${{ needs.resolve-vulcan-config.outputs.docs_bucket }}"
