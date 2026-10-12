@@ -88,15 +88,13 @@ The script letterboxes each image on the CPU, runs the MPK, and decodes it with
 Ultralytics' end-to-end selection, keeping up to 300 detections with a score
 above 0.001. Given the letterboxed image, it computes the masks of Ultralytics'
 CPU validation pixel for pixel, and it scores masks and boxes from the same
-detections. Three differences from the published protocol remain:
+detections. Two differences from the published protocol remain:
 
 - Ultralytics batches validation images as padded rectangles; this package
   always uses a 640×640 square.
 - Ultralytics' validation loader rounds the resized image size up, while this
   package rounds it to the nearest pixel, as Ultralytics' prediction letterbox
   does. The size differs by one pixel for 210 of the 5,000 images.
-- The COCO 2017 `mini` dataset stores the val2017 images as lossy WebP rather
-  than the original JPEG files.
 
 The benchmark script runs Neat Core's default synthetic benchmark on the MPK
 with Neat's YOLO26 segmentation decoder, and CI publishes one result for each
@@ -165,7 +163,7 @@ graphs and generated models stay in a temporary directory outside Git.
 
 ### DevKit accuracy
 
-The `coco_accuracy` accuracy entry declares the COCO 2017 `mini` dataset
+The `coco_accuracy` accuracy entry declares the COCO 2017 `val` dataset
 archive, the published metrics, and Ultralytics' reference scores. On a Modalix
 DevKit, run the accuracy stage on the output of
 `scripts/run_model_compilation.sh`, setting `REGISTRY_PYTHON` to a Python that

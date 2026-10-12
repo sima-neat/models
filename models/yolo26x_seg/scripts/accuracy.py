@@ -277,7 +277,7 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/mini directory")
+    parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/val directory")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
