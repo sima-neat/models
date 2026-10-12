@@ -68,6 +68,10 @@ architectures:
     display_name: DepthART
     paradigm: encoder_transformer
     allowed_model_types: [vision]
+  depth_anything_3:
+    display_name: Depth Anything 3
+    paradigm: encoder_transformer
+    allowed_model_types: [vision]
   gemma_3:
     display_name: Gemma 3
     paradigm: decoder_transformer

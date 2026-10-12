@@ -1,0 +1,160 @@
+id: depth_anything_3_metric_large_504x504
+display_name: Depth Anything 3 Metric Large 504x504
+description: Metric depth and sky estimation from a single camera image.
+model_type: vision
+tasks:
+- depth_estimation
+modalities:
+  inputs:
+  - image
+  outputs:
+  - depth_map
+  - masks
+architecture:
+  id: depth_anything_3
+  variant: metric_large_504x504
+owners:
+- '@sima-neat/models'
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Depth Anything 3 is developed by ByteDance Seed and distributed under Apache-2.0.
+upstream:
+  repository: https://huggingface.co/depth-anything/DA3METRIC-LARGE
+  revision: 4010e39f3634a45bc60553321fb49fb760bd594e
+  model_card: https://huggingface.co/depth-anything/DA3METRIC-LARGE
+  derived_from: https://github.com/ByteDance-Seed/Depth-Anything-3/tree/41736238f5bced4debf3f2a12375d2466874866d
+conversion:
+  default:
+    source:
+      type: file_set
+      entrypoint: model.safetensors
+      files:
+      - path: model.safetensors
+        uri: hf://models/depth-anything/DA3METRIC-LARGE@4010e39f3634a45bc60553321fb49fb760bd594e/model.safetensors
+        sha256: bbea5b0b3ee389849cffa7ddae89de064a90abd2b055fc5aa99aac68db324776
+        size_bytes: 1336734448
+      - path: config.json
+        uri: hf://models/depth-anything/DA3METRIC-LARGE@4010e39f3634a45bc60553321fb49fb760bd594e/config.json
+        sha256: a336f3e76fe375aaae17a9aed9130c9f2aa061535d317ec57dcb2f1f02e1dd53
+        size_bytes: 847
+      - path: depth_anything_3-0.1.1-py3-none-any.whl
+        uri: https://files.pythonhosted.org/packages/32/c8/73948d6bbe7ab32aebb50d2879df5479fdeedb67ec70f4784021b722f4ee/depth_anything_3-0.1.1-py3-none-any.whl
+        sha256: d7de119f5d235bb06044d83e0e41ee63dee7f30126776b23d648e4dbcf106542
+        size_bytes: 271370
+components:
+- id: model
+  role: inference
+  source:
+    type: file
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/depth_anything_3_metric_large_504x504/8031de6321f4fcddcf827e037d1498f11dd810b922db4e28b4ee546e84261e11/38183031961-1/model.onnx
+    sha256: 8031de6321f4fcddcf827e037d1498f11dd810b922db4e28b4ee546e84261e11
+    size_bytes: 1336643407
+    media_type: application/onnx
+  interface:
+    format: onnx
+    opset: 17
+    entrypoints:
+    - id: default
+      inputs:
+      - name: image
+        dtype: float32
+        shape: [1, 3, 504, 504]
+        layout: NCHW
+        description: RGB image resized to cover 504x504, center-cropped, scaled to [0, 1], and ImageNet-normalized.
+      outputs:
+      - name: depth
+        dtype: float32
+        shape: [1, 1, 504, 504]
+        layout: NCHW
+        description: Canonical depth; meters are the focal length in input pixels times depth divided by 300.
+      - name: sky
+        dtype: float32
+        shape: [1, 1, 504, 504]
+        layout: NCHW
+        description: Sky score; pixels at or above 0.3 are sky.
+    shape_profiles: []
+  preprocessing:
+    pipeline:
+    - op: decode_image
+      parameters: {color_space: RGB}
+    - op: resize
+      parameters: {height: 504, width: 504, fit: cover, upscale_resample: bicubic, downscale_resample: area}
+    - op: center_crop
+      parameters: {height: 504, width: 504}
+    - op: rescale
+      parameters: {factor: 0.00392156862745098}
+    - op: normalize
+      parameters:
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+    - op: transpose
+      parameters: {from: HWC, to: CHW}
+  postprocessing:
+    pipeline: []
+  surgery:
+    type: python
+    entrypoint: scripts/surgery.py:prepare_model
+    parameters: {}
+  recipe: scripts/compile.py
+resources: []
+calibrations:
+- id: nyu_train_images
+  status: ready
+  dataset:
+    id: nyu-depth-v2
+    variant: default
+    sha256: cd2ac66f8957ef5dee03124dda93c8557002d7d7ab1f14502a232b4bf169a77a
+    size_bytes: 346009575
+build_profiles:
+- id: modalix_bf16
+  target: modalix
+  components:
+  - id: model
+    artifact_suffix: bf16
+    calibration: nyu_train_images
+    parameters:
+      precision: bf16
+      calibration_bins: 2048
+      calibration_samples: 46
+compositions:
+- id: default
+  type: single
+  component: model
+  entrypoint: default
+packages:
+- id: default
+  default: true
+  components: [model]
+  resources: []
+  build_profiles: [modalix_bf16]
+  composition: default
+  maturity: experimental
+fidelity: []
+accuracy:
+- id: nyu_depth_accuracy
+  scope: {type: package, package: default}
+  build_profiles: [modalix_bf16]
+  engine: devkit_script
+  status: ready
+  result_component: model
+  dataset:
+    id: nyu-depth-v2
+    variant: default
+    sha256: cd2ac66f8957ef5dee03124dda93c8557002d7d7ab1f14502a232b4bf169a77a
+    size_bytes: 346009575
+  metrics: [abs_rel, delta1]
+  required_metrics: [abs_rel, delta1]
+  reference:
+    source: https://arxiv.org/abs/2511.10647
+    metrics: {abs_rel: 0.070, delta1: 0.963}
+benchmark:
+- id: modalix_latency
+  scope: {type: component, component: model}
+  build_profiles: [modalix_bf16]
+  status: pending
+  target: modalix
+  reason: Establish a Core API baseline for the default MPK workload.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
+maturity: experimental
