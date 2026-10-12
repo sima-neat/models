@@ -31,46 +31,16 @@ jobs:
         run: python -m pip install -e '.[dev]'
 
       - name: Install sima-cli
-        run: |
-          set -euo pipefail
-          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
-          sima_cli="${HOME}/.sima-cli/.venv/bin/sima-cli"
-          "${sima_cli}" packages build --help >/dev/null
-          echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"
+        run: scripts/install_sima_cli.sh
 
       - name: Test model-registry contracts
-        run: |
-          python -m pytest tests/unit
+        run: python -m pytest tests/unit
 
       - name: Build wheel and Vulcan metadata
         run: packaging/model-registry/build.sh
 
       - name: Verify package installer and author command surface
-        run: |
-          set -euo pipefail
-          model_compiler="${RUNNER_TEMP}/model-compiler"
-          python -m venv "${model_compiler}"
-          "${model_compiler}/bin/python" -m pip install certifi jsonschema==4.18.4 PyYAML
-          "${model_compiler}/bin/python" -c 'from pathlib import Path; import sysconfig; Path(sysconfig.get_path("purelib"), "afe.py").touch()'
-          touch "${model_compiler}/bin/mla-masm"
-          chmod +x "${model_compiler}/bin/mla-masm"
-          export MODEL_COMPILER_PYTHON="${model_compiler}/bin/python"
-          bash dist/model-registry/install_model_registry_package.sh
-          model_registry="${model_compiler}/bin/model-registry"
-          "${model_registry}" --version
-          help_text="$("${model_registry}" --help)"
-          module_help_text="$("${model_compiler}/bin/python" -m model_registry --help)"
-          test "${help_text}" = "${module_help_text}"
-          for command in validate validate-models fetch fetch-calibration matrix resolve-compiler verify-mpk; do
-            grep -q "${command}" <<< "${help_text}"
-          done
-          for command in package publish publish-benchmark publish-catalog; do
-            if "${model_registry}" "${command}" --help >/dev/null 2>&1; then
-              echo "author CLI unexpectedly exposes ${command}" >&2
-              exit 1
-            fi
-          done
-          python -m json.tool dist/model-registry/metadata.json >/dev/null
+        run: packaging/model-registry/verify_package.sh
 
       - name: Upload package payload
         uses: actions/upload-artifact@v7

@@ -70,8 +70,14 @@ def test_ci_runs_every_unit_test() -> None:
 
 
 def test_model_registry_workflow_smoke_tests_the_author_command_surface() -> None:
-    text = PACKAGE_WORKFLOW.read_text(encoding="utf-8")
+    steps = {step["name"]: step for step in load(PACKAGE_WORKFLOW)["jobs"]["build"]["steps"]}
+    verify = (ROOT / "packaging/model-registry/verify_package.sh").read_text(encoding="utf-8")
+    install = (ROOT / "scripts/install_sima_cli.sh").read_text(encoding="utf-8")
 
-    assert 'help_text="$("${model_registry}" --help)"' in text
-    assert "author CLI unexpectedly exposes" in text
-    assert 'echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"' in text
+    assert steps["Install sima-cli"]["run"] == "scripts/install_sima_cli.sh"
+    assert steps["Verify package installer and author command surface"]["run"] == (
+        "packaging/model-registry/verify_package.sh"
+    )
+    assert 'help_text="$("${model_registry}" --help)"' in verify
+    assert "author CLI unexpectedly exposes" in verify
+    assert 'echo "SIMA_CLI_BIN=${sima_cli}" >> "${GITHUB_ENV}"' in install

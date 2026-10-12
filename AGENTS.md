@@ -70,6 +70,12 @@ in the same commit.
 - **Board stages.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` on a DevKit and publishes performance (`model_benchmark` runs) and
   accuracy (`model_accuracy` runs) separately.
+- Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
+  the order of steps. A step that needs more than one command calls a named,
+  executable script with a usage header: under `scripts/`, or beside the code
+  it serves, as `packaging/model-registry/build.sh` does. Registry logic
+  belongs in a `model-registry` command. A new script under `scripts/` is not
+  a stage-key input unless `stage_keys.py` lists it.
 - A newer push cancels the branch's running orchestrator; builds that
   already published stay and are reused. How branch catalogs, merges, and the
   model browser interact is in
@@ -98,8 +104,6 @@ Conventions the code relies on:
   `--fidelity-dataset`, `--mpk`); data enters only through the dataset registry
   declared in `model.yaml`. Board stage scripts run without registry
   credentials.
-- A CI step calls a named script under `scripts/` or a `model-registry`
-  command; keep workflow YAML to orchestration.
 - Schemas under `schemas/` reject unknown fields. Published results keep their
   `schema_version` (performance 5, accuracy 2, numerical fidelity 1) because
   the artifact browser and `sima-cli` choose a renderer by it. Registry
