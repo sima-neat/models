@@ -8,7 +8,7 @@ from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
 from model_registry.errors import FetchError
-from model_registry.fetch import Fetcher
+from model_registry.fetch import Fetcher, resolve_dataset
 from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
@@ -323,3 +323,49 @@ def test_github_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch
         "Bearer private-release-token",
         "Bearer private-release-token",
     ]
+
+
+def fake_dataset_registry(monkeypatch, cached: Path, download: bytes) -> list[Path]:
+    """Serve the cached archive like dataset-registry, downloading it when it is missing."""
+    calls = []
+
+    def resolve(dataset, cache_dir):
+        calls.append(cached)
+        if not cached.exists():
+            cached.write_bytes(download)
+        return cached
+
+    monkeypatch.setattr("model_registry.fetch._resolve_with_dataset_registry", resolve)
+    return calls
+
+
+DATASET = {"id": "fixture", "variant": "val", "sha256": DIGEST, "size_bytes": len(PAYLOAD)}
+
+
+def test_dataset_matching_its_declaration_is_reused(tmp_path: Path, monkeypatch) -> None:
+    cached = tmp_path / "archive.tgz"
+    cached.write_bytes(PAYLOAD)
+    calls = fake_dataset_registry(monkeypatch, cached, b"unexpected download")
+
+    assert resolve_dataset(DATASET) == cached.resolve()
+    assert len(calls) == 1
+
+
+def test_stale_cached_dataset_is_replaced(tmp_path: Path, monkeypatch) -> None:
+    cached = tmp_path / "archive.tgz"
+    cached.write_bytes(b"previously published archive")
+    calls = fake_dataset_registry(monkeypatch, cached, PAYLOAD)
+
+    assert resolve_dataset(DATASET) == cached.resolve()
+    assert cached.read_bytes() == PAYLOAD
+    assert len(calls) == 2
+
+
+def test_dataset_still_differing_after_refetch_fails(tmp_path: Path, monkeypatch) -> None:
+    cached = tmp_path / "archive.tgz"
+    cached.write_bytes(b"previously published archive")
+    calls = fake_dataset_registry(monkeypatch, cached, b"archive differing from the declaration")
+
+    with pytest.raises(FetchError, match="dataset size mismatch"):
+        resolve_dataset(DATASET)
+    assert len(calls) == 2

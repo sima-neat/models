@@ -65,7 +65,8 @@ jobs:
       # complete component group before this job is queued.
       - build-profile-id-${{ fromJSON(inputs.entry).build_profile_id }}
       - component-id-${{ fromJSON(inputs.entry).component_id }}
-    timeout-minutes: 90
+    # Large models compile for hours; the limit only stops a stalled compile.
+    timeout-minutes: 360
     env:
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
@@ -328,25 +329,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          STAGES: ${{ join(fromJSON(inputs.entry).stages, ',') }}
-          BENCHMARK_COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}
-        run: |
-          set -euo pipefail
-          output="$(gh workflow run vulcan-model-benchmarking.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
-            -f environment=staging \
-            -f source_run_id="$GITHUB_RUN_ID" \
-            -f source_sha="$GITHUB_SHA" \
-            -f source_branch="$GITHUB_REF_NAME" \
-            -f model_id="$MODEL_ID" \
-            -f build_profile_id="$BUILD_PROFILE_ID" \
-            -f compile_invocation_id="$COMPILE_INVOCATION_ID" \
-            -f component_ids="$BENCHMARK_COMPONENT_IDS" \
-            -f stages="$STAGES")"
-          run_url="$(grep -Eom1 'https://[^[:space:]]+/actions/runs/[0-9]+' <<< "$output" || true)"
-          echo "DevKit run for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID ($STAGES): ${run_url:-link unavailable}" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          ENTRY: ${{ inputs.entry }}
+        run: scripts/start_devkit_stages.sh "$ENTRY" "$GITHUB_RUN_ID"
 
       - name: Assemble the packages this build completes
         id: packages

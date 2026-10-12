@@ -445,8 +445,9 @@ jobs:
             --base-branches "$BASE_BRANCHES" \
             --git-sha "$GITHUB_SHA"
 
+  # One job starts every reused build's DevKit stages; each build's line links its benchmark run.
   measure:
-    name: Start DevKit stages for ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    name: Dispatch DevKit stages for reused builds
     needs: [select, plan, publish-catalog]
     if: >-
       !cancelled() &&
@@ -457,35 +458,15 @@ jobs:
     permissions:
       actions: write
       contents: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.measure_matrix) }}
     steps:
-      - name: Start the stages a reused build still lacks
+      - name: Check out the trusted revision
+        uses: actions/checkout@v6
+
+      - name: Start the stages reused builds still lack
         env:
           GH_TOKEN: ${{ github.token }}
-          MODEL_ID: ${{ matrix.model_id }}
-          BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
-          COMPILE_INVOCATION_ID: ${{ matrix.compile_invocation_id }}
-          COMPONENT_IDS: ${{ join(matrix.benchmark_component_ids, ',') }}
-          STAGES: ${{ join(matrix.stages, ',') }}
-        run: |
-          set -euo pipefail
-          output="$(gh workflow run vulcan-model-benchmarking.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
-            -f environment=staging \
-            -f source_run_id= \
-            -f source_sha="$GITHUB_SHA" \
-            -f source_branch="$GITHUB_REF_NAME" \
-            -f model_id="$MODEL_ID" \
-            -f build_profile_id="$BUILD_PROFILE_ID" \
-            -f compile_invocation_id="$COMPILE_INVOCATION_ID" \
-            -f component_ids="$COMPONENT_IDS" \
-            -f stages="$STAGES")"
-          run_url="$(grep -Eom1 'https://[^[:space:]]+/actions/runs/[0-9]+' <<< "$output" || true)"
-          echo "DevKit run for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID ($STAGES): ${run_url:-link unavailable}" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          MEASURE_MATRIX: ${{ needs.plan.outputs.measure_matrix }}
+        run: scripts/start_devkit_stages.sh "$MEASURE_MATRIX"
 
   report-partial-publication:
     name: Report failed model builds
