@@ -172,8 +172,8 @@ accuracy:
   dataset:
     id: coco-2017
     variant: val
-    sha256: 6ca48b7dfbaf548106c277b053cb26b0aed6cf77bab08079aac70b3577c08fc5
-    size_bytes: 986845648
+    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
+    size_bytes: 898368520
   metrics: [coco_mask_map, coco_mask_ap50, coco_mask_ap75, coco_mask_ap_small, coco_mask_ap_medium,
     coco_mask_ap_large, coco_mask_ar1, coco_mask_ar10, coco_mask_ar100, coco_mask_ar_small, coco_mask_ar_medium,
     coco_mask_ar_large, coco_box_map, coco_box_ap50]
