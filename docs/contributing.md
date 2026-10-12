@@ -143,7 +143,8 @@ on the reviewed revision:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, measured, or published
-   for the revision. Every push runs this check, not only merges.
+   for the revision. Every push runs this check, not only merges, and a
+   push to `main` or `develop` publishes the checked browser to staging.
 2. **Plan.** `plan-stages` compares each build's compile key with the
    branch's catalog and, on a feature branch, its base branches' catalogs. A
    build compiles when no published run carries its key. A build that is

@@ -21,7 +21,7 @@ byte size, and SHA-256.
 | Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, the compile matrix, and compile-output and MPK checks. CI installs the full command surface for stage planning, packaging, provenance, and publication. |
-| GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run `Target Branch Checks` only. |
+| GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run only `Target Branch Checks` and the description check, `PR Sanitization`. |
 | Model Compiler runner | An ephemeral self-hosted runner with the pinned Model Compiler. Compiles one build with read-only repository access. |
 | Modalix DevKit runner | Runs the performance and accuracy stages of one build. Holds no publication credentials. |
 | S3/object storage | Stores immutable compiled artifacts, packages, logs, and results. |
@@ -121,6 +121,7 @@ input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-r
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
+       -> on main and develop: publish that model browser to staging
   -> plan: compare stage keys with the branch catalog and registry runs
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
@@ -175,8 +176,8 @@ in staging and only for Modalix targets.
 
 ## Compile workflow trust boundary
 
-Pull requests run only `Target Branch Checks`, on GitHub-hosted runners with
-read-only repository access. The orchestrator has no pull-request trigger, so
+Pull requests run only `Target Branch Checks` and `PR Sanitization`, on
+GitHub-hosted runners with read-only repository access. The orchestrator has no pull-request trigger, so
 self-hosted jobs run only for trusted pushes and explicit maintainer
 dispatches. Production is manual and uses the protected
 GitHub `production` environment.

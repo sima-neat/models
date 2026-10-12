@@ -1,7 +1,7 @@
 name: Developer Docs Validation
 
-# The orchestrator calls this before planning compilations, Target Branch Checks on every pull request,
-# and Vulcan Model Browser before publishing the site it uploads; a manual run checks one ref.
+# The orchestrator calls this before planning compilations and publishes the site it uploads;
+# Target Branch Checks calls it on every pull request; a manual run checks one ref.
 on:
   workflow_call: {}
   workflow_dispatch: {}

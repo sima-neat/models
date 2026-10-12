@@ -158,6 +158,30 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  # Staging serves the model browser of main and develop: the portal this run built and checked.
+  publish-model-browser:
+    name: Publish the staging model browser
+    needs: [select, portal, resolve-vulcan-config]
+    if: >-
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
+      needs.select.outputs.vulcan_environment == 'staging'
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
+    with:
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      site_key: DOCS
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}
+      artifact_pattern: model-browser-site
+      s3_prefix: models
+      cloudfront_paths: "/models /models/*"
+
   plan:
     name: Plan compilations and DevKit stages against the registry
     needs: [select, portal]

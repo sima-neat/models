@@ -78,14 +78,14 @@ link to the raw result instead of guessing at incompatible structures.
 
 ## Staging deployment
 
-Changes to `artifact-browser/**`, `docs/**`, or `website/**` on `main` or
-`develop` are assembled into one static portal by `developer-docs.yml`, which
-browser-tests and smoke-tests it, and published by `vulcan-model-browser.yml`
-to the staging docs bucket under `models/`. The
+Every push to `main` or `develop` runs `vulcan-model-orchestrator.yml`, whose
+`portal` job assembles one static portal with `developer-docs.yml` and
+browser-tests and smoke-tests it. Its `publish-model-browser` job then
+publishes that portal to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
 
-The workflow can also be started manually. It resolves the bucket, publisher
+A manual staging dispatch of the orchestrator on either branch republishes it. The job resolves the bucket, publisher
 role, KMS key, and CloudFront distribution from the shared staging Vulcan
 configuration; those deployment values are not hard-coded in this repository.
 

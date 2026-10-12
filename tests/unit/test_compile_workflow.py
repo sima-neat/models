@@ -97,6 +97,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "select",
         "portal",
         "resolve-vulcan-config",
+        "publish-model-browser",
         "plan",
         "authorize-runner-classes",
         "initialize-catalog",

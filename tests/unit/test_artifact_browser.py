@@ -17,7 +17,7 @@ from model_registry.model import load_models
 
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER = ROOT / "artifact-browser"
-DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-browser.yml"
+ORCHESTRATOR_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-orchestrator.yml"
 DOCS_WORKFLOW = ROOT / ".github" / "workflows" / "developer-docs.yml"
 PORTAL_ASSEMBLER = ROOT / "website" / "scripts" / "assemble-portal.mjs"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.ts"
@@ -104,12 +104,17 @@ def test_browser_redirects_the_extensionless_models_route_before_loading_assets(
 
 
 def test_staging_deployment_publishes_models_to_docs_origin() -> None:
-    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    workflow = yaml.load(ORCHESTRATOR_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = workflow["jobs"]["publish-model-browser"]
 
-    assert workflow["on"]["push"]["branches"] == ["main", "develop"]
-    assert workflow["jobs"]["resolve-vulcan-config"]["with"]["vulcan_env"] == "staging"
+    assert job["if"] == (
+        "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && "
+        "needs.select.outputs.vulcan_environment == 'staging'"
+    )
+    assert job["uses"] == "sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main"
+    assert job["permissions"] == {"contents": "read", "actions": "write", "id-token": "write"}
 
-    publish = workflow["jobs"]["publish"]["with"]
+    publish = job["with"]
     assert publish["bucket"] == "${{ needs.resolve-vulcan-config.outputs.docs_bucket }}"
     assert publish["role_to_assume"] == "${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}"
     assert publish["cloudfront_distribution_id"] == (
@@ -118,9 +123,9 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert publish["s3_prefix"] == "models"
     assert publish["cloudfront_paths"] == "/models /models/*"
 
-    # The deployment publishes the site Developer Docs Validation built and checked.
-    assert workflow["jobs"]["build"]["uses"] == "./.github/workflows/developer-docs.yml"
-    assert workflow["jobs"]["publish"]["needs"] == ["resolve-vulcan-config", "build"]
+    # The deployment publishes the site the run's portal check built and checked.
+    assert workflow["jobs"]["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
+    assert job["needs"] == ["select", "portal", "resolve-vulcan-config"]
     docs = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     upload = docs["jobs"]["build"]["steps"][-1]
     assert upload["with"]["path"] == "website/portal-build/"
