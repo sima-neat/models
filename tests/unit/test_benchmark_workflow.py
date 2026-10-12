@@ -35,6 +35,7 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert set(inputs) == {
         "environment",
         "source_run_id",
+        "started_by_run_id",
         "source_sha",
         "source_branch",
         "model_id",
@@ -43,10 +44,11 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
         "component_ids",
         "stages",
     }
-    optional = {"source_run_id", "component_ids", "stages"}
+    optional = {"source_run_id", "started_by_run_id", "component_ids", "stages"}
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["component_ids"]["default"] == ""
+    assert inputs["started_by_run_id"]["default"] == ""
     assert inputs["stages"]["default"] == "performance,accuracy"
     assert inputs["environment"]["options"] == ["staging"]
     assert "operation" not in inputs
@@ -74,6 +76,7 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert ".head_sha == $sha" in verify["run"]
     assert ".head_branch == $branch" in verify["run"]
     assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in verify["run"]
+    assert '[[ -z "$STARTED_BY_RUN_ID" || "$STARTED_BY_RUN_ID" =~ ^[0-9]+$ ]]' in verify["run"]
     assert 'git check-ref-format --branch "$SOURCE_BRANCH"' in verify["run"]
     assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify["run"]
     assert "compiler-output-" not in verify["run"]
@@ -115,6 +118,49 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     upload = next(item for item in stage["steps"] if item.get("uses") == "actions/upload-artifact@v7")
     assert upload["with"]["name"] == (
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("started_by_run_id", "started_by"),
+    [
+        ("77", "- Started by: [run 77](https://github.com/sima-neat/models/actions/runs/77)\n"),
+        ("", ""),
+    ],
+)
+def test_dispatched_benchmark_links_its_starting_run_source_and_model_page(
+    tmp_path: Path, started_by_run_id: str, started_by: str
+) -> None:
+    stage = load_workflow()["jobs"]["stage-dispatched-benchmark"]
+    links = step(stage["steps"], "Link the starting run, source revision, and model page")
+    assert stage["steps"].index(links) == stage["steps"].index(
+        step(stage["steps"], "Verify the source run and compiled artifact")
+    ) + 1
+    summary = tmp_path / "summary.md"
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    env = {
+        **os.environ,
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "sima-neat/models",
+        "STARTED_BY_RUN_ID": started_by_run_id,
+        "SOURCE_SHA": sha,
+        "SOURCE_BRANCH": "feat/new model",
+        "MODEL_ID": "alpha",
+        "BUILD_PROFILE_ID": "int8",
+        "COMPILE_INVOCATION_ID": "default",
+        "STAGES": "performance,accuracy",
+    }
+
+    subprocess.run(["bash", "-c", links["run"]], env=env, check=True)
+
+    assert summary.read_text(encoding="utf-8") == (
+        "### alpha / default (int8): performance, accuracy\n"
+        + started_by
+        + f"- Source: `feat/new model` @ [`0123456`](https://github.com/sima-neat/models/commit/{sha})\n"
+        "- Model page (staging): [alpha on feat/new model]"
+        "(https://developer-stg.sima.ai/models/?branch=feat%2Fnew%20model&model=alpha&variant=int8)."
+        " Results appear there once published.\n"
     )
 
 

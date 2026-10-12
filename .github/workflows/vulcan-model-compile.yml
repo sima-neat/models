@@ -332,7 +332,7 @@ jobs:
           BENCHMARK_COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}
         run: |
           set -euo pipefail
-          gh workflow run Vulcan-Model-Benchmarking.yml \
+          output="$(gh workflow run Vulcan-Model-Benchmarking.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "$GITHUB_REF_NAME" \
             -f environment=staging \
@@ -343,8 +343,15 @@ jobs:
             -f build_profile_id="$BUILD_PROFILE_ID" \
             -f compile_invocation_id="$COMPILE_INVOCATION_ID" \
             -f component_ids="$BENCHMARK_COMPONENT_IDS" \
-            -f stages="$STAGES"
-          echo "Started $STAGES for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID." >> "$GITHUB_STEP_SUMMARY"
+            -f started_by_run_id="$GITHUB_RUN_ID" \
+            -f stages="$STAGES")"
+          run_url="$(grep -Eom1 'https://[^[:space:]]+/actions/runs/[0-9]+' <<< "$output" || true)"
+          devkit_run="DevKit run link unavailable"
+          if [[ -n "$run_url" ]]; then devkit_run="[DevKit run]($run_url)"; fi
+          branch_query="$(jq -rn --arg branch "$GITHUB_REF_NAME" '$branch | @uri')"
+          model_page="https://developer-stg.sima.ai/models/?branch=$branch_query&model=$MODEL_ID&variant=$BUILD_PROFILE_ID"
+          echo "Started $STAGES for $MODEL_ID/$BUILD_PROFILE_ID/$COMPILE_INVOCATION_ID: $devkit_run · [model page]($model_page)" \
+            >> "$GITHUB_STEP_SUMMARY"
 
       - name: Assemble the packages this build completes
         id: packages

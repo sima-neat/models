@@ -458,6 +458,7 @@ def test_reused_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
     assert '-f source_sha="$GITHUB_SHA"' in start["run"]
     assert '-f stages="$STAGES"' in start["run"]
     assert '-f component_ids="$COMPONENT_IDS"' in start["run"]
+    assert '-f started_by_run_id="$GITHUB_RUN_ID"' in start["run"]
     assert start["env"]["STAGES"] == "${{ join(matrix.stages, ',') }}"
     assert start["env"]["COMPONENT_IDS"] == "${{ join(matrix.benchmark_component_ids, ',') }}"
 
@@ -694,9 +695,60 @@ def test_new_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
     assert '-f source_run_id="$GITHUB_RUN_ID"' in start["run"]
     assert '-f stages="$STAGES"' in start["run"]
     assert '-f component_ids="$BENCHMARK_COMPONENT_IDS"' in start["run"]
+    assert '-f started_by_run_id="$GITHUB_RUN_ID"' in start["run"]
     assert start["env"]["STAGES"] == "${{ join(fromJSON(inputs.entry).stages, ',') }}"
     assert start["env"]["BENCHMARK_COMPONENT_IDS"] == (
         "${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "name"),
+    [
+        (WORKFLOW, "measure", "Start the stages a reused build still lacks"),
+        (BUILD_WORKFLOW, "publish", "Start the DevKit stages"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("gh_output", "devkit_run"),
+    [
+        (
+            "https://github.com/sima-neat/models/actions/runs/123\n",
+            "[DevKit run](https://github.com/sima-neat/models/actions/runs/123)",
+        ),
+        ("", "DevKit run link unavailable"),
+    ],
+)
+def test_stage_dispatch_links_the_devkit_run_and_model_page(
+    tmp_path: Path, workflow: Path, job: str, name: str, gh_output: str, devkit_run: str
+) -> None:
+    start = step(load(workflow)["jobs"][job], name)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(f"#!/bin/sh\nprintf '{gh_output}'\n", encoding="utf-8")
+    (bin_dir / "gh").chmod(0o755)
+    summary = tmp_path / "summary.md"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "GITHUB_REPOSITORY": "sima-neat/models",
+        "GITHUB_RUN_ID": "77",
+        "GITHUB_SHA": "0" * 40,
+        "GITHUB_REF_NAME": "feat/new model",
+        "MODEL_ID": "alpha",
+        "BUILD_PROFILE_ID": "int8",
+        "COMPILE_INVOCATION_ID": "default",
+        "STAGES": "performance",
+        "COMPONENT_IDS": "model",
+        "BENCHMARK_COMPONENT_IDS": "model",
+    }
+
+    subprocess.run(["bash", "-c", start["run"]], env=env, check=True)
+
+    assert summary.read_text(encoding="utf-8") == (
+        f"Started performance for {'registry build ' if job == 'measure' else ''}alpha/int8/default: {devkit_run} · "
+        "[model page](https://developer-stg.sima.ai/models/?branch=feat%2Fnew%20model&model=alpha&variant=int8)\n"
     )
 
 

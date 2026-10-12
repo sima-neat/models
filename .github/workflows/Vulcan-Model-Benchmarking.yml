@@ -15,6 +15,11 @@ on:
         required: false
         default: ""
         type: string
+      started_by_run_id:
+        description: Workflow run that started these stages, linked from the run summary
+        required: false
+        default: ""
+        type: string
       source_sha:
         description: Source revision used to compile the model
         required: true
@@ -80,6 +85,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          STARTED_BY_RUN_ID: ${{ inputs.started_by_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           MODEL_ID: ${{ inputs.model_id }}
@@ -97,6 +103,7 @@ jobs:
           [[ ",$STAGES," != *",performance,"* || -n "$COMPONENT_IDS" ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ -z "$SOURCE_RUN_ID" || "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ -z "$STARTED_BY_RUN_ID" || "$STARTED_BY_RUN_ID" =~ ^[0-9]+$ ]]
           git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$BUILD_PROFILE_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
@@ -124,6 +131,29 @@ jobs:
                 '[.artifacts[] | select(.name == $artifact and (.expired | not))] | length'
           )"
           test "$artifact_count" = "1"
+
+      - name: Link the starting run, source revision, and model page
+        env:
+          STARTED_BY_RUN_ID: ${{ inputs.started_by_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
+          STAGES: ${{ inputs.stages }}
+        run: |
+          set -euo pipefail
+          repository_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          branch_query="$(jq -rn --arg branch "$SOURCE_BRANCH" '$branch | @uri')"
+          model_page="https://developer-stg.sima.ai/models/?branch=$branch_query&model=$MODEL_ID&variant=$BUILD_PROFILE_ID"
+          {
+            echo "### $MODEL_ID / $COMPILE_INVOCATION_ID ($BUILD_PROFILE_ID): ${STAGES//,/, }"
+            if [[ -n "$STARTED_BY_RUN_ID" ]]; then
+              echo "- Started by: [run $STARTED_BY_RUN_ID]($repository_url/actions/runs/$STARTED_BY_RUN_ID)"
+            fi
+            echo "- Source: \`$SOURCE_BRANCH\` @ [\`${SOURCE_SHA:0:7}\`]($repository_url/commit/$SOURCE_SHA)"
+            echo "- Model page (staging): [$MODEL_ID on $SOURCE_BRANCH]($model_page). Results appear there once published."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check out trusted registry tooling from the protected workflow revision
         uses: actions/checkout@v6
