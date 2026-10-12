@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pyneat
 from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
@@ -88,12 +89,8 @@ def resize_sources(source: int, target: int) -> tuple[np.ndarray, np.ndarray, np
     return lower, upper, weight
 
 
-# The prototypes are upsampled 4x to the 640x640 input frame. PROTO_UPSAMPLE[y] holds the bilinear weights of
-# every prototype row for frame row y (and likewise for columns).
-PROTO_LOWER, PROTO_UPPER, PROTO_WEIGHT = resize_sources(PROTO_SIZE, IMAGE_SIZE)
-PROTO_UPSAMPLE = np.zeros((IMAGE_SIZE, PROTO_SIZE), np.float32)
-np.add.at(PROTO_UPSAMPLE, (np.arange(IMAGE_SIZE), PROTO_LOWER), 1 - PROTO_WEIGHT)
-np.add.at(PROTO_UPSAMPLE, (np.arange(IMAGE_SIZE), PROTO_UPPER), PROTO_WEIGHT)
+# The prototype rows (and columns) that each frame row (and column) samples when upsampled 4x to 640x640.
+PROTO_LOWER, PROTO_UPPER, _ = resize_sources(PROTO_SIZE, IMAGE_SIZE)
 
 
 def tensor_options() -> pyneat.ModelOptions:
@@ -186,12 +183,14 @@ def frame_mask(proto: np.ndarray, coefficients: np.ndarray, x0: int, y0: int, x1
     """Return the binary mask of one detection over frame rows y0:y1 and columns x0:x1.
 
     Equals Ultralytics' process_mask_native there: the prototype mix, upsampled bilinearly to 640x640, then
-    positive. Only the prototype rows and columns that the region samples are mixed.
+    positive. Only the prototype window that the region samples is mixed and upsampled. OpenCV's bilinear resize
+    uses torch's pixel centers (align_corners=False), so frame row y is row y - 4 * r0 of the upsampled window.
     """
-    rows = slice(PROTO_LOWER[y0], PROTO_UPPER[y1 - 1] + 1)
-    columns = slice(PROTO_LOWER[x0], PROTO_UPPER[x1 - 1] + 1)
-    mixed = proto[rows, columns] @ coefficients
-    return PROTO_UPSAMPLE[y0:y1, rows] @ mixed @ PROTO_UPSAMPLE[x0:x1, columns].T > 0
+    r0, r1 = PROTO_LOWER[y0], PROTO_UPPER[y1 - 1] + 1
+    c0, c1 = PROTO_LOWER[x0], PROTO_UPPER[x1 - 1] + 1
+    mixed = proto[r0:r1, c0:c1] @ coefficients
+    upsampled = cv2.resize(mixed, (4 * (c1 - c0), 4 * (r1 - r0)), interpolation=cv2.INTER_LINEAR)
+    return upsampled[y0 - 4 * r0 : y1 - 4 * r0, x0 - 4 * c0 : x1 - 4 * c0] > 0
 
 
 def instance_masks(
