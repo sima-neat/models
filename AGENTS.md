@@ -45,7 +45,6 @@ in the same commit.
 | the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
 | a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
-| a model's task or architecture, or a new model | its `HeroSpec` in `tools/heroes/specs.py` and the rendered `hero.png` ([Model hero images](#model-hero-images)) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a `model-registry` command | `cli.py` (and `AUTHOR_COMMANDS` when authors run it), every workflow and script that calls it, `packaging/model-registry/install_model_registry_package.sh`, the docs, and `tests/unit/test_cli.py` |
 | a module that only CI may run | the removal list in `packaging/model-registry/build.sh` |
@@ -195,61 +194,22 @@ Nested documentation such as training or QAT guides may use a structure suited
 to that workflow, but the top-level README should link to it from the relevant
 standard section.
 
-The hero line uses the exact alt text shown above and points to the model's
-own `hero.png`, made as described in [Model hero images](#model-hero-images).
+Every model has a hero: a regular (non-symlinked) 1200x480 PNG no
+larger than 2 MiB. The registry's strict PNG profile permits `IHDR`, optional
+`PLTE`, `IDAT`, `IEND`, and optional validated `tIME` or `tRNS` ancillary
+chunks. Keep it legible in light and dark themes, avoid embedding essential
+instructions in the pixels, and use the exact accessible Markdown alt text
+shown above. The registry publishes the image as a checksum-bound Vulcan
+artifact alongside the README; do not use a placeholder, remote image URL, or
+an image outside the model directory.
+
+Create a hero for each model and keep heroes consistent across the catalog.
+Each hero shows the model's output on an input, such as labeled boxes on a
+scene, in a scene no other model uses. Models of one architecture share a
+style and accent color, and labels use the same size on every hero.
 
 When changing model behavior, interfaces, supported builds, qualification
 evidence, installation steps, or redistribution terms, update the owning
 README and the hero image in the same change. A README- or hero-only edit is
 documentation or catalog metadata; it must not change compilation, validation,
 benchmark, or artifact fingerprints.
-
-## Model hero images
-
-Every model has a `hero.png`, shown on its catalog card and model page. Heroes
-are rendered from code: `tools/heroes/specs.py` declares one `HeroSpec` per
-model, and `tools/heroes/render.py` draws it. Edit the spec, then render:
-
-```bash
-python tools/heroes/render.py <model_id>        # write models/<model_id>/hero.png
-python tools/heroes/render.py --check           # every committed hero matches its spec
-python tools/heroes/render.py --sheet sheet.png # contact sheet of all heroes, for review
-```
-
-A hero shows the model's output on its input, so a reader can name the task
-from the image alone. Each spec combines three layers:
-
-- **Template**, chosen by the model's first task through `TASK_TEMPLATES`:
-  classification shows the image beside ranked class-score bars; detection
-  draws labeled boxes; keypoints draws skeletons on people; depth shows the
-  image beside its depth map; segmentation masks the objects that match a text
-  prompt. A new task adds a template function in `render.py` and its
-  `TASK_TEMPLATES` entry.
-- **Family**, chosen by `architecture.id` through `ARCHITECTURE_FAMILIES`: one
-  accent color and one backdrop shared by every variant of a design, so a
-  family reads as a set and families differ at a glance. A new variant reuses
-  its family; a new architecture family adds a `Family` and a backdrop.
-- **Scene**, unique to the model: its own setting, subjects, or viewpoint
-  inside the family backdrop. Scenes differ in content only; show a variant
-  difference, such as input resolution, only when the model's evidence
-  supports it, never as more objects found by a larger model.
-
-Keep each hero clean: two to four labeled objects from the model's label set,
-drawn in the muted object palette from `draw.py`, with the family accent
-reserved for the model's output. Labels use `LABEL_FONT_SIZE` (48 px), which
-renders at about 11 CSS px on the narrowest catalog card. Leave model names,
-metrics, and instructions out of the pixels. A scene that needs a new object
-adds a drawing function to `OBJECTS` in `draw.py`.
-
-`tests/unit/test_heroes.py` checks that every model has a spec matching its
-family and task, that scenes are unique, that labels stay on the canvas without
-overlapping, and that each committed hero matches its spec. Then compare the
-new hero with its family on the contact sheet, and look at it in
-`artifact-browser/preview.py` at phone and desktop width, light and dark.
-
-The registry accepts a regular (non-symlinked) 1200x480 PNG no larger than
-2 MiB with only `IHDR`, `PLTE`, `IDAT`, `IEND`, `tIME`, and `tRNS` chunks, and
-publishes it as a checksum-bound Vulcan artifact beside the README; the
-renderer writes that format. Keep hero code under `tools/heroes/`: a model
-folder accepts only its four entries, and every file under `scripts/` is a
-compile input.
