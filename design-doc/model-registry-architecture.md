@@ -21,7 +21,7 @@ byte size, and SHA-256.
 | Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, the compile matrix, and compile-output and MPK checks. CI installs the full command surface for stage planning, packaging, provenance, and publication. |
-| GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run validation only. |
+| GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run `Target Branch Checks` only. |
 | Model Compiler runner | An ephemeral self-hosted runner with the pinned Model Compiler. Compiles one build with read-only repository access. |
 | Modalix DevKit runner | Runs the performance and accuracy stages of one build. Holds no publication credentials. |
 | S3/object storage | Stores immutable compiled artifacts, packages, logs, and results. |
@@ -149,8 +149,7 @@ in staging and only for Modalix targets.
   MPK digest, so it matches only a measurement of the same build.
 - **Base branches.** `develop`, `main`, `release-*` and `integration/*` are
   long-lived. `select` lists the long-lived branches that share history with
-  the head, closest first, or only the pull request or dispatch base when one
-  is given; Git does not record which branch another was cut from.
+  the head, closest first, or only the dispatch base when one is given; Git does not record which branch another was cut from.
 - **Prior catalog.** A long-lived branch keeps to its own catalog; on its first
   push it inherits from the closest base branch that has one. A feature branch
   takes each model build profile from the first catalog whose builds carry
@@ -176,9 +175,10 @@ in staging and only for Modalix targets.
 
 ## Compile workflow trust boundary
 
-Pull requests run catalog validation and an offline stage plan on
-GitHub-hosted runners only. Self-hosted jobs are restricted to trusted pushes
-and explicit maintainer dispatches. Production is manual and uses the protected
+Pull requests run only `Target Branch Checks`, on GitHub-hosted runners with
+read-only repository access. The orchestrator has no pull-request trigger, so
+self-hosted jobs run only for trusted pushes and explicit maintainer
+dispatches. Production is manual and uses the protected
 GitHub `production` environment.
 
 Before requesting a self-hosted runner, the select job resolves the exact Model

@@ -66,20 +66,6 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
 
     # A push that changes no compile input still publishes its catalog; its stage keys select no work.
     assert "push" in on and not on["push"]
-    pull_request_paths = on["pull_request"]["paths"]
-    for path in (
-        ".github/workflows/vulcan-model-orchestrator.yml",
-        ".github/workflows/vulcan-model-compile.yml",
-        ".github/workflows/vulcan-model-benchmarking.yml",
-        "deps/**",
-        "models/**",
-        "scripts/**",
-        "taxonomies/**",
-        "tools/model_registry/**",
-        "training/yolo26_tiny_drone/**",
-    ):
-        assert path in pull_request_paths
-    assert "tools/runtime/**" not in pull_request_paths
 
 
 def test_production_is_an_explicit_dispatch_choice() -> None:
@@ -145,25 +131,12 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     workflow = load(WORKFLOW)
     jobs = workflow["jobs"]
 
-    assert "pull_request_target" not in workflow["on"]
+    # Pull requests run Target Branch Checks; pull-request code never starts this workflow.
+    assert set(workflow["on"]) == {"push", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     for name, job in jobs.items():
         if "uses" not in job:
             assert job["runs-on"] == "ubuntu-latest", name
-    # Only select runs for pull requests; it has no write or OIDC permission and reads no registry.
-    for name, job in jobs.items():
-        if name != "select":
-            assert "github.event_name != 'pull_request'" in job["if"], name
-    select = jobs["select"]
-    assert "if" not in select
-    assert "permissions" not in select
-    offline = step(select, "List the invocations this change can compile")
-    assert offline["if"] == "github.event_name == 'pull_request'"
-    assert "plan-stages" in offline["run"]
-    assert "--offline" in offline["run"]
-    assert "--read-api-url" not in offline["run"]
-    assert "${{ vars." not in yaml.safe_dump(select)
-    assert "${{ secrets." not in yaml.safe_dump(select)
 
     # The self-hosted compiler is reachable only through the build job, and only as a workflow call.
     build_workflow = load(BUILD_WORKFLOW)
@@ -188,7 +161,6 @@ def test_trusted_events_reach_the_build(event) -> None:
         "needs.initialize-catalog.result": "success",
     }
     assert evaluate(condition, values) is True
-    assert evaluate(condition, {**values, "github.event_name": "pull_request"}) is False
 
 
 # Selection and planning
@@ -246,7 +218,7 @@ def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
 
     assert "model-registry resolve-base" in base["run"]
     assert ".base_branches | join(\",\")" in base["run"]
-    assert base["env"]["PREFERRED_BRANCH"] == "${{ inputs.base_branch || github.event.pull_request.base.ref }}"
+    assert base["env"]["PREFERRED_BRANCH"] == "${{ inputs.base_branch }}"
     plan = step(jobs["plan"], "Compare stage keys with published runs")
     assert plan["env"]["BASE_BRANCHES"] == "${{ needs.select.outputs.base_branches }}"
     assert '--base-branches "$BASE_BRANCHES"' in plan["run"]
@@ -259,7 +231,7 @@ def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
     assert jobs["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
     assert "portal" in jobs["plan"]["needs"]
     # Without a status function, plan runs only when portal succeeded; every later job needs plan.
-    assert "always()" not in jobs["plan"]["if"] and "cancelled()" not in jobs["plan"]["if"]
+    assert "if" not in jobs["plan"]
 
 
 def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
@@ -415,7 +387,6 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
         ("push", "staging", "failure", "1", False),
         ("push", "staging", "skipped", "1", False),
         ("push", "staging", "success", "0", False),
-        ("pull_request", "staging", "success", "1", False),
     ],
 )
 def test_reused_builds_start_devkit_stages_after_the_catalog_snapshot(
@@ -471,7 +442,6 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
 
     assert report["needs"] == ["plan", "compile", "publish-catalog"]
     assert report["if"].startswith("always() &&")
-    assert "github.event_name != 'pull_request'" in report["if"]
     assert report["permissions"] == {"actions": "read", "contents": "read"}
     # The filter matches the compile job's name, and no other job shares its prefix.
     assert jobs["compile"]["name"].startswith("Compile ")

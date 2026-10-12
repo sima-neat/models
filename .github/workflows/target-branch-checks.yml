@@ -1,0 +1,22 @@
+name: Target Branch Checks
+
+# Checks a pull request's merge result on GitHub-hosted runners with read-only access and no secrets.
+# Compiling, measuring, and publishing run only after a push, in the orchestrator and publishing workflows.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: target-branch-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Model Registry Package
+    uses: ./.github/workflows/model-registry-package.yml
+
+  portal:
+    name: Check the model browser portal
+    uses: ./.github/workflows/developer-docs.yml

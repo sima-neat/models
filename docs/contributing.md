@@ -85,9 +85,9 @@ input, generated output, result, log, cache, or credential appears in the
 staged diff. Write a commit message that describes the model or lifecycle
 contract, not just the filenames.
 
-Open a pull request against `develop`. Repository automation reruns validation
-and lists the declared builds from the committed revision. It does not compile
-or measure pull-request code. Trusted post-merge workflows perform those later
+Open a pull request against `develop`. `Target Branch Checks` reruns
+validation on the merge result. It does not compile or measure pull-request
+code. Trusted post-merge workflows perform those later
 stages; authors do not invoke those publication steps themselves.
 
 ## Pull request description
@@ -116,11 +116,12 @@ provenance and are reserved for CI.
 
 ## CI and trust boundaries
 
-Pull requests run catalog and taxonomy validation, compiler-pin and base-branch
-resolution, and an offline stage plan on GitHub-hosted infrastructure. They do
-not schedule contributor-controlled recipe, surgery, or measurement code on a
-self-hosted runner. The offline plan reads no registry state, so it lists every
-declared build rather than the ones the change will rerun.
+Pull requests run `Target Branch Checks` on the merge result, on
+GitHub-hosted infrastructure: the unit tests, which validate the complete
+catalog and taxonomy and resolve the compiler pin, the `model-registry` package
+build, and the model browser checks. They do not schedule
+contributor-controlled recipe, surgery, or measurement code on a self-hosted
+runner, and they read no registry state.
 
 For a model change, interpret a successful pull-request workflow as confirmation
 that:
@@ -128,8 +129,8 @@ that:
 - the complete catalog, taxonomy, conversion sources, fidelity, accuracy, and
   benchmark entries, and declarative compositions are structurally valid;
 - the repository-wide Model Compiler dependency resolves;
-- the base branches were identified; and
-- the declared builds form a deterministic plan.
+- the `model-registry` package builds; and
+- the model browser builds and loads.
 
 It is **not** evidence that the recipe compiled, the MPK passed validation,
 fidelity or accuracy met a threshold, or the model ran on a DevKit. Those claims must come

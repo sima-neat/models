@@ -137,8 +137,8 @@ approval check in the scaler before provisioning as a defense-in-depth boundary.
 The workflow definition must also avoid accepting an arbitrary runner label
 directly from untrusted event input.
 
-Pull-request checks validate the requested class and construct the matrix, but
-they do not read the protected Vulcan specification or run admission. The first
+Pull-request checks validate the requested class against the schema, but they
+do not read the protected Vulcan specification or run admission. The first
 trusted push after merge performs that lookup. A missing, expired, or mismatched
 approval fails before the self-hosted compile job is scheduled.
 

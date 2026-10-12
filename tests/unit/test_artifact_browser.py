@@ -106,7 +106,7 @@ def test_browser_redirects_the_extensionless_models_route_before_loading_assets(
 def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-    assert workflow["on"]["push"]["branches"] == ["main", "develop", "feat/artifact-browser"]
+    assert workflow["on"]["push"]["branches"] == ["main", "develop"]
     assert workflow["jobs"]["resolve-vulcan-config"]["with"]["vulcan_env"] == "staging"
 
     publish = workflow["jobs"]["publish"]["with"]
@@ -118,17 +118,22 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     assert publish["s3_prefix"] == "models"
     assert publish["cloudfront_paths"] == "/models /models/*"
 
-    build = workflow["jobs"]["build"]
-    assert build["steps"][-1]["with"]["path"] == "website/portal-build/"
-    assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
+    # The deployment publishes the site Developer Docs Validation built and checked.
+    assert workflow["jobs"]["build"]["uses"] == "./.github/workflows/developer-docs.yml"
+    assert workflow["jobs"]["publish"]["needs"] == ["resolve-vulcan-config", "build"]
+    docs = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    upload = docs["jobs"]["build"]["steps"][-1]
+    assert upload["with"]["path"] == "website/portal-build/"
+    assert publish["artifact_pattern"] == upload["with"]["name"]
 
 
-def test_staging_deployment_smoke_tests_the_portal_before_publishing_it() -> None:
-    workflow = yaml.load(DEPLOY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+def test_portal_is_uploaded_only_after_its_checks_pass() -> None:
+    workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     steps = workflow["jobs"]["build"]["steps"]
     position = {step.get("run") or step.get("uses", "").split("@")[0]: index for index, step in enumerate(steps)}
 
     assert position["npm run build:portal"] < position["npm run smoke:portal"] < position["actions/upload-artifact"]
+    assert position["node --test tests/browser/*.test.mjs"] < position["actions/upload-artifact"]
     assert position["npx playwright install --with-deps chromium"] < position["npm run smoke:portal"]
 
 
@@ -452,7 +457,7 @@ def test_developer_docs_workflow_runs_browser_tests_and_smoke_tests_the_portal()
     workflow = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     runs = [step.get("run") for step in workflow["jobs"]["build"]["steps"]]
 
-    # The orchestrator calls this check on every push; it has no push or pull-request trigger of its own.
+    # The orchestrator, Target Branch Checks, and the deployment call this; it has no push or pull-request trigger.
     assert set(workflow["on"]) == {"workflow_call", "workflow_dispatch"}
     assert "node --test tests/browser/*.test.mjs" in runs
     assert runs.index("npm run smoke:portal") > runs.index("npm run build:portal")

@@ -60,12 +60,13 @@ sima-cli models download --id resnet_50 --variant modalix_int8 --branch develop
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `Vulcan Model Orchestrator` | pull request | Validates the catalog, taxonomy, and compiler pin and prints an offline stage plan. Contributor code never reaches a self-hosted runner. |
+| `Target Branch Checks` | pull request | Runs `pytest tests/unit`, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
 | `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, starts `Vulcan Model Compile` for each changed build, starts the DevKit stages reused builds lack, and publishes the branch catalog. A push that changes no stage key only publishes the catalog. |
 | `Vulcan Model Compile` | started by the orchestrator | Compiles one build, publishes it, and starts its DevKit stages. |
 | `Vulcan Model Benchmarking` | started by `Vulcan Model Compile` or the orchestrator | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit and publishes each result. |
 | `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh`, publishes the ONNX file, and prints its source pin. |
-| `Model Registry Contributor Tool` | pull request, push | Runs `pytest tests/unit` and builds the `model-registry` package with `packaging/model-registry/build.sh`. |
+| `Build and Publish Model Registry` | push, manual dispatch | Runs `pytest tests/unit`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
+| `Vulcan Model Browser` | push to `main` or `develop`, manual dispatch | Publishes the model browser that `Developer Docs Validation` built and checked to staging. |
 | `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
 
 ## Documentation

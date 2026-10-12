@@ -78,9 +78,10 @@ link to the raw result instead of guessing at incompatible structures.
 
 ## Staging deployment
 
-Changes to `artifact-browser/**`, `docs/**`, or `website/**` on `main` are
-assembled into one static portal and published by
-`vulcan-model-browser.yml` to the staging docs bucket under `models/`. The
+Changes to `artifact-browser/**`, `docs/**`, or `website/**` on `main` or
+`develop` are assembled into one static portal by `developer-docs.yml`, which
+browser-tests and smoke-tests it, and published by `vulcan-model-browser.yml`
+to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
 

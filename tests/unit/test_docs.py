@@ -45,7 +45,7 @@ def test_contributor_docs_distinguish_pr_checks_from_trusted_automation() -> Non
     assert "Pull requests do **not** run recipe or surgery code" in overview
     assert "## After merge: trusted staging automation" in contributing
     assert "A successful compile does not by itself mean the dispatched benchmark succeeded" in contributing_words
-    assert "if: github.event_name != 'pull_request'" in workflow
+    assert "pull_request" not in workflow
 
 
 def test_local_qualification_is_required_before_submission() -> None:

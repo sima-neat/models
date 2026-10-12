@@ -54,10 +54,11 @@ in the same commit.
 
 ## CI
 
-- **Pull request.** `Vulcan Model Orchestrator` validates the catalog, taxonomy, and
-  compiler pin and prints an offline stage plan. Contributor code never runs on
-  self-hosted runners for a pull request. `Model Registry Contributor Tool`
-  runs `pytest tests/unit` and builds the `model-registry` package.
+- **Pull request.** Only `Target Branch Checks` runs, on the merge result and
+  GitHub-hosted runners: `model-registry-package.yml` runs `pytest tests/unit`
+  and builds the `model-registry` package, and `developer-docs.yml` checks the
+  model browser. Contributor code never runs on self-hosted runners for a pull
+  request.
 - **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and smoke-tests the model browser (`developer-docs.yml`); `plan` waits for it, so a portal failure stops the run. The `plan` job runs `model-registry plan-stages`, which reads the
   branch's prior catalog (its own, merged with its base branches' on a feature
   branch; see `design-doc/model-registry-architecture.md`) and resolves each

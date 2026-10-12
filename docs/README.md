@@ -34,7 +34,7 @@ reruns](adding-a-model.md#9-know-what-a-change-reruns).
 | Phase | What runs | What it proves |
 | --- | --- | --- |
 | Local development | Validation, verified downloads, each declared compile invocation, MPK checks, and the performance and accuracy stages on a DevKit. | The author has reproducible evidence for every submitted build. |
-| Pull request | Catalog, taxonomy, and compiler-pin validation and an offline stage plan, on GitHub-hosted runners. | The committed contract is valid and selects the intended builds. Pull requests do **not** run recipe or surgery code on self-hosted runners. |
+| Pull request | `Target Branch Checks`: unit tests with catalog, taxonomy, and compiler-pin validation, the package build, and the model browser checks, on GitHub-hosted runners. | The committed contract is valid on the merge result. Pull requests do **not** run recipe or surgery code on self-hosted runners. |
 | Trusted automation | On a push, each stage whose key has no completed registry run: compilation, publication, then the DevKit stages. | Staging artifacts, measurements, and provenance come from the reviewed revision. Production is an explicit protected maintainer action. |
 
 The pinned Model Compiler and a compatible Modalix DevKit are submission
