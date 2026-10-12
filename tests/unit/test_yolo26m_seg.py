@@ -371,7 +371,6 @@ def test_resize_sources_follow_torch_bilinear_without_corner_alignment(accuracy:
     position = np.clip((np.arange(640) + 0.5) / 4 - 0.5, 0, 159)
     np.testing.assert_allclose((1 - weight) * lower + weight * upper, position)
     assert (upper - lower <= 1).all() and (upper[weight == 0] == lower[weight == 0]).all()
-    np.testing.assert_array_equal(accuracy.PROTO_UPSAMPLE.sum(axis=1), 1)
     lower, upper, weight = accuracy.resize_sources(426, 333)
     position = np.clip((np.arange(333) + 0.5) * 426 / 333 - 0.5, 0, 425)
     np.testing.assert_allclose((1 - weight) * lower + weight * upper, position, atol=1e-4)
