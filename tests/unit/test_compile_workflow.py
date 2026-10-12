@@ -409,29 +409,17 @@ def test_reused_builds_start_devkit_stages_after_the_catalog_snapshot(
     assert evaluate(job["if"], values) is expected
 
 
-def test_reused_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
+def test_reused_builds_start_their_stages_from_one_job() -> None:
     job = load(WORKFLOW)["jobs"]["measure"]
-    start = step(job, "Start the stages a reused build still lacks")
-    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
+    start = step(job, "Start the stages reused builds still lack")
 
+    assert job["name"] == "Dispatch DevKit stages for reused builds"
     assert job["permissions"] == {"actions": "write", "contents": "read"}
-    assert job["strategy"]["fail-fast"] == "false"
-    assert job["strategy"]["matrix"] == "${{ fromJSON(needs.plan.outputs.measure_matrix) }}"
-    assert "gh workflow run vulcan-model-benchmarking.yml" in start["run"]
-    assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
-    # The job has no checkout, so gh cannot infer the repository from a git remote.
-    assert all(not item.get("uses", "").startswith("actions/checkout") for item in job["steps"])
-    assert '--repo "$GITHUB_REPOSITORY"' in start["run"]
-    # The benchmark only runs when dispatched on its source branch.
-    assert '--ref "$GITHUB_REF_NAME"' in start["run"]
-    assert '-f source_branch="$GITHUB_REF_NAME"' in start["run"]
-    # An empty source run restores the reused build from the registry at this catalog revision.
-    assert "-f source_run_id= " in start["run"]
-    assert '-f source_sha="$GITHUB_SHA"' in start["run"]
-    assert '-f stages="$STAGES"' in start["run"]
-    assert '-f component_ids="$COMPONENT_IDS"' in start["run"]
-    assert start["env"]["STAGES"] == "${{ join(matrix.stages, ',') }}"
-    assert start["env"]["COMPONENT_IDS"] == "${{ join(matrix.benchmark_component_ids, ',') }}"
+    assert "strategy" not in job
+    assert job["steps"][0]["uses"] == "actions/checkout@v6"
+    assert start["env"]["MEASURE_MATRIX"] == "${{ needs.plan.outputs.measure_matrix }}"
+    # An empty source run restores each reused build from the registry at this catalog revision.
+    assert start["run"] == 'scripts/start_devkit_stages.sh "$MEASURE_MATRIX"'
 
 
 def test_failed_builds_are_reported_after_the_snapshot() -> None:
@@ -651,47 +639,25 @@ def test_new_builds_start_only_their_applicable_devkit_stages(environment, targe
     assert evaluate(start["if"], values) is expected
 
 
-def test_new_build_stage_dispatch_matches_the_benchmark_inputs() -> None:
+def test_new_build_starts_its_stages_with_the_shared_script() -> None:
     start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the DevKit stages")
-    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
 
     # A failed dispatch leaves the build published; the next run plans the missing stages.
     assert start["continue-on-error"] == "true"
-    assert "gh workflow run vulcan-model-benchmarking.yml" in start["run"]
-    assert dispatched_inputs(start["run"]) == set(benchmark_inputs)
-    assert '--repo "$GITHUB_REPOSITORY"' in start["run"]
-    assert '--ref "$GITHUB_REF_NAME"' in start["run"]
-    assert '-f source_branch="$GITHUB_REF_NAME"' in start["run"]
-    assert '-f source_run_id="$GITHUB_RUN_ID"' in start["run"]
-    assert '-f stages="$STAGES"' in start["run"]
-    assert '-f component_ids="$BENCHMARK_COMPONENT_IDS"' in start["run"]
-    assert start["env"]["STAGES"] == "${{ join(fromJSON(inputs.entry).stages, ',') }}"
-    assert start["env"]["BENCHMARK_COMPONENT_IDS"] == (
-        "${{ join(fromJSON(inputs.entry).benchmark_component_ids, ',') }}"
-    )
+    assert start["env"]["ENTRY"] == "${{ inputs.entry }}"
+    # The benchmark downloads this compile run's output.
+    assert start["run"] == 'scripts/start_devkit_stages.sh "$ENTRY" "$GITHUB_RUN_ID"'
 
 
-@pytest.mark.parametrize(
-    ("workflow", "job", "name"),
-    [
-        (WORKFLOW, "measure", "Start the stages a reused build still lacks"),
-        (BUILD_WORKFLOW, "publish", "Start the DevKit stages"),
-    ],
-)
-@pytest.mark.parametrize(
-    ("gh_output", "link"),
-    [
-        ("https://github.com/sima-neat/models/actions/runs/123\n", "https://github.com/sima-neat/models/actions/runs/123"),
-        ("", "link unavailable"),
-    ],
-)
-def test_stage_dispatch_logs_the_devkit_run_link(
-    tmp_path: Path, workflow: Path, job: str, name: str, gh_output: str, link: str
-) -> None:
-    start = step(load(workflow)["jobs"][job], name)
+START_SCRIPT = ROOT / "scripts" / "start_devkit_stages.sh"
+
+
+def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.CompletedProcess, Path, Path]:
+    """Run the start script with a fake gh that records each call's arguments."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "gh").write_text(f"#!/bin/sh\nprintf '{gh_output}'\n", encoding="utf-8")
+    calls = tmp_path / "calls"
+    (bin_dir / "gh").write_text(f'#!/bin/sh\necho "$*" >> {calls}\n{gh}\n', encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
     summary = tmp_path / "summary.md"
     env = {
@@ -699,22 +665,84 @@ def test_stage_dispatch_logs_the_devkit_run_link(
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "GITHUB_STEP_SUMMARY": str(summary),
         "GITHUB_REPOSITORY": "sima-neat/models",
-        "GITHUB_RUN_ID": "77",
         "GITHUB_SHA": "0" * 40,
         "GITHUB_REF_NAME": "develop",
-        "MODEL_ID": "alpha",
-        "BUILD_PROFILE_ID": "int8",
-        "COMPILE_INVOCATION_ID": "default",
-        "STAGES": "performance,accuracy",
-        "COMPONENT_IDS": "model",
-        "BENCHMARK_COMPONENT_IDS": "model",
+    }
+    result = subprocess.run(["bash", str(START_SCRIPT), *args], env=env, capture_output=True, text=True)
+    return result, summary, calls
+
+
+def build(model_id: str, components: list[str], stages: list[str]) -> dict:
+    return {
+        "model_id": model_id,
+        "build_profile_id": "int8",
+        "compile_invocation_id": "default",
+        "benchmark_component_ids": components,
+        "stages": stages,
     }
 
-    result = subprocess.run(["bash", "-c", start["run"]], env=env, check=True, capture_output=True, text=True)
 
-    line = f"DevKit run for alpha/int8/default (performance,accuracy): {link}\n"
-    assert result.stdout == line
-    assert summary.read_text(encoding="utf-8") == line
+def test_start_script_dispatches_every_benchmark_input() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
+
+    assert "gh workflow run vulcan-model-benchmarking.yml" in script
+    assert dispatched_inputs(script) == set(benchmark_inputs)
+    # A checkout-free caller has no git remote for gh to infer the repository from.
+    assert '--repo "$GITHUB_REPOSITORY"' in script
+    # The benchmark only runs when dispatched on its source branch.
+    assert '--ref "$GITHUB_REF_NAME"' in script
+    assert '-f source_branch="$GITHUB_REF_NAME"' in script
+
+
+@pytest.mark.parametrize(
+    ("gh", "link"),
+    [
+        ("echo https://github.com/sima-neat/models/actions/runs/123", "https://github.com/sima-neat/models/actions/runs/123"),
+        ("true", "link unavailable"),
+    ],
+)
+def test_start_script_logs_one_devkit_run_link_per_build(tmp_path: Path, gh: str, link: str) -> None:
+    matrix = {"include": [build("alpha", ["model"], ["performance", "accuracy"]), build("beta", [], ["accuracy"])]}
+
+    result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
+
+    lines = (
+        f"DevKit run for alpha/int8/default (performance,accuracy): {link}\n"
+        f"DevKit run for beta/int8/default (accuracy): {link}\n"
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == lines
+    assert summary.read_text(encoding="utf-8") == lines
+    alpha, beta = calls.read_text(encoding="utf-8").splitlines()
+    assert "-f source_run_id= " in alpha
+    assert "-f component_ids=model " in alpha
+    # An accuracy-only build names no performance component.
+    assert "-f component_ids= -f stages=accuracy" in beta
+
+
+def test_start_script_accepts_one_build_with_its_source_run(tmp_path: Path) -> None:
+    result, _, calls = run_start_script(tmp_path, "true", json.dumps(build("alpha", ["model"], ["performance"])), "77")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "DevKit run for alpha/int8/default (performance): link unavailable\n"
+    assert "-f source_run_id=77 " in calls.read_text(encoding="utf-8")
+
+
+def test_start_script_starts_the_other_builds_after_a_failure(tmp_path: Path) -> None:
+    gh = 'case "$*" in *model_id=alpha*) echo "HTTP 404: not found" >&2; exit 1;; esac'
+    matrix = {"include": [build("alpha", ["model"], ["performance"]), build("beta", ["model"], ["performance"])]}
+
+    result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
+
+    assert result.returncode == 1
+    assert "HTTP 404: not found" in result.stderr
+    assert result.stdout == (
+        "DevKit run for alpha/int8/default (performance): not started\n"
+        "DevKit run for beta/int8/default (performance): link unavailable\n"
+    )
+    assert summary.read_text(encoding="utf-8") == result.stdout
+    assert len(calls.read_text(encoding="utf-8").splitlines()) == 2
 
 
 def test_packages_and_catalog_update_only_for_publishable_builds() -> None:
