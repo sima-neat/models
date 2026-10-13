@@ -276,6 +276,16 @@ export function variantPackage(runs) {
   return runs.map(fullPackageForRun).find(Boolean) || null;
 }
 
+// The order each multi-component model runs in, generated from model.yaml when the portal is built.
+// Without it the model page shows its components as before, so a failed fetch is not an error.
+let componentPipelines = null;
+function loadComponentPipeline(modelId) {
+  componentPipelines ||= fetch(new URL("./component-pipelines.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return componentPipelines.then((pipelines) => pipelines[modelId] || null);
+}
+
 export async function loadVariant(anchor) {
   const key = variantBuildKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
@@ -283,13 +293,14 @@ export async function loadVariant(anchor) {
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
-  const [devkit, packageSummary] = await Promise.all([
+  const [devkit, packageSummary, pipeline] = await Promise.all([
     accuracyKeyForRuns(runs).then(devkitAccuracy),
     packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : null,
+    loadComponentPipeline(anchor.metadata?.model_id),
   ]);
   const variant = {
     key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, devkit, packageSummary,
-    requestedPackageId: packageRun?.run_id || null,
+    requestedPackageId: packageRun?.run_id || null, pipeline,
   };
   state.variantCache.set(key, variant);
   return variant;

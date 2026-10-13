@@ -220,6 +220,11 @@ sections and thin rules.
 `website/scripts/assemble-portal.mjs` renames every module with the revision
 for the deployed portal and fails when a module imports a file missing from its
 `fingerprintedAssets` list, so add a new module there.
+It also writes `component-pipelines.<revision>.json` from the `pipeline` field
+of each `model.yaml`, which draws the component order on a multi-component
+model page; `preview.py` serves the same data from `models/`. Run
+`build:portal` with the repository installed or `PYTHON` set, as for
+`preview.py`.
 
 ## Downloading model variants
 

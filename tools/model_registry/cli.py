@@ -16,7 +16,7 @@ from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .fidelity_config import find_fidelity_config
-from .model import component_for, load_and_validate_model, load_models, profile_component_for
+from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
 from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
 from .stage_plan import plan_stages, resolve_base_branches
@@ -95,6 +95,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--profiles", help="comma-separated build profile IDs within the selected models")
     matrix.add_argument("--components", help="comma-separated component IDs within the selected models")
     matrix.add_argument("--compiler-version", help="also emit each invocation's compile key")
+
+    pipelines = subcommands.add_parser(
+        "component-pipelines", help="write the order each multi-component model runs in, for the model browser"
+    )
+    pipelines.add_argument("--repository", type=Path, default=Path.cwd())
+    pipelines.add_argument("--output", type=Path, required=True)
 
     stages = subcommands.add_parser(
         "plan-stages", help="select changed compile invocations and the board stages reused builds still need"
@@ -552,6 +558,12 @@ def _matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def _component_pipelines(args: argparse.Namespace) -> int:
+    pipelines = component_pipelines(load_models(args.repository))
+    args.output.write_text(json.dumps(pipelines, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    return 0
+
+
 def _plan_stages(args: argparse.Namespace) -> int:
     from .registry import _public_registry_json
 
@@ -928,6 +940,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _fetch_fidelity_dataset(args)
         if args.command == "matrix":
             return _matrix(args)
+        if args.command == "component-pipelines":
+            return _component_pipelines(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "authorize-runner-matrix":

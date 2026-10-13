@@ -192,6 +192,10 @@ compositions:
     from: {component: transformer, output: dets}
   - name: labels
     from: {component: transformer, output: labels}
+pipeline:
+- component: backbone
+- cpu: Top 300 proposals
+- component: transformer
 packages:
 - id: default
   default: true

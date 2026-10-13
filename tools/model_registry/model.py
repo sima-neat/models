@@ -168,6 +168,19 @@ def composition_document(declaration: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in declaration.items() if key not in {"id", "type"}}
 
 
+def component_pipelines(models: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    """Each declared pipeline, keyed by model ID, with every component stage carrying its role."""
+    pipelines = {}
+    for model_id, model in sorted(models.items()):
+        if "pipeline" in model:
+            roles = {item["id"]: item["role"] for item in model["components"]}
+            pipelines[model_id] = [
+                {**stage, "role": roles[stage["component"]]} if "component" in stage else stage
+                for stage in model["pipeline"]
+            ]
+    return pipelines
+
+
 def _load_declarative_composition(
     directory: Path,
     declaration: dict[str, Any],
@@ -519,6 +532,10 @@ def validate_model(
             composition_components[composition_id] = _load_declarative_composition(
                 directory, composition, components, schema_file.parent
             )
+
+    pipeline_components = [stage["component"] for stage in model.get("pipeline", []) if "component" in stage]
+    if pipeline_components and sorted(pipeline_components) != sorted(components):
+        raise ValidationError(f"{directory}: pipeline must list each component exactly once")
 
     default_packages = [item["id"] for item in model["packages"] if item["default"]]
     if len(default_packages) != 1:

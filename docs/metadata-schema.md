@@ -299,6 +299,20 @@ declarative composition document when one is used.
 The embedded manifest is validated against
 [`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json).
 
+A multi-component model can add `pipeline` so the model browser shows the
+order its components run in. List each component once, in run order, and
+name any CPU step between them:
+
+```yaml
+pipeline:
+  - component: encoder
+  - cpu: Beam search
+  - component: decoder
+```
+
+The browser reads `pipeline` only for display; it does not change what is
+compiled or packaged.
+
 ## Fidelity, accuracy, and benchmark entries
 
 These three sections declare the quality and performance evidence of each

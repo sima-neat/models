@@ -247,11 +247,13 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "scripts").mkdir(parents=True)
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
+    for source in ("models", "schemas", "tools"):
+        (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
         capture_output=True,
         text=True,
-        env={**os.environ, "GITHUB_SHA": "a" * 40},
+        env={**os.environ, "GITHUB_SHA": "a" * 40, "PYTHON": sys.executable},
     )
 
 
@@ -269,6 +271,18 @@ def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> 
         for specifier in re.findall(r"[\"'](\.\.?/[^\"'\s]*\.js)[\"']", module.read_text(encoding="utf-8")):
             assert ".aaaaaaaaaaaa.js" in specifier, f"{module.name} imports {specifier}"
             assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
+
+
+def test_assembled_portal_ships_the_component_pipelines_api_fetches(tmp_path: Path) -> None:
+    shutil.copytree(BROWSER, tmp_path / "artifact-browser")
+    assert assemble_portal(tmp_path).returncode == 0
+
+    portal = tmp_path / "website" / "portal-build"
+    pipelines = json.loads((portal / "component-pipelines.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "transformer"]
+    api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
+    assert '"./component-pipelines.aaaaaaaaaaaa.json"' in api
+    assert '"./component-pipelines.json"' not in api
 
 
 def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: Path) -> None:
@@ -1412,14 +1426,16 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
-    assert "details.map((detail) => componentPerformance(detail, !singleComponent))" in render_detail
+    # A declared pipeline orders and numbers the components under a strip; otherwise they keep run order.
+    assert "componentPerformance(detail, !singleComponent, order && index + 1)" in render_detail
+    assert '${order ? pipelineStrip(variant.pipeline) : ""}' in render_detail
     # Per-component facts live in the row, never on the page.
     for marker in ['keyValue("Run ID"', 'keyValue("Fingerprint"', "fidelityPanel(tests, run.id)"]:
         assert marker in component_row
         assert marker not in render_detail
     # Each component's benchmark sits in the Performance section, not in its file row.
     assert "componentBenchmark(" not in component_row
-    component_performance = script.split("function componentPerformance(detail, named)", 1)[1].split("function ", 1)[0]
+    component_performance = script.split("function componentPerformance(", 1)[1].split("function ", 1)[0]
     assert "componentBenchmark(detail.benchmark, run.id)" in component_performance
     # A component row is a disclosure keyed by its run, with compile parameters nested inside it.
     assert 'disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta)' in component_row

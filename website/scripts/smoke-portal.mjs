@@ -62,6 +62,7 @@ try {
     const checks = [
       ['model list', new URL('/', variantUrl), '#result-list .model-card'],
       ['variant page', variantUrl, '#components-section .component-performance'],
+      ['component pipeline', new URL('/?model=rf_detr_nano&variant=modalix_int8_bf16', variantUrl), '#components-section .component-pipeline'],
     ];
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);

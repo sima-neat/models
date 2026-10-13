@@ -285,11 +285,38 @@ function componentBenchmark(payload, runId) {
     ${disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload), groups.map((group) => group.title).join(" · "))}`;
 }
 
+// Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
+function humanize(id) {
+  const words = String(id).replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// The component ids in the order the pipeline runs them, when the pipeline names exactly the
+// variant's components; a pipeline built from another branch's model.yaml may not.
+function pipelineOrder(variant) {
+  const order = (variant.pipeline || []).filter((stage) => "component" in stage).map((stage) => stage.component);
+  const ids = variant.details.map((detail) => detail.summary.run.metadata?.component_id || "model");
+  return order.length === ids.length && order.every((id) => ids.includes(id)) ? order : null;
+}
+
+// Each component box carries the number its heading repeats; a CPU stage between them is not numbered.
+function pipelineStrip(pipeline) {
+  let number = 0;
+  const stages = pipeline.map((stage) => ("component" in stage
+    ? `<li class="pipeline-stage"><div class="pipeline-box"><span class="component-number">${++number}</span><span><strong>${escapeHtml(humanize(stage.component))}</strong><small>${escapeHtml(humanize(stage.role))}</small></span></div></li>`
+    : `<li class="pipeline-stage host"><div class="pipeline-box"><span><strong>CPU</strong><small>${escapeHtml(stage.cpu)}</small></span></div></li>`));
+  return `<ol class="component-pipeline" aria-label="Order the components run in">${stages.join("")}</ol>`;
+}
+
 // A multi-component model shows each component's numbers under its name; they are never combined.
-function componentPerformance(detail, named) {
+function componentPerformance(detail, named, number) {
   const run = detail.summary.run;
+  const id = run.metadata?.component_id || "model";
+  const heading = number
+    ? `<h4 class="numbered"><span class="component-number">${number}</span>${escapeHtml(humanize(id))}</h4>`
+    : `<h4>${escapeHtml(id)}</h4>`;
   return `<div class="component-performance">
-    ${named ? `<h4>${escapeHtml(run.metadata?.component_id || "model")}</h4>` : ""}
+    ${named ? heading : ""}
     ${componentBenchmark(detail.benchmark, run.id)}
   </div>`;
 }
@@ -660,6 +687,10 @@ export function renderDetail(variant) {
   const originalModel = inputs.map(originalModelLink).find(Boolean);
   const builtAt = Math.max(...variant.runs.map((item) => Date.parse(item.finished_at || item.created_at || "") || 0));
   const singleComponent = details.length === 1;
+  const order = pipelineOrder(variant);
+  const performanceDetails = order
+    ? [...details].sort((a, b) => order.indexOf(a.summary.run.metadata?.component_id) - order.indexOf(b.summary.run.metadata?.component_id))
+    : details;
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</small>` : ""}</button>`
@@ -693,7 +724,8 @@ export function renderDetail(variant) {
 
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, each measured on its own.</p>`}
-      ${details.map((detail) => componentPerformance(detail, !singleComponent)).join("")}
+      ${order ? pipelineStrip(variant.pipeline) : ""}
+      ${performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1)).join("")}
       ${singleComponent ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
     </section>
 

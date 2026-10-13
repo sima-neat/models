@@ -37,6 +37,19 @@ browserHtml = browserHtml
   .replace('src="app.js"', `src="app.${revision}.js"`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
+// The order each multi-component model runs in, built from model.yaml by the registry tooling.
+const pipelinesUrl = './component-pipelines.json';
+const pipelinesFile = `component-pipelines.${revision}.json`;
+execFileSync(process.env.PYTHON || 'python3', [
+  '-m', 'model_registry', 'component-pipelines', '--repository', repository, '--output', join(output, pipelinesFile),
+], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'});
+const apiModule = join(output, `api.${revision}.js`);
+const apiSource = readFileSync(apiModule, 'utf8');
+if (!apiSource.includes(`"${pipelinesUrl}"`)) {
+  throw new Error(`api.js no longer fetches ${pipelinesUrl}; update the pipelines step in assemble-portal.mjs`);
+}
+writeFileSync(apiModule, apiSource.replace(`"${pipelinesUrl}"`, `"./${pipelinesFile}"`));
+
 const modules = fingerprintedAssets.filter((asset) => asset !== 'styles');
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {

@@ -32,7 +32,7 @@ from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.dependencies import resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fidelity_config import find_fidelity_config  # noqa: E402
-from model_registry.model import load_models, profile_component_for  # noqa: E402
+from model_registry.model import component_pipelines, load_models, profile_component_for  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
 BRANCH = "develop"
@@ -463,6 +463,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
                 "text/javascript",
             )
+        elif path == "/component-pipelines.json":
+            # The unbuilt sources request this name; an assembled portal requests the file it ships.
+            self._json(component_pipelines(_repository()["models"]))
         elif path.startswith(f"{REPOSITORY_API}/"):
             self._repository_api(path.removeprefix(REPOSITORY_API), query)
         elif path.startswith("/v1/runs/"):

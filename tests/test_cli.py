@@ -238,6 +238,19 @@ def test_matrix_emits_workflow_json(capsys) -> None:
     assert all(len(entry["build_fingerprint"]) == 64 for entry in entries)
 
 
+def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> None:
+    output = tmp_path / "component-pipelines.json"
+    assert main(["component-pipelines", "--repository", str(ROOT), "--output", str(output)]) == 0
+
+    pipelines = json.loads(output.read_text(encoding="utf-8"))
+    assert "resnet_50" not in pipelines
+    assert pipelines["rf_detr_nano"] == [
+        {"component": "backbone", "role": "feature_extractor"},
+        {"cpu": "Top 300 proposals"},
+        {"component": "transformer", "role": "detection_head"},
+    ]
+
+
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     result = main(["matrix", "--repository", str(ROOT), "--models", "does_not_exist"])
     assert result == 2

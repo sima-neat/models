@@ -220,6 +220,10 @@ Exactly one package is `default: true`. CI assembles each package from the
 build that compiles its components, so a user downloads the complete product
 as one archive.
 
+For a multi-component product, also add `pipeline` so the model browser shows
+the order the components run in; see [Compositions and
+packages](metadata-schema.md#compositions-and-packages).
+
 ## 8. Declare fidelity, accuracy, and benchmark entries
 
 Each entry names its `scope` (a component or a package) and the

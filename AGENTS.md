@@ -194,7 +194,9 @@ change.
   repository installed (`python -m pip install .`) or `PYTHON` pointing at
   such an interpreter.
 - Add a new module to `fingerprintedAssets` in
-  `website/scripts/assemble-portal.mjs`.
+  `website/scripts/assemble-portal.mjs`. Assembly also writes
+  `component-pipelines.<revision>.json` from each `model.yaml` `pipeline`, so
+  `build:portal` needs the same Python as `preview.py`.
 - Before a push, run `python -m pytest tests/test_artifact_browser.py`,
   `node --test tests/browser/*.test.mjs`, and `npm run typecheck`,
   `npm run build:portal`, and `npm run smoke:portal` with `--prefix website`,

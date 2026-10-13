@@ -29,6 +29,13 @@
     "calibrations": {"type": "array", "items": {"$ref": "#/$defs/calibration"}},
     "build_profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildProfile"}},
     "compositions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/composition"}},
+    "pipeline": {
+      "type": "array", "minItems": 2,
+      "items": {"oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["component"], "properties": {"component": {"$ref": "#/$defs/id"}}},
+        {"type": "object", "additionalProperties": false, "required": ["cpu"], "properties": {"cpu": {"type": "string", "minLength": 1}}}
+      ]}
+    },
     "packages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/package"}},
     "conversion": {
       "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
