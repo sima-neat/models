@@ -1071,6 +1071,25 @@ def test_pose_accuracy_metrics_lead_with_keypoint_map() -> None:
     assert 'coco_keypoint_map: "Keypoint mAP 50–95"' in script
 
 
+def test_dota_accuracy_metrics_lead_with_map50() -> None:
+    script = _browser_source("model-view.js")
+    start = script.index("const ACCURACY_METRIC_LABELS = {")
+    end = script.index("function accuracyPanel(")
+    report = {"metrics": {name: {"value": 0.5} for name in ["dota_obb_map", "dota_obb_map50"]}}
+    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script[start:end] + order],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # DOTA Task 1 ranks models by mAP at IoU 0.5, so it is the headline metric.
+    assert json.loads(result.stdout) == ["dota_obb_map50", "dota_obb_map"]
+    assert 'dota_obb_map50: "DOTA mAP50"' in script
+    assert 'dota_obb_map: "DOTA mAP 50–95"' in script
+
+
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
