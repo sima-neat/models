@@ -63,6 +63,7 @@ for component in "${components[@]}"; do
 
   # Record the workload Core benchmarked, separately from the measured report fields. A script that
   # configures the model reports its selection and postprocessing; otherwise the MPK default applies.
+  # The script reports its sample count, which energy per inference divides by.
   "$PYNEAT_PYTHON" - "$output/performance-test.json" "$output/core-benchmark.json" <<'PY'
 import json
 import sys
@@ -72,11 +73,12 @@ import pyneat
 
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text())
+report = json.loads(Path(sys.argv[2]).read_text())
 model = pyneat.Model(manifest["model"]["path"])
 options = pyneat.BenchmarkOptions()
 info = model.info()
 manifest["configuration"] = {
-    "samples": options.num_samples,
+    "samples": report.get("samples", options.num_samples),
     "include_plugin_latency": options.include_plugin_latency,
     "original_width": None, "original_height": None, "resize_mode": None,
 }
@@ -86,7 +88,7 @@ manifest["workload"] = {
     "inputs": [{"shape": spec.shape, "dtype": spec.dtypes[0].name} for spec in model.input_specs()],
     "preprocess": info.selection.preprocess_graph,
     "postprocess": info.selection.selected_post_kind,
-    **json.loads(Path(sys.argv[2]).read_text()).get("workload", {}),
+    **report.get("workload", {}),
 }
 path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY

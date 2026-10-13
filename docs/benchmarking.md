@@ -43,7 +43,9 @@ parser.add_argument("--mpk", required=True)
 parser.add_argument("--output", required=True)
 args = parser.parse_args()
 
-report = pyneat.Model(args.mpk).benchmark()
+benchmark_options = pyneat.BenchmarkOptions()
+benchmark_options.num_samples = 1000
+report = pyneat.Model(args.mpk).benchmark(benchmark_options)
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
         "core_version": pyneat.__version__,
@@ -51,8 +53,16 @@ with open(args.output, "w", encoding="utf-8") as output:
         "fps": report.fps,
         "avg_power_watts": report.avg_power_watts,
         "energy_joules": report.energy_joules,
+        "samples": benchmark_options.num_samples,
     }, output, allow_nan=False)
 ```
+
+Scripts measure 1000 samples rather than Core's default of 100. At about
+1000 FPS, 100 samples last about 0.1 s, so startup and ramp-up dominate the
+throughput window and the 100 ms power sampling catches the board before it
+reaches full load: YOLO26n INT8 measured about 945 FPS and 8.7 W with 100
+samples, and about 1040 FPS and 11.9 W with 1000. The script reports its
+sample count because the registry divides total energy by it.
 
 A failed call exits unsuccessfully. Keep the log: a missing report is not a
 successful benchmark. Keep archives and results outside Git.
@@ -64,12 +74,12 @@ results; their numbers are not a measured combined pipeline.
 ## Workload and measurements
 
 The workload is the default route Core selects from the MPK, with Core's
-synthetic inputs and default benchmark options. A script that configures the
+synthetic inputs and the script's benchmark options. A script that configures the
 model, such as YOLO26's box decoder, adds its selection and postprocessing to
-its report, and CI records them in place of the defaults. CI records the input
-shapes, batch size, preprocessing, postprocessing, and sample count separately,
-using Core's model-inspection API; that step loads the MPK but runs no
-inference.
+its report, and CI records them in place of the defaults. CI records the
+script's sample count, and records the input shapes, batch size,
+preprocessing, and postprocessing separately using Core's model-inspection API;
+that step loads the MPK but runs no inference.
 
 Default-MPK results are a baseline of their own. Do not compare them with
 historical YOLO measurements that configured image preprocessing and
