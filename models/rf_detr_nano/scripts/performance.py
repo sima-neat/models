@@ -11,7 +11,10 @@ parser.add_argument("--output", required=True, help="benchmark report JSON to wr
 args = parser.parse_args()
 
 model = pyneat.Model(args.mpk)
-report = model.benchmark()
+# 1000 samples keep the throughput window long enough for steady FPS and several power readings.
+benchmark_options = pyneat.BenchmarkOptions()
+benchmark_options.num_samples = 1000
+report = model.benchmark(benchmark_options)
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
         "core_version": pyneat.__version__,
@@ -19,4 +22,5 @@ with open(args.output, "w", encoding="utf-8") as output:
         "fps": report.fps,
         "avg_power_watts": report.avg_power_watts,
         "energy_joules": report.energy_joules,
+        "samples": benchmark_options.num_samples,
     }, output, allow_nan=False)
