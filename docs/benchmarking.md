@@ -21,6 +21,14 @@ sima-cli neat install --env production --type minimal '<neat-core.install_target
 The scripts use the existing `BenchmarkReport` fields; no Core extension is
 required.
 
+Results are measured with the MLA at 1 GHz, the highest clock its devfreq
+governor offers. Throughput and power depend on the clock, while model outputs
+do not. Before measuring, `scripts/run_model_performance.sh` reads
+`/sys/class/devfreq/5000000.mla/cur_freq`; when the clock is lower, it writes
+1 GHz to `userspace/set_freq` with `sudo -n`. When the clock is still not 1 GHz,
+the stage fails without measuring. The runner user therefore needs passwordless
+`sudo` for that write.
+
 ## The performance script
 
 `scripts/performance.py` takes `--mpk <archive>` and `--output <report>`:
@@ -103,7 +111,8 @@ compiles and publishes, **Vulcan Model Compile** starts **Vulcan Model
 Benchmarking** on the same branch for each build whose performance or accuracy
 stage key has no completed run. The DevKit has no publication credentials.
 
-On the DevKit, `scripts/run_model_performance.sh` handles each component:
+On the DevKit, `scripts/run_model_performance.sh` sets the MLA clock, then
+handles each component:
 
 1. `make-benchmark-manifest` writes `performance-test.json` with the
    compilation's identity.
@@ -113,8 +122,8 @@ On the DevKit, `scripts/run_model_performance.sh` handles each component:
    `performance-result.json`, following
    [`performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result.schema.json)
    (`schema_version` 5). It records the compilation identity, the script
-   digest, the source revision, and the actual Core and platform versions. It
-   never runs or times a model.
+   digest, the source revision, the actual Core and platform versions, and
+   the MLA clock. It never runs or times a model.
 
 A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
@@ -122,7 +131,8 @@ performance stage key and carries a `performance-result` artifact, the
 benchmark log, a `performance/model-synthetic` test result, and the
 measurements. The model browser reads performance results with
 `schema_version` 1 through 5, shows measured values with their units, and marks
-absent metrics unavailable. A failure keeps its workflow evidence and is not
+absent metrics unavailable. Its Speed card shows the MLA clock when the result
+records one. A failure keeps its workflow evidence and is not
 published as a successful measurement. Performance and accuracy publish on
 their own outcomes: when one stage fails, the other's result is still
 published, and the next push reruns only the stage that has no run. A

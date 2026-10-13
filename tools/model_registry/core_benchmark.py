@@ -35,6 +35,9 @@ UNAVAILABLE_UNITS = {
     "mla_memory_final_mib": "MiB",
 }
 
+# run_model_performance.sh sets the MLA clock before measuring; the result records the clock it ran at.
+MLA_FREQUENCY = Path("/sys/class/devfreq/5000000.mla/cur_freq")
+
 
 def _require_internals_runtime(installed: dict[str, str]) -> None:
     """Require a versioned Internals runtime package in the dpkg inventory."""
@@ -73,6 +76,9 @@ def runner_environment() -> dict[str, Any]:
             Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip()
             if Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").exists()
             else None
+        ),
+        "mla_frequency_hz": (
+            int(MLA_FREQUENCY.read_text(encoding="utf-8")) if MLA_FREQUENCY.exists() else None
         ),
         "runner": os.environ.get("RUNNER_NAME", platform.node()),
     }

@@ -96,6 +96,7 @@ function common(result) {
     samples: result.configuration?.samples,
     platformVersion: result.compatibility?.actual_platform_version,
     neatVersion: result.compatibility?.actual_neat_version,
+    mlaFrequencyHz: result.environment?.mla_frequency_hz,
   };
 }
 

@@ -171,6 +171,15 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
 
+def test_performance_runs_only_at_the_full_mla_clock() -> None:
+    script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
+    clock = script.index('MLA_DEVFREQ=/sys/class/devfreq/5000000.mla')
+
+    assert clock < script.index('"$MODEL_DIR/scripts/performance.py"')
+    assert 'if (( $(cat "$MLA_DEVFREQ/cur_freq") < MLA_FREQUENCY_HZ )); then' in script
+    assert 'sudo -n tee "$MLA_DEVFREQ/userspace/set_freq"' in script
+    assert "if (( mla_frequency_hz != MLA_FREQUENCY_HZ )); then" in script
+
 def test_devkit_stages_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark-dispatched-model"]
     steps = benchmark["steps"]

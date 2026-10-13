@@ -953,6 +953,8 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     for group in ['["speed", "Speed"', '["heat", "Power & heat"', '["memory", "MLA memory"', '["startup", "Startup"']:
         assert group in script
     assert 'metricGroup("other", "Other measurements"' in script
+    assert "mlaFrequencyHz: result.environment?.mla_frequency_hz" in adapters
+    assert 'label: "MLA clock"' in script
     assert "Not reported by this runtime:" in script
     assert "data-trial-metric" not in browser
     assert "trialChart" not in browser

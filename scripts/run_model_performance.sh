@@ -43,6 +43,20 @@ SIMA_PLATFORM_VERSION="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])')"
 export SIMA_PLATFORM_VERSION
 
+# Throughput and power depend on the MLA clock, while outputs do not. Raise a lower clock to the 1 GHz
+# maximum, and stop before measuring if the board does not run at it.
+MLA_DEVFREQ=/sys/class/devfreq/5000000.mla
+MLA_FREQUENCY_HZ=1000000000
+if (( $(cat "$MLA_DEVFREQ/cur_freq") < MLA_FREQUENCY_HZ )); then
+  echo "$MLA_FREQUENCY_HZ" | sudo -n tee "$MLA_DEVFREQ/userspace/set_freq" >/dev/null ||
+    { echo "Could not set the MLA clock to $MLA_FREQUENCY_HZ Hz." >&2; exit 1; }
+fi
+mla_frequency_hz="$(cat "$MLA_DEVFREQ/cur_freq")"
+if (( mla_frequency_hz != MLA_FREQUENCY_HZ )); then
+  echo "The MLA clock is $mla_frequency_hz Hz; benchmarks require $MLA_FREQUENCY_HZ Hz." >&2
+  exit 1
+fi
+
 for component in "${components[@]}"; do
   output="$OUTPUT_DIR/$component"
   mkdir -p "$output"
