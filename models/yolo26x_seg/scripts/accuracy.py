@@ -6,12 +6,13 @@ import argparse
 import contextlib
 import io
 import json
+import multiprocessing
 import random
 import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -61,6 +62,8 @@ MAX_DETECTIONS = [1, 10, 100]
 # Images decode on worker threads while the MPK runs; OpenCV releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
+# Mask decoding is per-detection Python work; 8 processes keep up with inference on the board's 16 cores.
+DECODERS = 8
 # The MPK returns bbox_0..2, class_logit_0..2 and mask_coeff_0..2, then mask_proto, all NHWC. Anchors are the
 # grid-cell centres of each level, row-major from stride 8 to stride 32, as Ultralytics' make_anchors lays them out.
 # They are float32, like the exported head's box arithmetic, so mask crop bounds round as Ultralytics' do.
@@ -208,11 +211,16 @@ def instance_masks(
     column_lower, column_upper, _ = resize_sources(IMAGE_SIZE - 2 * left, width)
     row_lower, row_upper = row_lower + top, row_upper + top
     column_lower, column_upper = column_lower + left, column_upper + left
+    bounds = crop_bounds(boxes)
+    # Image rows and columns whose samples all fall inside each crop box; the sources rise monotonically.
+    spans = zip(
+        np.searchsorted(row_lower, bounds[:, 1]),
+        np.searchsorted(row_upper, bounds[:, 3]),
+        np.searchsorted(column_lower, bounds[:, 0]),
+        np.searchsorted(column_upper, bounds[:, 2]),
+    )
     rles = []
-    for (x0, y0, x1, y1), mix in zip(crop_bounds(boxes), coefficients):
-        # Image rows and columns whose samples all fall inside the crop box; the sources rise monotonically.
-        r0, r1 = np.searchsorted(row_lower, y0), np.searchsorted(row_upper, y1)
-        c0, c1 = np.searchsorted(column_lower, x0), np.searchsorted(column_upper, x1)
+    for (x0, y0, x1, y1), mix, (r0, r1, c0, c1) in zip(bounds, coefficients, spans):
         counts = [width * height]
         if r0 < r1 and c0 < c1:
             region = frame_mask(proto, mix, x0, y0, x1, y1)
@@ -225,12 +233,13 @@ def instance_masks(
 
 def run_lengths(region: np.ndarray, top: int, left: int, height: int, width: int) -> list[int]:
     """Uncompressed COCO RLE counts (column-major, background first) of an image that is zero outside region."""
-    columns = np.zeros((region.shape[1], height), dtype=bool)
-    columns[:, top : top + region.shape[0]] = region.T
-    padded = np.concatenate([[False], columns.ravel(), [False]])
+    padded = np.zeros(region.shape[1] * height + 2, dtype=bool)
+    padded[1:-1].reshape(region.shape[1], height)[:, top : top + region.shape[0]] = region.T
     changes = np.flatnonzero(padded[1:] != padded[:-1]) + left * height
     # A run that reaches the last pixel already ends at width * height.
-    return np.diff(np.concatenate([[0], np.union1d(changes, width * height)])).tolist()
+    if not changes.size or changes[-1] < width * height:
+        changes = np.append(changes, width * height)
+    return np.diff(changes, prepend=0).tolist()
 
 
 def decode(outputs: Sequence[np.ndarray], image_id: int, width: int, height: int, categories: np.ndarray) -> list[dict]:
@@ -299,14 +308,24 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     image_dir = args.dataset / IMAGES
     images = prefetched(lambda record: preprocess_image((image_dir / record["file_name"]).read_bytes()), records)
-    for count, (record, image) in enumerate(zip(records, images), start=1):
-        tensor = pyneat.Tensor.from_numpy(image, copy=False)
-        if runner is None:
-            runner = model.build([tensor])
-        outputs = [output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)]
-        detections.extend(decode(outputs, record["id"], record["width"], record["height"], categories))
-        if count == 1 or count % 250 == 0 or count == len(records):
-            log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
+    # Worker processes decode earlier images while the board runs the next ones; results keep image order.
+    with ProcessPoolExecutor(DECODERS, mp_context=multiprocessing.get_context("spawn")) as decoders:
+        pending: deque = deque()
+        for count, (record, image) in enumerate(zip(records, images), start=1):
+            tensor = pyneat.Tensor.from_numpy(image, copy=False)
+            if runner is None:
+                runner = model.build([tensor])
+            # Copies, because the runner reuses its output buffers while a decoder may still read them.
+            outputs = [output.to_numpy(copy=True) for output in runner.run([tensor], timeout_ms=120000)]
+            pending.append(
+                decoders.submit(decode, outputs, record["id"], record["width"], record["height"], categories)
+            )
+            if len(pending) > 2 * DECODERS:
+                detections.extend(pending.popleft().result())
+            if count == 1 or count % 250 == 0 or count == len(records):
+                log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
+        while pending:
+            detections.extend(pending.popleft().result())
     inference_seconds = time.monotonic() - started
 
     if not detections:
