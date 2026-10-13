@@ -230,8 +230,12 @@ def publish_accuracy_result(
     fingerprint: str,
     object_key: str,
     stable_key: str,
+    test_status: str,
 ) -> JsonObject:
-    """Attach an accuracy result to a mutable registry run as an artifact, a test result and measurements."""
+    """Attach an accuracy result to a mutable registry run as an artifact, a test result and measurements.
+
+    The test result carries the outcome of the model's accuracy tests on the result.
+    """
     stored = store.ensure_native_sha256(path, object_key, sha256, media_type="application/json")
     artifact = client.request(
         "PUT",
@@ -249,7 +253,7 @@ def publish_accuracy_result(
         },
         f"{stable_key}-accuracy-artifact",
     )
-    test_result: JsonObject = {"status": "passed", "version": str(report["schema_version"]), "summary": report}
+    test_result: JsonObject = {"status": test_status, "version": str(report["schema_version"]), "summary": report}
     if artifact.get("artifact_id"):
         test_result["report_artifact_id"] = artifact["artifact_id"]
     client.request(

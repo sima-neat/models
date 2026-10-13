@@ -1,0 +1,5 @@
+build:
+  compile: true
+measure:
+  accuracy: true
+  performance: true

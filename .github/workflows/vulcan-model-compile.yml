@@ -232,6 +232,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # A failing test fails this job, so the publish job never runs for this build.
+      - name: Test the build with its model's compile tests
+        run: |
+          set -euo pipefail
+          # Only this step sees pytest, so it cannot shadow a compiler package during compilation.
+          test_tools="$RUNNER_TEMP/model-test-tools"
+          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check --target "$test_tools" 'pytest>=8,<9'
+          PYTHONPATH="$test_tools${PYTHONPATH:+:$PYTHONPATH}" REGISTRY_PYTHON="$MODEL_COMPILER_PYTHON" \
+            scripts/run_model_tests.sh compile "$MODEL_DIR" "$PROFILE_OUTPUT_DIR"
+
   publish:
     name: Publish
     needs: compile

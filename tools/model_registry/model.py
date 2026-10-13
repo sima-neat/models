@@ -11,14 +11,15 @@ from jsonschema import Draft202012Validator, FormatChecker
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
 from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
+from .model_tests import TEST_SCOPE_SCHEMA, TESTS_DIR, validate_test_scope
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
 MODEL_FILE = "model.yaml"
 SCHEMA_RELATIVE_PATH = Path("schemas/model.schema.json")
 SCRIPTS_DIR = "scripts"
-# A model folder holds its manifest, its documentation, and model-owned code in scripts/.
-MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR}
+# A model folder holds its manifest, its documentation, model-owned code in scripts/, and its tests in tests/.
+MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR, TESTS_DIR}
 STAGES = ("fidelity", "accuracy", "benchmark")
 # vulcan-model-convert.yml runs these files for a model that declares `conversion`.
 CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-convert.txt")
@@ -658,6 +659,8 @@ def validate_model(
                 f"{', '.join(sorted(missing))}"
             )
 
+    validate_test_scope(directory, model, schema_file.parent / TEST_SCOPE_SCHEMA)
+
 
 def _validate_devkit_accuracy(
     entry: dict[str, Any],
@@ -709,7 +712,7 @@ def _check_folder_layout(directory: Path) -> None:
     if unexpected:
         raise ValidationError(
             f"{directory}: unexpected model folder entries: {', '.join(unexpected)}; "
-            f"keep model code in {SCRIPTS_DIR}/ and stage settings in {MODEL_FILE}"
+            f"keep model code in {SCRIPTS_DIR}/, tests in {TESTS_DIR}/ and stage settings in {MODEL_FILE}"
         )
 
 

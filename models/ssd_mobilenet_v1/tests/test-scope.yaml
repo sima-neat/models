@@ -1,0 +1,4 @@
+build:
+  compile: true
+measure:
+  performance: true

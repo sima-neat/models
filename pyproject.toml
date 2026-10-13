@@ -14,6 +14,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# What a stage runner needs to run a model's tests on that stage's output.
+tests = [
+  "numpy>=1.26,<3",
+  "pytest>=8,<9",
+]
 dev = [
   "build>=1.2,<2",
   "numpy>=1.26,<3",
@@ -37,8 +42,11 @@ where = ["tools"]
 model_registry = ["py.typed"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
-testpaths = ["tests"]
+addopts = "-ra --import-mode=importlib"
+testpaths = ["tests", "models/*/tests"]
+# pytest's default list without "build", which would skip every model's tests/build/, and with fixtures/,
+# whose model folders hold test files that are data.
+norecursedirs = ["*.egg", ".*", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}", "fixtures"]
 
 [tool.ruff]
 line-length = 120

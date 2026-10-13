@@ -46,6 +46,13 @@ models/<model-id>/
     convert.py                  # only when model.yaml declares a conversion
     requirements-convert.txt    # required with convert.py
     <helper>.py                 # model-specific surgery, calibration, or shared code
+  tests/                        # the model's tests; see step 10
+    test-scope.yaml             # switches each test file below on or off
+    build/test_conversion.py    # only with convert.py
+    build/test_compile.py
+    measure/test_accuracy.py    # only when model.yaml declares DevKit accuracy
+    measure/test_performance.py # only when model.yaml declares a benchmark
+    fixtures/                   # optional test data
 ```
 
 Put every model-specific setting in `model.yaml`, not in separate
@@ -253,6 +260,7 @@ recompiled build is always remeasured.
 | Change | Reruns |
 | --- | --- |
 | README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
@@ -262,7 +270,78 @@ recompiled build is always remeasured.
 The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
 in `tools/model_registry/stage_keys.py`.
 
-## 10. Validate the contract
+To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
+`models` set to the model and `force_rebuild_all`: it recompiles the model's
+builds, which runs the compile tests and remeasures every build. A changed
+conversion test applies on the next conversion dispatch.
+
+## 10. Write the model's tests
+
+Each model carries its own tests in `tests/`, one file per stage, named by
+what it checks. A test either exercises the model's scripts, or checks the real
+output of its stage by taking that output's fixture from the root
+`conftest.py`:
+
+| File | Exercises | Stage-output fixture | That test runs in CI |
+| --- | --- | --- | --- |
+| `build/test_conversion.py` | `convert.py` | `converted`: the ONNX path | after conversion, before the ONNX upload |
+| `build/test_compile.py` | `compile.py`, calibration, surgery, declared training code | `compiled`: the build's output directory | after compilation, before the build is published |
+| `measure/test_accuracy.py` | `accuracy.py` | `accuracy`: the accuracy result | after the DevKit accuracy stage, before publication |
+| `measure/test_performance.py` | `performance.py` | `performance`: one component's performance result | after the DevKit performance stage, before publication |
+
+A test without a stage-output fixture runs in `python -m pytest` on every pull
+request. Import a model script with the `load_script` fixture, as in
+`load_script("compile")`; it stubs Model Compiler and DevKit modules the host
+lacks. `build_profile` names the build profile of the given output.
+
+A failing conversion or compile test stops the ONNX upload or the build's
+publication. A failing measurement test publishes its result with test status
+`failed`, then fails the run. Give each measured build a minimum taken from its
+latest published result: the accuracy minus 0.01 for each required metric,
+and 90% of the throughput for each component:
+
+```python
+from typing import Any
+
+# Lowest accepted throughput per build profile and component: 90% of the latest published result.
+MINIMUM_THROUGHPUT_FPS = {("modalix_int8", "model"): 1253.2}
+
+
+def test_throughput_meets_its_minimum(performance: dict[str, Any], build_profile: str) -> None:
+    key = (build_profile, performance["model"]["component_id"])
+    assert performance["metrics"]["throughput_fps"]["value"] >= MINIMUM_THROUGHPUT_FPS[key]
+```
+
+Switch each file in `tests/test-scope.yaml`: `true`, or `enabled: false` with
+a `reason`, for example while no published result exists to take a minimum
+from. A switched-off measurement publishes its result with test status
+`skipped`.
+
+```yaml
+build:
+  conversion: true  # only with scripts/convert.py
+  compile: true
+measure:
+  accuracy: true    # only with a devkit_script accuracy entry
+  performance:
+    enabled: false
+    reason: no published performance result yet to derive its minimum from
+```
+
+From a virtual environment with this checkout's development extra installed
+(`python -m pip install '.[dev]'`), run the model's tests, and run one stage's
+file on an output you produced:
+
+```bash
+python -m pytest models/<model-id>/tests
+REGISTRY_PYTHON="$(command -v python)" \
+  scripts/run_model_tests.sh performance models/<model-id> <performance-result.json>
+```
+
+`run_model_tests.sh` prints `passed`, `failed`, or `skipped`, as CI publishes
+it.
+
+## 11. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>

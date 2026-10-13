@@ -33,8 +33,15 @@ jobs:
       - name: Install sima-cli
         run: scripts/install_sima_cli.sh
 
-      - name: Test model-registry contracts
-        run: python -m pytest tests/unit
+      - name: Test model-registry contracts and each model's scripts
+        run: python -m pytest
+
+      # A plain run deselects the tests that check real stage output. Selecting them without running them
+      # still imports each one and reads its test-scope.yaml entry.
+      - name: Collect each model's stage-output tests
+        run: >-
+          python -m pytest --collect-only -q models/*/tests/build models/*/tests/measure
+          --converted=/dev/null --compiled=/dev/null --accuracy=/dev/null --performance=/dev/null
 
       - name: Build wheel and Vulcan metadata
         run: packaging/model-registry/build.sh

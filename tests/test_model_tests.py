@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+import ast
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from model_registry.model_tests import TEST_GROUPS, disabled_reason, load_test_scope, stage_test_file
+
+ROOT = Path(__file__).resolve().parents[1]
+RUN_MODEL_TESTS = ROOT / "scripts" / "run_model_tests.sh"
+PERFORMANCE_TESTS = '''
+def test_needs_no_output() -> None:
+    assert True
+
+
+def test_throughput_meets_its_minimum(performance, build_profile) -> None:
+    assert build_profile == "modalix_int8"
+    assert performance["metrics"]["throughput_fps"]["value"] >= 100
+'''
+
+
+@pytest.fixture
+def model_dir(tmp_path: Path) -> Path:
+    """A repository holding one model with performance tests, configured as this repository runs them."""
+    for name in ("pyproject.toml", "conftest.py"):
+        shutil.copy(ROOT / name, tmp_path / name)
+    model = tmp_path / "models" / "demo"
+    (model / "tests" / "measure").mkdir(parents=True)
+    (model / "model.yaml").write_text("id: demo\n", encoding="utf-8")
+    (model / "tests" / "test-scope.yaml").write_text("measure:\n  performance: true\n", encoding="utf-8")
+    (model / "tests" / "measure" / "test_performance.py").write_text(PERFORMANCE_TESTS, encoding="utf-8")
+    return model
+
+
+def performance_result(tmp_path: Path, fps: float) -> Path:
+    path = tmp_path / "performance-result.json"
+    result = {"model": {"build_profile_id": "modalix_int8"}, "metrics": {"throughput_fps": {"value": fps}}}
+    path.write_text(json.dumps(result), encoding="utf-8")
+    return path
+
+
+def pytest_in(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-c", str(repository / "pyproject.toml"), "--rootdir", str(repository),
+         "-p", "no:cacheprovider", *args],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+
+
+def run_model_tests(stage: str, model: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(RUN_MODEL_TESTS), stage, str(model), str(output)],
+        capture_output=True, text=True, check=False, env={**os.environ, "REGISTRY_PYTHON": sys.executable},
+    )  # fmt: skip
+
+
+def test_plain_run_deselects_the_tests_that_check_stage_output(model_dir: Path) -> None:
+    result = pytest_in(model_dir.parents[1], str(model_dir / "tests"))
+
+    assert result.returncode == 0, result.stdout
+    assert "1 passed, 1 deselected" in result.stdout
+
+
+def test_given_stage_output_runs_only_the_tests_that_check_it(model_dir: Path, tmp_path: Path) -> None:
+    output = performance_result(tmp_path, 150)
+    result = pytest_in(model_dir.parents[1], str(model_dir / "tests"), f"--performance={output}", "-v")
+
+    assert result.returncode == 0, result.stdout
+    assert "test_throughput_meets_its_minimum PASSED" in result.stdout
+    assert "1 passed, 1 deselected" in result.stdout
+
+
+@pytest.mark.parametrize(("fps", "outcome", "exit_code"), [(150, "passed", 0), (50, "failed", 1)])
+def test_stage_runner_prints_the_outcome_of_the_stage_tests(
+    model_dir: Path, tmp_path: Path, fps: float, outcome: str, exit_code: int
+) -> None:
+    result = run_model_tests("performance", model_dir, performance_result(tmp_path, fps))
+
+    assert result.stdout == f"{outcome}\n", result.stderr
+    assert result.returncode == exit_code
+
+
+def test_stage_runner_skips_a_stage_its_scope_switches_off(model_dir: Path, tmp_path: Path) -> None:
+    (model_dir / "tests" / "test-scope.yaml").write_text(
+        "measure:\n  performance:\n    enabled: false\n    reason: no published result\n", encoding="utf-8"
+    )
+
+    result = run_model_tests("performance", model_dir, performance_result(tmp_path, 50))
+
+    assert result.stdout == "skipped\n"
+    assert result.returncode == 0
+    assert "no published result" in result.stderr
+    # A plain run skips the switched-off file's tests with the same reason.
+    plain = pytest_in(model_dir.parents[1], str(model_dir / "tests"), f"--performance={tmp_path / 'none.json'}")
+    assert "1 skipped, 1 deselected" in plain.stdout
+    assert "disabled in test-scope.yaml: no published result" in plain.stdout
+
+
+def test_stage_runner_passes_a_stage_whose_tests_take_no_output(model_dir: Path, tmp_path: Path) -> None:
+    (model_dir / "tests" / "measure" / "test_performance.py").write_text(
+        "def test_needs_no_output() -> None:\n    assert True\n", encoding="utf-8"
+    )
+
+    result = run_model_tests("performance", model_dir, performance_result(tmp_path, 50))
+
+    assert result.stdout == "passed\n"
+    assert "no performance test of demo takes the performance output" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("stage", "output", "message"),
+    [
+        ("latency", "result.json", "unknown stage: latency"),
+        ("performance", "missing.json", "performance output does not exist"),
+        ("accuracy", "result.json", "tests/measure/test_accuracy.py is missing"),
+    ],
+)
+def test_stage_runner_reports_no_outcome_when_it_cannot_run_the_tests(
+    model_dir: Path, tmp_path: Path, stage: str, output: str, message: str
+) -> None:
+    performance_result(tmp_path, 150).rename(tmp_path / "result.json")
+
+    result = run_model_tests(stage, model_dir, tmp_path / output)
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert message in result.stderr
+
+
+def test_stage_output_tests_stop_on_an_invalid_scope(model_dir: Path, tmp_path: Path) -> None:
+    (model_dir / "tests" / "test-scope.yaml").write_text("measure: [\n", encoding="utf-8")
+
+    result = pytest_in(
+        model_dir.parents[1], str(model_dir / "tests"), f"--performance={performance_result(tmp_path, 150)}"
+    )
+
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "could not load test scope" in result.stderr
+
+
+@pytest.mark.parametrize("model", sorted(path.name for path in (ROOT / "models").iterdir() if path.is_dir()))
+def test_each_enabled_measure_file_checks_its_stage_result(model: str) -> None:
+    model_dir = ROOT / "models" / model
+    scope = load_test_scope(model_dir)
+    for stage in TEST_GROUPS["measure"]:
+        if stage not in (scope.get("measure") or {}) or disabled_reason(scope, stage):
+            continue
+        path = model_dir / "tests" / stage_test_file(stage)
+        tests = [
+            node
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+        ]
+        assert any(stage in {argument.arg for argument in test.args.args} for test in tests), (
+            f"{path.relative_to(ROOT)} has no test that takes the {stage} result"
+        )

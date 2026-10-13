@@ -106,18 +106,25 @@ On the DevKit, `scripts/run_model_performance.sh` handles each component:
    digest, the source revision, and the actual Core and platform versions. It
    never runs or times a model.
 
+`scripts/run_model_tests.sh` then runs the model's
+`tests/measure/test_performance.py` on each component's result and records
+`passed`, `failed`, or `skipped` ([write the model's
+tests](adding-a-model.md#10-write-the-models-tests)).
+
 A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
 performance stage key and carries a `performance-result` artifact, the
-benchmark log, a `performance/model-synthetic` test result, and the
-measurements. The model browser reads performance results with
-`schema_version` 1 through 5, shows measured values with their units, and marks
-absent metrics unavailable. A failure keeps its workflow evidence and is not
-published as a successful measurement. Performance and accuracy publish on
-their own outcomes: when one stage fails, the other's result is still
-published, and the next push reruns only the stage that has no run. A
-dispatched run stops before measuring when its branch has since changed the
-tooling the stage keys hash; the newer push measures that build instead.
+benchmark log, a `performance/model-synthetic` test result whose status is the
+test outcome, and the measurements. A failed test still publishes the result
+and completes its run, then fails the workflow run. The model browser reads
+performance results with `schema_version` 1 through 5, shows measured values
+with their units, and marks absent metrics unavailable. A failed measurement
+keeps its workflow evidence and is not published as a successful measurement.
+Performance and accuracy publish on their own outcomes: when one stage fails,
+the other's result is still published, and the next push reruns only the stage
+that has no run. A dispatched run stops before measuring when its branch has
+since changed the tooling the stage keys hash; the newer push measures that
+build instead.
 
 Because the performance stage has its own key, editing `performance.py`, a
 `benchmark` entry, or the DevKit runtime pin remeasures performance from the

@@ -16,7 +16,8 @@ complete the entire loop before submitting a model pull request.
 For each supported build, meaning each compile invocation of each build
 profile, complete this sequence before opening a pull request:
 
-1. Validate the model directory and the complete catalog.
+1. Validate the model directory and the complete catalog, and run the
+   model's tests.
 2. Fetch and checksum the declared source, calibration, and fidelity inputs.
 3. Confirm the pinned compiler and the builds the matrix derives from
    `model.yaml`.
@@ -81,6 +82,20 @@ Then validate every model:
 ```bash
 model-registry validate-models --repository .
 ```
+
+Run the model's tests from a virtual environment with this checkout's
+development extra installed (`python -m pip install '.[dev]'`):
+
+```bash
+python -m pytest models/<model-id>/tests
+```
+
+Run a stage's tests on an output you produced with
+`scripts/run_model_tests.sh <stage> models/<model-id> <output>`, where the
+output is a build's compile output directory or a DevKit result JSON and
+`REGISTRY_PYTHON` names that environment's Python. [Write the model's
+tests](adding-a-model.md#10-write-the-models-tests) explains the files and
+where each test runs.
 
 ## Fetch and verify immutable inputs
 
@@ -308,7 +323,8 @@ covers both forms and the result contract.
 
 Before leaving the local workflow, confirm that:
 
-- the model and the complete catalog validate;
+- the model and the complete catalog validate, and the model's tests pass,
+  including each stage's tests on its local output;
 - every intended build appears in the matrix;
 - every build compiles and its compile outputs and MPKs validate;
 - each declared fidelity report has the expected metrics;
@@ -333,6 +349,7 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
 | Source host or URL rejected | Use a full-commit Hugging Face resource, an approved GitHub release asset, or another approved checksum-verified host. |
 | Referenced file does not exist | Keep recipe and surgery paths under the model's `scripts/`; a declared `conversion` also needs `scripts/convert.py` and `scripts/requirements-convert.txt`. |
-| Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, and `scripts/`. |
+| Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, `scripts/`, and `tests/`. |
+| `switch exactly the stages this model declares` or `unexpected test files` | Give `tests/test-scope.yaml` one entry per stage test file the model needs, and keep only those files, `build/`, `measure/`, and `fixtures/` under `tests/` ([write the model's tests](adding-a-model.md#10-write-the-models-tests)). |
 | Build missing from the matrix | Check the component binding `status`, the requested IDs, and the build profile's `compile_invocations`. |
 | Unexpected MPK count | Start from an empty output directory. An invocation writes exactly one MPK per component. |

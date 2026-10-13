@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/test-scope.schema.json",
+  "title": "SiMa Neat model test scope",
+  "description": "Switches each stage's test file of one model on or off. build/ checks conversion and compilation; measure/ checks DevKit accuracy and performance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["build"],
+  "properties": {
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compile"],
+      "properties": {
+        "conversion": {"$ref": "#/$defs/switch"},
+        "compile": {"$ref": "#/$defs/switch"}
+      }
+    },
+    "measure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accuracy": {"$ref": "#/$defs/switch"},
+        "performance": {"$ref": "#/$defs/switch"}
+      }
+    }
+  },
+  "$defs": {
+    "switch": {
+      "description": "true runs the stage's test file; a disabled stage records why.",
+      "oneOf": [
+        {"const": true},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "reason"],
+          "properties": {
+            "enabled": {"const": false},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    }
+  }
+}

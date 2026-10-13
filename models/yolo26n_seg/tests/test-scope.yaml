@@ -1,0 +1,6 @@
+build:
+  conversion: true
+  compile: true
+measure:
+  accuracy: true
+  performance: true

@@ -34,6 +34,45 @@ The shared tooling is one module per job. The
 which module owns what; put new shared code in the module that owns its job,
 and give a new job a new module named after what it does.
 
+## Tests
+
+Repository-wide tests sit in `tests/`. Each model's tests sit in its folder,
+named by what they check:
+
+```text
+models/<model_id>/tests/
+  test-scope.yaml             switches each test file below on or off
+  build/test_conversion.py    when the model has scripts/convert.py
+  build/test_compile.py       every model
+  measure/test_accuracy.py    when model.yaml declares DevKit accuracy
+  measure/test_performance.py when model.yaml declares a benchmark
+  fixtures/                   optional test data
+```
+
+`test-scope.yaml` has one entry per required file: `true`, or `enabled: false`
+with a `reason`. `model-registry validate` enforces the entries and the
+layout. A model test imports a script with the root `conftest.py` fixture
+`load_script("<name>")`, which stubs the Model Compiler and DevKit modules a
+host lacks.
+
+A test's fixtures decide where it runs:
+
+| A test that takes | Runs | A failure |
+|---|---|---|
+| no stage output | `python -m pytest`, on every pull request and push | blocks the merge |
+| `converted` | after `convert.py`, in `vulcan-model-convert.yml` | stops the ONNX upload |
+| `compiled` | after compilation, in `vulcan-model-compile.yml` | leaves the build unpublished |
+| `accuracy` or `performance` | after measurement, in `vulcan-model-benchmarking.yml` | publishes the result with test status `failed`, then fails the run |
+
+`scripts/run_model_tests.sh <stage> <model_dir> <stage_output>` runs one
+stage's file on that output and prints `passed`, `failed`, or `skipped` (the
+scope switches the stage off); a plain `pytest` deselects every test that
+takes stage output. No stage key reads `models/<id>/tests/` or
+`run_model_tests.sh`, so a changed test reruns nothing and applies the next
+time its stage runs. To apply it now, dispatch `Vulcan Model Orchestrator`
+with `models` set to the model and `force_rebuild_all`, which recompiles and
+remeasures it.
+
 ## Keep the structure consistent
 
 Each row is a change that is incomplete without the files beside it. Make them
@@ -41,12 +80,16 @@ in the same commit.
 
 | When you change | Also change |
 |---|---|
-| what a stage depends on: a `model.yaml` field its key reads, or a shared file it runs | the key function or the `PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `stage_keys.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/unit/test_compile_matrix.py` or `tests/unit/test_stage_plan.py` |
+| what a stage depends on: a `model.yaml` field its key reads, or a shared file it runs | the key function or the `PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `stage_keys.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
 | the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
 | a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
-| a `model-registry` command | `cli.py` (and `AUTHOR_COMMANDS` when authors run it), every workflow and script that calls it, `packaging/model-registry/install_model_registry_package.sh`, the docs, and `tests/unit/test_cli.py` |
+| a model script | the model's test of that behavior under `tests/build/` or `tests/measure/` |
+| what a model converts, compiles, or measures on a DevKit | its `tests/test-scope.yaml` entries and the stage test files they enable |
+| the layout of a model's `tests/` | `TESTS_DIR_ENTRIES` and `TEST_GROUPS` in `model_tests.py`, `schemas/test-scope.schema.json`, and [the tests step](docs/adding-a-model.md#10-write-the-models-tests) |
+| how a stage runs its model tests or what they report | `scripts/run_model_tests.sh`, the stage's workflow step, and `TEST_OUTCOMES` in `model_tests.py` |
+| a `model-registry` command | `cli.py` (and `AUTHOR_COMMANDS` when authors run it), every workflow and script that calls it, `packaging/model-registry/install_model_registry_package.sh`, the docs, and `tests/test_cli.py` |
 | a module that only CI may run | the removal list in `packaging/model-registry/build.sh` |
 | a module's job, or a new module | the [module map](design-doc/model-registry-architecture.md#shared-tooling) |
 | a published result's shape | its schema under `schemas/` and `artifact-browser/`, which must keep rendering results already in the registry |
@@ -56,8 +99,9 @@ in the same commit.
 
 - **Pull request.** `Target Branch Checks` is the only workflow that builds or
   tests a pull request, on the merge result and GitHub-hosted runners:
-  `model-registry-package.yml` runs `pytest tests/unit` and builds the
-  `model-registry` package, and `developer-docs.yml` checks the model browser.
+  `model-registry-package.yml` runs `python -m pytest`, collects every
+  model's stage-output tests, and builds the `model-registry` package, and
+  `developer-docs.yml` checks the model browser.
   `PR Sanitization` checks the pull request's description. Contributor code
   never runs on self-hosted runners for a pull request.
 - **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and smoke-tests the model browser (`developer-docs.yml`); `plan` waits for it, so a portal failure stops the run. On `main` and `develop`, `publish-model-browser` publishes that checked portal to staging. The `plan` job runs `model-registry plan-stages`, which reads the
@@ -65,12 +109,15 @@ in the same commit.
   branch; see `design-doc/model-registry-architecture.md`) and resolves each
   stage key against the registry. `compile` calls
   `.github/workflows/vulcan-model-compile.yml` once per build to compile,
-  publish, and start the build's board stages. `publish-catalog` writes the
-  final catalog snapshot, and `measure` starts the board stages a reused build
-  still lacks.
+  run the model's compile tests, publish, and start the build's board
+  stages. `publish-catalog` writes the final catalog snapshot, and `measure`
+  starts the board stages a reused build still lacks.
 - **Board stages.** `vulcan-model-benchmarking.yml` runs the requested
-  `stages` on a DevKit and publishes performance (`model_benchmark` runs) and
-  accuracy (`model_accuracy` runs) separately.
+  `stages` on a DevKit, runs the model's measure tests on each result, and
+  publishes performance (`model_benchmark` runs) and accuracy
+  (`model_accuracy` runs) separately, each with its test outcome. A failed
+  test fails the run after publication; the completed run is not measured
+  again.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
@@ -84,10 +131,10 @@ in the same commit.
 
 ## Contributing
 
-1. Declare the change in `model.yaml` and the model's `scripts/`, following
-   [adding a model](docs/adding-a-model.md) and the
+1. Declare the change in `model.yaml` and the model's `scripts/` and
+   `tests/`, following [adding a model](docs/adding-a-model.md) and the
    [metadata schema](docs/metadata-schema.md).
-2. Run `pytest tests/unit` and `model-registry validate models/<model_id>`.
+2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
 3. Compile each changed build in the pinned Model Compiler with
    `scripts/run_model_compilation.sh` and check every MPK with
    `model-registry verify-mpk` ([local development](docs/local-development.md)).
@@ -121,7 +168,7 @@ Before changing `artifact-browser/`, read its
 change.
 
 - Make every expandable area a `disclosure()` row from `ui.js`. Raw
-  `<details>` elements fail `tests/unit/test_artifact_browser.py`.
+  `<details>` elements fail `tests/test_artifact_browser.py`.
 - The browser lists INT8 build profiles first and opens a model on INT8;
   `profileGroups` in `api.js` sets this, not the `model.yaml` profile order.
 - Keep the glance-first page: key facts in the section, the rest in one row.
@@ -136,7 +183,7 @@ change.
   such an interpreter.
 - Add a new module to `fingerprintedAssets` in
   `website/scripts/assemble-portal.mjs`.
-- Before a push, run `python -m pytest tests/unit/test_artifact_browser.py`,
+- Before a push, run `python -m pytest tests/test_artifact_browser.py`,
   `node --test tests/browser/*.test.mjs`, and `npm run typecheck`,
   `npm run build:portal`, and `npm run smoke:portal` with `--prefix website`,
   then look at the changed pages in `preview.py` at desktop and phone width,

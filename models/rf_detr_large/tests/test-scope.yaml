@@ -1,0 +1,10 @@
+build:
+  conversion: true
+  compile: true
+measure:
+  accuracy:
+    enabled: false
+    reason: no develop accuracy result is published yet to derive its minimum from
+  performance:
+    enabled: false
+    reason: no develop performance result is published yet to derive its minimums from

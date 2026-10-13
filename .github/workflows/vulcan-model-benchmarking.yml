@@ -292,10 +292,11 @@ jobs:
       actions: read
       contents: read
       id-token: write
-    # Each stage publishes on its own outcome, so one stage's failure does not discard the other's result.
+    # Each stage publishes on its own outcome, so one stage's failure does not discard the other's result. A
+    # stage's tests run only on its measured result and succeed once they record passed, failed or skipped.
     outputs:
-      performance: ${{ steps.performance.outcome }}
-      accuracy: ${{ steps.accuracy.outcome }}
+      performance: ${{ steps.performance-tests.outcome }}
+      accuracy: ${{ steps.accuracy-tests.outcome }}
     env:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
@@ -328,7 +329,7 @@ jobs:
       - name: Install registry tooling in an isolated environment
         run: |
           python3 -m venv "$RUNNER_TEMP/model-registry-tools"
-          "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install .
+          "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install '.[tests]'
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
 
       - name: Resolve and verify benchmark runtime
@@ -404,12 +405,33 @@ jobs:
         if: ${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark "$COMPONENT_IDS"
 
+      # Publication sends each recorded outcome with its result and then fails the run on a failed one.
+      - name: Test each performance result with the model's performance tests
+        id: performance-tests
+        if: ${{ !cancelled() && steps.performance.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra components <<< "$COMPONENT_IDS"
+          for component in "${components[@]}"; do
+            status="_benchmark/$component/test-status.txt"
+            scripts/run_model_tests.sh performance "_source/models/$MODEL_ID" \
+              "_benchmark/$component/performance-result.json" > "$status" || [[ "$(<"$status")" == failed ]]
+          done
+
       - name: Measure accuracy on DevKit
         id: accuracy
         if: >-
           ${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' &&
           env.MEASURE_ACCURACY == 'true' }}
         run: scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy
+
+      - name: Test the accuracy result with the model's accuracy tests
+        id: accuracy-tests
+        if: ${{ !cancelled() && steps.accuracy.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          scripts/run_model_tests.sh accuracy "_source/models/$MODEL_ID" _accuracy/accuracy-result.json \
+            > _accuracy/test-status.txt || [[ "$(<_accuracy/test-status.txt)" == failed ]]
 
       - name: Retain benchmark evidence
         if: always() && env.MEASURE_PERFORMANCE == 'true'
@@ -421,6 +443,7 @@ jobs:
             _benchmark/*/core-benchmark.json
             _benchmark/*/performance-test.json
             _benchmark/*/benchmark.log
+            _benchmark/*/test-status.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -528,7 +551,8 @@ jobs:
               --environment staging \
               --branch "$SOURCE_BRANCH" \
               --git-sha "$SOURCE_SHA" \
-              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --test-status "$(<"_benchmarks/$component/test-status.txt")"
           done
       - name: Publish the accuracy run
         if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
@@ -556,7 +580,23 @@ jobs:
             --environment staging \
             --branch "$SOURCE_BRANCH" \
             --git-sha "$SOURCE_SHA" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --test-status "$(<_accuracy/test-status.txt)"
+      # The results are published either way; a failed test still fails the run, which keeps its evidence.
+      - name: Fail the run on a failed model test
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          failed=()
+          for status in _benchmarks/*/test-status.txt _accuracy/test-status.txt; do
+            if [[ -f "$status" && "$(<"$status")" == failed ]]; then
+              failed+=("$status")
+            fi
+          done
+          if (( ${#failed[@]} )); then
+            echo "The model's tests failed on the published results: ${failed[*]}" >&2
+            exit 1
+          fi
 
   cleanup-dispatched-benchmark-artifacts:
     name: Clean up dispatched benchmark artifacts
