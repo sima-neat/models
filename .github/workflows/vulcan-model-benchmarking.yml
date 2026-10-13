@@ -286,7 +286,7 @@ jobs:
     environment: ${{ inputs.environment }}
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ inputs.environment }}"]
+      labels: [self-hosted, Linux, ARM64, modalix, model-registry, "vulcan-${{ inputs.environment }}"]
     timeout-minutes: 45
     permissions:
       actions: read

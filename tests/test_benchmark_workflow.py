@@ -145,6 +145,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "Linux",
         "ARM64",
         "modalix",
+        "model-registry",
         "vulcan-${{ inputs.environment }}",
     ]
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
