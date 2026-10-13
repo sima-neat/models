@@ -169,16 +169,8 @@ def composition_document(declaration: dict[str, Any]) -> dict[str, Any]:
 
 
 def component_pipelines(models: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
-    """Each declared pipeline, keyed by model ID, with every component stage carrying its role."""
-    pipelines = {}
-    for model_id, model in sorted(models.items()):
-        if "pipeline" in model:
-            roles = {item["id"]: item["role"] for item in model["components"]}
-            pipelines[model_id] = [
-                {**stage, "role": roles[stage["component"]]} if "component" in stage else stage
-                for stage in model["pipeline"]
-            ]
-    return pipelines
+    """Each declared pipeline, keyed by model ID."""
+    return {model_id: model["pipeline"] for model_id, model in sorted(models.items()) if "pipeline" in model}
 
 
 def _load_declarative_composition(

@@ -201,19 +201,12 @@ def test_declarative_composition_validates_ports_and_package_contents() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
-def test_pipeline_is_read_with_component_roles() -> None:
+def test_pipeline_is_read_as_declared() -> None:
     model = _two_component_model()
     model["pipeline"] = [{"component": "model"}, {"cpu": "Top 10 boxes"}, {"component": "second_model"}]
     validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
-    role = model["components"][0]["role"]
-    assert component_pipelines({"fixture_model": model}) == {
-        "fixture_model": [
-            {"component": "model", "role": role},
-            {"cpu": "Top 10 boxes"},
-            {"component": "second_model", "role": role},
-        ]
-    }
+    assert component_pipelines({"fixture_model": model}) == {"fixture_model": model["pipeline"]}
     assert component_pipelines({"fixture_model": _two_component_model()}) == {}
 
 

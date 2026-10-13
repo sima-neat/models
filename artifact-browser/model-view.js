@@ -299,13 +299,13 @@ function pipelineOrder(variant) {
   return order.length === ids.length && order.every((id) => ids.includes(id)) ? order : null;
 }
 
-// Each component box carries the number its heading repeats; a CPU stage between them is not numbered.
+// One line from input to output: numbered component chips, with any CPU step between them as a dashed chip.
 function pipelineStrip(pipeline) {
   let number = 0;
   const stages = pipeline.map((stage) => ("component" in stage
-    ? `<li class="pipeline-stage"><div class="pipeline-box"><span class="component-number">${++number}</span><span><strong>${escapeHtml(humanize(stage.component))}</strong><small>${escapeHtml(humanize(stage.role))}</small></span></div></li>`
-    : `<li class="pipeline-stage host"><div class="pipeline-box"><span><strong>CPU</strong><small>${escapeHtml(stage.cpu)}</small></span></div></li>`));
-  return `<ol class="component-pipeline" aria-label="Order the components run in">${stages.join("")}</ol>`;
+    ? `<li><span class="pipeline-chip"><span class="component-number">${++number}</span>${escapeHtml(humanize(stage.component))}</span></li>`
+    : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}</span></li>`));
+  return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
 }
 
 // A multi-component model shows each component's numbers under its name; they are never combined.

@@ -245,9 +245,9 @@ def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> No
     pipelines = json.loads(output.read_text(encoding="utf-8"))
     assert "resnet_50" not in pipelines
     assert pipelines["rf_detr_nano"] == [
-        {"component": "backbone", "role": "feature_extractor"},
+        {"component": "backbone"},
         {"cpu": "Top 300 proposals"},
-        {"component": "transformer", "role": "detection_head"},
+        {"component": "transformer"},
     ]
 
 
