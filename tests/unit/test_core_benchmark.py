@@ -123,19 +123,24 @@ def test_runner_environment_records_only_installed_packages(monkeypatch):
     }
     assert environment["fingerprint_version"] == PERFORMANCE_FINGERPRINT_VERSION
     assert environment["mla_frequency_hz"] is None
+    assert environment["cpu_frequency_khz"] is None
 
 
-def test_runner_environment_records_the_mla_clock(monkeypatch):
+def test_runner_environment_records_the_mla_and_cpu_clocks(monkeypatch):
     files = {
         "/etc/buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = B1800\n",
         str(core_benchmark.MLA_FREQUENCY): "1000000000\n",
+        str(core_benchmark.CPU_FREQUENCY): "1400000\n",
     }
     monkeypatch.setattr(Path, "read_text", lambda self, encoding=None: files[str(self)])
     monkeypatch.setattr(Path, "exists", lambda self: str(self) in files)
     packages = SimpleNamespace(stdout="ii \tneat-runtime\t0.5.0+test\n")
     monkeypatch.setattr(core_benchmark.subprocess, "run", lambda command, **kwargs: packages)
 
-    assert core_benchmark.runner_environment()["mla_frequency_hz"] == 1_000_000_000
+    environment = core_benchmark.runner_environment()
+
+    assert environment["mla_frequency_hz"] == 1_000_000_000
+    assert environment["cpu_frequency_khz"] == 1_400_000
 
 
 def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp_path):

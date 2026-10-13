@@ -954,7 +954,9 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
         assert group in script
     assert 'metricGroup("other", "Other measurements"' in script
     assert "mlaFrequencyHz: result.environment?.mla_frequency_hz" in adapters
-    assert 'label: "MLA clock"' in script
+    assert "cpuFrequencyKhz: result.environment?.cpu_frequency_khz" in adapters
+    assert 'clockRow("MLA clock", benchmark.mlaFrequencyHz / 1e6)' in script
+    assert 'clockRow("CPU clock", benchmark.cpuFrequencyKhz / 1e3)' in script
     assert "Not reported by this runtime:" in script
     assert "data-trial-metric" not in browser
     assert "trialChart" not in browser

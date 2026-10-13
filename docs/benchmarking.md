@@ -26,8 +26,16 @@ governor offers. Throughput and power depend on the clock, while model outputs
 do not. Before measuring, `scripts/run_model_performance.sh` reads
 `/sys/class/devfreq/5000000.mla/cur_freq`; when the clock is lower, it writes
 1 GHz to `userspace/set_freq` with `sudo -n`. When the clock is still not 1 GHz,
-the stage fails without measuring. The runner user therefore needs passwordless
-`sudo` for that write.
+the stage fails without measuring.
+
+The CPU feeds the MLA and runs postprocessing, so its clock also bounds
+throughput: YOLO26n INT8 with the box decoder measures about 1060 FPS at
+1.4 GHz and about 930 FPS at 1.2 GHz. One cpufreq policy covers every Modalix
+core. When `/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq` is not
+1.4 GHz, the script writes 1.4 GHz to `scaling_setspeed`, which requires the
+`userspace` governor, and fails without measuring when the clock still differs.
+
+The runner user therefore needs passwordless `sudo` for both writes.
 
 ## The performance script
 
@@ -111,8 +119,8 @@ compiles and publishes, **Vulcan Model Compile** starts **Vulcan Model
 Benchmarking** on the same branch for each build whose performance or accuracy
 stage key has no completed run. The DevKit has no publication credentials.
 
-On the DevKit, `scripts/run_model_performance.sh` sets the MLA clock, then
-handles each component:
+On the DevKit, `scripts/run_model_performance.sh` sets the MLA and CPU
+clocks, then handles each component:
 
 1. `make-benchmark-manifest` writes `performance-test.json` with the
    compilation's identity.
@@ -123,7 +131,7 @@ handles each component:
    [`performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result.schema.json)
    (`schema_version` 5). It records the compilation identity, the script
    digest, the source revision, the actual Core and platform versions, and
-   the MLA clock. It never runs or times a model.
+   the MLA and CPU clocks. It never runs or times a model.
 
 A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
@@ -131,8 +139,8 @@ performance stage key and carries a `performance-result` artifact, the
 benchmark log, a `performance/model-synthetic` test result, and the
 measurements. The model browser reads performance results with
 `schema_version` 1 through 5, shows measured values with their units, and marks
-absent metrics unavailable. Its Speed card shows the MLA clock when the result
-records one. A failure keeps its workflow evidence and is not
+absent metrics unavailable. Its Speed card shows the MLA and CPU clocks when
+the result records them. A failure keeps its workflow evidence and is not
 published as a successful measurement. Performance and accuracy publish on
 their own outcomes: when one stage fails, the other's result is still
 published, and the next push reruns only the stage that has no run. A

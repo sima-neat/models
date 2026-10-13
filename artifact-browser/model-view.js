@@ -210,15 +210,19 @@ function metricGroups(benchmark) {
     memory: memoryBar(measurements),
     startup: startupTimeline(measurements),
   };
-  // The MLA clock bounds the speed a result can reach, so the Speed card shows the clock it ran at.
+  // The MLA and CPU clocks bound the speed a result can reach, so the Speed card shows the clocks it ran at.
+  const clockRow = (label, megahertz) => Number.isFinite(megahertz)
+    ? metricRow({ label, text: megahertz.toLocaleString(), unit: "MHz" })
+    : "";
   const conditions = {
-    speed: Number.isFinite(benchmark.mlaFrequencyHz)
-      ? metricRow({ label: "MLA clock", text: (benchmark.mlaFrequencyHz / 1e6).toLocaleString(), unit: "MHz" })
-      : "",
-    heat: temperature ? temperatureRow(temperature) : "",
+    speed: [
+      clockRow("MLA clock", benchmark.mlaFrequencyHz / 1e6),
+      clockRow("CPU clock", benchmark.cpuFrequencyKhz / 1e3),
+    ],
+    heat: [temperature ? temperatureRow(temperature) : ""],
   };
   const groups = METRIC_GROUPS.map(([id, title, icon, keys]) => {
-    const rows = [...rowsFor(keys), conditions[id]].filter(Boolean);
+    const rows = [...rowsFor(keys), ...(conditions[id] || [])].filter(Boolean);
     return rows.length ? { title, markup: metricGroup(id, title, icon, rows, extras[id]) } : null;
   }).filter(Boolean);
   const known = new Set(METRIC_GROUPS.flatMap(([, , , keys]) => keys));

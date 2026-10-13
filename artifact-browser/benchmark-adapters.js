@@ -97,6 +97,7 @@ function common(result) {
     platformVersion: result.compatibility?.actual_platform_version,
     neatVersion: result.compatibility?.actual_neat_version,
     mlaFrequencyHz: result.environment?.mla_frequency_hz,
+    cpuFrequencyKhz: result.environment?.cpu_frequency_khz,
   };
 }
 

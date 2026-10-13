@@ -57,6 +57,20 @@ if (( mla_frequency_hz != MLA_FREQUENCY_HZ )); then
   exit 1
 fi
 
+# The CPU feeds the MLA and runs postprocessing, so its clock also bounds throughput. One cpufreq policy covers
+# every Modalix core. Set any other clock to the 1.4 GHz maximum, and stop before measuring if it does not hold.
+CPU_CPUFREQ=/sys/devices/system/cpu/cpufreq/policy0
+CPU_FREQUENCY_KHZ=1400000
+if (( $(cat "$CPU_CPUFREQ/scaling_cur_freq") != CPU_FREQUENCY_KHZ )); then
+  echo "$CPU_FREQUENCY_KHZ" | sudo -n tee "$CPU_CPUFREQ/scaling_setspeed" >/dev/null ||
+    { echo "Could not set the CPU clock to $CPU_FREQUENCY_KHZ kHz." >&2; exit 1; }
+fi
+cpu_frequency_khz="$(cat "$CPU_CPUFREQ/scaling_cur_freq")"
+if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
+  echo "The CPU clock is $cpu_frequency_khz kHz; benchmarks require $CPU_FREQUENCY_KHZ kHz." >&2
+  exit 1
+fi
+
 for component in "${components[@]}"; do
   output="$OUTPUT_DIR/$component"
   mkdir -p "$output"

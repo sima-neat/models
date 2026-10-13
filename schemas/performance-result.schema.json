@@ -57,7 +57,8 @@
       "properties": {
         "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fingerprint_version": {"const": 2},
-        "mla_frequency_hz": {"type": ["integer", "null"], "minimum": 1}
+        "mla_frequency_hz": {"type": ["integer", "null"], "minimum": 1},
+        "cpu_frequency_khz": {"type": ["integer", "null"], "minimum": 1}
       }
     },
     "power_measurement": {"type": "object"},

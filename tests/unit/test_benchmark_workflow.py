@@ -180,6 +180,16 @@ def test_performance_runs_only_at_the_full_mla_clock() -> None:
     assert 'sudo -n tee "$MLA_DEVFREQ/userspace/set_freq"' in script
     assert "if (( mla_frequency_hz != MLA_FREQUENCY_HZ )); then" in script
 
+
+def test_performance_runs_only_at_the_full_cpu_clock() -> None:
+    script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
+    clock = script.index("CPU_CPUFREQ=/sys/devices/system/cpu/cpufreq/policy0")
+
+    assert clock < script.index('"$MODEL_DIR/scripts/performance.py"')
+    assert 'if (( $(cat "$CPU_CPUFREQ/scaling_cur_freq") != CPU_FREQUENCY_KHZ )); then' in script
+    assert 'sudo -n tee "$CPU_CPUFREQ/scaling_setspeed"' in script
+    assert "if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then" in script
+
 def test_devkit_stages_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark-dispatched-model"]
     steps = benchmark["steps"]
