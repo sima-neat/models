@@ -4,7 +4,6 @@ compile:
   run_tests: true
 accuracy:
   run_tests: true
-  allowed_drop: 5%
   expected:
     modalix_bf16:
       coco_keypoint_map: 0.6864
@@ -34,7 +33,6 @@ accuracy:
       coco_person_box_ap50: 0.7327
 performance:
   run_tests: true
-  allowed_drop: 10%
   expected:
     modalix_bf16:
       model:

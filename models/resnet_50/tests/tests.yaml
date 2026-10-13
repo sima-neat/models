@@ -2,14 +2,12 @@ compile:
   run_tests: true
 accuracy:
   run_tests: true
-  allowed_drop: 5%
   expected:
     modalix_int8:
       top1_accuracy: 0.7764
       top5_accuracy: 0.9356
 performance:
   run_tests: true
-  allowed_drop: 10%
   expected:
     modalix_bf16:
       model:

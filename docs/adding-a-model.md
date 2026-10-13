@@ -312,31 +312,30 @@ with test status `skipped`. Skip a stage only while its tests cannot run, for
 example before the model has a published result to expect values from.
 
 A running `accuracy` or `performance` entry also states what the model must
-deliver on a DevKit:
+deliver on a DevKit in `expected`: the latest published value of every
+measured build. For accuracy, that is every metric the accuracy entry
+declares, per build profile; for performance, `throughput_fps`, per build
+profile and component. Take the values from the model browser's latest
+`develop` results, rounded to 4 decimal places for accuracy and 1 for
+throughput.
 
-- `expected` holds the latest published value of every measured build: for
-  accuracy, every metric the accuracy entry declares, per build profile; for
-  performance, `throughput_fps`, per build profile and component. Take the
-  values from the model browser's latest `develop` results, rounded to 4
-  decimal places for accuracy and 1 for throughput.
-- `allowed_drop` is how far a measured value may fall below its expected value
-  and still pass, as a percentage of that value. Use `5%` for accuracy and
-  `10%` for performance. For a metric whose result says lower is better, the
-  value may rise by that much instead.
+A measured value passes when it falls at most 5% below its expected accuracy
+or 10% below its expected throughput. For a metric whose result says lower is
+better, it may rise by that much instead. Every model uses these limits:
+`ACCURACY_ALLOWED_DROP` and `PERFORMANCE_ALLOWED_DROP` in
+`tools/model_registry/model_tests.py`.
 
 ```yaml
 compile:
   run_tests: true
 accuracy:
   run_tests: true
-  allowed_drop: 5%
   expected:
     modalix_int8:
       top1_accuracy: 0.7764
       top5_accuracy: 0.9356
 performance:
   run_tests: true
-  allowed_drop: 10%
   expected:
     modalix_bf16:
       model:

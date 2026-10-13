@@ -52,12 +52,13 @@ models/<model_id>/tests/
 `tests.yaml` has one entry per stage the model has (`conversion`, `compile`,
 `accuracy`, `performance`), each with `run_tests: true`, or `false` with a
 `skip_reason`. A running `accuracy` or `performance` entry also sets
-`allowed_drop` (`5%` for accuracy, `10%` for performance) and `expected`: the
-latest published `develop` value of every measured build, per build profile
-for each declared accuracy metric, and per build profile and component for
-`throughput_fps`. Each measure test asserts
+`expected`: the latest published `develop` value of every measured build, per
+build profile for each declared accuracy metric, and per build profile and
+component for `throughput_fps`. Each measure test asserts
 `measured_shortfalls(model_dir, "<stage>", result) == []`; it fails when a
-value falls more than `allowed_drop` below its expected value. When a reviewed
+value falls more than `ACCURACY_ALLOWED_DROP` (5%) or
+`PERFORMANCE_ALLOWED_DROP` (10%) in `model_tests.py` below its expected
+value. These limits are shared by every model. When a reviewed
 change moves a published value, update `expected` to the new published result.
 `model-registry validate` enforces the entries, the expected values, and the
 layout; [set up

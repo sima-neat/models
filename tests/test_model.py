@@ -327,12 +327,8 @@ def test_fidelity_entry_is_validated(settings: dict, expected: str) -> None:
 
 
 RUN_TESTS = {"run_tests": True}
-EXPECTED_SCORE = {"run_tests": True, "allowed_drop": "5%", "expected": {"fixture": {"score": 0.5}}}
-EXPECTED_THROUGHPUT = {
-    "run_tests": True,
-    "allowed_drop": "10%",
-    "expected": {"fixture": {"model": {"throughput_fps": 9.0}}},
-}
+EXPECTED_SCORE = {"run_tests": True, "expected": {"fixture": {"score": 0.5}}}
+EXPECTED_THROUGHPUT = {"run_tests": True, "expected": {"fixture": {"model": {"throughput_fps": 9.0}}}}
 
 
 def _write_model_tests(directory: Path, tests: dict) -> None:
@@ -583,8 +579,8 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
         ("accuracy", {**EXPECTED_SCORE, "expected": {"other": {"score": 0.5}}}, "expected.fixture lacks score"),
         ("accuracy", {**EXPECTED_SCORE, "expected": {"fixture": {"top1": 0.5}}}, "expected.fixture lacks score"),
         ("accuracy", {**EXPECTED_SCORE, "expected": {"fixture": {}}}, "accuracy.expected.fixture"),
-        ("accuracy", {"run_tests": True, "expected": {"fixture": {"score": 0.5}}}, "'allowed_drop' is a required"),
-        ("accuracy", {**EXPECTED_SCORE, "allowed_drop": "0.05"}, "accuracy.allowed_drop"),
+        ("accuracy", {"run_tests": True}, "'expected' is a required"),
+        ("accuracy", {**EXPECTED_SCORE, "allowed_drop": "50%"}, "accuracy: Unevaluated properties"),
         ("accuracy", {**EXPECTED_SCORE, "unknown": 1}, "accuracy: Unevaluated properties"),
         ("performance", {**EXPECTED_THROUGHPUT, "expected": {"fixture": {}}}, "expected.fixture.model lacks"),
         (
@@ -597,8 +593,8 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
         "accuracy without its build profile",
         "accuracy without a declared metric",
         "accuracy without values",
-        "missing allowed drop",
-        "allowed drop not a percentage",
+        "missing expected values",
+        "a model's own allowed drop",
         "unknown setting",
         "performance without its component",
         "performance without its throughput",

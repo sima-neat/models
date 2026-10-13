@@ -22,7 +22,6 @@ RUN_MODEL_TESTS = ROOT / "scripts" / "run_model_tests.sh"
 PERFORMANCE_EXPECTED = """\
 performance:
   run_tests: true
-  allowed_drop: 10%
   expected:
     modalix_int8:
       model:
@@ -214,7 +213,7 @@ def accuracy_result(**values: float) -> dict:
 def test_measured_shortfalls_compare_each_expected_value(tmp_path: Path, result: dict, shortfalls: list[str]) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(
-        "accuracy:\n  run_tests: true\n  allowed_drop: 5%\n  expected:\n    modalix_int8:\n"
+        "accuracy:\n  run_tests: true\n  expected:\n    modalix_int8:\n"
         "      top1: 0.80\n      top5: 0.95\n",
         encoding="utf-8",
     )
@@ -225,7 +224,7 @@ def test_measured_shortfalls_compare_each_expected_value(tmp_path: Path, result:
 def test_measured_shortfalls_hold_a_lower_is_better_metric_under_its_allowed_rise(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(
-        "accuracy:\n  run_tests: true\n  allowed_drop: 5%\n  expected:\n    modalix_int8:\n      error: 0.20\n",
+        "accuracy:\n  run_tests: true\n  expected:\n    modalix_int8:\n      error: 0.20\n",
         encoding="utf-8",
     )
     result = accuracy_result(error=0.2101)

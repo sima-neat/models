@@ -4,7 +4,6 @@ compile:
   run_tests: true
 accuracy:
   run_tests: true
-  allowed_drop: 5%
   expected:
     modalix_bf16:
       coco_mask_map: 0.4378
@@ -38,7 +37,6 @@ accuracy:
       coco_box_ap50: 0.6675
 performance:
   run_tests: true
-  allowed_drop: 10%
   expected:
     modalix_bf16:
       model:

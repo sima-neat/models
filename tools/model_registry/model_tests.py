@@ -17,6 +17,10 @@ from jsonschema import Draft202012Validator
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
 from .errors import ValidationError
 
+# How far a measured value may fall below the value tests.yaml expects and still pass, relative to that value.
+ACCURACY_ALLOWED_DROP = 0.05
+PERFORMANCE_ALLOWED_DROP = 0.10
+
 TESTS_DIR = "tests"
 TESTS_FILE = "tests.yaml"
 TESTS_SCHEMA = "model-tests.schema.json"
@@ -65,13 +69,13 @@ def skip_reason(tests: dict[str, Any], stage: str) -> str | None:
 
 
 def measured_shortfalls(model_dir: str | Path, stage: str, result: dict[str, Any]) -> list[str]:
-    """Each value tests.yaml expects of this measured result that the result misses by more than allowed_drop."""
-    entry = load_model_tests(model_dir)[stage]
-    drop = float(entry["allowed_drop"].removesuffix("%")) / 100
+    """Each value tests.yaml expects of this measured result that the result misses by more than the stage's
+    allowed drop."""
+    drop = ACCURACY_ALLOWED_DROP if stage == "accuracy" else PERFORMANCE_ALLOWED_DROP
     build = [result["model"]["build_profile_id"]]
     if stage == "performance":
         build.append(result["model"]["component_id"])
-    expected = entry["expected"]
+    expected = load_model_tests(model_dir)[stage]["expected"]
     for key in build:
         expected = expected.get(key, {})
     if not expected:
@@ -83,9 +87,9 @@ def measured_shortfalls(model_dir: str | Path, stage: str, result: dict[str, Any
         if measured is None:
             shortfalls.append(f"{name} was not measured")
         elif metric.get("direction") == "lower" and measured > value * (1 + drop):
-            shortfalls.append(f"{name} {measured:g} is above {value:g} by more than {entry['allowed_drop']}")
+            shortfalls.append(f"{name} {measured:g} is above {value:g} by more than {drop:.0%}")
         elif metric.get("direction") != "lower" and measured < value * (1 - drop):
-            shortfalls.append(f"{name} {measured:g} is below {value:g} by more than {entry['allowed_drop']}")
+            shortfalls.append(f"{name} {measured:g} is below {value:g} by more than {drop:.0%}")
     return shortfalls
 
 
@@ -118,9 +122,7 @@ def validate_model_tests(model_dir: str | Path, model: dict[str, Any], schema_pa
         if skip_reason(tests, stage) is not None:
             continue
         if not (tests_dir / stage_test_file(stage)).is_file():
-            raise ValidationError(
-                f"{directory}: {stage} tests run but {TESTS_DIR}/{stage_test_file(stage)} is missing"
-            )
+            raise ValidationError(f"{directory}: {stage} tests run but {TESTS_DIR}/{stage_test_file(stage)} is missing")
         if stage in TEST_GROUPS["measure"]:
             _require_expected_values(path, stage, tests[stage]["expected"], _measured_builds(model, stage))
 

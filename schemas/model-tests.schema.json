@@ -63,16 +63,11 @@
       "required": ["run_tests"],
       "properties": {
         "run_tests": {"$ref": "#/$defs/runTests"},
-        "skip_reason": {"$ref": "#/$defs/skipReason"},
-        "allowed_drop": {
-          "description": "How far a measured value may fall below its expected value and still pass, such as 5%.",
-          "type": "string",
-          "pattern": "^([0-9]|[1-9][0-9])(\\.[0-9]+)?%$"
-        }
+        "skip_reason": {"$ref": "#/$defs/skipReason"}
       },
       "if": {"properties": {"run_tests": {"const": false}}},
       "then": {"required": ["skip_reason"]},
-      "else": {"required": ["allowed_drop", "expected"], "not": {"required": ["skip_reason"]}}
+      "else": {"required": ["expected"], "not": {"required": ["skip_reason"]}}
     },
     "metricValues": {
       "type": "object",
