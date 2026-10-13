@@ -146,6 +146,9 @@ tasks:
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
+  oriented_object_detection:
+    display_name: Oriented Object Detection
+    allowed_model_types: [vision]
   pose_estimation:
     display_name: Pose Estimation
     allowed_model_types: [vision]
