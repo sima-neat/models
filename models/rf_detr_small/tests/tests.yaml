@@ -1,0 +1,30 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  allowed_drop: 5%
+  expected:
+    modalix_int8_bf16:
+      coco_map: 0.4646
+      coco_ap50: 0.6480
+      coco_ap75: 0.5006
+      coco_ap_small: 0.2280
+      coco_ap_medium: 0.5140
+      coco_ap_large: 0.6890
+      coco_ar1: 0.3639
+      coco_ar10: 0.6000
+      coco_ar100: 0.6555
+      coco_ar_small: 0.3863
+      coco_ar_medium: 0.7346
+      coco_ar_large: 0.8876
+performance:
+  run_tests: true
+  allowed_drop: 10%
+  expected:
+    modalix_int8_bf16:
+      backbone:
+        throughput_fps: 143.1
+      transformer:
+        throughput_fps: 543.7

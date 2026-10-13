@@ -246,7 +246,7 @@ Open <http://127.0.0.1:4174/?run=53bfaa91-8b75-4bdb-afc2-83019a61f514>
 and click **Download** to review the RF-DETR component dialog.
 
 Run the download and variant-build checks with `node --test tests/browser/*.test.mjs`
-and the existing UI checks with `python -m pytest tests/unit/test_artifact_browser.py`.
+and the existing UI checks with `python -m pytest tests/test_artifact_browser.py`.
 When a catalog build declares `artifact_suffix`, the dialog and download use
 `<model_id>_<artifact_suffix>_mpk.tar.gz`. The browser sends `download_filename` to
 the registry artifact endpoint; deploy registry support before this consumer.

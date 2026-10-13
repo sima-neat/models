@@ -175,10 +175,16 @@ each MPK, the dataset identity, the SHA-256 of `accuracy.py`, and the source
 revision. Each metric named in the entry's `reference` carries that published
 score as its `reference`.
 
-CI publishes it as a `model_accuracy` registry run under the result
-component's compile run. The run records the accuracy stage key and carries an
-`accuracy-result` artifact, an `accuracy/<entry-id>` test result, and one
-`model.accuracy.<metric>` measurement per metric. The model browser shows the
+On the DevKit, `scripts/run_model_tests.sh` runs the model's
+`tests/measure/test_accuracy.py` on the result, which compares each metric
+with the build's expected value in `tests/tests.yaml` ([set up
+`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). CI publishes the result as
+a `model_accuracy` registry run under the result component's compile run. The
+run records the accuracy stage key and carries an `accuracy-result` artifact,
+an `accuracy/<entry-id>` test result whose status is the test outcome
+(`passed`, `failed`, or `skipped`), and one `model.accuracy.<metric>`
+measurement per metric. A failed test still publishes the result, then fails
+the workflow run. The model browser shows the
 first four metrics as tiles and lists the rest in a table, each with its
 published score when the entry records one, and the evaluated sample count.
 

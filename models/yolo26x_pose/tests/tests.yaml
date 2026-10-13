@@ -1,0 +1,44 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  allowed_drop: 5%
+  expected:
+    modalix_bf16:
+      coco_keypoint_map: 0.7133
+      coco_keypoint_ap50: 0.9091
+      coco_keypoint_ap75: 0.7831
+      coco_keypoint_ap_medium: 0.6702
+      coco_keypoint_ap_large: 0.7942
+      coco_keypoint_ar: 0.7713
+      coco_keypoint_ar50: 0.9395
+      coco_keypoint_ar75: 0.8331
+      coco_keypoint_ar_medium: 0.7166
+      coco_keypoint_ar_large: 0.8500
+      coco_person_box_map: 0.5735
+      coco_person_box_ap50: 0.7232
+    modalix_int8:
+      coco_keypoint_map: 0.6710
+      coco_keypoint_ap50: 0.9041
+      coco_keypoint_ap75: 0.7537
+      coco_keypoint_ap_medium: 0.6340
+      coco_keypoint_ap_large: 0.7494
+      coco_keypoint_ar: 0.7361
+      coco_keypoint_ar50: 0.9348
+      coco_keypoint_ar75: 0.8105
+      coco_keypoint_ar_medium: 0.6831
+      coco_keypoint_ar_large: 0.8116
+      coco_person_box_map: 0.5568
+      coco_person_box_ap50: 0.7088
+performance:
+  run_tests: true
+  allowed_drop: 10%
+  expected:
+    modalix_bf16:
+      model:
+        throughput_fps: 29.5
+    modalix_int8:
+      model:
+        throughput_fps: 125.1

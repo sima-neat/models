@@ -54,6 +54,11 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           scripts/run_model_conversion.sh "models/$MODEL_ID" "$CONVERSION" "$EXPORT_DIR"
+      - name: Test the converted model with the model's conversion tests
+        run: |
+          "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" '.[tests]'
+          REGISTRY_PYTHON="$EXPORT_VENV/bin/python" \
+            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/model.onnx"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-west-2

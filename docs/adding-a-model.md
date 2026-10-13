@@ -46,6 +46,13 @@ models/<model-id>/
     convert.py                  # only when model.yaml declares a conversion
     requirements-convert.txt    # required with convert.py
     <helper>.py                 # model-specific surgery, calibration, or shared code
+  tests/                        # the model's tests; see step 10
+    tests.yaml                  # which stage tests run, and the expected DevKit values
+    build/test_conversion.py    # only with convert.py
+    build/test_compile.py
+    measure/test_accuracy.py    # only when model.yaml declares DevKit accuracy
+    measure/test_performance.py # only when model.yaml declares a benchmark
+    fixtures/                   # optional test data
 ```
 
 Put every model-specific setting in `model.yaml`, not in separate
@@ -253,6 +260,7 @@ recompiled build is always remeasured.
 | Change | Reruns |
 | --- | --- |
 | README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
@@ -262,7 +270,120 @@ recompiled build is always remeasured.
 The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
 in `tools/model_registry/stage_keys.py`.
 
-## 10. Validate the contract
+To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
+`models` set to the model and `force_rebuild_all`: it recompiles the model's
+builds, which runs the compile tests and remeasures every build. A changed
+conversion test applies on the next conversion dispatch.
+
+## 10. Write the model's tests
+
+Each model carries its own tests in `tests/`, one file per stage, named by
+what it checks. A test either exercises the model's scripts, or checks the real
+output of its stage by taking that output's fixture from the root
+`conftest.py`:
+
+| File | Exercises | Stage-output fixture | That test runs in CI |
+| --- | --- | --- | --- |
+| `build/test_conversion.py` | `convert.py` | `converted`: the ONNX path | after conversion, before the ONNX upload |
+| `build/test_compile.py` | `compile.py`, calibration, surgery, declared training code | `compiled`: the build's output directory | after compilation, before the build is published |
+| `measure/test_accuracy.py` | `accuracy.py` | `accuracy`: the accuracy result | after the DevKit accuracy stage, before publication |
+| `measure/test_performance.py` | `performance.py` | `performance`: one component's performance result | after the DevKit performance stage, before publication |
+
+A test without a stage-output fixture runs in `python -m pytest` on every pull
+request. Import a model script with the `load_script` fixture, as in
+`load_script("compile")`; it stubs Model Compiler and DevKit modules the host
+lacks. `build_profile` names the build profile of the given output.
+
+A failing conversion or compile test stops the ONNX upload or the build's
+publication. A failing measurement test publishes its result with test status
+`failed`, then fails the run.
+
+### Set up `tests/tests.yaml`
+
+`tests/tests.yaml` has one entry per stage the model has: `conversion` when
+the model has `scripts/convert.py`, `compile` always, `accuracy` when
+`model.yaml` declares a `devkit_script` accuracy entry, and `performance` when
+it declares a benchmark. `model-registry validate` rejects a missing or extra
+entry.
+
+Each entry sets `run_tests`. `true` runs the stage's test file. `false` skips
+it and needs a `skip_reason`; a skipped measurement still publishes its result,
+with test status `skipped`. Skip a stage only while its tests cannot run, for
+example before the model has a published result to expect values from.
+
+A running `accuracy` or `performance` entry also states what the model must
+deliver on a DevKit:
+
+- `expected` holds the latest published value of every measured build: for
+  accuracy, every metric the accuracy entry declares, per build profile; for
+  performance, `throughput_fps`, per build profile and component. Take the
+  values from the model browser's latest `develop` results, rounded to 4
+  decimal places for accuracy and 1 for throughput.
+- `allowed_drop` is how far a measured value may fall below its expected value
+  and still pass, as a percentage of that value. Use `5%` for accuracy and
+  `10%` for performance. For a metric whose result says lower is better, the
+  value may rise by that much instead.
+
+```yaml
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  allowed_drop: 5%
+  expected:
+    modalix_int8:
+      top1_accuracy: 0.7764
+      top5_accuracy: 0.9356
+performance:
+  run_tests: true
+  allowed_drop: 10%
+  expected:
+    modalix_bf16:
+      model:
+        throughput_fps: 578.6
+    modalix_int8:
+      model:
+        throughput_fps: 1491.4
+```
+
+`model-registry validate` requires an `expected` value for every build the
+stage measures. The measurement test compares the result with these values
+through one shared function:
+
+```python
+from pathlib import Path
+from typing import Any
+
+from model_registry.model_tests import measured_shortfalls
+
+
+def test_performance_meets_its_expected_values(performance: dict[str, Any], model_dir: Path) -> None:
+    assert measured_shortfalls(model_dir, "performance", performance) == []
+```
+
+Update `expected` when a reviewed change moves a published value, such as a
+new compiler or a faster script, in the same pull request or right after its
+results publish. No stage key reads `tests/`, so editing `tests.yaml` reruns
+nothing; the new values apply the next time the stage runs. To apply them
+now, dispatch `Vulcan Model Orchestrator` with `models` set to the model and
+`force_rebuild_all`, which recompiles and remeasures it.
+
+### Run the tests locally
+
+From a virtual environment with this checkout's development extra installed
+(`python -m pip install '.[dev]'`), run the model's tests, and run one stage's
+file on an output you produced:
+
+```bash
+python -m pytest models/<model-id>/tests
+REGISTRY_PYTHON="$(command -v python)" \
+  scripts/run_model_tests.sh performance models/<model-id> <performance-result.json>
+```
+
+`run_model_tests.sh` prints `passed`, `failed`, or `skipped`, as CI publishes
+it.
+
+## 11. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>

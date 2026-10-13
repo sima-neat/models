@@ -1,0 +1,48 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  allowed_drop: 5%
+  expected:
+    modalix_bf16:
+      coco_mask_map: 0.3958
+      coco_mask_ap50: 0.6086
+      coco_mask_ap75: 0.4256
+      coco_mask_ap_small: 0.2003
+      coco_mask_ap_medium: 0.4443
+      coco_mask_ap_large: 0.5639
+      coco_mask_ar1: 0.3216
+      coco_mask_ar10: 0.5191
+      coco_mask_ar100: 0.5619
+      coco_mask_ar_small: 0.3628
+      coco_mask_ar_medium: 0.6199
+      coco_mask_ar_large: 0.7392
+      coco_box_map: 0.4730
+      coco_box_ap50: 0.6409
+    modalix_int8:
+      coco_mask_map: 0.3764
+      coco_mask_ap50: 0.5840
+      coco_mask_ap75: 0.4034
+      coco_mask_ap_small: 0.1861
+      coco_mask_ap_medium: 0.4290
+      coco_mask_ap_large: 0.5475
+      coco_mask_ar1: 0.3128
+      coco_mask_ar10: 0.5094
+      coco_mask_ar100: 0.5527
+      coco_mask_ar_small: 0.3461
+      coco_mask_ar_medium: 0.6142
+      coco_mask_ar_large: 0.7287
+      coco_box_map: 0.4477
+      coco_box_ap50: 0.6202
+performance:
+  run_tests: true
+  allowed_drop: 10%
+  expected:
+    modalix_bf16:
+      model:
+        throughput_fps: 146.7
+    modalix_int8:
+      model:
+        throughput_fps: 20.5

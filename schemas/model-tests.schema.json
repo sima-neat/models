@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/model-tests.schema.json",
+  "title": "SiMa Neat model tests",
+  "description": "One model's tests/tests.yaml: whether each stage's test file runs, and what the model is expected to deliver on a DevKit. build/ checks conversion and compilation; measure/ checks accuracy and performance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["compile"],
+  "properties": {
+    "conversion": {"$ref": "#/$defs/buildStage"},
+    "compile": {"$ref": "#/$defs/buildStage"},
+    "accuracy": {
+      "$ref": "#/$defs/measureStage",
+      "unevaluatedProperties": false,
+      "properties": {
+        "expected": {
+          "description": "Per build profile, the value of every metric the accuracy result reports.",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/metricValues"}
+        }
+      }
+    },
+    "performance": {
+      "$ref": "#/$defs/measureStage",
+      "unevaluatedProperties": false,
+      "properties": {
+        "expected": {
+          "description": "Per build profile and component, the throughput its performance result reports.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["throughput_fps"],
+              "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "runTests": {
+      "description": "true runs the stage's test file; false skips it and needs a skip_reason.",
+      "type": "boolean"
+    },
+    "skipReason": {"type": "string", "minLength": 1},
+    "buildStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_tests"],
+      "properties": {
+        "run_tests": {"$ref": "#/$defs/runTests"},
+        "skip_reason": {"$ref": "#/$defs/skipReason"}
+      },
+      "if": {"properties": {"run_tests": {"const": false}}},
+      "then": {"required": ["skip_reason"]},
+      "else": {"not": {"required": ["skip_reason"]}}
+    },
+    "measureStage": {
+      "type": "object",
+      "required": ["run_tests"],
+      "properties": {
+        "run_tests": {"$ref": "#/$defs/runTests"},
+        "skip_reason": {"$ref": "#/$defs/skipReason"},
+        "allowed_drop": {
+          "description": "How far a measured value may fall below its expected value and still pass, such as 5%.",
+          "type": "string",
+          "pattern": "^([0-9]|[1-9][0-9])(\\.[0-9]+)?%$"
+        }
+      },
+      "if": {"properties": {"run_tests": {"const": false}}},
+      "then": {"required": ["skip_reason"]},
+      "else": {"required": ["allowed_drop", "expected"], "not": {"required": ["skip_reason"]}}
+    },
+    "metricValues": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"type": "number"}
+    }
+  }
+}

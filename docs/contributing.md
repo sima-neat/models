@@ -45,7 +45,9 @@ rules in [Model categorization taxonomy](model-taxonomy.md).
 Put common lifecycle behavior in `tools/`; do not copy download, cache,
 checksum, MPK validation, or publication code into a model directory. Changes
 to shared tooling, schemas, dependency pins, and workflows affect more than one
-model and should include corresponding unit or contract tests.
+model and should include corresponding unit or contract tests. A model change
+updates that model's own tests under `models/<model-id>/tests/` ([write the
+model's tests](adding-a-model.md#10-write-the-models-tests)).
 
 ## Never commit generated or sensitive artifacts
 
@@ -117,8 +119,9 @@ provenance and are reserved for CI.
 ## CI and trust boundaries
 
 Pull requests run `Target Branch Checks` on the merge result, on
-GitHub-hosted infrastructure: the unit tests, which validate the complete
-catalog and taxonomy and resolve the compiler pin, the `model-registry` package
+GitHub-hosted infrastructure: the repository tests and every model's tests
+that need no stage output, which also validate the complete catalog and
+taxonomy and resolve the compiler pin, the `model-registry` package
 build, and the model browser checks. They do not schedule
 contributor-controlled recipe, surgery, or measurement code on a self-hosted
 runner, and they read no registry state.
@@ -153,8 +156,9 @@ on the reviewed revision:
 3. **Authorize.** Each requested runner class is checked against the protected
    environment specification.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
-   access, `scripts/run_model_compilation.sh` runs the recipe, and every MPK is
-   verified with its provenance.
+   access, `scripts/run_model_compilation.sh` runs the recipe, every MPK is
+   verified with its provenance, and the model's compile tests check the
+   output. A failing test leaves the build unpublished.
 5. **Publish.** A GitHub-hosted job verifies the complete component set,
    publishes each component and its fidelity report as a compile run, starts
    the DevKit stages for a new Modalix build, assembles and publishes the
@@ -165,8 +169,9 @@ on the reviewed revision:
    they still lack.
 
 **Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
-stages of one build on a DevKit, then publishes each result as its own
-registry run under the compile run.
+stages of one build on a DevKit, runs the model's measure tests on each result,
+then publishes each result as its own registry run under the compile run, with
+the test outcome. A failed test fails the run after publication.
 
 The compile and the DevKit stages are separate GitHub Actions runs. A
 successful compile does not by itself mean the dispatched benchmark succeeded;
@@ -176,7 +181,9 @@ up with a focused manifest, recipe, or script change and reproducible evidence.
 
 Production is an explicit protected workflow choice, and the DevKit stages run
 only in staging. A manual dispatch can name models, build profiles, or
-components and can force every selected build to recompile. A dispatch that
+components and can force every selected build to recompile, which also
+applies a changed model test at once; otherwise a changed test applies the next
+time its stage runs. A dispatch that
 names build profiles or components compiles and publishes those builds but
 does not publish packages or update the catalog.
 

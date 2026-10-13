@@ -35,12 +35,12 @@ artifact-browser/          Model browser and its local preview server (preview.p
 deps/                      Repository-wide toolchain and DevKit runtime pins
 design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
-models/<model-id>/         model.yaml, README.md, hero.png, and model code in scripts/
+models/<model-id>/         model.yaml, README.md, hero.png, model code in scripts/, and its tests in tests/
 packaging/model-registry/  Build and installer for the author-safe sima-cli package
 schemas/                   Model, composition, package, and result JSON Schemas
 scripts/                   Stage runner scripts and CI helpers
 taxonomies/                Sanctioned model categories and display labels
-tests/                     Schema fixtures, unit tests, and contract tests
+tests/                     Repository-wide unit and contract tests and their fixtures
 tools/model_registry/      Shared CLI and lifecycle implementation
 training/                  Declared training code that is a compile input of its model
 website/                   Developer documentation site
@@ -93,6 +93,7 @@ this table. Modules marked CI only are removed from the author package by
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
 | `runner_approval.py` | authorizing requested compile runner classes |
+| `model_tests.py` | each model's test files and `tests/tests.yaml`, the comparison of a measured result with its expected values, and the outcomes a stage's tests report |
 | `errors.py` | the error types every module raises |
 
 ## Stages and stage keys
@@ -112,8 +113,10 @@ entries, the model's compile scripts, declared training code, and the compiler
 version. The performance and accuracy keys cover the compile runs and MPK
 digests they measure, their `model.yaml` entries and model script, the shared
 tooling of that stage, and the DevKit runtime pin. A recompiled build gets new
-DevKit keys and is therefore remeasured. The contributor guide lists every
-input in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
+DevKit keys and is therefore remeasured. No key reads a model's `tests/`, so a
+changed test applies the next time its stage runs. The contributor guide lists
+every input in [what a change
+reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
 
@@ -126,12 +129,13 @@ push (Vulcan Model Orchestrator, every push)
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
   -> compile (Vulcan Model Compile, per selected build)
-       compile: run_model_compilation.sh, verify-mpk (self-hosted, read-only)
+       compile: run_model_compilation.sh, verify-mpk, the model's compile tests (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
   -> publish the catalog snapshot
   -> measure: start the DevKit stages that reused builds still lack
 DevKit stages (per build)
-  -> performance and accuracy on a DevKit, then publish each result
+  -> performance and accuracy on a DevKit, then the model's measure tests on each result
+  -> publish each result with its test outcome; a failed test then fails the run
 ```
 
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current

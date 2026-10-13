@@ -23,6 +23,7 @@ from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import load_and_validate_model
+from .model_tests import require_test_outcome
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 from .stage_keys import (
     ACCURACY_FINGERPRINT_VERSION,
@@ -245,13 +246,17 @@ def publish_benchmark_result(
     github_run_url: str | None = None,
     schema_path: str | Path | None = None,
     repository: str | Path,
+    test_status: str,
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
     """Publish one component's DevKit performance result as a ``model_benchmark`` run under its compile run.
 
     The run fingerprint is the component's performance key, read from ``repository`` at the measured revision.
+    A passed result's test result carries ``test_status``, the outcome of the model's performance tests on it;
+    the run still completes when they fail, so the stage is not measured again.
     """
+    test_status = require_test_outcome(test_status)
     root = Path(repository).expanduser().resolve()
     path = Path(result_path).expanduser().resolve()
     log = Path(log_path).expanduser().resolve() if log_path is not None else None
@@ -384,7 +389,7 @@ def publish_benchmark_result(
         f"{stable_key}-artifact",
     )
     test_body: JsonObject = {
-        "status": "passed" if result["status"] == "passed" else "error",
+        "status": test_status if result["status"] == "passed" else "error",
         "version": str(result["schema_version"]),
         "summary": result,
     }
@@ -475,6 +480,7 @@ def publish_accuracy_run(
     environment: str,
     branch: str,
     git_sha: str,
+    test_status: str,
     kms_key_id: str | None = None,
     github_run_url: str | None = None,
     request: Request | None = None,
@@ -482,8 +488,11 @@ def publish_accuracy_run(
 ) -> JsonObject:
     """Publish a build profile's DevKit accuracy result as a ``model_accuracy`` run under its result component.
 
-    The run's inputs are the compiled MPKs the accuracy script ran; its fingerprint is the accuracy key.
+    The run's inputs are the compiled MPKs the accuracy script ran; its fingerprint is the accuracy key. Its
+    test result carries ``test_status``, the outcome of the model's accuracy tests on the result; the run
+    still completes when they fail, so the stage is not measured again.
     """
+    test_status = require_test_outcome(test_status)
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
     path = Path(result_path).expanduser().resolve()
@@ -597,6 +606,7 @@ def publish_accuracy_run(
         fingerprint=stage_key,
         object_key=f"{prefix}/{path.name}",
         stable_key=stable_key,
+        test_status=test_status,
     )
     if log_path is not None:
         log = Path(log_path).expanduser().resolve()

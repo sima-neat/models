@@ -169,6 +169,13 @@ jobs:
           "$MODEL_COMPILER_PYTHON" -c 'import certifi, jsonschema, yaml'
           echo "PYTHONPATH=$tooling${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
 
+      # Installed before compiling, so an install failure cannot discard a finished build. Only the test step
+      # puts it on PYTHONPATH, so it cannot shadow a compiler package during compilation.
+      - name: Install pytest for the model's compile tests
+        run: |
+          "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check \
+            --target "$RUNNER_TEMP/model-test-tools" 'pytest>=8,<9'
+
       - name: Compile the invocation with its model's compile script
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -231,6 +238,12 @@ jobs:
           path: ${{ env.ARTIFACT_ROOT }}
           if-no-files-found: error
           retention-days: 14
+
+      # A failing test fails this job, so the publish job never runs for this build.
+      - name: Test the build with its model's compile tests
+        run: |
+          PYTHONPATH="$RUNNER_TEMP/model-test-tools${PYTHONPATH:+:$PYTHONPATH}" REGISTRY_PYTHON="$MODEL_COMPILER_PYTHON" \
+            scripts/run_model_tests.sh compile "$MODEL_DIR" "$PROFILE_OUTPUT_DIR"
 
   publish:
     name: Publish

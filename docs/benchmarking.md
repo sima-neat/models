@@ -133,19 +133,26 @@ clocks, then handles each component:
    digest, the source revision, the actual Core and platform versions, and
    the MLA and CPU clocks. It never runs or times a model.
 
+`scripts/run_model_tests.sh` then runs the model's
+`tests/measure/test_performance.py` on each component's result, which
+compares its throughput with the expected value in `tests/tests.yaml`, and
+records `passed`, `failed`, or `skipped` ([set up
+`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)).
+
 A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
 performance stage key and carries a `performance-result` artifact, the
-benchmark log, a `performance/model-synthetic` test result, and the
-measurements. The model browser reads performance results with
-`schema_version` 1 through 5, shows measured values with their units, and marks
-absent metrics unavailable. Its Speed card shows the MLA and CPU clocks when
-the result records them. A failure keeps its workflow evidence and is not
-published as a successful measurement. Performance and accuracy publish on
-their own outcomes: when one stage fails, the other's result is still
-published, and the next push reruns only the stage that has no run. A
-dispatched run stops before measuring when its branch has since changed the
-tooling the stage keys hash; the newer push measures that build instead.
+benchmark log, a `performance/model-synthetic` test result whose status is the
+test outcome, and the measurements. A failed test still publishes the result
+and completes its run, then fails the workflow run. The model browser reads
+performance results with `schema_version` 1 through 5, shows measured values
+with their units, and marks absent metrics unavailable. Its Speed card shows the
+MLA and CPU clocks when the result records them. A failed measurement keeps its
+workflow evidence and is not published as a successful measurement. Performance
+and accuracy publish on their own outcomes: when one stage fails, the other's
+result is still published, and the next push reruns only the stage that has no
+run. A dispatched run stops before measuring when its branch has since changed
+the tooling the stage keys hash; the newer push measures that build instead.
 
 Because the performance stage has its own key, editing `performance.py`, a
 `benchmark` entry, or the DevKit runtime pin remeasures performance from the

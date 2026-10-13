@@ -17,6 +17,7 @@ from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .fidelity_config import find_fidelity_config
 from .model import component_for, load_and_validate_model, load_models, profile_component_for
+from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
 from .stage_plan import plan_stages, resolve_base_branches
 
@@ -277,6 +278,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_benchmark.add_argument(
         "--repository", type=Path, required=True, help="models checkout at the measured revision"
     )
+    publish_benchmark.add_argument(
+        "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's performance tests"
+    )
     publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
 
     publish_accuracy = subcommands.add_parser(
@@ -298,6 +302,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_accuracy.add_argument("--branch", required=True)
     publish_accuracy.add_argument("--git-sha", required=True)
     publish_accuracy.add_argument("--github-run-url")
+    publish_accuracy.add_argument(
+        "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's accuracy tests"
+    )
     publish_accuracy.add_argument("--json", action="store_true", dest="json_output")
 
     benchmark_set = subcommands.add_parser(
@@ -754,6 +761,7 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
         github_run_url=args.github_run_url,
         compile_run_id=args.compile_run_id,
         repository=args.repository,
+        test_status=args.test_status,
     )
     message = (
         json.dumps(result, sort_keys=True)
@@ -781,6 +789,7 @@ def _publish_accuracy(args: argparse.Namespace) -> int:
         branch=args.branch,
         git_sha=args.git_sha,
         github_run_url=args.github_run_url,
+        test_status=args.test_status,
     )
     message = (
         json.dumps(result, sort_keys=True)
