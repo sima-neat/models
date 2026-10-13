@@ -127,9 +127,9 @@ calibrations:
   status: ready
   dataset:
     id: coco-2017
-    variant: mini
-    sha256: abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78
-    size_bytes: 462182592
+    variant: cal
+    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
+    size_bytes: 187510866
 build_profiles:
 - id: modalix_bf16
   target: modalix

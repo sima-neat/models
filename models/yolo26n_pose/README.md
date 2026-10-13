@@ -132,8 +132,9 @@ and top-300 selection lets the whole network run on the MLA. The cut changes no
 values: the head tensors match the full graph exactly.
 
 The INT8 build calibrates on 50 images drawn with a fixed seed from the
-`cal2017` split of the COCO 2017 mini dataset, so no scored val2017 image
-calibrates the model. In the pinned Model Compiler environment, compile one
+`cal2017` train2017 images of the COCO 2017 `cal` dataset that have a
+person with labelled keypoints, so no scored val2017 image calibrates the
+model. In the pinned Model Compiler environment, compile one
 build with the shared runner script. It resolves the source and the calibration
 archive, runs `scripts/compile.py`, and validates the MPK:
 
@@ -147,7 +148,7 @@ graphs and generated models stay in a temporary directory outside Git.
 
 ### DevKit accuracy
 
-The `coco_keypoint_accuracy` accuracy entry declares the COCO 2017 `keypoints`
+The `coco_keypoint_accuracy` accuracy entry declares the COCO 2017 `val`
 dataset archive, which holds the original val2017 images and the official
 person keypoint annotations, the published metrics, and Ultralytics' reference
 score. On a Modalix DevKit, run the accuracy stage on the output of

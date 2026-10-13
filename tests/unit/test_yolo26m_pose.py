@@ -131,23 +131,39 @@ def test_preprocessing_returns_rgb_hwc_in_unit_range() -> None:
     np.testing.assert_array_equal(result[320, 320], [0, 0, 1])
 
 
-def test_calibration_draws_a_seeded_sample_from_cal2017_only(tmp_path: Path) -> None:
+def test_calibration_draws_a_seeded_sample_of_keypoint_labelled_cal2017_images(tmp_path: Path) -> None:
     calibration = load_module("calibration")
+    # Images 0-4 have a person with labelled keypoints; image 5's only person has none.
+    keypoints = {
+        "images": [{"id": index, "file_name": f"{index:012d}.jpg"} for index in range(6)],
+        "annotations": [{"image_id": index, "num_keypoints": 0 if index == 5 else 3} for index in range(6)]
+        + [{"image_id": 2, "num_keypoints": 0}],
+    }
+    files = {f"coco/{split}/{index:012d}.jpg": b"x" for split in ("cal2017", "val2017") for index in range(6)}
+    files["coco/annotations/person_keypoints_cal2017.json"] = json.dumps(keypoints).encode()
     archive = tmp_path / "coco.tgz"
     with tarfile.open(archive, "w:gz") as stream:
-        for split in ("cal2017", "val2017"):
-            for index in range(6):
-                info = tarfile.TarInfo(f"mini/{split}/{index:012d}.webp")
-                info.size = 1
-                stream.addfile(info, io.BytesIO(b"x"))
+        for name, content in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            stream.addfile(info, io.BytesIO(content))
 
     names = calibration.calibration_names(archive, 4)
 
     assert names == calibration.calibration_names(archive, 4)
     assert len(set(names)) == 4
-    assert all(Path(name).parent.name == "cal2017" for name in names)
-    with pytest.raises(ValueError, match="cannot select 7"):
-        calibration.calibration_names(archive, 7)
+    assert all(Path(name).parent.name == "cal2017" and Path(name).stem != f"{5:012d}" for name in names)
+    with pytest.raises(ValueError, match="cannot select 6 calibration images from 5 keypoint-labelled"):
+        calibration.calibration_names(archive, 6)
+
+
+def test_calibration_requires_the_cal2017_keypoint_annotations(tmp_path: Path) -> None:
+    calibration = load_module("calibration")
+    (tmp_path / "cal2017").mkdir()
+    (tmp_path / "cal2017" / "000000000001.jpg").write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="person_keypoints_cal2017.json"):
+        calibration.calibration_names(tmp_path, 1)
 
 
 def _source_graph(constant_weight: bool = False) -> onnx.ModelProto:
@@ -406,5 +422,5 @@ def test_model_declares_the_cut_interface_and_both_builds(monkeypatch: pytest.Mo
     entry = model["accuracy"][0]
     assert entry["metrics"] == list(load_module("accuracy", monkeypatch, BOARD_MODULES).METRICS)
     assert entry["required_metrics"] == ["coco_keypoint_map"]
-    assert (entry["dataset"]["id"], entry["dataset"]["variant"]) == ("coco-2017", "keypoints")
-    assert model["calibrations"][0]["dataset"]["variant"] == "mini"
+    assert (entry["dataset"]["id"], entry["dataset"]["variant"]) == ("coco-2017", "val")
+    assert model["calibrations"][0]["dataset"]["variant"] == "cal"

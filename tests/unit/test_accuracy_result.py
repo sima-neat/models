@@ -77,7 +77,7 @@ def test_import_accuracy_records_the_entry_dataset_and_compiled_mpks(tmp_path: P
     assert report["model"]["package_id"] == "default"
     assert report["model"]["artifacts"] == digests
     assert report["validation"] == {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"}
-    assert report["dataset"]["sha256"] == "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78"
+    assert report["dataset"]["sha256"] == "a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da"
     assert report["execution"]["models_commit"] == GIT_SHA
     script = ROOT / "models" / "rf_detr_small" / "scripts" / "accuracy.py"
     assert report["execution"]["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()

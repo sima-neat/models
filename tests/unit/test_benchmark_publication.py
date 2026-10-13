@@ -515,9 +515,9 @@ def rf_detr_accuracy(tmp_path: Path, artifacts: dict[str, str]) -> Path:
         "validation": {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"},
         "dataset": {
             "id": "coco-2017",
-            "variant": "mini",
+            "variant": "val",
             "split": "val2017",
-            "sha256": "abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78",
+            "sha256": "a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da",
             "evaluated_samples": 5000,
             "available_samples": 5000,
         },

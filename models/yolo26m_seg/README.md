@@ -148,8 +148,8 @@ network run on the MLA. The cut changes no values: the head tensors match the
 full graph exactly.
 
 The INT8 build calibrates on 50 images drawn with a fixed seed from the
-`cal2017` split of the COCO 2017 mini dataset, so no scored val2017 image
-calibrates the model. In the pinned Model Compiler environment, compile one
+`cal2017` train2017 images of the COCO 2017 `cal` dataset, so no scored
+val2017 image calibrates the model. In the pinned Model Compiler environment, compile one
 build with the shared runner script. It resolves the source and the calibration
 archive, runs `scripts/compile.py`, and validates the MPK:
 

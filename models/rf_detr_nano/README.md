@@ -140,7 +140,8 @@ Two further rewrites remove work that the compiler would otherwise schedule:
 These rewrites change only float32 rounding. The rewrites leave the interfaces
 unchanged and fail on an unexpected export.
 
-The recipe sorts the COCO 2017 mini image names and shuffles them with the
+The recipe sorts the image names of the COCO 2017 `cal` dataset, 1,000
+train2017 images that no accuracy run scores, and shuffles them with the
 declared seed. It uses the first 50 images for calibration and the next 50 for
 fidelity; labels are not needed for the tensor comparison. Resolve the dataset,
 then run the grouped recipe in the pinned Model Compiler environment:
@@ -187,7 +188,7 @@ tensors, generated models, and reports must remain outside Git.
 
 ### DevKit accuracy
 
-The `coco_accuracy` accuracy entry declares the COCO 2017 `mini` dataset
+The `coco_accuracy` accuracy entry declares the COCO 2017 `val` dataset
 archive, the published metrics, and Roboflow's reference scores. On a Modalix
 DevKit, run the accuracy stage on the output of
 `scripts/run_model_compilation.sh` above, setting `REGISTRY_PYTHON` to a Python
