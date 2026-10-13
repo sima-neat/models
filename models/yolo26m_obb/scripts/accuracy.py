@@ -264,7 +264,8 @@ def score(detections: dict[str, np.ndarray], label_dir: Path) -> tuple[dict[str,
         for label in range(len(CLASSES)):
             mine, theirs = boxes[boxes[:, 6] == label], np.flatnonzero(labels == label)
             best, index = best_overlaps(corners(mine), polygons[theirs])
-            truth = np.where(index >= 0, theirs[np.maximum(index, 0)] + offset, -1)
+            truth = np.full(len(mine), -1)
+            truth[index >= 0] = theirs[index[index >= 0]] + offset
             found[label].append(np.column_stack([mine[:, 5], best, truth]))
         offset += len(labels)
     truth_difficult = np.concatenate(difficult_flags)
