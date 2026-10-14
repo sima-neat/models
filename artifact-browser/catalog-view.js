@@ -10,7 +10,7 @@ import {
   runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl,
 } from "./api.js";
 
-// A filter lists only the values the loaded builds use, labeled from the taxonomy.
+// A filter lists only the values the loaded models use, labeled from the taxonomy.
 function filterOptions(section, values, emptyLabel) {
   return `<option value="">${escapeHtml(emptyLabel)}</option>${values
     .map((id) => [id, taxonomyLabel(section, id)])
@@ -26,6 +26,8 @@ function hideFilterWithoutChoice(element) {
 
 export function populateCategoryFilters() {
   if (!state.taxonomy) return;
+  // A reused build keeps the categories it was compiled with; the catalog holds the current ones.
+  const source = catalogMode() ? state.models : state.runs;
   const definitions = [
     ["model-type-filter", "model_types", "model_type", "Any type"],
     ["task-filter", "tasks", "tasks", "Any task"],
@@ -37,7 +39,7 @@ export function populateCategoryFilters() {
     const element = elements[elementId];
     const selection = state.categorySelection[elementId] || "";
     const selected = Object.hasOwn(state.taxonomy[section] || {}, selection) ? selection : "";
-    const values = [...new Set([selected, ...state.runs.flatMap((run) => run[field] ?? [])])].filter(Boolean);
+    const values = [...new Set([selected, ...source.flatMap((item) => item[field] ?? [])])].filter(Boolean);
     element.innerHTML = filterOptions(section, values, emptyLabel);
     element.value = selected;
     state.categorySelection[elementId] = selected;
