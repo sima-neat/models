@@ -11,8 +11,7 @@ modalities:
   - bounding_boxes
   - class_scores
 architecture:
-  id: yolo_26
-  variant: n_coco_640x640
+  id: yolo
 owners:
 - '@sima-neat/models'
 license:

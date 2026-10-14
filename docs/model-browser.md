@@ -23,8 +23,9 @@ Changing the name, description, or hero does not recompile or remeasure any
 build, because none of them is part of a stage key.
 
 Search matches model, build-profile, and component names and the taxonomy
-labels. Task and architecture filters sit beside the cards. Branch, compiler,
-type, paradigm, and input filters are under **More filters**.
+labels. Task and model family filters sit beside the cards. Architecture, type,
+input, branch, and compiler filters are under **More filters**. A filter lists
+only the values the loaded builds use and is hidden when fewer than two remain.
 
 To compare builds, choose **Compare** in the top bar. The page has three
 pickers, one per build; opening it from a model page fills the first picker

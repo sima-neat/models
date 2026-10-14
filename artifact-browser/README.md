@@ -114,8 +114,10 @@ additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
 model, build-profile, and component names together with category names. Task and
-architecture filters sit beside the cards; branch, compiler, type, paradigm, and
-input filters stay under **More filters**, which opens when one of them is active.
+model family filters sit beside the cards; architecture, type, input, branch, and
+compiler filters stay under **More filters**, which opens when one of them is active.
+Each filter lists only the values the loaded builds use, and a filter with fewer
+than two values is hidden unless it is set.
 On narrow screens the filters move into a drawer whose button shows the
 active-filter count.
 The branch filter defaults to `develop`. A branch selected by the user is saved per

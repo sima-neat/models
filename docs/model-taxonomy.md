@@ -16,8 +16,7 @@ modalities:
   inputs: [image]
   outputs: [class_scores]
 architecture:
-  id: resnet_50
-  variant: imagenet_1k
+  id: resnet
 ```
 
 The facets are intentionally independent:
@@ -25,9 +24,19 @@ The facets are intentionally independent:
 - model type describes the broad product class, such as Vision, LLM, or VLM;
 - task describes what the model does;
 - modality describes semantic inputs and outputs;
-- architecture identifies the sanctioned family/version and derives its
-  technical paradigm, such as CNN or decoder transformer;
-- tags are normalized free-form secondary descriptors.
+- `architecture.id` names the model family, the upstream model line without its
+  generation or size: `yolo`, not `yolo_26` or `yolo26n`. The model's `id` and
+  `display_name` carry the generation and size. The browser labels this filter
+  Model family;
+- the family's `paradigm` (CNN or Transformer) is derived, not declared. The
+  browser labels it Architecture;
+- `tags` are optional search terms that no facet covers, such as a training
+  dataset (`coco`) or a deployment trait (`one_class`). Write each as a
+  lowercase ID with underscores, and do not repeat a task, family, or model
+  type.
+
+To categorize a model, take every ID from the taxonomy. When none fits, add the
+entry to `taxonomies/model-taxonomy.yaml` in the same pull request.
 
 ## Publication identity
 

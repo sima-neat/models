@@ -12,8 +12,7 @@ modalities:
   - class_scores
   - masks
 architecture:
-  id: yolo_26
-  variant: s_coco_seg_640x640
+  id: yolo
 owners:
 - '@sima-neat/models'
 license:

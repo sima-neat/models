@@ -654,11 +654,7 @@ def test_catalog_model_is_valid() -> None:
     assert model["tasks"] == ["image_classification"]
     categorization = validate_model_categorization(model, load_taxonomy(TAXONOMY))
     assert categorization is not None
-    assert categorization["architecture"] == {
-        "id": "resnet_50",
-        "paradigm": "cnn",
-        "variant": "imagenet_1k",
-    }
+    assert categorization["architecture"] == {"id": "resnet", "paradigm": "cnn"}
     assert model["components"][0]["source"]["sha256"] == (
         "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     )
@@ -687,7 +683,7 @@ def test_incompatible_model_type_and_architecture_fail() -> None:
     model["model_type"] = "llm"
     model["tasks"] = ["text_generation"]
     model["modalities"] = {"inputs": ["text"], "outputs": ["text"]}
-    with pytest.raises(ValidationError, match="architecture 'resnet_50' is not compatible"):
+    with pytest.raises(ValidationError, match="architecture 'resnet' is not compatible"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 
@@ -703,16 +699,6 @@ def test_category_fields_are_required() -> None:
     for field in ("model_type", "tasks", "modalities", "architecture"):
         model.pop(field)
     with pytest.raises(ValidationError, match="'model_type' is a required property"):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
-
-
-def test_duplicate_component_roles_fail() -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["architecture"]["components"] = [
-        {"role": "encoder", "architecture_id": "clip_vit_l_14"},
-        {"role": "encoder", "architecture_id": "llama_2"},
-    ]
-    with pytest.raises(ValidationError, match=r"architecture.components\[1\].role duplicates"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
 
 

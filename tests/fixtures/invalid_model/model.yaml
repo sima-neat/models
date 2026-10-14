@@ -4,7 +4,7 @@ description: Invalid fixture with a mutable, unchecked component source.
 model_type: vision
 tasks: [image_classification]
 modalities: {inputs: [image], outputs: [class_scores]}
-architecture: {id: resnet_50, variant: invalid}
+architecture: {id: resnet}
 owners: ["@sima-neat/models"]
 license:
   spdx: Apache-2.0

@@ -10,8 +10,7 @@ modalities:
   outputs:
   - class_scores
 architecture:
-  id: resnet_50
-  variant: fixture
+  id: resnet
 owners:
 - '@sima-neat/models'
 license:

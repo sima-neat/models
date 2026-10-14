@@ -739,7 +739,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert "Roboto:wght@400;500;600;700" in html
     assert "IBM+Plex+Mono" in html
     assert '<h1 class="sr-only">Model Registry</h1>' in html
-    assert "Search models, tasks, or architectures" in html
+    assert "Search models, tasks, or families" in html
     assert 'class="page-header"' not in html
     assert "Trace every" not in html
     assert '<header class="catalog-intro">' in html
@@ -809,6 +809,17 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     assert '"architecture-filter": "architecture_id"' in script
     assert "setCategoryFiltersDisabled(true)" in script
     assert "Category filters are temporarily unavailable" in script
+
+
+def test_filters_list_only_used_values_and_hide_without_a_choice() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = _browser_source("catalog-view.js")
+
+    assert '<span>Model family</span><select id="architecture-filter">' in html
+    assert '<span>Architecture</span><select id="paradigm-filter">' in html
+    assert "state.runs.flatMap((run) => run[field] ?? [])" in script
+    assert 'element.closest("label").hidden = element.options.length < 3 && !element.value' in script
+    assert 'hideFilterWithoutChoice(elements["compiler-filter"])' in script
 
 
 def test_category_filters_are_server_side_and_shareable() -> None:

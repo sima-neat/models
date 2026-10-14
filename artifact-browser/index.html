@@ -61,7 +61,7 @@
             <label class="search-field">
               <span class="sr-only">Search models</span>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15A7.5 7.5 0 1 1 4 11.5a7.5 7.5 0 0 1 15 0Z" /></svg>
-              <input id="search" type="search" placeholder="Search models, tasks, or architectures…" autocomplete="off" />
+              <input id="search" type="search" placeholder="Search models, tasks, or families…" autocomplete="off" />
               <kbd>/</kbd>
             </label>
             <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-drawer">
@@ -73,12 +73,12 @@
           <div class="catalog-layout">
             <aside id="filter-drawer" class="filter-drawer" data-open="false" aria-label="Filters">
               <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
-              <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
+              <label><span>Model family</span><select id="architecture-filter"><option value="">Any family</option></select></label>
               <details id="more-filters" class="more-filters disclosure">
                 <summary><span class="disclosure-label">More filters</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
                 <div class="more-filters-body disclosure-body">
                   <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
-                  <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
+                  <label><span>Architecture</span><select id="paradigm-filter"><option value="">Any architecture</option></select></label>
                   <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
                   <label><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
                   <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>

@@ -11,8 +11,7 @@ modalities:
   - bounding_boxes
   - class_scores
 architecture:
-  id: ssdlite_mobilenet_v3_large
-  variant: coco_320x320
+  id: ssd_mobilenet
 owners:
 - '@sima-neat/models'
 license:
