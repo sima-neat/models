@@ -351,7 +351,8 @@ performance:
 
 `model-registry validate` requires an `expected` value for every build the
 stage measures. The measurement test compares the result with these values
-through one shared function:
+through one shared function. A performance test also checks that the result
+records the execution plan the model browser draws:
 
 ```python
 from pathlib import Path
@@ -362,6 +363,12 @@ from model_registry.model_tests import measured_shortfalls
 
 def test_performance_meets_its_expected_values(performance: dict[str, Any], model_dir: Path) -> None:
     assert measured_shortfalls(model_dir, "performance", performance) == []
+
+
+def test_performance_records_the_execution_plan_the_browser_draws(performance: dict[str, Any]) -> None:
+    plan = performance["core_report"]["execution_plan"]
+    assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
+    assert plan["nodes"] and plan["edges"]
 ```
 
 Update `expected` when a reviewed change moves a published value, such as a

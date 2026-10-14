@@ -142,7 +142,8 @@ clocks, then handles each component:
 
 `scripts/run_model_tests.sh` then runs the model's
 `tests/measure/test_performance.py` on each component's result, which
-compares its throughput with the expected value in `tests/tests.yaml`, and
+compares its throughput with the expected value in `tests/tests.yaml`, checks
+that the result records the execution plan the model browser draws, and
 records `passed`, `failed`, or `skipped` ([set up
 `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)).
 

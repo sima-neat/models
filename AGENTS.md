@@ -58,7 +58,9 @@ component for `throughput_fps`. Each measure test asserts
 `measured_shortfalls(model_dir, "<stage>", result) == []`; it fails when a
 value falls more than `ACCURACY_ALLOWED_DROP` (5%) or
 `PERFORMANCE_ALLOWED_DROP` (10%) in `model_tests.py` below its expected
-value. These limits are shared by every model. When a reviewed
+value. A performance test also asserts that `core_report.execution_plan` is a
+`sima.neat.execution_plan` version 1 plan with nodes and edges, the plan the
+model browser draws. These limits are shared by every model. When a reviewed
 change moves a published value, update `expected` to the new published result.
 `model-registry validate` enforces the entries, the expected values, and the
 layout; [set up
