@@ -430,13 +430,15 @@ Run the package with the [Neat Model API](https://developer.sima.ai/software/dev
 For complete applications, start from the examples in [sima-neat/apps](https://github.com/sima-neat/apps).
 ````
 
-Start from a README of the same kind: [`yolo26n`](../models/yolo26n/README.md)
-for a one-component detector, [`rf_detr_nano`](../models/rf_detr_nano/README.md)
+Start from a README of the same kind:
+[`yolo26n`](https://github.com/sima-neat/models/blob/develop/models/yolo26n/README.md)
+for a one-component detector,
+[`rf_detr_nano`](https://github.com/sima-neat/models/blob/develop/models/rf_detr_nano/README.md)
 for a CPU step between two components, and
-[`resnet_50`](../models/resnet_50/README.md) for a classifier.
-`model-registry validate-models` checks the structure, the word limits, the
-Building applications text, and the internal terms a README leaves out. The
-writing rules are in
+[`resnet_50`](https://github.com/sima-neat/models/blob/develop/models/resnet_50/README.md)
+for a classifier. `model-registry validate-models` checks the structure, the
+word limits, the Building applications text, and the internal terms a README
+leaves out. The writing rules are in
 [`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 
 ## 12. Validate the contract
