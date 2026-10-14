@@ -526,7 +526,7 @@ def validate_model(
             )
 
     pipeline_components = [stage["component"] for stage in model.get("pipeline", []) if "component" in stage]
-    if pipeline_components and sorted(pipeline_components) != sorted(components):
+    if "pipeline" in model and sorted(pipeline_components) != sorted(components):
         raise ValidationError(f"{directory}: pipeline must list each component exactly once")
 
     default_packages = [item["id"] for item in model["packages"] if item["default"]]

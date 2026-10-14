@@ -216,6 +216,7 @@ def test_pipeline_is_read_as_declared() -> None:
         [{"component": "model"}, {"cpu": "Top 10 boxes"}],
         [{"component": "model"}, {"component": "model"}, {"component": "second_model"}],
         [{"component": "model"}, {"component": "unknown"}],
+        [{"cpu": "Top 10 boxes"}, {"cpu": "Sort boxes"}],
     ],
 )
 def test_pipeline_must_list_each_component_once(pipeline: list[dict]) -> None:
