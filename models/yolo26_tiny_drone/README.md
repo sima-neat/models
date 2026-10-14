@@ -20,13 +20,16 @@ so its longer side is 1600, center it, and fill the rest with gray (114, 114,
 **Outputs.** Eight tensors at strides 4, 8, 16, and 32 (grids of 400, 200, 100,
 and 50 cells):
 
-- `bbox_0` to `bbox_3`: four box values for each cell.
+- `bbox_0` to `bbox_3`: the distances from the cell center to the box's left, top, right, and bottom edges, in cells.
 - `class_logit_0` to `class_logit_3`: one drone logit for each cell.
 
 1. Apply a sigmoid to the logits and keep the cells that score above 0.05.
-2. Decode the box at each kept cell.
-3. Remove overlapping boxes (non-maximum suppression) whose intersection over union is above 0.6.
-4. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
+2. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
+3. The box corners are the center minus the left and top distances, and the center plus the right and bottom distances, times the stride.
+4. Remove overlapping boxes (non-maximum suppression) whose intersection over union is above 0.6.
+5. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
+
+Neat's `YoloV26` box decoder can also decode these outputs.
 
 ## Building applications
 

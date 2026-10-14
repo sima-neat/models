@@ -20,11 +20,14 @@ and divide by 0.5.
 1 cells and three anchors per cell at level 0 and six at the other levels:
 
 - `ssd_loc_0` to `ssd_loc_5`: four box offsets for each anchor.
-- `ssd_confidence_0` to `ssd_confidence_5`: 91 class logits for each anchor. Index 0 is the background.
+- `ssd_confidence_0` to `ssd_confidence_5`: 91 class logits for each anchor.
 
 Neat's `Ssd` box decoder generates the anchors, decodes the boxes, scores the
 classes, and removes overlapping boxes. It reads the box outputs first, then the
 class outputs, each in level order.
+
+Class index i is COCO category ID i: index 0 is the background, and 10 indexes
+are unused.
 
 ## Building applications
 

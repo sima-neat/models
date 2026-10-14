@@ -31,8 +31,9 @@ transformer treats each of the 300 positions differently.
 h), and `labels`, 91 class logits for each box.
 
 1. Apply a sigmoid to `labels` and rank all 300 × 91 box-class pairs by score.
-2. Convert each box to corners: (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
-3. Multiply x by the image width and y by the image height.
+2. Keep the 300 best pairs, then drop those with an unused class index.
+3. Convert each box to corners: (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
+4. Multiply x by the image width and y by the image height, and clip to the image.
 
 Class index i is COCO category ID i. Eleven of the 91 indexes are unused.
 

@@ -21,11 +21,14 @@ the aspect ratio. Scale the RGB values to 0–1, subtract the ImageNet mean
 1 cells and six anchors per cell:
 
 - `ssd_loc_0` to `ssd_loc_5`: four box offsets for each anchor.
-- `ssd_confidence_0` to `ssd_confidence_5`: 91 class logits for each anchor. Index 0 is the background.
+- `ssd_confidence_0` to `ssd_confidence_5`: 91 class logits for each anchor.
 
 Neat's `Ssd` box decoder generates the anchors, decodes the boxes, scores the
 classes, and removes overlapping boxes. It reads the box outputs first, then the
 class outputs, each in level order.
+
+Class index i is COCO category ID i: index 0 is the background, and 10 indexes
+are unused.
 
 ## Building applications
 
