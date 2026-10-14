@@ -776,3 +776,15 @@ def test_board_telemetry_metrics_are_published_as_measurements():
     assert measurements["board.die_temperature.peak"]["aggregation"] == "max"
     assert measurements["board.cpu_usage.avg"]["aggregation"] == "mean"
     assert measurements["board.power.peak"]["sample_count"] == 15
+
+
+def test_latency_percentiles_and_busiest_core_are_published():
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    measured = {"status": "measured", "reason": None, "aggregation": "raw", "minimum": None, "maximum": None,
+                "standard_deviation": None, "sample_count": 1}
+    result["metrics"]["latency_p99_ms"] = {**measured, "unit": "ms", "value": 3.1}
+    result["metrics"]["peak_cpu_core_usage_pct"] = {**measured, "unit": "%", "value": 98.5, "aggregation": "max"}
+    measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
+
+    assert measurements["model.latency.p99"]["value"] == 3.1
+    assert measurements["board.cpu_core_usage.peak"]["value"] == 98.5

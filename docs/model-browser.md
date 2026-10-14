@@ -55,14 +55,16 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    output, each tagged with the processor it runs on; the step on the MLA is
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
-   scale, and zero point. **Benchmark
-   details** groups every measurement into speed (latency per trial), power
-   and energy (SoM and MLA power, with the average power of each rail), heat
-   and load (die and board temperature, CPU usage), memory (MLA, CMA, and
-   Linux memory), and startup (model load and time to first inference). Its
+   scale, and zero point. **Benchmark details** groups every measurement into
+   speed (latency and its percentiles), power and energy (SoM and MLA power,
+   with the average power of each rail), heat and load (die and board
+   temperature, CPU usage over all cores and on the busiest core), memory (MLA,
+   EV74, and Linux memory), and startup (model load and time to first
+   inference). Its
    last line names the Sentinel version and the samples behind the board
-   readings, or why they are missing. **Power rails and sensors** lists the
-   average and peak of every power rail and temperature sensor. A metric the browser does not recognize appears under **Other
+   readings, or why they are missing. **Power rails, sensors, and CPU cores**
+   lists the average and peak of every power rail, temperature sensor, and CPU
+   core. A metric the browser does not recognize appears under **Other
    measurements**, so a new metric shows up without a browser change. A
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,

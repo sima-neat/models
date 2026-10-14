@@ -224,6 +224,8 @@ def sentinel_telemetry():
         "die_temperature_max_c": summary("die_temperature_max_c", "C", 42.3, 43.3),
         "board_temperatures_c": [summary("temp1", "C", 40.9, 42.0), summary("temp2", "C", 43.9, 44.6)],
         "cpu_usage_pct": summary("cpu_usage_pct", "%", 7.8, 8.7),
+        "cpu_cores_usage_pct": [summary("cpu_core_0_usage_pct", "%", 6.0, 7.0),
+                                summary("cpu_core_1_usage_pct", "%", 61.0, 98.5)],
         "mla_memory_mib": summary("mla_memory_mib", "MiB", 29.6, 29.7),
         "cma_memory_mib": summary("cma_memory_mib", "MiB", 863.8, 867.2),
         "linux_memory_used_mib": summary("linux_memory_used_mib", "MiB", 600.0, 607.5),
@@ -253,7 +255,31 @@ def test_sentinel_telemetry_becomes_board_metrics(core_inputs, tmp_path):
     assert [rail["key"] for rail in metrics["peak_power_watts"]["details"]["breakdown"]] == ["soc", "mla"]
     assert len(metrics["peak_die_temperature_c"]["details"]["breakdown"]) == 2
     assert "details" not in metrics["avg_cpu_usage_pct"]
+    # The busiest core stands out even though the all-core average stays low.
+    assert metrics["peak_cpu_core_usage_pct"]["value"] == 98.5
+    assert [core["key"] for core in metrics["peak_cpu_core_usage_pct"]["details"]["breakdown"]] == [
+        "cpu_core_0_usage_pct", "cpu_core_1_usage_pct"]
     assert metrics["mla_memory_peak_delta_mib"]["reason"] == "not_reported_by_core_benchmark"
+
+
+def test_latency_percentiles_come_from_the_core_report(core_inputs, tmp_path):
+    with_report(core_inputs, latency_p50_ms=1.9, latency_p95_ms=2.6, latency_p99_ms=3.1)
+    metrics = package(core_inputs, tmp_path)["metrics"]
+
+    assert {name: metrics[name]["value"] for name in ("latency_p50_ms", "latency_p95_ms", "latency_p99_ms")} == {
+        "latency_p50_ms": 1.9, "latency_p95_ms": 2.6, "latency_p99_ms": 3.1}
+    assert metrics["latency_p99_ms"]["status"] == "measured"
+
+
+def test_readings_an_older_core_does_not_report_are_unavailable(core_inputs, tmp_path):
+    telemetry = sentinel_telemetry()
+    del telemetry["cpu_cores_usage_pct"]
+    with_report(core_inputs, telemetry=telemetry)
+    metrics = package(core_inputs, tmp_path)["metrics"]
+
+    for name in ("latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "peak_cpu_core_usage_pct"):
+        assert metrics[name]["status"] == "unavailable", name
+        assert metrics[name]["reason"] == "not_reported_by_core_benchmark", name
 
 
 @pytest.mark.parametrize(

@@ -125,9 +125,10 @@ Default-MPK results are a baseline of their own. Do not compare them with
 historical YOLO measurements that configured image preprocessing and
 BoxDecode explicitly.
 
-Core reports mean latency, throughput in logical inferences per second, average
-SoM power, and total energy. The registry derives energy per inference by
-dividing total energy by the sample count times the compiled batch size.
+Core reports mean latency and its p50, p95, and p99 percentiles, throughput in
+logical inferences per second, average SoM power, and total energy. The
+registry derives energy per inference by dividing total energy by the sample
+count times the compiled batch size.
 Missing power stays unavailable. A `benchmark` entry's `required_metrics` must
 be present for publication; RF-DETR requires average power and energy per
 inference.
@@ -141,23 +142,25 @@ the throughput pass:
 | `avg_mla_power_watts`, `peak_mla_power_watts` | MLA rail power |
 | `avg_die_temperature_c`, `peak_die_temperature_c` | Hottest die sensor, with each die sensor in the peak's details |
 | `peak_board_temperature_c` | Hottest board sensor, with each board sensor in its details |
-| `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage |
+| `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage averaged over all cores |
+| `peak_cpu_core_usage_pct` | Peak usage of the busiest CPU core, with each core in its details |
 | `mla_memory_peak_mib` | Peak MLA memory |
-| `peak_cma_memory_mib` | Peak contiguous memory (CMA) in use, which includes the MLA memory |
+| `peak_cma_memory_mib` | Peak EV74 memory: the contiguous memory (CMA) pool in use |
 | `peak_linux_memory_mib` | Peak Linux memory in use |
 
 A reading with no samples is unavailable. Its reason says whether Sentinel did
 not run (`sentinel_telemetry_unavailable`), ran without that reading
-(`not_measured_by_sentinel`), or the Core report has no telemetry
-(`not_reported_by_core_benchmark`). Add a reading by adding a row to
-`TELEMETRY_METRICS` in `tools/model_registry/core_benchmark.py`, its
-measurement name in `benchmark_publication.py`, and its label in the browser's
-`metrics.js`.
+(`not_measured_by_sentinel`), or the Core report does not include it
+(`not_reported_by_core_benchmark`), as in a Core release from before that
+reading. Latency percentiles missing from an older report have the same reason.
+Add a reading by adding a row to `TELEMETRY_METRICS` in
+`tools/model_registry/core_benchmark.py`, its measurement name in
+`benchmark_publication.py`, and its label in the browser's `metrics.js`.
 
-Percentiles, initialization timings, and MLA memory before and after the run
-are not exported by this Core API. Results mark those metrics unavailable
-rather than estimating them or copying them from old results. Adding them
-belongs in Core before Models consumes them.
+Initialization timings and MLA memory before and after the run are not exported
+by this Core API. Results mark those metrics unavailable rather than estimating
+them or copying them from old results. Adding them belongs in Core before
+Models consumes them.
 
 ## CI and registry publication
 

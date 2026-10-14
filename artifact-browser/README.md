@@ -158,8 +158,8 @@ everything longer sits in one expandable row.
   inference for each component. **Benchmark details** shows the speed, power
   and energy, heat and load, memory, and startup groups, metrics the runtime
   did not report, the board telemetry source, and the result schema, tool, and
-  raw-result link. **Power rails and sensors** lists each rail and temperature
-  sensor when the result carries them.
+  raw-result link. **Power rails, sensors, and CPU cores** lists each rail,
+  temperature sensor, and CPU core when the result carries them.
 - **Accuracy** shows the status, the first four metrics, and the scope.
   **Evaluation details** explains status and coverage and lists the context
   and remaining metrics.

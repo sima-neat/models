@@ -24,9 +24,14 @@ CORE_UNITS = {
     "avg_power_watts": "W",
     "energy_joules": "J",
 }
-UNAVAILABLE_UNITS = {
+# Percentiles of the latency pass; Core releases before they were reported leave them unavailable.
+LATENCY_PERCENTILES = {
     "latency_p50_ms": "ms",
     "latency_p95_ms": "ms",
+    "latency_p99_ms": "ms",
+}
+UNAVAILABLE_UNITS = {
+    **LATENCY_PERCENTILES,
     "model_load_ms": "ms",
     "time_to_first_inference_ms": "ms",
     "mla_memory_baseline_mib": "MiB",
@@ -46,6 +51,7 @@ TELEMETRY_METRICS = {
     "peak_board_temperature_c": ("board_temperatures_c", "maximum", "C", "board_temperatures_c"),
     "avg_cpu_usage_pct": ("cpu_usage_pct", "mean", "%", None),
     "peak_cpu_usage_pct": ("cpu_usage_pct", "maximum", "%", None),
+    "peak_cpu_core_usage_pct": ("cpu_cores_usage_pct", "maximum", "%", "cpu_cores_usage_pct"),
     "mla_memory_peak_mib": ("mla_memory_mib", "maximum", "MiB", None),
     "peak_cma_memory_mib": ("cma_memory_mib", "maximum", "MiB", None),
     "peak_linux_memory_mib": ("linux_memory_used_mib", "maximum", "MiB", None),
@@ -165,9 +171,11 @@ def telemetry_metrics(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
         entries = value if isinstance(value, list) else [] if value is None else [value]
         measured = [entry for entry in (_telemetry_entry(item, field, unit) for item in entries) if entry]
         selected = max(measured, key=lambda entry: entry[statistic], default=None)
+        # A Core release from before a reading was added reports Sentinel telemetry without its field.
+        missing = reason == "not_measured_by_sentinel" and field not in telemetry
         metric = {
             "status": "measured" if selected else "unavailable",
-            "reason": None if selected else reason,
+            "reason": None if selected else "not_reported_by_core_benchmark" if missing else reason,
             "unit": REGISTRY_UNITS.get(unit, unit),
             "aggregation": AGGREGATIONS[statistic],
             "value": selected[statistic] if selected else None,
@@ -227,8 +235,10 @@ def import_core_benchmark(
     environment["fingerprint"] = canonical_sha256(environment)
     metrics = {}
     fields = {"latency_avg_ms": "latency_ms", "throughput_fps": "fps"}
-    for name, unit in CORE_UNITS.items():
+    for name, unit in {**CORE_UNITS, **LATENCY_PERCENTILES}.items():
         field = fields.get(name, name)
+        if name in LATENCY_PERCENTILES and field not in report:
+            continue
         value = report.get(field)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValidationError(f"benchmark report requires a finite number for {field}")

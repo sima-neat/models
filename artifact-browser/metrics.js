@@ -3,6 +3,7 @@ export const METRIC_DEFINITIONS = {
   latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
+  latency_p99_ms: { label: "Latency p99", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
   avg_power_watts: { label: "SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   peak_power_watts: { label: "Peak SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
@@ -22,13 +23,14 @@ export const METRIC_DEFINITIONS = {
     label: "Peak MLA memory increase", unit: "MiB", digits: 1, scale: 1, direction: "lower",
   },
   mla_memory_final_mib: { label: "MLA memory final", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
-  peak_cma_memory_mib: { label: "Peak CMA used", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
+  peak_cma_memory_mib: { label: "Peak EV74 memory (CMA)", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
   peak_linux_memory_mib: { label: "Peak Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
   avg_die_temperature_c: { label: "Die temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
   peak_die_temperature_c: { label: "Peak die temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
   peak_board_temperature_c: { label: "Peak board temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
-  avg_cpu_usage_pct: { label: "CPU usage", unit: "%", digits: 1, scale: 1, direction: "lower" },
-  peak_cpu_usage_pct: { label: "Peak CPU usage", unit: "%", digits: 1, scale: 1, direction: "lower" },
+  avg_cpu_usage_pct: { label: "CPU usage, all cores", unit: "%", digits: 1, scale: 1, direction: "lower" },
+  peak_cpu_usage_pct: { label: "Peak CPU usage, all cores", unit: "%", digits: 1, scale: 1, direction: "lower" },
+  peak_cpu_core_usage_pct: { label: "Peak CPU usage, busiest core", unit: "%", digits: 1, scale: 1, direction: "lower" },
 };
 
 function fallbackMetricLabel(key) {

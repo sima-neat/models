@@ -95,13 +95,14 @@ function detailTag(icon, value, kind) {
 // Benchmark details group the measurements by what they tell a reader. A metric this browser does not
 // know yet still appears, under Other measurements.
 const METRIC_GROUPS = [
-  ["speed", "Speed", "gauge", ["latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "throughput_fps"]],
+  ["speed", "Speed", "gauge", ["latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "throughput_fps"]],
   ["power", "Power & energy", "power", [
     "avg_power_watts", "peak_power_watts", "avg_mla_power_watts", "peak_mla_power_watts",
     "energy_per_inference_joules", "energy_joules",
   ]],
   ["heat", "Heat & load", "thermometer", [
-    "avg_die_temperature_c", "peak_die_temperature_c", "peak_board_temperature_c", "avg_cpu_usage_pct", "peak_cpu_usage_pct",
+    "avg_die_temperature_c", "peak_die_temperature_c", "peak_board_temperature_c",
+    "avg_cpu_usage_pct", "peak_cpu_usage_pct", "peak_cpu_core_usage_pct",
   ]],
   ["memory", "Memory", "memory", [
     "mla_memory_baseline_mib", "mla_memory_peak_mib", "mla_memory_peak_delta_mib", "mla_memory_final_mib",
@@ -116,7 +117,7 @@ const GROUP_LABELS = {
   mla_memory_peak_mib: "Peak MLA",
   mla_memory_peak_delta_mib: "Peak MLA increase",
   mla_memory_final_mib: "MLA after the run",
-  peak_cma_memory_mib: "Peak CMA used",
+  peak_cma_memory_mib: "Peak EV74 (CMA)",
   peak_linux_memory_mib: "Peak Linux used",
 };
 
@@ -193,17 +194,6 @@ function memoryBar(measurements) {
   ]);
 }
 
-// Contiguous memory (CMA) holds the MLA buffers, so the MLA share is drawn as the end of the CMA bar
-// rather than added to it.
-function cmaBar(measurements) {
-  const mla = measuredValue("mla_memory_peak_mib", measurements.mla_memory_peak_mib);
-  const cma = measuredValue("peak_cma_memory_mib", measurements.peak_cma_memory_mib);
-  if (!mla || !cma || cma.value <= 0) return "";
-  return proportionBar(cma.value - mla.value, cma.value, `${mla.text} ${mla.unit} of the ${cma.text} ${cma.unit} of used CMA is MLA memory`, [
-    `CMA used ${cma.text} ${cma.unit}`, `MLA ${mla.text} ${mla.unit}`,
-  ]);
-}
-
 // The SoM power each rail draws on average, as one bar split by rail.
 function railSplit(measurements) {
   const rails = (measurements.peak_power_watts?.details?.breakdown || [])
@@ -239,7 +229,7 @@ function metricGroups(benchmark) {
     speed: latencyTrials(benchmark.trials, measurements),
     power: railSplit(measurements),
     heat: temperature ? temperatureSparkline(temperature) : "",
-    memory: memoryBar(measurements) || cmaBar(measurements),
+    memory: memoryBar(measurements),
     startup: startupTimeline(measurements),
   };
   // The MLA and CPU clocks bound the speed a result can reach, so the Speed card shows the clocks it ran at.
@@ -287,7 +277,7 @@ function benchmarkDetails(benchmark, payload) {
     <p class="metric-source">${source}${raw}</p>`;
 }
 
-// One row per power rail or temperature sensor, with its average and peak over the throughput window.
+// One row per power rail, temperature sensor, or CPU core, with its average and peak over the throughput window.
 function breakdownTable(title, entries, unit, digits) {
   const rows = entries.filter((entry) => Number.isFinite(entry.mean) && Number.isFinite(entry.maximum))
     .map((entry) => `<tr><th scope="row">${escapeHtml(entry.label)}</th><td>${entry.mean.toFixed(digits)} ${escapeHtml(unit)}</td><td>${entry.maximum.toFixed(digits)} ${escapeHtml(unit)}</td></tr>`);
@@ -296,15 +286,21 @@ function breakdownTable(title, entries, unit, digits) {
     : "";
 }
 
-// The power rails and temperature sensors behind the Power and Heat totals.
+// The power rails, temperature sensors, and CPU cores behind the Power and Heat & load totals.
 function boardBreakdown(measurements, runId) {
   const parts = (key) => measurements[key]?.details?.breakdown || [];
   const rails = parts("peak_power_watts");
   const sensors = [...parts("peak_die_temperature_c"), ...parts("peak_board_temperature_c")];
-  const tables = [breakdownTable("Power rails", rails, "W", 2), breakdownTable("Temperature sensors", sensors, "°C", 1)].filter(Boolean);
+  const cores = parts("peak_cpu_core_usage_pct");
+  const tables = [
+    breakdownTable("Power rails", rails, "W", 2),
+    breakdownTable("Temperature sensors", sensors, "°C", 1),
+    breakdownTable("CPU cores", cores, "%", 1),
+  ].filter(Boolean);
   if (!tables.length) return "";
-  const meta = [rails.length && `${rails.length} rails`, sensors.length && `${sensors.length} sensors`].filter(Boolean).join(" · ");
-  return disclosure(`board:${runId}`, "Power rails and sensors", `<div class="breakdown">${tables.join("")}</div>`, meta);
+  const meta = [rails.length && `${rails.length} rails`, sensors.length && `${sensors.length} sensors`, cores.length && `${cores.length} cores`]
+    .filter(Boolean).join(" · ");
+  return disclosure(`board:${runId}`, "Power rails, sensors, and CPU cores", `<div class="breakdown">${tables.join("")}</div>`, meta);
 }
 
 // The performance tiles of each component, with the hint shown under each value.

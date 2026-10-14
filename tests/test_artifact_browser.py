@@ -986,10 +986,10 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     for group in ['["speed", "Speed"', '["power", "Power & energy"', '["heat", "Heat & load"', '["memory", "Memory"',
                   '["startup", "Startup"']:
         assert group in script
-    # Sentinel telemetry: the rail split, the MLA share of CMA, and the rails and sensors behind the totals.
+    # Sentinel telemetry: the rail split, and the rails and sensors behind the totals.
     assert "power: railSplit(measurements)" in script
-    assert "memory: memoryBar(measurements) || cmaBar(measurements)" in script
-    assert '"Power rails and sensors"' in script
+    assert '"Power rails, sensors, and CPU cores"' in script
+    assert 'breakdownTable("CPU cores", cores, "%", 1)' in script
     assert "telemetryText(benchmark.telemetry)" in script
     assert ".rail-split" in styles
     assert 'metricGroup("other", "Other measurements"' in script
