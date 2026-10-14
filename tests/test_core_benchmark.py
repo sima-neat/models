@@ -159,6 +159,21 @@ def test_core_report_keeps_values_units_and_unavailable_metrics(core_inputs, tmp
     assert result["compatibility"]["expected_neat_version"] is None
 
 
+def test_core_report_carries_the_execution_plan_the_browser_draws(core_inputs, tmp_path):
+    plan = {"schema": "sima.neat.execution_plan", "schema_version": 1, "model": {"name": "resnet_50", "batch": 4},
+            "nodes": [{"id": "p0", "kind": "Input", "runs_on": "A65"}], "edges": []}
+    report = json.loads(core_inputs[1].read_text())
+    core_inputs[1].write_text(json.dumps({**report, "execution_plan": plan}))
+    assert package(core_inputs, tmp_path)["core_report"]["execution_plan"] == plan
+
+
+def test_every_performance_script_records_the_execution_plan_of_the_model_it_benchmarks():
+    scripts = sorted((Path(__file__).resolve().parents[1] / "models").glob("*/scripts/performance.py"))
+    assert scripts
+    for script in scripts:
+        assert '"execution_plan": json.loads(model.execution_plan().to_json()),' in script.read_text(), script
+
+
 @pytest.mark.parametrize(
     "failure", [
         "nonfinite", "negative_power", "negative_energy", "missing_metric",

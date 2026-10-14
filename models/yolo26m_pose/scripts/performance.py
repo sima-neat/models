@@ -26,6 +26,7 @@ with open(args.output, "w", encoding="utf-8") as output:
         "avg_power_watts": report.avg_power_watts,
         "energy_joules": report.energy_joules,
         "samples": benchmark_options.num_samples,
+        "execution_plan": json.loads(model.execution_plan().to_json()),
         "workload": {
             "selection": "YoloV26Pose box decoder, top 100",
             "postprocess": model.info().selection.selected_post_kind,
