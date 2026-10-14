@@ -34,7 +34,9 @@ shows its key facts directly; longer detail sits behind one kind of control: a
 full-width row between thin rules, the label on the left, an optional short
 summary, and a › on the right that turns down when the row opens, like a
 settings list. No other expand control exists, so anything that opens looks
-and behaves the same.
+and behaves the same. The one exception is the execution graph: a Details
+button at the right of its heading opens the tensor table under the graph, so
+the details stay attached to the graph they describe.
 
 Actions and links look different. An action (download, copy) is a
 button with an icon. Blue text ending in ↗ is a link that leaves the browser.

@@ -280,7 +280,14 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .benchmark-context { margin: 12px 0 0; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
 /* The steps a component ran, in order, each tagged with the processor it ran on. */
 .execution-graph { margin-top: 24px; }
-.execution-graph h5 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.execution-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.execution-graph h5 { margin: 0; font-size: 14px; font-weight: 600; }
+.execution-details { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 8px 4px 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--ink-soft); font: inherit; font-size: 13px; cursor: pointer; transition: background 140ms ease, color 140ms ease; }
+.execution-details:hover, .execution-details[aria-expanded="true"] { background: var(--surface); color: var(--ink); }
+.execution-details:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.execution-details .chevron { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms ease; }
+.execution-details[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+.execution-graph [id^="tensors:"] { margin-top: 18px; }
 .execution-graph ol { display: flex; margin: 0; padding: 0; list-style: none; }
 .execution-graph li { display: flex; flex: 1 1 0; min-width: 0; align-items: center; }
 .execution-graph li.execution-end { flex-grow: .7; }

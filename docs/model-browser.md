@@ -53,8 +53,9 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    decoder, top 100**, followed by preprocessing and postprocessing.
    **Execution graph** then draws the steps the component runs, from input to
    output, each tagged with the processor it runs on; the step on the MLA is
-   the **Compiled Model**. Its **Tensors** row lists the tensors passed between
-   steps with their data type, shape, scale, and zero point. **Benchmark
+   the **Compiled Model**. **Details**, at the right of its heading, opens a
+   table of the tensors passed between steps with their data type, shape,
+   scale, and zero point. **Benchmark
    details** groups every measurement into speed (latency per trial),
    heat (power and board temperature), memory (MLA memory before loading, at
    peak, and after the run), and startup (model load and time to first

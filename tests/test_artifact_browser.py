@@ -369,13 +369,23 @@ def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
         assert removed not in browser
 
 
-def test_execution_graph_opens_its_tensors_in_the_shared_disclosure_row() -> None:
+def test_execution_graph_opens_its_tensors_from_details_beside_its_heading() -> None:
     script = _browser_source("model-view.js")
+    app = _browser_source("app.js")
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
+    design = (BROWSER / "DESIGN.md").read_text(encoding="utf-8")
 
     assert "executionGraph: executionGraph(result.core_report?.execution_plan)" in adapters
     assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
-    assert 'disclosure(`tensors:${runId}`, "Tensors", table, `${graph.tensors.length} tensors`)' in script
+    # Details sits in the heading row and controls the tensor table, which starts closed.
+    assert '<div class="execution-head"><h5>Execution graph</h5>${details}</div>' in script
+    assert 'aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>' in script
+    assert '<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>' in script
+    assert '"Tensors"' not in script
+    # Like a disclosure row, the table stays open across re-renders.
+    assert "const open = state.openDisclosures.has(key);" in script
+    assert "if (open) state.openDisclosures.add(key);" in app
+    assert "The one exception is the execution graph" in design
 
 
 def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit() -> None:

@@ -270,8 +270,8 @@ function benchmarkContext(benchmark) {
   ].filter(Boolean).join(" · ");
 }
 
-// Each step of the benchmarked Model and the processor it ran on, with the tensors between the steps one
-// row away.
+// Each step of the benchmarked Model and the processor it ran on. Details, at the right of the heading,
+// opens the tensors between the steps under the graph.
 function executionGraphSection(graph, runId) {
   if (!graph) return "";
   const steps = graph.steps.map((step) => (step.runsOn
@@ -279,8 +279,13 @@ function executionGraphSection(graph, runId) {
     : `<li class="execution-end"><span class="execution-step">${escapeHtml(step.name)}</span></li>`)).join("");
   const rows = graph.tensors.map((tensor) => `<tr${tensor.connection ? "" : ' class="continued"'}><th scope="row">${escapeHtml(tensor.connection)}</th>${[tensor.dtype, tensor.shape, tensor.scale, tensor.zeroPoint].map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("");
   const table = `<div class="tensor-table"><table><thead><tr>${["Connection", "Type", "Shape", "Scale", "Zero point"].map((label) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
-  return `<section class="execution-graph" aria-label="Execution graph"><h5>Execution graph</h5><ol>${steps}</ol></section>
-    ${graph.tensors.length ? disclosure(`tensors:${runId}`, "Tensors", table, `${graph.tensors.length} tensors`) : ""}`;
+  const key = `tensors:${runId}`;
+  const open = state.openDisclosures.has(key);
+  const details = graph.tensors.length
+    ? `<button type="button" class="execution-details" data-details="${escapeHtml(key)}" aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>`
+    : "";
+  return `<section class="execution-graph" aria-label="Execution graph"><div class="execution-head"><h5>Execution graph</h5>${details}</div><ol>${steps}</ol>
+    ${graph.tensors.length ? `<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>` : ""}</section>`;
 }
 
 function componentBenchmark(payload, runId) {

@@ -646,6 +646,17 @@ elements["detail-pane"].addEventListener("click", (event) => {
   const download = event.target.closest("[data-download]");
   if (download?.dataset.download === "package") downloadPackage(download.dataset.runId);
   else if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
+  // The execution graph's Details button opens its tensors and, like a disclosure row, stays open on re-render.
+  const details = event.target.closest("[data-details]");
+  if (details) {
+    const key = details.dataset.details;
+    const open = details.getAttribute("aria-expanded") !== "true";
+    details.setAttribute("aria-expanded", String(open));
+    document.getElementById(key).hidden = !open;
+    if (open) state.openDisclosures.add(key);
+    else state.openDisclosures.delete(key);
+    return;
+  }
   const sectionLink = event.target.closest("[data-scroll-to]");
   if (sectionLink) {
     const section = elements["detail-pane"].querySelector(`#${sectionLink.dataset.scrollTo}`);
