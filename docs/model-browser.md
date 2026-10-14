@@ -39,7 +39,9 @@ Selecting a card opens the model page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. A model with several build profiles shows
 one tab per profile; INT8 profiles come first and the page opens on the first
-tab, whatever order `model.yaml` declares. Sections appear in this order:
+tab, whatever order `model.yaml` declares. The GitHub link in the header opens
+the model's folder at the commit the README comes from. Sections appear in this
+order:
 
 1. **Overview.** The hero and the `## Overview` section of the README. The
    **Full model card** row opens the rest of the README, its **Inputs and
@@ -50,7 +52,10 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    power, and energy per inference from its DevKit benchmark. The line below
    them names the workload: **Core default MPK** when the benchmark script uses
    Core's defaults, or the script's own selection, such as **YoloV26 box
-   decoder, top 100**, followed by preprocessing and postprocessing.
+   decoder, top 100**, followed by preprocessing and postprocessing. It ends
+   with the commit and GitHub workflow of the run that measured the component.
+   CI reuses a build until its compile inputs change, so that commit can be
+   later than the build's.
    **Execution graph** then draws the steps the component runs, from input to
    output, each tagged with the processor it runs on; the step on the MLA is
    the **Compiled Model**. **Details**, at the right of its heading, opens a
@@ -65,12 +70,14 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
    Each component's measurements then appear under the same number.
-3. **Accuracy.** The status, the first four metrics, and the evaluated sample
-   count. **Evaluation details** explains the status and coverage and lists
+3. **Accuracy.** The status, the first four metrics, the evaluated sample
+   count, and the commit and GitHub workflow of the run that measured them.
+   **Evaluation details** explains the status and coverage and lists
    the remaining metrics, each with its published score when `model.yaml`
    records one.
 4. **Details.** The package with its size, checksum, and download buttons,
-   then rows for build provenance, source models, and each component's files,
+   then rows for build provenance (the commit and workflow that compiled the
+   build), source models, and each component's files,
    checksum, numerical fidelity, and compile parameters.
 5. **License.** The SPDX identifier, whether redistribution is allowed, and the
    attribution.
