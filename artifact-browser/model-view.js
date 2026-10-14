@@ -12,18 +12,33 @@ import {
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
 
-function githubModelUrl(run, modelId) {
+function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
   const repository = String(state.repository.name || "");
   const configuredRepository = `${organization}/${repository}`.toLowerCase();
   const runRepository = String(run.repository || "").toLowerCase();
-  const commit = String(run.commit_sha || "");
+  const commit = String(sourceCommit || "");
   if (!/^[A-Za-z0-9_.-]+$/.test(organization)
     || !/^[A-Za-z0-9_.-]+$/.test(repository)
     || runRepository !== configuredRepository
     || !/^[a-f0-9]{40}$/i.test(commit)
     || !/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(modelId)) return null;
   return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
+}
+
+// A reused build is measured by later runs, so each result names the commit and workflow that measured
+// it, appended to the result's context line.
+function measurementSource(run, modelId) {
+  const commit = String(run?.commit_sha || "");
+  if (!/^[a-f0-9]{40}$/i.test(commit)) return "";
+  const sourceUrl = githubModelUrl(run, modelId);
+  const commitMarkup = sourceUrl
+    ? `<a class="measurement-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="View the ${escapeHtml(modelId)} source that measured this result, at commit ${escapeHtml(shortSha(commit))}">${escapeHtml(commit.slice(0, 7))}${icons.external}</a>`
+    : escapeHtml(commit.slice(0, 7));
+  const workflow = run.ci_run_url
+    ? ` · <a class="measurement-link" href="${escapeHtml(run.ci_run_url)}" target="_blank" rel="noreferrer">GitHub workflow${icons.external}</a>`
+    : "";
+  return ` · Commit ${commitMarkup}${workflow}`;
 }
 
 function mpkValidationMark(tests = []) {
@@ -288,7 +303,7 @@ function executionGraphSection(graph, runId) {
     ${graph.tensors.length ? `<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>` : ""}</section>`;
 }
 
-function componentBenchmark(payload, runId) {
+function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
   if (adapted.kind === "unsupported") {
@@ -299,7 +314,7 @@ function componentBenchmark(payload, runId) {
   const tiles = KPI_METRICS.map(([key, hint]) => kpiTile(key, benchmark.measurements[key], hint)).join("");
   const { groups } = metricGroups(benchmark);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
-    <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}</p>
+    <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}${measurementSource(benchmarkRun, modelId)}</p>
     ${executionGraphSection(benchmark.executionGraph, runId)}
     ${disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload), groups.map((group) => group.title).join(" · "))}`;
 }
@@ -328,7 +343,7 @@ function pipelineStrip(pipeline) {
 }
 
 // A multi-component model shows each component's numbers under its name; they are never combined.
-function componentPerformance(detail, named, number) {
+function componentPerformance(detail, named, number, modelId) {
   const run = detail.summary.run;
   const id = run.metadata?.component_id || "model";
   const heading = number
@@ -336,7 +351,7 @@ function componentPerformance(detail, named, number) {
     : `<h4>${escapeHtml(id)}</h4>`;
   return `<div class="component-performance">
     ${named ? heading : ""}
-    ${componentBenchmark(detail.benchmark, run.id)}
+    ${componentBenchmark(detail.benchmark, run.id, detail.benchmarkRun, modelId)}
   </div>`;
 }
 
@@ -429,29 +444,36 @@ function orderedAccuracyMetrics(report) {
   return Object.entries(report.metrics || {}).sort(([left], [right]) => rank(left) - rank(right));
 }
 
-function accuracyReport(payload, tests = [], benchmarkTests = [], devkitPayload = null) {
-  const fallback = tests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
-  const legacyDevkit = benchmarkTests.find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
-  return devkitPayload?.result || legacyDevkit?.summary || payload?.result || fallback?.summary;
+// The DevKit accuracy run wins over the legacy result on the benchmark run, which wins over compile-run
+// accuracy. A result carries the run that measured it when the page loaded that run.
+function accuracyResult(detail, devkitPayload) {
+  const fallback = (detail.tests.test_results || [])
+    .find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
+  const legacyDevkit = (detail.benchmarkTests?.test_results || [])
+    .find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
+  if (devkitPayload?.result) return { report: devkitPayload.result, run: devkitPayload.run };
+  if (legacyDevkit) return { report: legacyDevkit.summary, run: detail.benchmarkRun };
+  return { report: detail.accuracy?.result || fallback?.summary, run: null };
 }
 
-function variantAccuracyReport(variant) {
-  return variant.details.map((detail) => accuracyReport(
-    detail.accuracy, detail.tests.test_results || [], detail.benchmarkTests?.test_results || [], variant.devkit,
-  )).find((report) => [1, 2].includes(report?.schema_version)) || null;
+function variantAccuracy(variant) {
+  return variant.details.map((detail) => accuracyResult(detail, variant.devkit))
+    .find(({ report }) => [1, 2].includes(report?.schema_version)) || null;
 }
 
 // The first accuracy metric of a build and the source model's published score, for the Compare page.
 export function accuracyHeadline(variant) {
-  const report = variantAccuracyReport(variant);
+  const report = variantAccuracy(variant)?.report;
   if (report?.schema_version === 1) return { label: "Top-1", value: percentage(report.metrics?.candidate?.top1_accuracy), published: "" };
   const [name, metric] = report ? orderedAccuracyMetrics(report)[0] || [] : [];
   if (!name) return null;
   return { label: ACCURACY_METRIC_LABELS[name] || name, value: accuracyMetricValue(metric), published: publishedAccuracyValue(metric) };
 }
 
-function accuracyPanel(report) {
-  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report), accuracyMetricTable(report));
+function accuracyPanel(result, modelId) {
+  const report = result?.report;
+  const source = measurementSource(result?.run, modelId);
+  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report), accuracyMetricTable(report), source);
   if (!report || report.schema_version !== 1) return "";
   const candidate = report.metrics?.candidate || {};
   const reference = report.metrics?.reference || {};
@@ -462,7 +484,7 @@ function accuracyPanel(report) {
       <div class="accuracy-metric primary"><span>Candidate top-5</span><strong>${percentage(candidate.top5_accuracy)}</strong><small>Reference ${percentage(reference.top5_accuracy)}</small></div>
       <div class="accuracy-metric"><span>Top-1 agreement</span><strong>${percentage(comparison.top1_agreement)}</strong><small>Candidate vs reference</small></div>
       <div class="accuracy-metric"><span>Top-1 delta</span><strong>${percentage(comparison.top1_delta, { signed: true })}</strong><small>Top-5 ${percentage(comparison.top5_delta, { signed: true })}</small></div>
-    `, `${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}`);
+    `, `${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}`, "", source);
 }
 
 function accuracyMetricValue(metric) {
@@ -494,7 +516,7 @@ function accuracyContextV2(report) {
   return `${keyValue("Validation", report.validation?.id)}${keyValue("Measured on", "DevKit")}${keyValue("Core", report.execution?.core_version)}`;
 }
 
-function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "") {
+function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "", sourceMarkup = "") {
   const dataset = report.dataset || {};
   const fullCoverage = Number.isInteger(dataset.evaluated_samples)
     && dataset.evaluated_samples === dataset.available_samples;
@@ -520,7 +542,7 @@ function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "")
       ${tableMarkup}`;
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3><span class="status-badge ${statusClass}">${status}</span></div>
-    <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}</p>
+    <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}${sourceMarkup}</p>
     <div class="accuracy-summary">${metricsMarkup}</div>
     ${disclosure("accuracy", "Evaluation details", details, coverageLabel)}
   </section>`;
@@ -694,9 +716,13 @@ export function renderDetail(variant) {
     .filter(Boolean), (precision) => precision);
   const categories = run.model_categories || {};
   const license = run.metadata?.license;
-  const sourceUrl = githubModelUrl(run, model);
-  const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
-  const accuracyMarkup = accuracyPanel(variantAccuracyReport(variant));
+  // CI reuses a build until its compile inputs change, so the build's commit can predate the scripts
+  // that measured it. The source link opens the commit the model card comes from; Build provenance
+  // keeps the build's own commit.
+  const sourceCommit = catalogModel?.documentation?.source_commit || run.commit_sha;
+  const sourceUrl = githubModelUrl(run, model, sourceCommit);
+  const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(sourceCommit)}`;
+  const accuracyMarkup = accuracyPanel(variantAccuracy(variant), model);
   const overviewMarkup = overviewSection(catalogModel);
   const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
   // Every component's MPK must pass validation for the build to carry the mark.
@@ -744,7 +770,7 @@ export function renderDetail(variant) {
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, each measured on its own.</p>`}
       ${order ? pipelineStrip(variant.pipeline) : ""}
-      ${performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1)).join("")}
+      ${performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1, model)).join("")}
       ${singleComponent ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
     </section>
 

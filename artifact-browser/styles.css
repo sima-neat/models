@@ -278,6 +278,10 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
   .component-pipeline > li + li::before { margin: 6px 0; content: "\2193"; content: "\2193" / ""; }
 }
 .benchmark-context { margin: 12px 0 0; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+/* The commit and workflow that measured a result, at the end of its context line. */
+.measurement-link { display: inline-flex; align-items: center; gap: 4px; color: var(--blue); text-decoration: none; }
+.measurement-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.measurement-link svg { width: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 /* The steps a component ran, in order, each tagged with the processor it ran on. */
 .execution-graph { margin-top: 24px; }
 .execution-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

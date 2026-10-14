@@ -431,6 +431,18 @@ def _index() -> dict[str, Any]:
     }
 
 
+def _measurement_run(run_id: str, run_type: str, build_run_id: str) -> dict:
+    """A DevKit run that measured a build at the latest revision, as CI measures a reused build."""
+    workflow = int(_fraction("workflow", run_id) * 10**11)
+    return {
+        **_index()["runs"][build_run_id],
+        "id": run_id,
+        "run_type": run_type,
+        "commit_sha": _repository()["revisions"][-1]["sha"],
+        "ci_run_url": f"https://github.com/sima-neat/models/actions/runs/{workflow}",
+    }
+
+
 class PreviewHandler(SimpleHTTPRequestHandler):
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode()
@@ -526,6 +538,12 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 return
             name, media_type = files[rest[1]]
             self._bytes((ROOT / "models" / model_id / name).read_bytes(), media_type)
+        elif run_id in index["benchmarks"] and not rest:
+            run = _measurement_run(run_id, "model_benchmark", index["benchmarks"][run_id])
+            self._json({"run": run, "artifacts": []})
+        elif run_id in index["accuracy_runs"] and not rest:
+            _, build = index["accuracy"][index["accuracy_runs"][run_id]]
+            self._json({"run": _measurement_run(run_id, "model_accuracy", build["run_id"]), "artifacts": []})
         elif run_id in index["benchmarks"] and rest == ["test-results"]:
             self._json({"run_id": run_id, "test_results": [
                 {"suite": "performance", "name": "model-synthetic", "status": "passed"},

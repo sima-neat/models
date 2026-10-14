@@ -844,19 +844,49 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     assert "run.metadata?.build_profile_id, run.metadata?.component_id" in script
 
 
-def test_model_card_links_to_the_exact_compiled_github_source() -> None:
+def test_model_source_link_opens_the_model_card_commit() -> None:
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert "function githubModelUrl(run, modelId)" in script
+    assert "function githubModelUrl(run, modelId, sourceCommit = run.commit_sha)" in script
     assert 'const runRepository = String(run.repository || "").toLowerCase()' in script
     assert "runRepository !== configuredRepository" in script
     assert "/tree/${commit}/models/${encodeURIComponent(modelId)}`" in script
     assert r"/^[a-f0-9]{40}$/i.test(commit)" in script
     assert 'class="model-source-link"' in script
-    assert "View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}" in script
+    # CI reuses a build until its compile inputs change, so the link follows the model card, not the build.
+    assert "const sourceCommit = catalogModel?.documentation?.source_commit || run.commit_sha;" in script
+    assert "githubModelUrl(run, model, sourceCommit)" in script
+    assert "View ${model} source on GitHub at commit ${shortSha(sourceCommit)}" in script
+    # Build provenance keeps the commit the build was compiled at.
+    assert 'keyValue("Commit", run.commit_sha, { copy: true, mono: true })' in script
     assert 'target="_blank" rel="noreferrer"' in script
     assert ".model-source-link:focus-visible" in styles
+
+
+def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_them() -> None:
+    api = _browser_source("api.js")
+    script = _browser_source("model-view.js")
+    styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    measurement_source = script.split("function measurementSource(run, modelId)", 1)[1].split("\nfunction ", 1)[0]
+
+    # A reused build is measured by later runs, whose commit and workflow the build run does not carry.
+    assert "api(`/v1/runs/${benchmarkRunId}`).then((benchmarkSummary) => benchmarkSummary.run)" in api
+    assert "benchmarkTests, benchmarkRun, accuracy }" in api
+    assert "api(`/v1/runs/${run.id}`).catch(() => null)," in api
+    assert "return { ...payload, run: summary?.run || run };" in api
+    # Each result links to the model source and the workflow of its own run, never the build's.
+    assert "githubModelUrl(run, modelId)" in measurement_source
+    assert "run.ci_run_url" in measurement_source
+    assert r"/^[a-f0-9]{40}$/i.test(commit)" in measurement_source
+    assert 'target="_blank" rel="noreferrer"' in measurement_source
+    assert "${measurementSource(benchmarkRun, modelId)}</p>" in script
+    assert "componentBenchmark(detail.benchmark, run.id, detail.benchmarkRun, modelId)" in script
+    assert "const source = measurementSource(result?.run, modelId);" in script
+    assert "${escapeHtml(dataset.split || \"\")}${sourceMarkup}</p>" in script
+    assert "return { report: devkitPayload.result, run: devkitPayload.run };" in script
+    assert "return { report: legacyDevkit.summary, run: detail.benchmarkRun };" in script
+    assert ".measurement-link {" in styles
 
 
 def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
@@ -1011,9 +1041,10 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'api(`/v1/runs/${runId}/accuracy/latest`)' in script
-    assert 'payload?.result || fallback?.summary' in script
+    assert "detail.accuracy?.result || fallback?.summary" in script
     # The DevKit run wins over the legacy benchmark-run result, which wins over compile-run accuracy.
-    assert "devkitPayload?.result || legacyDevkit?.summary || payload?.result" in script
+    devkit_first = script.index("if (devkitPayload?.result) return")
+    assert devkit_first < script.index("if (legacyDevkit) return") < script.index("detail.accuracy?.result ||")
     assert 'item.suite === "accuracy"' in script
     assert 'id="accuracy-section"' in script
     assert "Candidate top-1" in script
@@ -1043,8 +1074,8 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert "return keyIn(await loadHistoricalCatalogModel(runs[0]));" in script
     assert "runIds.has(build.run_id) && build.validation_fingerprint" in script
     assert 'run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1"' in script
-    assert "return await api(`/v1/runs/${run.id}/accuracy/latest`)" in script
-    assert "api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`)" in script
+    assert "api(`/v1/runs/${run.id}/accuracy/latest`)" in script
+    assert "api(`/v1/runs/${benchmarkRunId}/test-results`)" in script
     assert "item.summary?.schema_version === 2" in script
     assert "Object.entries(report.metrics || {})" in script
     assert 'coco_map: "mAP 50–95"' in script
@@ -1440,13 +1471,13 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert positions == sorted(positions)
     assert all(render_detail.count(marker) == 1 for marker in order)
     # One accuracy panel for the variant, from whichever component carries it.
-    assert "accuracyPanel(variantAccuracyReport(variant))" in render_detail
+    assert "accuracyPanel(variantAccuracy(variant), model)" in render_detail
     assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
     # A declared pipeline orders and numbers the components under a strip; otherwise they keep run order.
-    assert "componentPerformance(detail, !singleComponent, order && index + 1)" in render_detail
+    assert "componentPerformance(detail, !singleComponent, order && index + 1, model)" in render_detail
     assert '${order ? pipelineStrip(variant.pipeline) : ""}' in render_detail
     # Per-component facts live in the row, never on the page.
     for marker in ['keyValue("Run ID"', 'keyValue("Fingerprint"', "fidelityPanel(tests, run.id)"]:
@@ -1455,7 +1486,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     # Each component's benchmark sits in the Performance section, not in its file row.
     assert "componentBenchmark(" not in component_row
     component_performance = script.split("function componentPerformance(", 1)[1].split("function ", 1)[0]
-    assert "componentBenchmark(detail.benchmark, run.id)" in component_performance
+    assert "componentBenchmark(detail.benchmark, run.id, detail.benchmarkRun, modelId)" in component_performance
     # A component row is a disclosure keyed by its run, with compile parameters nested inside it.
     assert 'disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta)' in component_row
     assert 'disclosure(`parameters:${run.id}`, "Compile parameters"' in component_row

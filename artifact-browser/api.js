@@ -24,7 +24,11 @@ async function devkitAccuracy(accuracyKey) {
   const query = new URLSearchParams({ run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1" });
   try {
     const { run } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`);
-    return await api(`/v1/runs/${run.id}/accuracy/latest`);
+    // The resolved run omits its workflow; the full run gives the Accuracy section both commit and workflow.
+    const [payload, summary] = await Promise.all([
+      api(`/v1/runs/${run.id}/accuracy/latest`), api(`/v1/runs/${run.id}`).catch(() => null),
+    ]);
+    return { ...payload, run: summary?.run || run };
   } catch (error) {
     if (error.status === 404) return null;
     throw error;
@@ -253,11 +257,16 @@ export async function loadRunDetail(runId) {
     api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`), api(`/v1/runs/${runId}/test-results`),
     optional(api(`/v1/runs/${runId}/benchmarks/latest`)), optional(api(`/v1/runs/${runId}/accuracy/latest`)),
   ]);
-  // Builds measured before accuracy became its own run carry it on the benchmark run.
-  const benchmarkTests = benchmark?.benchmark_run?.id
-    ? await api(`/v1/runs/${benchmark.benchmark_run.id}/test-results`).catch(() => null)
-    : null;
-  const detail = { summary, provenance, tests, benchmark, benchmarkTests, accuracy };
+  // Builds measured before accuracy became its own run carry it on the benchmark run. A reused build is
+  // measured at a later commit than it was built, so the benchmark run's own commit and workflow are kept.
+  const benchmarkRunId = benchmark?.benchmark_run?.id;
+  const [benchmarkTests, benchmarkRun] = benchmarkRunId
+    ? await Promise.all([
+      api(`/v1/runs/${benchmarkRunId}/test-results`).catch(() => null),
+      api(`/v1/runs/${benchmarkRunId}`).then((benchmarkSummary) => benchmarkSummary.run).catch(() => null),
+    ])
+    : [null, null];
+  const detail = { summary, provenance, tests, benchmark, benchmarkTests, benchmarkRun, accuracy };
   state.detailCache.set(runId, detail);
   return detail;
 }
