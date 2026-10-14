@@ -288,7 +288,8 @@ def _provenance(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
 
 @cache
 def _benchmark_template() -> dict[str, Any]:
-    return json.loads((BROWSER / "fixtures" / "performance-result-v4.json").read_text(encoding="utf-8"))
+    # A ResNet-50 result imported from a DevKit Core benchmark, so board telemetry keeps real proportions.
+    return json.loads((BROWSER / "fixtures" / "performance-result-v5.json").read_text(encoding="utf-8"))
 
 
 def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
@@ -299,38 +300,23 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     })
     result["compatibility"]["actual_platform_version"] = compiler["version"]
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
-    power = round(6.5 + _fraction("power", *key) * 4.0, 3)
-    model_load = round(90.0 + _fraction("load", *key) * 600.0, 1)
-    baseline = round(64.0 + _fraction("baseline", *key) * 160.0, 1)
-    delta = round(64.0 + _fraction("memory", *key) * 960.0, 1)
+    power = result["metrics"]["avg_power_watts"]["value"]
     samples = result["configuration"]["samples"]
     values = {
         "latency_avg_ms": latency,
         "throughput_fps": round(1000.0 / latency, 1),
-        "avg_power_watts": power,
         "energy_joules": round(power * latency * samples / 1000.0, 2),
         "energy_per_inference_joules": round(power * latency / 1000.0, 5),
-        "model_load_ms": model_load,
-        "time_to_first_inference_ms": round(model_load + 180.0 + latency * 4, 1),
-        "mla_memory_baseline_mib": baseline,
-        "mla_memory_peak_mib": round(baseline + delta, 1),
-        "mla_memory_peak_delta_mib": delta,
-        "mla_memory_final_mib": round(baseline + delta * 0.85, 1),
+        "mla_memory_peak_mib": round(16.0 + _fraction("memory", *key) * 240.0, 1),
     }
-    # Trials keep the template's spread around the synthetic means, so trial and summary values agree.
-    for trial in result["trials"]:
-        for name, value in trial.items():
-            template = result["metrics"].get(name, {}).get("value")
-            if name in values and isinstance(value, (int, float)) and template:
-                trial[name] = round(value * values[name] / template, 5)
+    # The rest of the board telemetry keeps the template's DevKit readings.
     for name, value in values.items():
         metric = result["metrics"][name]
         scale = value / metric["value"]
         metric.update({
             "value": value,
-            "minimum": round(metric["minimum"] * scale, 5),
-            "maximum": round(metric["maximum"] * scale, 5),
-            "standard_deviation": round(metric["standard_deviation"] * scale, 5),
+            "minimum": metric["minimum"] and round(metric["minimum"] * scale, 5),
+            "maximum": metric["maximum"] and round(metric["maximum"] * scale, 5),
         })
     return result
 
@@ -591,7 +577,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({
                 "benchmark_run": {"id": _id("benchmark", run_id)},
                 "result": _benchmark_result(model, build, compiler),
-                "result_artifact_url": "/fixtures/performance-result-v4.json",
+                "result_artifact_url": "/fixtures/performance-result-v5.json",
             })
         elif rest == ["benchmarks", "latest"]:
             self._not_found("benchmark_not_found")
@@ -605,7 +591,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def _download_link(self) -> None:
         self._json({"artifact": {
-            "download_url": "/fixtures/performance-result-v4.json", "download_url_expires_in": 300,
+            "download_url": "/fixtures/performance-result-v5.json", "download_url_expires_in": 300,
         }})
 
     def translate_path(self, path: str) -> str:

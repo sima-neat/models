@@ -46,7 +46,7 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    outputs** and **Building applications** sections, so the title, hero, and
    overview are never shown twice. The README follows the
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
-2. **Performance.** For each component: throughput, average latency, board
+2. **Performance.** For each component: throughput, average latency, SoM
    power, and energy per inference from its DevKit benchmark. The line below
    them names the workload: **Core default MPK** when the benchmark script uses
    Core's defaults, or the script's own selection, such as **YoloV26 box
@@ -56,10 +56,13 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
    scale, and zero point. **Benchmark
-   details** groups every measurement into speed (latency per trial),
-   heat (power and board temperature), memory (MLA memory before loading, at
-   peak, and after the run), and startup (model load and time to first
-   inference). A metric the browser does not recognize appears under **Other
+   details** groups every measurement into speed (latency per trial), power
+   and energy (SoM and MLA power, with the average power of each rail), heat
+   and load (die and board temperature, CPU usage), memory (MLA, CMA, and
+   Linux memory), and startup (model load and time to first inference). Its
+   last line names the Sentinel version and the samples behind the board
+   readings, or why they are missing. **Power rails and sensors** lists the
+   average and peak of every power rail and temperature sensor. A metric the browser does not recognize appears under **Other
    measurements**, so a new metric shows up without a browser change. A
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,

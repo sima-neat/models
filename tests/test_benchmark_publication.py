@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from model_registry.benchmark_publication import (
+    _measurements,
     benchmark_identity_document,
     load_benchmark_result,
     publish_accuracy_run,
@@ -760,3 +761,18 @@ def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Pat
             request=lambda *_: pytest.fail("no registry request is expected"),
             artifact_store=FakeStore(),
         )
+
+
+def test_board_telemetry_metrics_are_published_as_measurements():
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
+
+    assert {
+        "board.power.peak", "board.mla_power.avg", "board.mla_power.peak", "board.die_temperature.avg",
+        "board.die_temperature.peak", "board.temperature.peak", "board.cpu_usage.avg", "board.cpu_usage.peak",
+        "model.mla_memory.peak", "board.cma_memory.peak", "board.linux_memory.peak",
+    } <= set(measurements)
+    assert measurements["board.die_temperature.peak"]["unit"] == "°C"
+    assert measurements["board.die_temperature.peak"]["aggregation"] == "max"
+    assert measurements["board.cpu_usage.avg"]["aggregation"] == "mean"
+    assert measurements["board.power.peak"]["sample_count"] == 15

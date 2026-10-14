@@ -983,8 +983,15 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert "/benchmarks/latest" in script
     # Benchmark details group the measurements into cards; unknown metrics land in Other measurements.
     assert 'disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload)' in script
-    for group in ['["speed", "Speed"', '["heat", "Power & heat"', '["memory", "MLA memory"', '["startup", "Startup"']:
+    for group in ['["speed", "Speed"', '["power", "Power & energy"', '["heat", "Heat & load"', '["memory", "Memory"',
+                  '["startup", "Startup"']:
         assert group in script
+    # Sentinel telemetry: the rail split, the MLA share of CMA, and the rails and sensors behind the totals.
+    assert "power: railSplit(measurements)" in script
+    assert "memory: memoryBar(measurements) || cmaBar(measurements)" in script
+    assert '"Power rails and sensors"' in script
+    assert "telemetryText(benchmark.telemetry)" in script
+    assert ".rail-split" in styles
     assert 'metricGroup("other", "Other measurements"' in script
     assert "mlaFrequencyHz: result.environment?.mla_frequency_hz" in adapters
     assert "cpuFrequencyKhz: result.environment?.cpu_frequency_khz" in adapters
@@ -1179,7 +1186,7 @@ def test_compare_is_a_page_of_three_pickers_over_one_table() -> None:
     assert 'if (compareLink) state.comparePicks = picksFromUrl(link);' in script
     # The model page the reader came from fills the first empty picker.
     assert "if (viewed && !state.comparePicks.includes(viewed) && empty >= 0)" in script
-    rows = ("Throughput", "Latency", "Board power", "Energy per inference", "Headline metric", "Published")
+    rows = ("Throughput", "Latency", "SoM power", "Energy per inference", "Headline metric", "Published")
     for row in (f'"{label}"' for label in rows):
         assert row in script
     assert '<span class="sr-only"> (best)</span>' in script

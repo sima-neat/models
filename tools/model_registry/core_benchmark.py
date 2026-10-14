@@ -34,6 +34,25 @@ UNAVAILABLE_UNITS = {
     "mla_memory_peak_delta_mib": "MiB",
     "mla_memory_final_mib": "MiB",
 }
+# Board telemetry Core's benchmark reads from Sentinel over the throughput window: each registry
+# metric names its report telemetry field, the statistic, the unit Sentinel reports, and the field
+# whose entries break it down. A list field (one entry per sensor) reports its hottest entry.
+TELEMETRY_METRICS = {
+    "peak_power_watts": ("power_som_watts", "maximum", "W", "power_rails_watts"),
+    "avg_mla_power_watts": ("power_mla_watts", "mean", "W", None),
+    "peak_mla_power_watts": ("power_mla_watts", "maximum", "W", None),
+    "avg_die_temperature_c": ("die_temperature_max_c", "mean", "C", None),
+    "peak_die_temperature_c": ("die_temperature_max_c", "maximum", "C", "die_temperatures_c"),
+    "peak_board_temperature_c": ("board_temperatures_c", "maximum", "C", "board_temperatures_c"),
+    "avg_cpu_usage_pct": ("cpu_usage_pct", "mean", "%", None),
+    "peak_cpu_usage_pct": ("cpu_usage_pct", "maximum", "%", None),
+    "mla_memory_peak_mib": ("mla_memory_mib", "maximum", "MiB", None),
+    "peak_cma_memory_mib": ("cma_memory_mib", "maximum", "MiB", None),
+    "peak_linux_memory_mib": ("linux_memory_used_mib", "maximum", "MiB", None),
+}
+AGGREGATIONS = {"mean": "mean", "maximum": "max"}
+# Sentinel writes Celsius as "C"; the registry spells the unit out.
+REGISTRY_UNITS = {"C": "°C"}
 
 # run_model_performance.sh sets the MLA and CPU clocks before measuring; the result records the clocks it ran at.
 MLA_FREQUENCY = Path("/sys/class/devfreq/5000000.mla/cur_freq")
@@ -112,6 +131,62 @@ def _metric(value: dict[str, Any], unit: str) -> dict[str, Any]:
     }
 
 
+def _telemetry_entry(value: Any, field: str, unit: str) -> dict[str, Any] | None:
+    """Return one Core telemetry summary when it measured anything, after checking its shape."""
+    if not isinstance(value, dict):
+        raise ValidationError(f"benchmark telemetry {field} must be an object")
+    samples = value.get("samples")
+    if type(samples) is not int or samples < 0:
+        raise ValidationError(f"benchmark telemetry {field} requires a sample count")
+    if not samples:
+        return None
+    if value.get("unit") != unit:
+        raise ValidationError(f"benchmark telemetry {field} must be in {unit!r}, not {value.get('unit')!r}")
+    for statistic in ("mean", "minimum", "maximum"):
+        number = value.get(statistic)
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number):
+            raise ValidationError(f"benchmark telemetry {field} requires a finite {statistic}")
+    return value
+
+
+def telemetry_metrics(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map the report's Sentinel telemetry to registry metrics; a metric without samples is unavailable."""
+    telemetry = report.get("telemetry")
+    if telemetry is None:
+        reason = "not_reported_by_core_benchmark"
+        telemetry = {}
+    elif not isinstance(telemetry, dict):
+        raise ValidationError("benchmark telemetry must be an object")
+    else:
+        reason = "not_measured_by_sentinel" if telemetry.get("status") == "ok" else "sentinel_telemetry_unavailable"
+    metrics = {}
+    for name, (field, statistic, unit, breakdown) in TELEMETRY_METRICS.items():
+        value = telemetry.get(field)
+        entries = value if isinstance(value, list) else [] if value is None else [value]
+        measured = [entry for entry in (_telemetry_entry(item, field, unit) for item in entries) if entry]
+        selected = max(measured, key=lambda entry: entry[statistic], default=None)
+        metric = {
+            "status": "measured" if selected else "unavailable",
+            "reason": None if selected else reason,
+            "unit": REGISTRY_UNITS.get(unit, unit),
+            "aggregation": AGGREGATIONS[statistic],
+            "value": selected[statistic] if selected else None,
+            "minimum": selected["minimum"] if selected else None,
+            "maximum": selected["maximum"] if selected else None,
+            "standard_deviation": None,
+            "sample_count": selected["samples"] if selected else 0,
+        }
+        parts = telemetry.get(breakdown) if breakdown else None
+        if selected and isinstance(parts, list):
+            metric["details"] = {"breakdown": [
+                {key: entry[key] for key in ("key", "label", "unit", "samples", "mean", "maximum")}
+                for entry in (_telemetry_entry(item, breakdown, unit) for item in parts)
+                if entry
+            ]}
+        metrics[name] = metric
+    return metrics
+
+
 def import_core_benchmark(
     manifest_path: Path,
     report_path: Path,
@@ -182,10 +257,13 @@ def import_core_benchmark(
         },
         "J/inference",
     )
+    metrics.update(telemetry_metrics(report))
     for name, unit in UNAVAILABLE_UNITS.items():
-        metrics[name] = _metric(
-            {"status": "unavailable", "value": None, "unit": unit, "reason": "not_reported_by_core_benchmark"}, unit
-        )
+        if name not in metrics:
+            metrics[name] = _metric(
+                {"status": "unavailable", "value": None, "unit": unit, "reason": "not_reported_by_core_benchmark"},
+                unit,
+            )
     result = {
         "schema_version": 5,
         "status": "passed",

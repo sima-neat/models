@@ -4,7 +4,10 @@ export const METRIC_DEFINITIONS = {
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
-  avg_power_watts: { label: "Board power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  avg_power_watts: { label: "SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  peak_power_watts: { label: "Peak SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  avg_mla_power_watts: { label: "MLA power", unit: "W", digits: 2, scale: 1, direction: "lower" },
+  peak_mla_power_watts: { label: "Peak MLA power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   energy_joules: { label: "Benchmark energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
   energy_per_inference_joules: {
     label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower",
@@ -14,11 +17,18 @@ export const METRIC_DEFINITIONS = {
     label: "Time to first inference", unit: "ms", digits: 1, scale: 1, direction: "lower",
   },
   mla_memory_baseline_mib: { label: "MLA memory baseline", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
-  mla_memory_peak_mib: { label: "MLA memory peak", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
+  mla_memory_peak_mib: { label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
   mla_memory_peak_delta_mib: {
-    label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower",
+    label: "Peak MLA memory increase", unit: "MiB", digits: 1, scale: 1, direction: "lower",
   },
   mla_memory_final_mib: { label: "MLA memory final", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
+  peak_cma_memory_mib: { label: "Peak CMA used", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
+  peak_linux_memory_mib: { label: "Peak Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
+  avg_die_temperature_c: { label: "Die temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
+  peak_die_temperature_c: { label: "Peak die temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
+  peak_board_temperature_c: { label: "Peak board temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
+  avg_cpu_usage_pct: { label: "CPU usage", unit: "%", digits: 1, scale: 1, direction: "lower" },
+  peak_cpu_usage_pct: { label: "Peak CPU usage", unit: "%", digits: 1, scale: 1, direction: "lower" },
 };
 
 function fallbackMetricLabel(key) {

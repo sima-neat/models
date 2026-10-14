@@ -99,6 +99,21 @@ function common(result) {
     mlaFrequencyHz: result.environment?.mla_frequency_hz,
     cpuFrequencyKhz: result.environment?.cpu_frequency_khz,
     executionGraph: executionGraph(result.core_report?.execution_plan),
+    telemetry: telemetrySource(result.core_report),
+  };
+}
+
+// Where the board telemetry came from, read from the Core report: the Sentinel daemon that sampled
+// it and how much of the throughput window it covered. Reports before Sentinel carry none.
+function telemetrySource(report) {
+  const telemetry = report?.telemetry;
+  if (!telemetry || typeof telemetry !== "object") return null;
+  return {
+    status: typeof telemetry.status === "string" ? telemetry.status : "",
+    sentinelVersion: typeof telemetry.sentinel_version === "string" ? telemetry.sentinel_version : "",
+    samples: Number.isInteger(telemetry.samples) ? telemetry.samples : 0,
+    intervalMs: finite(telemetry.sample_interval_ms),
+    windowMs: finite(report.throughput_duration_ms),
   };
 }
 

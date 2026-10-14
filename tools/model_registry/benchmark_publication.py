@@ -190,6 +190,17 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         "model_load_ms": ("model.initialization.load", "lower"),
         "time_to_first_inference_ms": ("model.initialization.time_to_first_inference", "lower"),
         "mla_memory_peak_delta_mib": ("model.mla_memory.peak_delta", "lower"),
+        "peak_power_watts": ("board.power.peak", "lower"),
+        "avg_mla_power_watts": ("board.mla_power.avg", "lower"),
+        "peak_mla_power_watts": ("board.mla_power.peak", "lower"),
+        "avg_die_temperature_c": ("board.die_temperature.avg", "lower"),
+        "peak_die_temperature_c": ("board.die_temperature.peak", "lower"),
+        "peak_board_temperature_c": ("board.temperature.peak", "lower"),
+        "avg_cpu_usage_pct": ("board.cpu_usage.avg", "lower"),
+        "peak_cpu_usage_pct": ("board.cpu_usage.peak", "lower"),
+        "mla_memory_peak_mib": ("model.mla_memory.peak", "lower"),
+        "peak_cma_memory_mib": ("board.cma_memory.peak", "lower"),
+        "peak_linux_memory_mib": ("board.linux_memory.peak", "lower"),
     }
     dimensions = {
         "model_id": result["model"]["id"],

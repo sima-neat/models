@@ -431,6 +431,23 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .metric-bar-rest { fill: var(--accent); }
 .metric-group[data-group="startup"] .metric-bar-first { fill: var(--accent-soft); }
 .metric-bar-legend { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* SoM power split by rail: one segment per rail, in the order Sentinel reports them. */
+.rail-split { display: flex; gap: 2px; height: 8px; margin-top: 8px; overflow: hidden; border-radius: 999px; }
+.rail-split span { min-width: 2px; }
+.rail-split span:nth-child(8n+1), .rail-legend li:nth-child(8n+1) i { background: var(--blue); }
+.rail-split span:nth-child(8n+2), .rail-legend li:nth-child(8n+2) i { background: var(--green); }
+.rail-split span:nth-child(8n+3), .rail-legend li:nth-child(8n+3) i { background: var(--amber); }
+.rail-split span:nth-child(8n+4), .rail-legend li:nth-child(8n+4) i { background: var(--violet); }
+.rail-split span:nth-child(8n+5), .rail-legend li:nth-child(8n+5) i { background: var(--red); }
+.rail-split span:nth-child(8n+6), .rail-legend li:nth-child(8n+6) i { background: var(--ink-soft); }
+.rail-split span:nth-child(8n+7), .rail-legend li:nth-child(8n+7) i { background: color-mix(in srgb, var(--blue) 50%, var(--surface-raised)); }
+.rail-split span:nth-child(8n+8), .rail-legend li:nth-child(8n+8) i { background: color-mix(in srgb, var(--green) 50%, var(--surface-raised)); }
+.rail-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--ink-soft); font-size: 12px; }
+.rail-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rail-legend i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
+.rail-legend b { margin-left: auto; color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.breakdown { display: grid; gap: 22px; }
+.breakdown-title { margin: 0 0 8px; color: var(--ink); font-size: 13px; font-weight: 600; }
 .metric-unavailable { margin: 16px 0 0; color: var(--ink-soft); font-size: 13px; }
 .metric-source { margin: 6px 0 0; color: var(--ink-faint); font-size: 12px; }
 .metric-source a { display: inline-flex; align-items: center; gap: 4px; color: var(--blue); text-decoration: none; }
@@ -545,7 +562,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
   .artifact-metadata { grid-template-columns: 1fr; }
   .artifact-metadata > div:first-child { margin-right: 0; }
   .toast-region { left: 16px; right: 16px; }
-  .benchmark-summary, .metric-groups { grid-template-columns: 1fr; }
+  .benchmark-summary, .metric-groups, .rail-legend { grid-template-columns: 1fr; }
   .compare-picks { grid-template-columns: minmax(0, 1fr); }
   .compare-table { min-width: 560px; }
   .compare-table tbody th[scope="row"] { width: 120px; }
