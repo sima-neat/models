@@ -40,5 +40,5 @@ Class index i is the i-th COCO category ID in ascending order. Neat's
 
 Run the package with the [Neat Model
 API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
-For complete applications, start from the examples in
-[sima-neat/apps](https://github.com/sima-neat/apps).
+For complete applications, start from the [Neat example
+apps](https://developer.sima.ai/examples).

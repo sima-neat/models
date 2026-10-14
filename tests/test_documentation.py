@@ -141,7 +141,7 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview()).replace("## Building applications\n\n", ""), "H2 sections must be"),
         (_readme(_overview()) + "\n## Source and license\n\nApache-2.0.\n", "H2 sections must be"),
         (_readme(_overview()).replace(_CONTENT, "Content.\n\n### Decoding"), "H2 sections must be"),
-        (_readme(_overview()).replace("[sima-neat/apps]", "[the Apps repository]"), "Building applications must be"),
+        (_readme(_overview()).replace("[Neat example apps]", "[the example apps]"), "Building applications must be"),
         (
             _readme(_overview()).replace(_CONTENT, " ".join(["word"] * MAX_README_WORDS)),
             f"at most {MAX_README_WORDS} words",

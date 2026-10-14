@@ -25,7 +25,7 @@ BANNED_TERMS = (
 BUILDING_APPLICATIONS = (
     "Run the package with the [Neat Model API]"
     "(https://developer.sima.ai/software/develop-apps/development-workflow/model). "
-    "For complete applications, start from the examples in [sima-neat/apps](https://github.com/sima-neat/apps)."
+    "For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples)."
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
 _ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
