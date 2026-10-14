@@ -278,6 +278,31 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
   .component-pipeline > li + li::before { margin: 6px 0; content: "\2193"; content: "\2193" / ""; }
 }
 .benchmark-context { margin: 12px 0 0; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+/* The steps a component ran, in order, each tagged with the processor it ran on. */
+.execution-graph { margin-top: 24px; }
+.execution-graph h5 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.execution-graph ol { display: flex; margin: 0; padding: 0; list-style: none; }
+.execution-graph li { display: flex; flex: 1 1 0; min-width: 0; align-items: center; }
+.execution-graph li.execution-end { flex-grow: .7; }
+.execution-graph li + li::before { flex: none; margin: 0 10px; color: var(--ink-faint); content: "\2192"; content: "\2192" / ""; }
+.execution-step { --accent: var(--line-strong); --accent-soft: var(--surface); flex: 1; min-width: 0; min-height: 52px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 10px 14px; border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: 10px; background: var(--surface-raised); font-size: 15px; font-weight: 500; }
+.execution-step[data-runs-on="EV74"] { --accent: var(--violet); --accent-soft: var(--violet-soft); }
+.execution-step[data-runs-on="MLA"] { --accent: var(--blue); --accent-soft: var(--blue-soft); }
+.execution-step[data-runs-on="A65"] { --accent: var(--amber); --accent-soft: var(--amber-soft); }
+.execution-step small { padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font: 500 11px var(--font-mono); letter-spacing: .04em; }
+.execution-end .execution-step { border: 1px dashed var(--line-strong); color: var(--ink-soft); font-weight: 400; }
+@container (max-width: 800px) {
+  .execution-graph ol, .execution-graph li { flex-direction: column; align-items: stretch; }
+  .execution-graph li + li::before { margin: 4px 0; text-align: center; content: "\2193"; content: "\2193" / ""; }
+}
+.tensor-table { overflow-x: auto; }
+.tensor-table table { width: 100%; border-collapse: collapse; color: var(--ink-soft); font: 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+.tensor-table th, .tensor-table td { padding: 6px 16px 6px 0; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.tensor-table thead th { padding-top: 0; border-top: 0; border-bottom: 1px solid var(--line); color: var(--ink-faint); font: 500 11px var(--font-body); letter-spacing: .04em; text-transform: uppercase; }
+.tensor-table tbody th { color: var(--ink); font: 400 14px var(--font-body); }
+.tensor-table tbody td:first-of-type { color: var(--ink); font-weight: 500; }
+.tensor-table tbody tr:first-child > *, .tensor-table tr.continued > * { border-top: 0; }
+.tensor-table tr.continued > * { padding-top: 0; }
 
 .artifact-metadata { display: grid; grid-template-columns: minmax(100px, .35fr) minmax(0, 1fr); margin: 0; border-top: 1px solid var(--line); }
 .artifact-metadata > div { min-width: 0; padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line); }

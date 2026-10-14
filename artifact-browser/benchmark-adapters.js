@@ -98,7 +98,34 @@ function common(result) {
     neatVersion: result.compatibility?.actual_neat_version,
     mlaFrequencyHz: result.environment?.mla_frequency_hz,
     cpuFrequencyKhz: result.environment?.cpu_frequency_khz,
+    executionGraph: executionGraph(result.core_report?.execution_plan),
   };
+}
+
+// A quantization parameter is one number, or one per channel for a per-axis tensor.
+function quantText(value, format) {
+  if (Array.isArray(value)) return "per channel";
+  return Number.isFinite(value) ? format(value) : "—";
+}
+
+// The steps the benchmarked Model ran, in order, and the tensors on each connection, read from the
+// Core execution plan the performance script records. Input and Output are the graph's ends; the MLA
+// step is the compiled model. Another plan schema shows no graph.
+export function executionGraph(plan) {
+  if (plan?.schema !== "sima.neat.execution_plan" || plan.schema_version !== 1
+    || !Array.isArray(plan.nodes) || !Array.isArray(plan.edges)) return null;
+  const steps = plan.nodes.map((node) => (["Input", "Output"].includes(node.kind)
+    ? { name: node.kind, runsOn: null }
+    : { name: node.runs_on === "MLA" ? "Compiled Model" : String(node.kind), runsOn: String(node.runs_on) }));
+  const names = new Map(plan.nodes.map((node, index) => [node.id, steps[index].name]));
+  const tensors = plan.edges.flatMap((edge) => (Array.isArray(edge.tensors) ? edge.tensors : []).map((tensor, index) => ({
+    connection: index === 0 ? `${names.get(edge.from) ?? edge.from} → ${names.get(edge.to) ?? edge.to}` : "",
+    dtype: String(tensor.dtype),
+    shape: Array.isArray(tensor.shape) ? tensor.shape.join("×") : "—",
+    scale: quantText(tensor.quant?.scale, (value) => (value >= 1 ? value.toFixed(2) : String(Number(value.toPrecision(3))))),
+    zeroPoint: quantText(tensor.quant?.zero_point, String),
+  })));
+  return { steps, tensors };
 }
 
 function adaptV1(result) {

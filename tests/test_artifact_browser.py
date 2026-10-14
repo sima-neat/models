@@ -369,6 +369,15 @@ def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
         assert removed not in browser
 
 
+def test_execution_graph_opens_its_tensors_in_the_shared_disclosure_row() -> None:
+    script = _browser_source("model-view.js")
+    adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
+
+    assert "executionGraph: executionGraph(result.core_report?.execution_plan)" in adapters
+    assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
+    assert 'disclosure(`tensors:${runId}`, "Tensors", table, `${graph.tensors.length} tensors`)' in script
+
+
 def test_model_card_markdown_resolves_safe_relative_links_at_the_source_commit() -> None:
     script = """
       import {readFileSync} from 'node:fs';

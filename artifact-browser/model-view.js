@@ -270,6 +270,19 @@ function benchmarkContext(benchmark) {
   ].filter(Boolean).join(" · ");
 }
 
+// Each step of the benchmarked Model and the processor it ran on, with the tensors between the steps one
+// row away.
+function executionGraphSection(graph, runId) {
+  if (!graph) return "";
+  const steps = graph.steps.map((step) => (step.runsOn
+    ? `<li><span class="execution-step" data-runs-on="${escapeHtml(step.runsOn)}">${escapeHtml(step.name)}<small>${escapeHtml(step.runsOn)}</small></span></li>`
+    : `<li class="execution-end"><span class="execution-step">${escapeHtml(step.name)}</span></li>`)).join("");
+  const rows = graph.tensors.map((tensor) => `<tr${tensor.connection ? "" : ' class="continued"'}><th scope="row">${escapeHtml(tensor.connection)}</th>${[tensor.dtype, tensor.shape, tensor.scale, tensor.zeroPoint].map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("");
+  const table = `<div class="tensor-table"><table><thead><tr>${["Connection", "Type", "Shape", "Scale", "Zero point"].map((label) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<section class="execution-graph" aria-label="Execution graph"><h5>Execution graph</h5><ol>${steps}</ol></section>
+    ${graph.tensors.length ? disclosure(`tensors:${runId}`, "Tensors", table, `${graph.tensors.length} tensors`) : ""}`;
+}
+
 function componentBenchmark(payload, runId) {
   if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
@@ -282,6 +295,7 @@ function componentBenchmark(payload, runId) {
   const { groups } = metricGroups(benchmark);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}</p>
+    ${executionGraphSection(benchmark.executionGraph, runId)}
     ${disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload), groups.map((group) => group.title).join(" · "))}`;
 }
 
