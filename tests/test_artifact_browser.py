@@ -819,6 +819,8 @@ def test_filters_list_only_used_values_and_hide_without_a_choice() -> None:
     assert '<span>Architecture</span><select id="paradigm-filter">' in html
     assert "state.runs.flatMap((run) => run[field] ?? [])" in script
     assert "if (build.run) return { ...build.run, ...catalogCategories(model) };" in _browser_source("api.js")
+    model_view = _browser_source("model-view.js")
+    assert "const categories = catalogModel?.categories || run.model_categories || {};" in model_view
     assert 'element.closest("label").hidden = element.options.length < 3 && !element.value' in script
     assert 'hideFilterWithoutChoice(elements["compiler-filter"])' in script
 

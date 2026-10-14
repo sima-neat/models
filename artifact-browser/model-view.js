@@ -692,7 +692,8 @@ export function renderDetail(variant) {
   const displayName = catalogModel?.display_name || model;
   const precisions = uniqueBy(details.map((detail) => detail.provenance.parameters?.parameters?.compile_parameters?.precision)
     .filter(Boolean), (precision) => precision);
-  const categories = run.model_categories || {};
+  // A reused build keeps the categories it was compiled with; the catalog has the current ones.
+  const categories = catalogModel?.categories || run.model_categories || {};
   const license = run.metadata?.license;
   const sourceUrl = githubModelUrl(run, model);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(run.commit_sha)}`;
