@@ -55,7 +55,11 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    heat (power and board temperature), memory (MLA memory before loading, at
    peak, and after the run), and startup (model load and time to first
    inference). A metric the browser does not recognize appears under **Other
-   measurements**, so a new metric shows up without a browser change.
+   measurements**, so a new metric shows up without a browser change. A
+   multi-component model whose `model.yaml` declares a `pipeline` first shows
+   the order its components run in, from input to output: numbered components,
+   with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
+   Each component's measurements then appear under the same number.
 3. **Accuracy.** The status, the first four metrics, and the evaluated sample
    count. **Evaluation details** explains the status and coverage and lists
    the remaining metrics, each with its published score when `model.yaml`
