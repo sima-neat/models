@@ -173,10 +173,24 @@ function modelCategory(model, name, fallback) {
   return model[name] ?? fallback;
 }
 
-export function runFromCatalogBuild(model, build) {
-  if (build.run) return build.run;
+// Categories come from the current catalog: a reused build keeps the ones it was compiled with.
+function catalogCategories(model) {
   const categories = model.categories || {};
   const architecture = categories.architecture || {};
+  return {
+    model_type: modelCategory(model, "model_type", categories.model_type),
+    architecture_id: modelCategory(model, "architecture_id", architecture.id),
+    architecture_paradigm: modelCategory(model, "architecture_paradigm", architecture.paradigm),
+    tasks: modelCategory(model, "tasks", categories.tasks) || [],
+    input_modalities: modelCategory(model, "input_modalities", categories.input_modalities) || [],
+    output_modalities: modelCategory(model, "output_modalities", categories.output_modalities) || [],
+    model_tags: modelCategory(model, "model_tags", categories.tags) || [],
+    model_categories: categories,
+  };
+}
+
+export function runFromCatalogBuild(model, build) {
+  if (build.run) return { ...build.run, ...catalogCategories(model) };
   const branch = elements["branch-filter"].value || DEFAULT_BRANCH;
   return {
     id: build.run_id,
@@ -197,14 +211,7 @@ export function runFromCatalogBuild(model, build) {
       component_id: componentId(build),
       compile_invocation_id: build.compile_invocation_id,
     },
-    model_type: modelCategory(model, "model_type", categories.model_type),
-    architecture_id: modelCategory(model, "architecture_id", architecture.id),
-    architecture_paradigm: modelCategory(model, "architecture_paradigm", architecture.paradigm),
-    tasks: modelCategory(model, "tasks", categories.tasks) || [],
-    input_modalities: modelCategory(model, "input_modalities", categories.input_modalities) || [],
-    output_modalities: modelCategory(model, "output_modalities", categories.output_modalities) || [],
-    model_tags: modelCategory(model, "model_tags", categories.tags) || [],
-    model_categories: categories,
+    ...catalogCategories(model),
   };
 }
 
