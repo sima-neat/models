@@ -6,11 +6,11 @@ from ModelSDK compilation:
 
 1. Python 3.10, PyTorch 2.3.1, TorchVision 0.18.1, and the SDK 2.0 SiMa QAT
    package train and export an opset-17 QDQ model.
-2. ModelSDK 2.1.3 imports the immutable source bundle and compiles the two
-   tessellation placements.
+2. The Model Compiler imports the immutable source bundle and compiles one
+   build per precision.
 
-The FP32 source in the bundle is used for both BF16 variants. The QDQ source is
-used for both INT8 variants. PTQ-only SmoothQuant, bias correction, channel
+The `modalix_bf16` build uses the FP32 source in the bundle, and `modalix_int8`
+uses the QDQ source. PTQ-only SmoothQuant, bias correction, channel
 equalization, and negligible-weight surgery must not be applied to the QAT
 source.
 

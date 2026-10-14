@@ -207,62 +207,53 @@ change.
 
 ## Model README requirements
 
-Every top-level registry entry under `models/<model_id>` must contain a
-`README.md`. The README begins with the following structure:
+Every model under `models/<model_id>` has a `README.md`. The model page shows
+the model's metrics, variants, components, license, and source links, then the
+README. The README holds what an application developer needs and the page
+cannot show: what the model does, how to prepare its input, and how to read its
+outputs. Start from the template in
+[docs/adding-a-model.md](docs/adding-a-model.md#11-write-the-readme).
 
-1. `# <display name>`
+`model-registry validate-models` enforces this structure:
+
+1. `# <display name>`, matching `display_name` in `model.yaml`.
 2. `![<display name> model hero](hero.png)`
-3. `## Overview`
-4. `## Usage`
-5. `## Model interface`
-6. `## Available builds`
-7. `## Quality and performance`
-8. `## Source and license`
-9. `## Reproducing the artifact`
+3. `## Overview`: one or two prose paragraphs of 50 to 120 words. Say what the
+   model finds, what input it takes, what it returns, and which components it
+   runs as. The registry publishes this section as the catalog summary and
+   search text.
+4. `## Inputs and outputs`: what the application does with the model. Give the
+   input preparation with its exact values, each step between components, and
+   each output tensor by its `model.yaml` name. Write the decode steps as a
+   numbered list, give the class-index mapping, and name the Neat decoder that
+   handles the outputs when one exists.
+5. `## Building applications`: the `BUILDING_APPLICATIONS` text from
+   `tools/model_registry/documentation.py`, unchanged.
 
-The H1 must exactly match `display_name` in `model.yaml`. Keep the listed H2
-headings even when a section is brief so model documentation remains
-predictable across the registry. Third-level headings may organize conversion,
-training, calibration, compilation, or validation details under
-`## Reproducing the artifact`.
+Write the README for an application developer:
 
-The Model Browser and `sima-cli` use `## Overview` as the model overview. It
-must be the first H2, immediately after the required hero image, and must:
+- Keep it within 350 words after the hero, with H1 and H2 headings only.
+- Name hardware and tools in plain words, such as "the CPU" and "the package".
+  The validator rejects internal terms (MPK, A65, MLA, AFE, ELF, tessellation)
+  and metric and tool names (mAP, AP50, FPS, latency, benchmark, sima-cli,
+  model-registry, Vulcan).
+- Leave to the model page what it reads from `model.yaml` and registry runs:
+  scores and metrics, benchmark settings, variants and compile settings,
+  versions, license and redistribution terms, checksums, download commands, and
+  links to the original model or its source repository.
+- Use the same wording for every size in a model family, so the READMEs differ
+  only in values.
+- Take each value from `model.yaml` and the current scripts, and update the
+  README in the change that alters it.
+- Write each list item on one line, because the model browser ends a list item
+  at its line break.
 
-- contain one or two prose paragraphs totaling 50 to 120 words;
-- explain what the model does and its intended use;
-- summarize the expected input and meaningful output or application boundary;
-- state a material limitation, qualification caveat, or deployment constraint
-  when one exists;
-- avoid tables, lists, commands, subheadings, hashes, workflow instructions,
-  compiler internals, and other maintainer-only details.
-
-Write the remaining sections for model users first and maintainers second:
-
-- `Usage` provides the normal installation or download command and the shortest
-  supported path to using the model.
-- `Model interface` describes preprocessing, inputs, outputs, and required
-  application-side postprocessing.
-- `Available builds` explains the purpose and deployment differences of the
-  declared build profiles and components.
-- `Quality and performance` distinguishes authoritative qualification or
-  accuracy results from diagnostic fidelity and benchmark measurements.
-- `Source and license` identifies the upstream model, meaningful derivation,
-  model card, and redistribution restrictions.
-- `Reproducing the artifact` contains conversion, training, calibration,
-  compilation, validation, and CI details needed by maintainers.
-
-Treat `model.yaml` as authoritative for IDs, tensor declarations, source pins,
-checksums, licenses, build profiles, and component structure. Do not copy large
-metadata blocks into the README. When prose mentions one of these values,
-verify it against `model.yaml` and the current scripts so the documentation
-cannot silently drift. Commands must be runnable from the repository root and
-must use current paths and supported CLI syntax.
-
-These requirements apply to top-level model READMEs consumed by the registry.
-Nested documentation such as training or QAT guides may use a structure suited
-to that workflow, but the top-level README should link to it from the relevant
-standard section.
+Keep maintainer explanations next to what they explain: in `model.yaml`
+comments, or in the docstrings of `convert.py`, `performance.py`, and
+`accuracy.py`. Every other file under `models/<id>/scripts/` is part of the
+compile key, so a comment there recompiles the model. Procedures that apply to
+every model belong in `docs/`. Maintainer guides inside a model directory, such
+as `scripts/qat/README.md`, use whatever structure suits their workflow.
 
 Every model has a hero: a regular (non-symlinked) 1200x480 PNG no
 larger than 2 MiB. The registry's strict PNG profile permits `IHDR`, optional
@@ -278,8 +269,7 @@ Each hero shows the model's output on an input, such as labeled boxes on a
 scene, in a scene no other model uses. Models of one architecture share a
 style and accent color, and labels use the same size on every hero.
 
-When changing model behavior, interfaces, supported builds, qualification
-evidence, installation steps, or redistribution terms, update the owning
-README and the hero image in the same change. A README- or hero-only edit is
-documentation or catalog metadata; it must not change compilation, validation,
-benchmark, or artifact fingerprints.
+When a change alters what the model detects, its input, its outputs, or its
+components, update the README and the hero in the same change. A README- or
+hero-only edit is documentation or catalog metadata; it must not change
+compilation, validation, benchmark, or artifact fingerprints.

@@ -56,8 +56,7 @@ models/<model-id>/
 ```
 
 Put every model-specific setting in `model.yaml`, not in separate
-configuration files. The README follows the structure in
-[`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
+configuration files. [Step 11](#11-write-the-readme) describes the README.
 
 Keep board-only code inside `performance.py` or `accuracy.py`. Any other
 `.py` or `.sh` file under `scripts/` is a compile input, so a helper that
@@ -393,7 +392,54 @@ REGISTRY_PYTHON="$(command -v python)" \
 `run_model_tests.sh` prints `passed`, `failed`, or `skipped`, as CI publishes
 it.
 
-## 11. Validate the contract
+## 11. Write the README
+
+The model page shows the README after what it reads from `model.yaml` and the
+registry runs: metrics, benchmarks, variants, components, license, and source
+links. The README adds what an application developer needs to run the model:
+what it finds, how to prepare its input, and how to read its outputs. Write it
+from this template:
+
+````markdown
+# <display_name>
+
+![<display_name> model hero](hero.png)
+
+## Overview
+
+<50 to 120 words of prose: what the model finds, the input it takes, what it
+returns, and the components it runs as.>
+
+## Inputs and outputs
+
+**Input.** <Each preparation step with its exact values: resize, padding,
+color order, scaling, and normalization.>
+
+**Between the components.** <Only for a model with several components: what
+the application computes on the CPU and which tensors it passes on.>
+
+**Outputs.** <Each output tensor by its model.yaml name, and what it holds.>
+
+1. <Each decode step, in order, one line per step.>
+
+<The class-index mapping, and the Neat decoder for these outputs, if one exists.>
+
+## Building applications
+
+Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
+For complete applications, start from the examples in [sima-neat/apps](https://github.com/sima-neat/apps).
+````
+
+Start from a README of the same kind: [`yolo26n`](../models/yolo26n/README.md)
+for a one-component detector, [`rf_detr_nano`](../models/rf_detr_nano/README.md)
+for a CPU step between two components, and
+[`resnet_50`](../models/resnet_50/README.md) for a classifier.
+`model-registry validate-models` checks the structure, the word limits, the
+Building applications text, and the internal terms a README leaves out. The
+writing rules are in
+[`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
+
+## 12. Validate the contract
 
 ```bash
 model-registry validate models/<model-id>

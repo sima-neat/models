@@ -158,6 +158,7 @@ build_profiles:
     calibration: coco_images
     parameters:
       precision: int8
+      # In one build of each, 1,024 backbone bins scored 0.7 COCO val2017 mAP above 2,048.
       calibration_bins: 1024
       calibration_samples: 50
   - id: transformer
@@ -208,6 +209,8 @@ fidelity:
 - id: full_pipeline_fidelity
   scope: {type: package, package: default}
   build_profiles: [modalix_int8_bf16]
+  # Reordered queries can lower numerical similarity for equivalent detections,
+  # so fidelity does not gate publication.
   status: diagnostic
   result_component: transformer
   dataset:

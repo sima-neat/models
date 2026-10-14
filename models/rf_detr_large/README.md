@@ -4,205 +4,41 @@
 
 ## Overview
 
-RF-DETR Large is a COCO object detector that accepts a normalized 704×704 RGB
-image and produces 300 boxes with 91 class scores. The Modalix package splits
-inference into independently deployable backbone and transformer components.
-Applications must select the 300 highest-scoring backbone proposals and gather
-their boxes on the A65 before invoking the transformer. Detection accuracy is
-measured as COCO mAP on a Modalix DevKit over the full COCO 2017 validation
-split.
+RF-DETR Large is the Large size of Roboflow's RF-DETR transformer object
+detector, trained on COCO. It runs as two components: a backbone that proposes
+candidate boxes, and a transformer that turns the best 300 candidates into 300
+detections. Your application selects those candidates on the CPU between the two
+components. RF-DETR predicts each object once, so the application does not need
+to remove overlapping boxes.
 
-## Usage
+## Inputs and outputs
 
-Download the complete published variant from the `develop` catalog:
+**Input.** Resize the image to 704×704 with bilinear resampling, without keeping
+the aspect ratio. Scale the RGB values to 0–1, subtract the ImageNet mean
+(0.485, 0.456, 0.406), and divide by the standard deviation (0.229, 0.224,
+0.225). The reference scripts pass this image as a 704×704×3 (height, width,
+channel) float tensor, with Neat's resize, color conversion, and normalization
+turned off.
 
-```bash
-sima-cli models download \
-  --id rf_detr_large \
-  --variant modalix_int8_bf16 \
-  --branch develop
-```
+**Between the components.** The backbone returns `backbone_features`,
+`proposal_scores`, and `proposal_boxes`, with 1,936 proposals. Take the 300
+highest scores, breaking ties by the lower proposal index, and gather their
+boxes in that order. Pass the gathered boxes as `proposals`, with
+`backbone_features`, to the transformer. Keep this order, because the
+transformer treats each of the 300 positions differently.
 
-The package contains both `backbone` and `transformer`. An application must run
-both components with the CPU proposal-selection bridge described below; either
-MPK alone is not a complete detector.
+**Outputs.** The transformer returns `dets`, 300 boxes as normalized (cx, cy, w,
+h), and `labels`, 91 class logits for each box.
 
-## Model interface
+1. Apply a sigmoid to `labels` and rank all 300 × 91 box-class pairs by score.
+2. Convert each box to corners: (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
+3. Multiply x by the image width and y by the image height.
 
-The backbone consumes a normalized NCHW FP32 RGB tensor with shape
-`1×3×704×704`. It emits the final feature map, 1,936 proposal scores, and 1,936
-decoded proposal boxes. On the A65, select the 300 highest scores, breaking ties
-by the lower proposal index, and gather the matching boxes in that order. Each
-decoder query slot has its own learned embedding, so a different tie order
-pairs boxes with different queries and changes the detections. The transformer
-consumes those proposals and the backbone feature map, then emits 300 boxes and
-91 class scores for each box.
+Class index i is COCO category ID i. Eleven of the 91 indexes are unused.
 
-```text
-image -> backbone.mpk -> scores + boxes -> A65 TopK/Gather -> transformer.mpk
-                         feature map -----------------------> transformer.mpk
-```
+## Building applications
 
-The package exposes `proposals` as an input because package composition connects
-only the two MPKs. `calibration.py` contains the deterministic reference bridge
-used during compilation and fidelity validation.
-
-The transformer outputs are not final detections. Boxes are normalized
-`(cx, cy, w, h)` values and class scores are logits. Apply a sigmoid to the
-scores, convert each box to corners, and scale x by the original image width
-and y by its height. Class index `i` is COCO category ID `i`; RF-DETR keeps all
-91 original COCO slots, 11 of which are unused.
-
-## Available builds
-
-The registry declares one `modalix_int8_bf16` build profile. It compiles the
-backbone with INT8 quantization and regular bias correction, and the
-transformer with BF16 quantization. Both use histogram MSE calibration with
-2,048 bins, set by `calibration_bins` in `model.yaml`. The grouped `rf_detr`
-invocation emits separate `backbone` and `transformer` MPK archives plus their
-shared compile manifest.
-
-## Quality and performance
-
-Compilation produces a fidelity report comparing the quantized AFE backbone,
-the CPU proposal bridge, and the quantized AFE transformer with the original
-exported ONNX model. These metrics are diagnostic rather than detection
-accuracy: query reordering can reduce numerical similarity for equivalent
-detections, so fidelity does not gate publication.
-
-The benchmark script measures each MPK separately with three trials of 1,000
-samples. CI runs the backbone and transformer sequentially on one Modalix board
-and publishes one benchmark result for each component.
-
-On the same board and MPKs, `scripts/accuracy.py` then measures the 12 COCO
-bounding-box AP and AR metrics on all 5,000 val2017 images. The `coco_accuracy`
-result is published as an accuracy run under the transformer's compile run, and
-the model browser shows it with the build beside Roboflow's
-[published scores](https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md) for the source model: mAP 50–95 0.565 and AP50 0.751.
-
-The script resizes each image to 704×704 with bilinear sampling and applies
-ImageNet normalization, runs the backbone, the CPU proposal bridge, and the
-transformer, and keeps the 300 highest-scoring box and class pairs with a score
-of at least 0.001. Boxes are clipped to the image, as in RF-DETR's current
-postprocessor.
-
-## Source and license
-
-The source is the RF-DETR Large checkpoint on Hugging Face, exported to ONNX
-with `transformers` 5.16.1. Normal compilation consumes the pinned ONNX and does
-not install the exporter dependencies.
-
-- [RF-DETR source repository](https://github.com/roboflow/rf-detr/tree/9b009fa928d6218320439803d1da01869a85c072), for background; conversion uses the Hugging Face checkpoint
-- [RF-DETR Large model card](https://huggingface.co/Roboflow/rf-detr-large)
-- [Pinned checkpoint revision](https://huggingface.co/Roboflow/rf-detr-large/tree/f62f7dd5252b61097cbace33886045816dadbde9)
-
-RF-DETR is distributed under Apache-2.0.
-
-## Reproducing the artifact
-
-### Conversion
-
-The `conversion.default` entry in `model.yaml` pins the three Hugging Face
-checkpoint files, and `scripts/requirements-convert.txt` pins the export
-dependencies. `convert.py` exports through `transformers` and folds constants
-with onnxsim, so surgery starts from a static graph. With Python 3.12 on Linux ARM64, run:
-
-```bash
-python3.12 -E -s -m venv /tmp/rfdetr-export-venv
-/tmp/rfdetr-export-venv/bin/python -E -s -m pip --isolated install . -r models/rf_detr_large/scripts/requirements-convert.txt
-/tmp/rfdetr-export-venv/bin/python -E -s models/rf_detr_large/scripts/convert.py --output-dir /tmp/rfdetr-export
-```
-
-To publish a conversion, manually run **Vulcan Model Convert** with model
-`rf_detr_large`. The workflow validates ONNX, compares a synthetic input with
-PyTorch, and uploads `model.onnx`. The comparison first checks the 1,936
-proposal scores; when two tied scores swap order, it tries the next seed,
-because a swap pairs decoder queries with different boxes. Copy the printed source pin into `model.yaml`
-only after surgery and compiler validation. The smoke comparison does not
-measure model accuracy.
-
-### Calibration and compilation
-
-`surgery.py` removes export no-ops before calibration: constant all-false
-masks, a scatter that overwrites every proposal, and decoder outputs kept only
-for training losses. It then rewrites the attention layout: the nine backbone
-window blocks run in head/window order, and the four decoder self-attention
-blocks run in NCHW with a 1x1 Conv projection. In all twelve backbone blocks,
-it folds the 1/8 attention scale into the Q projection weights instead of
-multiplying every attention score; a power-of-two scale keeps the float graph
-exact.
-
-Two further rewrites remove work that the compiler would otherwise schedule:
-
-- Each GELU folds its 1/√2 and 1/2 constants into the fc1 and fc2 weights,
-  removing a Div and a Mul on every MLP hidden activation.
-- The decoder's interleaved sine/cosine query embedding becomes one MatMul, a
-  phase Add and one Sin, using cos(a) = sin(a + π/2).
-
-These rewrites change only float32 rounding. The rewrites leave the interfaces
-unchanged and fail on an unexpected export.
-
-The recipe sorts the image names of the COCO 2017 `cal` dataset, 1,000
-train2017 images that no accuracy run scores, and shuffles them with the
-declared seed. It uses the first 50 images for calibration and the next 50 for
-fidelity; labels are not needed for the tensor comparison. Resolve the dataset,
-then run the grouped recipe in the pinned Model Compiler environment:
-
-```bash
-output_dir=/tmp/rf-detr-large
-
-source_json="$(model-registry fetch models/rf_detr_large \
-  --component backbone --json)"
-verified_model="$(jq -er .path <<<"$source_json")"
-
-calibration_json="$(model-registry fetch-calibration models/rf_detr_large \
-  --build-profile modalix_int8_bf16 --component backbone --json)"
-resolved_coco_archive="$(jq -er 'select(.kind == "dataset") | .path' \
-  <<<"$calibration_json")"
-test -f "$verified_model"
-test -e "$resolved_coco_archive"
-
-python models/rf_detr_large/scripts/compile.py \
-  --model "$verified_model" \
-  --dataset "$resolved_coco_archive" \
-  --fidelity-dataset "$resolved_coco_archive" \
-  --output-dir "$output_dir" \
-  --build-profile modalix_int8_bf16 \
-  --compile-invocation rf_detr
-```
-
-### Outputs and validation
-
-The recipe partitions the downloaded ONNX, calibrates the backbone, executes
-the quantized backbone and CPU bridge to create correlated transformer inputs,
-calibrates the transformer, and writes:
-
-```text
-<output>/
-  backbone/*_mpk.tar.gz
-  transformer/*_mpk.tar.gz
-  transformer/fidelity.json
-  compile-outputs.json
-```
-
-The published ONNX is retained for reuse. Partition graphs, intermediate
-tensors, generated models, and reports must remain outside Git.
-
-### DevKit accuracy
-
-The `coco_accuracy` accuracy entry declares the COCO 2017 `val` dataset
-archive, the published metrics, and Roboflow's reference scores. On a Modalix
-DevKit, run the accuracy stage on the output of
-`scripts/run_model_compilation.sh` above, setting `REGISTRY_PYTHON` to a Python
-that has the full Model Registry tooling and Dataset Registry:
-
-```bash
-scripts/run_model_accuracy.sh models/rf_detr_large modalix_int8_bf16 \
-  /tmp/rf-detr /media/nvme/neat-tests/rf-detr-accuracy
-```
-
-The script installs `scripts/requirements-accuracy.txt` beside PyNeat's
-environment, extracts the archive under `/media/nvme/neat-tests/`, and removes
-both when it exits. See
-[Accuracy on the DevKit](../../docs/local-accuracy-development.md#accuracy-on-the-devkit)
-for the result format and publication.
+Run the package with the [Neat Model
+API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
+For complete applications, start from the examples in
+[sima-neat/apps](https://github.com/sima-neat/apps).

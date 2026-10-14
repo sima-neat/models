@@ -208,6 +208,8 @@ fidelity:
 - id: full_pipeline_fidelity
   scope: {type: package, package: default}
   build_profiles: [modalix_int8_bf16]
+  # Reordered queries can lower numerical similarity for equivalent detections,
+  # so fidelity does not gate publication.
   status: diagnostic
   result_component: transformer
   dataset:

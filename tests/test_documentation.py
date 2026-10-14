@@ -6,14 +6,22 @@ import zlib
 from pathlib import Path
 
 import pytest
-from model_registry.documentation import REQUIRED_SECTIONS, load_model_documentation
+from model_registry.documentation import (
+    BUILDING_APPLICATIONS,
+    MAX_README_WORDS,
+    REQUIRED_SECTIONS,
+    load_model_documentation,
+)
 from model_registry.errors import ValidationError
+
+# The fixture's Inputs and outputs text, which tests replace to inject content.
+_CONTENT = "Content for inputs and outputs."
 
 
 def _readme(overview: str, *, title: str = "Fixture Model") -> str:
     sections = []
     for heading in REQUIRED_SECTIONS:
-        body = overview if heading == "Overview" else f"Content for {heading.lower()}."
+        body = {"Overview": overview, "Building applications": BUILDING_APPLICATIONS}.get(heading, _CONTENT)
         sections.append(f"## {heading}\n\n{body}")
     return f"# {title}\n\n![{title} model hero](hero.png)\n\n" + "\n\n".join(sections) + "\n"
 
@@ -107,13 +115,13 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
     [
         (_readme(_overview(), title="Wrong title"), "H1 must exactly match"),
         (_readme(_overview()).replace("(hero.png)", "(https://example.invalid/hero.png)"), "must begin with H1"),
-        (_readme(_overview()).replace("## Usage", "## How to use"), "H2 sections must be"),
+        (_readme(_overview()).replace("## Inputs and outputs", "## Using the model"), "H2 sections must be"),
         (
-            _readme(_overview()).replace("Content for usage.", "Content for usage. <h2>Unexpected</h2>"),
+            _readme(_overview()).replace(_CONTENT, f"{_CONTENT} <h2>Unexpected</h2>"),
             "H2 sections must be",
         ),
         (
-            _readme(_overview()).replace("Content for usage.", r"Content for usage. \\<h2>"),
+            _readme(_overview()).replace(_CONTENT, r"Content for inputs and outputs. \\<h2>"),
             "H2 sections must be",
         ),
         (_readme(_overview(49)), "50 to 120 words"),
@@ -130,6 +138,19 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
         (_readme(_overview(49) + " <h3\n class=x>Internal"), "prose paragraphs only"),
         (_readme(_overview(49) + r" \\<!--note-->"), "prose paragraphs only"),
         (_readme(_overview()).rstrip("\n"), "end with a newline"),
+        (_readme(_overview()).replace("## Building applications\n\n", ""), "H2 sections must be"),
+        (_readme(_overview()) + "\n## Source and license\n\nApache-2.0.\n", "H2 sections must be"),
+        (_readme(_overview()).replace(_CONTENT, "Content.\n\n### Decoding"), "H2 sections must be"),
+        (_readme(_overview()).replace("[sima-neat/apps]", "[the Apps repository]"), "Building applications must be"),
+        (
+            _readme(_overview()).replace(_CONTENT, " ".join(["word"] * MAX_README_WORDS)),
+            f"at most {MAX_README_WORDS} words",
+        ),
+        (_readme(_overview()).replace(_CONTENT, "Run the MPKs on the board."), "uses 'MPKs'"),
+        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 11 uses 'A65'"),
+        (_readme(_overview()).replace(_CONTENT, "Benchmarked at 30 FPS."), "uses 'Benchmark'"),
+        (_readme(_overview()).replace(_CONTENT, "Reports COCO mAP."), "uses 'mAP'"),
+        (_readme(_overview()).replace(_CONTENT, "Install with sima-cli."), "uses 'sima-cli'"),
     ],
 )
 def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown: str, message: str) -> None:
@@ -140,6 +161,18 @@ def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown:
 
     with pytest.raises(ValidationError, match=message):
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_contract_accepts_plain_words_near_banned_terms(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace(
+        _CONTENT, "Pass the feature map and the label map to the next component.",
+    )
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
 def test_model_readme_contract_accepts_escaped_image_syntax_in_overview(tmp_path: Path) -> None:
@@ -155,7 +188,7 @@ def test_model_readme_contract_accepts_escaped_image_syntax_in_overview(tmp_path
 def test_model_readme_contract_accepts_autolink_on_its_own_line(tmp_path: Path, autolink: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", autolink)
+    markdown = _readme(_overview()).replace(_CONTENT, autolink)
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -165,7 +198,7 @@ def test_model_readme_contract_accepts_autolink_on_its_own_line(tmp_path: Path, 
 def test_model_readme_contract_accepts_escaped_inline_html_heading(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", r"Content for usage. \<h2>")
+    markdown = _readme(_overview()).replace(_CONTENT, r"Content for inputs and outputs. \<h2>")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -375,7 +408,7 @@ def test_model_readme_contract_rejects_setext_h2_outside_overview(tmp_path: Path
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", "Content for usage.\n\nUnexpected section\n---\n\nUnexpected content.",
+        _CONTENT, f"{_CONTENT}\n\nUnexpected section\n---\n\nUnexpected content.",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -390,7 +423,7 @@ def test_model_readme_contract_accepts_root_thematic_break_after_container(
 ) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", f"{container}\n---")
+    markdown = _readme(_overview()).replace(_CONTENT, f"{container}\n---")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -405,7 +438,7 @@ def test_model_readme_contract_recognizes_inline_markup_in_setext_h2(tmp_path: P
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", f"Content for usage.\n\n{heading}\n---\n\nUnexpected content.",
+        _CONTENT, f"{_CONTENT}\n\n{heading}\n---\n\nUnexpected content.",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -421,7 +454,7 @@ def test_model_readme_contract_recognizes_inline_markup_in_setext_h2(tmp_path: P
 def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, heading: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    markdown = _readme(_overview()).replace(_CONTENT, f"{_CONTENT}\n\n{heading}")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -435,7 +468,7 @@ def test_model_readme_contract_rejects_nonstandard_headings(tmp_path: Path, head
 def test_model_readme_contract_rejects_headings_in_markdown_containers(tmp_path: Path, heading: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    markdown = _readme(_overview()).replace(_CONTENT, f"{_CONTENT}\n\n{heading}")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -460,7 +493,7 @@ def test_model_readme_contract_rejects_headings_on_list_continuation_lines(
 ) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
+    markdown = _readme(_overview()).replace(_CONTENT, f"{_CONTENT}\n\n{heading}")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -472,35 +505,7 @@ def test_model_readme_contract_rejects_headings_on_list_continuation_lines(
 def test_model_readme_contract_rejects_raw_html_headings(tmp_path: Path, heading: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", f"Content for usage.\n\n{heading}")
-    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
-    (model_dir / "hero.png").write_bytes(_png())
-
-    with pytest.raises(ValidationError, match="H2 sections must be"):
-        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
-
-
-def test_model_readme_contract_allows_h3_in_reproduction_section(tmp_path: Path) -> None:
-    model_dir = tmp_path / "models" / "fixture"
-    model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace(
-        "Content for reproducing the artifact.", "   ### Conversion\n\nRun the supported conversion command.",
-    )
-    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
-    (model_dir / "hero.png").write_bytes(_png())
-
-    documentation = load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
-
-    assert documentation["source_path"] == "models/fixture/README.md"
-
-
-@pytest.mark.parametrize("heading", ("###", "### #", "### ##", "   ### ###"))
-def test_model_readme_contract_rejects_empty_h3_in_reproduction_section(tmp_path: Path, heading: str) -> None:
-    model_dir = tmp_path / "models" / "fixture"
-    model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace(
-        "Content for reproducing the artifact.", f"{heading}\n\nRun the supported conversion command.",
-    )
+    markdown = _readme(_overview()).replace(_CONTENT, f"{_CONTENT}\n\n{heading}")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -540,7 +545,7 @@ def test_model_readme_contract_ignores_h2_inside_fenced_code(tmp_path: Path, mar
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", f"{marker}bash\n## Setup\necho setup\nUnexpected\n---\n{marker}",
+        _CONTENT, f"{marker}bash\n## Setup\necho setup\nUnexpected\n---\n{marker}",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -554,7 +559,7 @@ def test_model_readme_contract_keeps_active_fence_content_opaque(tmp_path: Path)
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", "````text\n- ```\n## not a section\n````",
+        _CONTENT, "````text\n- ```\n## not a section\n````",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -568,7 +573,7 @@ def test_model_readme_contract_keeps_blank_lines_in_list_fences(tmp_path: Path) 
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", "- ```bash\n\n  ## configure\n  echo ready\n  ```",
+        _CONTENT, "- ```bash\n\n  ## configure\n  echo ready\n  ```",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -582,7 +587,7 @@ def test_model_readme_contract_keeps_five_space_list_padding_as_code(tmp_path: P
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for reproducing the artifact.", "-     ### configure\n      echo ready",
+        _CONTENT, "-     ### configure\n      echo ready",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -596,7 +601,7 @@ def test_model_readme_contract_ends_fence_when_its_container_ends(tmp_path: Path
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     markdown = _readme(_overview()).replace(
-        "Content for usage.", "> ~~~text\n## Unexpected\n~~~",
+        _CONTENT, "> ~~~text\n## Unexpected\n~~~",
     )
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
@@ -615,7 +620,7 @@ def test_model_readme_contract_ends_fence_when_its_container_ends(tmp_path: Path
 def test_model_readme_contract_ignores_headings_in_container_fences(tmp_path: Path, block: str) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("Content for usage.", block)
+    markdown = _readme(_overview()).replace(_CONTENT, block)
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 

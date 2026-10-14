@@ -42,9 +42,9 @@ one tab per profile; INT8 profiles come first and the page opens on the first
 tab, whatever order `model.yaml` declares. Sections appear in this order:
 
 1. **Overview.** The hero and the `## Overview` section of the README. The
-   **Full model card** row opens the rest of the README, starting at the
-   section after Overview, so the title, hero, and overview are never shown
-   twice. The README follows the
+   **Full model card** row opens the rest of the README, its **Inputs and
+   outputs** and **Building applications** sections, so the title, hero, and
+   overview are never shown twice. The README follows the
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 2. **Performance.** For each component: throughput, average latency, board
    power, and energy per inference from its DevKit benchmark. The line below

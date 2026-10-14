@@ -15,14 +15,17 @@ MAX_HERO_BYTES = 2 * 1024 * 1024
 HERO_FILENAME = "hero.png"
 HERO_WIDTH = 1200
 HERO_HEIGHT = 480
-REQUIRED_SECTIONS = (
-    "Overview",
-    "Usage",
-    "Model interface",
-    "Available builds",
-    "Quality and performance",
-    "Source and license",
-    "Reproducing the artifact",
+REQUIRED_SECTIONS = ("Overview", "Inputs and outputs", "Building applications")
+# The model page shows the rest: metrics, benchmarks, variants, versions, license, and source links.
+MAX_README_WORDS = 350
+BANNED_TERMS = (
+    "MPK", "A65", "MLA", "AFE", "ELF", "tessellation", "mAP", "AP50", "FPS",
+    "latency", "benchmark", "sima-cli", "model-registry", "Vulcan",
+)
+BUILDING_APPLICATIONS = (
+    "Run the package with the [Neat Model API]"
+    "(https://developer.sima.ai/software/develop-apps/development-workflow/model). "
+    "For complete applications, start from the examples in [sima-neat/apps](https://github.com/sima-neat/apps)."
 )
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
 _ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
@@ -48,6 +51,11 @@ _INLINE_HTML_RE = re.compile(
     r"(?<!\\)(?:\\\\)*(?:<!--|<\?|<![A-Z]|<!\[CDATA\[|</?[A-Za-z][A-Za-z0-9-]*(?:\s|/?>))"
 )
 _INLINE_HTML_HEADING_RE = re.compile(r"(?<!\\)(?:\\\\)*</?h[1-6](?:[ \t]|/?>)", re.IGNORECASE)
+# A lowercase term also matches its capitalized and inflected forms; an acronym matches only itself or its plural.
+_BANNED_TERM_RE = re.compile("|".join(
+    rf"(?<![\w-])(?i:{re.escape(term)})" if term.islower() else rf"(?<![\w-]){re.escape(term)}s?(?![\w-])"
+    for term in BANNED_TERMS
+))
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
@@ -438,12 +446,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             previous_paragraph_context = None
             continue
         if heading := _ATX_HEADING_RE.fullmatch(container_line):
-            level = len(heading.group(1))
-            heading_text = re.sub(r"(?:^#+$|[ \t]+#+[ \t]*$)", "", heading.group(2) or "").strip()
-            if not (index == 0 and level == 1) and not (
-                not list_indents and level == 3
-                and current_section == "Reproducing the artifact" and heading_text
-            ):
+            if not (index == 0 and len(heading.group(1)) == 1):
                 has_invalid_heading = True
             previous_paragraph_context = None
             continue
@@ -565,6 +568,23 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
         or any(_THEMATIC_BREAK_RE.fullmatch(line) for line in overview_lines)
     ):
         raise ValidationError(f"model README Overview must contain prose paragraphs only: {readme}")
+
+    # Compare words, so the paragraph may wrap anywhere.
+    building_applications = " ".join("\n".join(lines[sections[-1][0] + 1:]).split())
+    if building_applications != BUILDING_APPLICATIONS:
+        raise ValidationError(
+            f"model README Building applications must be exactly {BUILDING_APPLICATIONS!r}: {readme}"
+        )
+    for number, line in enumerate(lines, start=1):
+        if term := _BANNED_TERM_RE.search(line):
+            raise ValidationError(
+                f"model README line {number} uses {term.group(0)!r}; write it in plain words: {readme}"
+            )
+    readme_words = len(re.findall(r"\S+", "\n".join(lines[4:])))
+    if readme_words > MAX_README_WORDS:
+        raise ValidationError(
+            f"model README must contain at most {MAX_README_WORDS} words after the hero, found {readme_words}: {readme}"
+        )
 
     documentation = {
         "format": "markdown",

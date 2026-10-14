@@ -11,6 +11,7 @@ import pytest
 import yaml
 from model_registry import cli
 from model_registry.cli import main
+from model_registry.documentation import BUILDING_APPLICATIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,9 +83,8 @@ def test_validation_checks_complete_filename_length(command, filename_length, tm
     if command == "validate-models":
         overview = " ".join(f"word{index}" for index in range(50))
         sections = [
-            ("Overview", overview), ("Usage", "Usage."), ("Model interface", "Interface."),
-            ("Available builds", "Builds."), ("Quality and performance", "Quality."),
-            ("Source and license", "Source."), ("Reproducing the artifact", "Reproduction."),
+            ("Overview", overview), ("Inputs and outputs", "Interface."),
+            ("Building applications", BUILDING_APPLICATIONS),
         ]
         (model_dir / "README.md").write_text(
             f"# {model['display_name']}\n\n"

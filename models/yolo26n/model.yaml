@@ -156,6 +156,8 @@ accuracy:
   metrics: [coco_map, coco_ap50, coco_ap75, coco_ap_small, coco_ap_medium, coco_ap_large,
     coco_ar1, coco_ar10, coco_ar100, coco_ar_small, coco_ar_medium, coco_ar_large]
   required_metrics: [coco_map]
+  # Ultralytics scores validation images in padded rectangular batches;
+  # accuracy.py always runs the 640x640 square input.
   reference:
     source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
     metrics: {coco_map: 0.401}
