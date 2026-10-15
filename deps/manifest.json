@@ -6,7 +6,7 @@
   },
   "model-compiler": {
     "channel": "develop",
-    "revision": "455ce50808c2",
+    "revision": "858fcf771fca",
     "version": "3.0.0"
   },
   "neat-core": {
