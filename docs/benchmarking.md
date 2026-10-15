@@ -78,6 +78,7 @@ args = parser.parse_args()
 model = pyneat.Model(args.mpk)
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
+benchmark_options.min_duration_ms = 180000
 report = model.benchmark(benchmark_options)
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
@@ -95,9 +96,10 @@ PyNeat interpreter, which cannot import the registry tooling.
 
 Scripts measure 1000 samples rather than Core's default of 100. The samples
 size the latency pass and the energy the registry divides per inference, so the
-script reports its sample count. Core keeps the throughput pass running for at
-least 30 seconds (`BenchmarkOptions.min_duration_ms`), so Sentinel, which
-samples every 2 seconds, records about 15 readings of the loaded board.
+script reports its sample count. Scripts also keep the throughput pass running
+for at least 180 seconds (`BenchmarkOptions.min_duration_ms`) rather than Core's
+default of 30, so Sentinel, which samples every 2 seconds, records about 90
+readings of the loaded board instead of about 15.
 
 The script also records the Model's execution plan: each step, the processor
 it runs on, and the tensors between steps. The plan comes from the same Model
