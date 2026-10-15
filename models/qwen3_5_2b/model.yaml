@@ -112,7 +112,6 @@ calibrations: []
 build_profiles:
 - id: modalix_a16w4_4k
   target: modalix
-  runner_class: expensive
   components:
   - id: model
     parameters:

@@ -10,4 +10,4 @@ SIMA_MLA_SIM_PARALLEL=1 llima-compile "$1" -o "$2" \
   --max_num_tokens 4096 \
   --language_group_size 128 \
   --input_height 448 --input_width 448 \
-  -j 12 --log_level INFO
+  --jobs 6 --log_level INFO
