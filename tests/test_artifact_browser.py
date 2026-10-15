@@ -88,7 +88,14 @@ def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     assert '<nav class="product-nav" aria-label="Model Registry">' in html
     assert '<a id="nav-models" href="./" aria-current="page">Models</a>' in html
     assert '<a id="nav-compare" href="./?view=compare">Compare</a>' in html
-    assert '<a href="./docs">Developer docs</a>' in html
+    assert (
+        '<a href="./docs"><span class="nav-long">Developer docs</span><span class="nav-short">Docs</span></a>'
+        in html
+    )
+    assert (
+        '<a class="buy-button" href="https://devkit.sima.ai/" target="_blank" rel="noopener noreferrer">Buy</a>'
+        in html
+    )
     assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
     assert '>GitHub</a>' not in html
 
