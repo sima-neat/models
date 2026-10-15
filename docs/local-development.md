@@ -356,3 +356,19 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | `accuracy.expected.<profile> lacks` or `performance.expected.<profile>.<component> lacks` | Add the build's latest published value under `expected` ([set up `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). |
 | Build missing from the matrix | Check the component binding `status`, the requested IDs, and the build profile's `compile_invocations`. |
 | Unexpected MPK count | Start from an empty output directory. An invocation writes exactly one MPK per component. |
+
+
+## Compile a LLiMa model
+
+For a Hugging Face language or vision-language model, use the same shared runner:
+
+```bash
+scripts/run_model_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
+model-registry verify-artifact /path/to/output/qwen3_5_2b/modalix_a16w4_4k/model --write-manifest
+```
+
+The runner verifies the pinned checkpoint download, calls the model's `compile.sh`,
+runs `llima-deploy`, and packs the complete deployment. Activate the matching LLiMa
+and Model Compiler tools first. No benchmark or accuracy stage runs unless declared.
+See [LLiMa model definitions](adding-a-model.md#llima-language-and-vision-language-models)
+for the source and package contracts.

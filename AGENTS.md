@@ -16,7 +16,7 @@ touches.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
-| compile | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
+| compile | Model Compiler | `scripts/compile.py` or `scripts/compile.sh` | `scripts/run_model_compilation.sh` |
 | performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` |
 
@@ -33,6 +33,16 @@ The shared tooling is one module per job. The
 [module map](design-doc/model-registry-architecture.md#shared-tooling) says
 which module owns what; put new shared code in the module that owns its job,
 and give a new job a new module named after what it does.
+
+## LLiMa models
+
+LLMs and VLMs declare the complete model as one component, with a pinned Hugging
+Face `file_set`, `interface.format: huggingface`, and `scripts/compile.sh`. The
+recipe only calls `llima-compile`; the shared runner downloads, deploys and packs
+its output. Validate the deployment ZIP with `model-registry verify-artifact`.
+Do not enumerate generated layers as components or nest model archives in packages.
+Only declared performance and accuracy stages run; leave their lists empty until
+implemented. See [LLiMa model definitions](docs/adding-a-model.md#llima-language-and-vision-language-models).
 
 ## Tests
 
@@ -153,8 +163,8 @@ in the same commit.
    [metadata schema](docs/metadata-schema.md).
 2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
 3. Compile each changed build in the pinned Model Compiler with
-   `scripts/run_model_compilation.sh` and check every MPK with
-   `model-registry verify-mpk` ([local development](docs/local-development.md)).
+   `scripts/run_model_compilation.sh` and check each compiled artifact with
+   `model-registry verify-artifact` ([local development](docs/local-development.md)).
 4. On a DevKit, run each changed component's `scripts/performance.py --mpk
    --output` and, for builds that declare accuracy,
    `scripts/run_model_accuracy.sh` on the compile output.

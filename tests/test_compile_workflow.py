@@ -572,7 +572,7 @@ def test_every_component_mpk_records_runner_and_input_provenance() -> None:
         "${{ fromJSON(inputs.entry).runner_approval_spec_revision }}"
     )
     assert 'for index in "${!components[@]}"' in verify
-    assert 'verify-mpk "$PROFILE_OUTPUT_DIR/$component"' in verify
+    assert 'verify-artifact "$PROFILE_OUTPUT_DIR/$component"' in verify
     for option in (
         "--write-manifest",
         "--source-sha256",

@@ -13,7 +13,7 @@ how the pieces compose, and publish one or more downloadable packages.
 ```text
 model
 ├── conversion ───── optional named upstream sources for scripts/convert.py
-├── components ───── independently compiled ONNX units
+├── components ───── independently compiled ONNX units or a complete LLiMa model
 ├── resources ────── packaged non-compiled files
 ├── calibrations ─── reusable compile-time data
 ├── build_profiles ─ target-wide settings plus component bindings
@@ -32,7 +32,7 @@ models/<model-id>/
   model.yaml
   README.md
   hero.png      1200x480 catalog card image
-  scripts/      compile.py, performance.py, accuracy.py, convert.py, and helpers
+  scripts/      compile.py (or compile.sh for LLiMa), performance.py, accuracy.py, convert.py, and helpers
 ```
 
 Validation rejects any other entry in the model directory.
@@ -399,3 +399,17 @@ model-registry validate-models --repository .
 Validation proves that the source-controlled contract is coherent. Developers
 must still compile and measure every supported build locally before submitting
 it.
+
+
+### LLiMa checkpoint and deployment formats
+
+A Hugging Face component uses `interface.format: huggingface` and `recipe: scripts/compile.sh`.
+Its source is a verified `file_set` with `config.json` as the entrypoint. Public inputs and
+outputs describe the generation API rather than individual accelerator graphs. A complete
+LLiMa deployment is one component, including its vision encoder when present.
+
+Native compile outputs carry `artifact_path` and `artifact_sha256`; `compile-result.json`
+marks `format: llima`. The published artifact is a deployment ZIP. Retrieval packages mark
+that component `format: llima`, with `path: .` naming the extracted model folder. Its checksum
+identifies the original compile artifact; `files` checksums identify each installed file.
+Existing ONNX/MPK metadata and packages retain their format.

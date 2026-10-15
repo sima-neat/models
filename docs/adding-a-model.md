@@ -111,11 +111,11 @@ Declare one `components` entry for each independently compiled unit. A
 component owns:
 
 - its role and immutable source;
-- one or more named ONNX entrypoints;
+- named ONNX tensor entrypoints or a Hugging Face generation entrypoint;
 - tensor, state, streaming, and concrete shape-profile contracts;
 - preprocessing and postprocessing pipelines;
 - optional model-specific surgery;
-- its `recipe`, `scripts/compile.py`;
+- its `recipe`, `scripts/compile.py` or `scripts/compile.sh`;
 - optional dependencies on other components.
 
 Names and tensor details must match the pinned inputs. Inspect the ONNX files;
@@ -177,7 +177,8 @@ accuracy entry must each compile all their components in one invocation.
 A binding proven incompatible may stay as `status: unsupported` with a reason.
 Do not use it for untested work.
 
-Every recipe has one interface, for single and grouped invocations alike:
+ONNX recipes use the following interface for single and grouped invocations.
+For Hugging Face checkpoints, use the [LLiMa recipe](#llima-language-and-vision-language-models) instead:
 
 ```text
 scripts/compile.py --model <verified-source> --output-dir <new-directory> \
@@ -263,7 +264,7 @@ current key.
 
 | Stage | Key inputs |
 | --- | --- |
-| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the shared `scripts/run_model_compilation.sh`, and the Model Compiler version |
+| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the shared `scripts/run_model_compilation.sh`, and the Model Compiler version; LLiMa builds additionally include `tools/model_registry/artifact.py` |
 | performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
@@ -461,3 +462,50 @@ model-registry validate-models --repository .
 These checks establish that the contract is coherent, not that it compiles or
 runs. Continue with [Qualify locally](local-development.md) and complete the
 full loop for every build before submitting.
+
+
+## LLiMa language and vision-language models
+
+Declare a complete language model as one component, with `interface.format: huggingface`,
+`recipe: scripts/compile.sh`, and a pinned Hugging Face `file_set` whose entrypoint is
+`config.json`. Include weights, tokenizer files, processor settings and the chat template;
+each file retains its revision, byte size and SHA-256. The existing verified downloader
+assembles the checkpoint directory. Do not list LLiMa's generated layers as components.
+
+The executable recipe takes two positional paths:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+llima-compile "$1" -o "$2" \
+  --max_num_tokens 4096 --language_group_size 128 \
+  --input_height 448 --input_width 448 -j 16 --log_level INFO
+```
+
+Run it through the usual shared runner, with Model Compiler and LLiMa activated:
+
+```bash
+scripts/run_model_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
+```
+
+The runner downloads the pinned files, invokes the recipe, runs `llima-deploy`, and
+writes one `*_llima.zip` plus `compile-outputs.json`. Native outputs use `artifact_path`
+and `artifact_sha256`; existing vision outputs keep their MPK fields. Check either format with
+`model-registry verify-artifact <component-output> --write-manifest`; `verify-mpk` remains
+available for MPKs. `model-registry pack-llima <deployed-directory> <archive>` can package
+an existing deployment without compiling again.
+
+The deployed ZIP contains `devkit/`, `elf_files/` and any `npy_files/` directly. The shared
+verifier rejects incomplete configurations, missing executables, unsafe paths and links.
+CI records the usual compiler and source provenance and publishes the ZIP as a `llima`
+model-pack artifact. Final retrieval packages flatten that deployment below the model
+folder, add the package manifest, and mark the component `format: llima`, `path: .`.
+There are no nested model archives. Large files are streamed during packaging.
+
+The native compile key also covers `tools/model_registry/artifact.py`, which implements
+its packing and verification. Existing vision keys do not acquire that dependency.
+README and hero changes remain outside compile identities.
+
+Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corresponding
+stage is implemented. This schedules compilation and publication only. Benchmark and
+accuracy recipes can be added separately when a GenAI measurement contract is available.

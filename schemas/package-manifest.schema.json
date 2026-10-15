@@ -49,6 +49,7 @@
         "properties": {
           "id": {"$ref": "#/$defs/id"},
           "role": {"$ref": "#/$defs/id"},
+          "format": {"const": "llima"},
           "path": {"$ref": "#/$defs/path"},
           "sha256": {"$ref": "#/$defs/sha256"},
           "size_bytes": {"type": "integer", "minimum": 1},

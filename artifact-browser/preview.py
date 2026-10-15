@@ -202,7 +202,9 @@ def _compile_run(model: dict, entry: dict, build: dict, compiler: dict, day: str
         "build_profile_id": build["build_profile_id"],
         "component_id": build["component_id"],
         "compile_invocation_id": build["compile_invocation_id"],
-        "artifact_kind": "mpk",
+        "artifact_kind": "llima" if next(
+            item for item in model["components"] if item["id"] == build["component_id"]
+        )["interface"]["format"] == "huggingface" else "mpk",
     })
     return run
 
@@ -581,13 +583,14 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def _compile_run_api(self, run_id: str, rest: list[str], model: dict, build: dict, compiler: dict) -> None:
         run = _index()["runs"][run_id]
+        native = run["metadata"].get("artifact_kind") == "llima"
         if not rest:
             self._json({"run": run, "artifacts": [{
-                "name": "mpk",
+                "name": f"{model['id']}_{build['build_profile_id']}_llima.zip" if native else "mpk",
                 "artifact_type": "model-pack",
                 "sha256": build["artifact_sha256"],
                 "size_bytes": 8_000_000 + int(_fraction("mpk-size", run_id) * 300_000_000),
-                "media_type": "application/gzip",
+                "media_type": "application/zip" if native else "application/gzip",
             }]})
         elif rest == ["provenance"]:
             self._json({"run": run, **_provenance(model, build, compiler)})
@@ -595,7 +598,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             fidelity = _fidelity_test(model, build)
             self._json({"run_id": run_id, "test_results": [
                 {"suite": "model", "name": "manifest-validation", "status": "passed", "duration_ms": 82},
-                {"suite": "model", "name": "mpk-validation", "status": "passed", "duration_ms": 418},
+                {"suite": "model", "name": "deployment-validation" if native else "mpk-validation",
+                 "status": "passed", "duration_ms": 418},
                 *([fidelity] if fidelity else []),
             ]})
         elif rest == ["metrics"]:

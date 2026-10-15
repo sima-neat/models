@@ -9,6 +9,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from .artifact import verify_llima
 from .errors import ValidationError
 from .fetch import Fetcher, sha256_file
 from .model import load_and_validate_model
@@ -67,6 +68,7 @@ def assemble_package(
     if build_profile_id not in package["build_profiles"]:
         raise ValidationError(f"package {model_id}/{package_id} does not support build profile {build_profile_id}")
 
+    native_archive = None
     component_entries: list[dict[str, Any]] = []
     component_files: list[tuple[str, Path]] = []
     provenance_identity: dict[str, str] | None = None
@@ -104,7 +106,16 @@ def assemble_package(
         digest, size = sha256_file(component_archive)
         if digest != result.get("sha256") or size != result.get("size_bytes"):
             raise ValidationError(f"{result_dir}: component archive does not match compile-result.json")
-        package_path = archive_name
+        native = components[component_id]["interface"]["format"] == "huggingface"
+        if native:
+            if package["composition"] not in compositions or compositions[package["composition"]]["type"] != "single":
+                raise ValidationError("A LLiMa package uses a single deployment composition")
+            if len(package["components"]) != 1 or package["resources"]:
+                raise ValidationError("A LLiMa package contains one complete deployment and no extra resources")
+            if result.get("format") != "llima":
+                raise ValidationError("Hugging Face compile result must declare format llima")
+            native_archive = component_archive
+        package_path = "." if native else archive_name
         component_files.append((package_path, component_archive))
         publication_path = result_dir / "registry-publication.json"
         compile_run_id = None
@@ -117,6 +128,7 @@ def assemble_package(
             {
                 "id": component_id,
                 "role": components[component_id]["role"],
+                **({"format": "llima"} if native else {}),
                 "path": package_path,
                 "sha256": digest,
                 "size_bytes": size,
@@ -177,6 +189,8 @@ def assemble_package(
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
     ]
+    if native_archive is not None:
+        installed_files = verify_llima(native_archive)
     manifest = {
         "model_id": model_id,
         "display_name": model["display_name"],

@@ -103,3 +103,19 @@ test('a single-component package is an MPK and any other package is a ZIP', () =
   assert.equal(packageFormat({}, 'yolo26n_w8a8_mpk.tar.gz'), 'MPK');
   assert.equal(packageFormat({media_type: 'application/zip'}, 'rf_detr_nano_w8a8_w16a16_default.zip'), 'ZIP');
 });
+
+
+test('LLiMa suffix downloads retain the native ZIP format', async () => {
+  const native = {...run, id: 'llima-run', metadata: {...run.metadata, model_id: 'qwen3_5_2b',
+    component_id: 'model', artifact_kind: 'llima'}};
+  const catalog = {model_id: 'qwen3_5_2b', builds: [{run_id: native.id, build_profile_id: 'mixed',
+    component_id: 'model', artifact_suffix: 'a16w4'}]};
+  const items = await variantDownloads(native, async path => path.includes('/repositories/')
+    ? {runs: [native]} : {artifacts: [{name: 'llima', artifact_type: 'model-pack', size_bytes: 4096}]}, catalog);
+  assert.equal(items[0].downloadFilename, 'qwen3_5_2b_a16w4_llima.zip');
+  const ready = await prepareDownloads(items, async path => {
+    assert.ok(path.includes('/artifacts/llima'));
+    return {artifact: {download_url: 'https://example.com/model.zip'}};
+  });
+  assert.equal(ready[0].filename, items[0].downloadFilename);
+});

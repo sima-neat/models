@@ -16,7 +16,7 @@ byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
-| Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
+| Model-owned `scripts/compile.py` or `scripts/compile.sh` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
 | Model-owned `scripts/performance.py` | Benchmarks one MPK with Neat Core on a Modalix DevKit. |
 | Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
@@ -84,7 +84,7 @@ this table. Modules marked CI only are removed from the author package by
 | `core_benchmark.py` | packaging Core's measurements for publication |
 | `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
 | `fidelity_config.py` | finding a build's fidelity entry and checking its result |
-| `artifact.py` | compile outputs and MPK verification |
+| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and native ZIP packing |
 | `artifact_metadata.py` | publication metadata validation |
 | `package.py` | assembling model packages from component MPKs |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
@@ -212,3 +212,15 @@ browser and `sima-cli models` commands consume those APIs directly.
 Branch deletion cancels the branch's unfinished workflow runs and calls the
 registry purge endpoint; branch creation calls the restore endpoint. Retention
 operates on registered runs and exact S3 object versions.
+
+
+## LLiMa builds
+
+The shared compile runner dispatches `scripts/compile.sh` for a Hugging Face component,
+then deploys and packs it as one ZIP. Source file sets use the same pinned, checksum-verified
+downloader as vision models. The recipe owns only the `llima-compile` invocation.
+
+Publication records a `llima` model-pack artifact instead of `mpk`. The compile run,
+provenance and catalog lifecycle are shared; registry restore selects the artifact kind
+from the source interface. Final packages flatten the deployment into the model folder.
+Empty measurement declarations schedule no board stages.

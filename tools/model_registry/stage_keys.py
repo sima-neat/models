@@ -99,7 +99,7 @@ def _file_digests(root: Path, required: list[str], optional: list[str] = ()) -> 
     return digests
 
 
-def _compile_input_files(root: Path, model_id: str) -> list[Path]:
+def _compile_input_files(root: Path, model_id: str, *, native: bool = False) -> list[Path]:
     """Code the compile runs: the shared runner, model scripts, and any declared training code."""
     candidates: list[Path] = []
     for prefix in (*COMPILE_TOOLING, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
@@ -111,6 +111,8 @@ def _compile_input_files(root: Path, model_id: str) -> list[Path]:
         else:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
+    if native:
+        candidates.append(root / "tools/model_registry/artifact.py")
     candidates.extend(
         item
         for item in (model_dir / SCRIPTS_DIR).rglob("*")
@@ -226,7 +228,8 @@ def compile_key(
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-    _hash_files(digest, root, _compile_input_files(root, model_id))
+    native = any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"])
+    _hash_files(digest, root, _compile_input_files(root, model_id, native=native))
     return digest.hexdigest()
 
 

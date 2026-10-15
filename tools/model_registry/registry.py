@@ -20,7 +20,7 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .accuracy_config import find_devkit_accuracy_config
-from .artifact import validate_compile_outputs, verify_mpk
+from .artifact import compile_output_fields, validate_compile_outputs, verify_artifact
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
@@ -879,7 +879,10 @@ def stage_catalog_build(
         run_id = build.get("run_id")
         if not isinstance(run_id, str) or not run_id:
             raise ValidationError(f"current catalog build has no retained compile run: {component_id}")
-        artifact_payload = read(f"{base_url}/v1/runs/{run_id}/artifacts/mpk")
+        component = next(item for item in model["components"] if item["id"] == component_id)
+        native = component["interface"]["format"] == "huggingface"
+        kind = "llima" if native else "mpk"
+        artifact_payload = read(f"{base_url}/v1/runs/{run_id}/artifacts/{kind}")
         artifact = artifact_payload.get("artifact")
         if not isinstance(artifact, dict):
             raise ValidationError(f"artifact registry returned no MPK metadata for {run_id}")
@@ -894,10 +897,10 @@ def stage_catalog_build(
             raise ValidationError(f"downloaded MPK failed size or SHA-256 verification for {run_id}")
         component_dir = output / model_id / build_profile_id / component_id
         component_dir.mkdir(parents=True, exist_ok=True)
-        archive_name = mpk_filename(model, build_profile_id, component_id)
+        archive_name = f"{model_id}_{build_profile_id}_{component_id}_llima.zip" if native else mpk_filename(model, build_profile_id, component_id)
         archive = component_dir / archive_name
         archive.write_bytes(payload)
-        verify_mpk(component_dir)
+        verify_artifact(component_dir)
         run_payload = read(f"{base_url}/v1/runs/{run_id}")
         run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
         compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
@@ -906,6 +909,7 @@ def stage_catalog_build(
             "sha256": digest,
             "size_bytes": len(payload),
             "status": "success",
+            **({"format": "llima"} if native else {}),
             "provenance": {"compiler_version": compiler_version},
         }
         (component_dir / "compile-result.json").write_text(
@@ -923,8 +927,8 @@ def stage_catalog_build(
         staged_outputs.append(
             {
                 "component_id": component_id,
-                "mpk_path": f"{component_id}/{archive_name}",
-                "mpk_sha256": digest,
+                "artifact_path" if native else "mpk_path": f"{component_id}/{archive_name}",
+                "artifact_sha256" if native else "mpk_sha256": digest,
                 "run_id": run_id,
             }
         )
@@ -936,7 +940,7 @@ def stage_catalog_build(
             "build_profile_id": build_profile_id,
             "compile_invocation_id": compile_invocation_id,
             "outputs": [
-                {key: item[key] for key in ("component_id", "mpk_path", "mpk_sha256")} for item in staged_outputs
+                {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1160,11 +1164,14 @@ def _preflight_compilations(
         archive = result_path.parent / archive_name
         if not archive.is_file() or archive.parent != result_path.parent:
             raise ValidationError(f"{result_path}: archive is missing from the packaged output")
+        native = component["interface"]["format"] == "huggingface"
+        if result.get("format", "mpk") != ("llima" if native else "mpk") or (archive.suffix == ".zip") != native:
+            raise ValidationError(f"{result_path}: artifact format does not match its source interface")
         artifact_sha = _require_sha256(result.get("sha256"), "sha256")
         declared_output = output_by_result[result_path]
         if (
-            archive.resolve() != Path(declared_output["mpk_path"]).resolve()
-            or artifact_sha != declared_output["mpk_sha256"]
+            archive.resolve() != Path(declared_output[compile_output_fields(declared_output)[0]]).resolve()
+            or artifact_sha != declared_output[compile_output_fields(declared_output)[1]]
         ):
             raise ValidationError(f"{result_path}: archive does not match the compile output manifest")
         actual_sha, actual_size = sha256_file(archive)
@@ -1353,7 +1360,7 @@ def publish_compilations(
                     "model_id": model_id,
                     "build_profile_id": build_profile_id,
                     "component_id": component_id,
-                    "artifact_kind": "mpk",
+                    "artifact_kind": "llima" if archive.suffix == ".zip" else "mpk",
                     "github_run_id": github_run_id,
                     **({"compile_timing": compilation["compile_timing"]} if compilation["compile_timing"] else {}),
                     "license": model["license"],
@@ -1394,10 +1401,13 @@ def publish_compilations(
 
         relative_archive = archive.relative_to(dist).as_posix()
         object_key = f"models/{branch_key}/{commit_tag}/{relative_archive}"
-        stored = store.ensure_native_sha256(archive, object_key, artifact_sha)
+        stored = store.ensure_native_sha256(
+            archive, object_key, artifact_sha,
+            media_type="application/zip" if archive.suffix == ".zip" else "application/gzip",
+        )
         client.request(
             "PUT",
-            f"/v1/runs/{run_id}/artifacts/mpk",
+            f"/v1/runs/{run_id}/artifacts/{'llima' if archive.suffix == '.zip' else 'mpk'}",
             {
                 "artifact_type": "model-pack",
                 "s3_bucket": bucket,
@@ -1406,7 +1416,7 @@ def publish_compilations(
                 "s3_version_id": stored.version_id,
                 "sha256": stored.sha256,
                 "size_bytes": stored.size_bytes,
-                "media_type": "application/gzip",
+                "media_type": "application/zip" if archive.suffix == ".zip" else "application/gzip",
                 "retention_class": "branch",
                 "metadata": {
                     "model_id": model_id,
@@ -1418,9 +1428,10 @@ def publish_compilations(
             f"{stable_key}-artifact",
         )
         # This is compiler-output validation, not a DevKit correctness or performance test.
+        validation = "deployment-validation" if archive.suffix == ".zip" else "mpk-validation"
         client.request(
             "PUT",
-            f"/v1/runs/{run_id}/test-results/compile/mpk-validation",
+            f"/v1/runs/{run_id}/test-results/compile/{validation}",
             {
                 "status": "passed",
                 "version": "1",
@@ -1650,7 +1661,7 @@ def publish_packages(
                 "input_type": "model-pack", "source_reference": f"registry-run:{component_run_id}",
                 "sha256": next(item["sha256"] for item in components if item["id"] == component_id),
                 "size_bytes": next(item["size_bytes"] for item in components if item["id"] == component_id),
-                "media_type": "application/gzip",
+                "media_type": "application/zip" if component.get("format") == "llima" else "application/gzip",
                 "metadata": {"component_id": component_id, "compile_run_id": component_run_id},
             }, f"{stable_key}-component-{component_id}")
         client.request("PUT", f"/v1/runs/{run_id}/parameters", {

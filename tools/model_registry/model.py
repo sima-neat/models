@@ -363,6 +363,18 @@ def validate_model(
             raise ValidationError(f"{directory}: component {component_id!r} cannot depend on itself")
 
         interface = component["interface"]
+        if interface["format"] == "huggingface":
+            if (component["recipe"] != "scripts/compile.sh"
+                    or component["source"]["type"] != "file_set"
+                    or component["source"]["entrypoint"] != "config.json"):
+                raise ValidationError(
+                    f"{directory}: Hugging Face components require scripts/compile.sh "
+                    "and a checkpoint file set with config.json as its entrypoint"
+                )
+            if len(components) != 1:
+                raise ValidationError(f"{directory}: declare the complete LLiMa model as one component")
+        elif component["recipe"] != "scripts/compile.py":
+            raise ValidationError(f"{directory}: ONNX components require scripts/compile.py")
         entrypoints = _by_id(interface["entrypoints"], f"entrypoint in component {component_id}")
         shape_profiles = _by_id(interface["shape_profiles"], f"shape profile in component {component_id}")
         symbols: dict[str, set[str]] = {}

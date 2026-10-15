@@ -42,10 +42,11 @@ function measurementSource(run, modelId) {
   return ` · Commit ${commitMarkup}${workflow}`;
 }
 
-function mpkValidationMark(tests = []) {
-  const passed = tests.some((test) => test.name === "mpk-validation" && test.status === "passed");
+function artifactValidationMark(tests = []) {
+  const passed = tests.some((test) => ["mpk-validation", "deployment-validation"].includes(test.name) && test.status === "passed");
   if (!passed) return "";
-  const message = "MPK package integrity verified: archive structure, checksum, and build provenance match.";
+  const label = tests.some((test) => test.name === "deployment-validation") ? "Model deployment" : "MPK package";
+  const message = `${label} integrity verified: archive structure, checksum, and build provenance match.`;
   return `<span class="mpk-validation-mark" tabindex="0" role="img" aria-label="${message}" data-tooltip="${message}">✓</span>`;
 }
 
@@ -476,7 +477,7 @@ function componentRow(detail, single) {
   const artifactRows = artifacts.length
     ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
-  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision && precisionLabel(parameters.precision)]
+  const meta = [mpkBytes ? `${run.metadata?.artifact_kind === "llima" ? "Model" : "MPK"} ${formatBytes(mpkBytes)}` : "", parameters.precision && precisionLabel(parameters.precision)]
     .filter(Boolean).join(" · ");
   const body = `<dl class="key-grid">
       ${artifactRows}
@@ -823,6 +824,13 @@ export function renderDetail(variant) {
     .filter(Boolean), (precision) => precision);
   // A reused build keeps the categories it was compiled with; the catalog has the current ones.
   const categories = catalogModel?.categories || run.model_categories || {};
+  const parameters = details[0]?.provenance.parameters?.parameters?.compile_parameters || {};
+  const hasImageResolution = [parameters.input_height, parameters.input_width].every((value) => Number.isInteger(value) && value > 0);
+  const compiledLimits = ["llm", "vlm"].includes(categories.model_type) ? [
+    Number.isInteger(parameters.max_num_tokens) && parameters.max_num_tokens > 0
+      ? keyValue("Maximum context", `${parameters.max_num_tokens.toLocaleString("en-US")} tokens (input + output)`) : "",
+    hasImageResolution ? keyValue("Image input resolution", `${parameters.input_height} × ${parameters.input_width} pixels`) : "",
+  ].join("") : "";
   const license = run.metadata?.license;
   // CI reuses a build until its compile inputs change, so the build's commit can predate the scripts
   // that measured it. The source link opens the commit the model card comes from; Build provenance
@@ -834,7 +842,7 @@ export function renderDetail(variant) {
   const overviewMarkup = overviewSection(catalogModel);
   const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
   // Every component's MPK must pass validation for the build to carry the mark.
-  const validated = details.every((detail) => mpkValidationMark(detail.tests.test_results || []));
+  const validated = details.every((detail) => artifactValidationMark(detail.tests.test_results || []));
   const fullPackage = variantPackage(variant.runs);
   const packageArtifact = (variant.packageSummary?.artifacts || []).find((item) => item.artifact_type === "model-package");
   const originalModel = inputs.map(originalModelLink).find(Boolean);
@@ -867,10 +875,11 @@ export function renderDetail(variant) {
       <div class="detail-title-actions">
         ${downloadAction}
         ${catalogModelOfVariant(variant) ? `<button class="cli-action" type="button" data-copy="${escapeHtml(cliDownloadCommand(variant))}">${icons.copy}<span>Copy CLI command</span></button>` : ""}
-        <div class="detail-links">${validated ? mpkValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+        <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
       </div>
     </header>
     ${detailBuildSwitcher(variant)}
+    ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
     ${sectionNavigation(sections)}
 
     ${overviewMarkup}

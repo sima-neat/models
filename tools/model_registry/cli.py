@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .accuracy_config import accuracy_components, find_devkit_accuracy_config
-from .artifact import record_compile_outputs, validate_compile_outputs, verify_mpk
+from .artifact import pack_llima, record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
@@ -34,6 +34,8 @@ AUTHOR_COMMANDS = frozenset(
         "validate-models",
         "validate-compile-outputs",
         "verify-mpk",
+        "verify-artifact",
+        "pack-llima",
     }
 )
 
@@ -180,7 +182,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_manifest.add_argument("--component", required=True)
     benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
 
-    mpk = subcommands.add_parser("verify-mpk", help="validate and checksum one compiler MPK output")
+    mpk = subcommands.add_parser(
+        "verify-mpk", aliases=["verify-artifact"], help="validate and checksum a compiled artifact"
+    )
     mpk.add_argument("output_dir", type=Path)
     mpk.add_argument("--write-manifest", action="store_true")
     mpk.add_argument("--json", action="store_true", dest="json_output")
@@ -199,6 +203,10 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--runner-class")
     mpk.add_argument("--runner-approval-id")
     mpk.add_argument("--runner-approval-spec-revision")
+
+    llima = subcommands.add_parser("pack-llima", help="package a deployed LLiMa model as a ZIP")
+    llima.add_argument("deployment", type=Path)
+    llima.add_argument("archive", type=Path)
 
     compile_outputs = subcommands.add_parser(
         "validate-compile-outputs", help="validate every MPK declared by one compile invocation"
@@ -658,8 +666,9 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "runner_approval_spec_revision",
     )
     provenance = {field: getattr(args, field) for field in fields if getattr(args, field) is not None}
-    result = verify_mpk(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
-    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid MPK: {result['archive']}")
+    verify = verify_artifact if args.command == "verify-artifact" else verify_mpk
+    result = verify(args.output_dir, write_manifest=args.write_manifest, provenance=provenance)
+    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid artifact: {result['archive']}")
     return 0
 
 
@@ -962,7 +971,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _import_accuracy(args)
         if args.command == "make-benchmark-manifest":
             return _make_benchmark_manifest(args)
-        if args.command == "verify-mpk":
+        if args.command == "pack-llima":
+            pack_llima(args.deployment, args.archive)
+            return 0
+        if args.command in {"verify-mpk", "verify-artifact"}:
             return _verify_mpk(args)
         if args.command == "assemble-package":
             return _assemble_package(args)

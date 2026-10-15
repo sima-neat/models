@@ -212,7 +212,7 @@ jobs:
             if [[ "$RUNNER_APPROVAL_IDS" != "null" ]]; then
               approval_id="$(jq -r ".[${index}] // \"\"" <<< "$RUNNER_APPROVAL_IDS")"
             fi
-            "$MODEL_COMPILER_PYTHON" -m model_registry verify-mpk "$PROFILE_OUTPUT_DIR/$component" \
+            "$MODEL_COMPILER_PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component" \
               --write-manifest \
               --model-id "$MODEL_ID" \
               --build-profile-id "$BUILD_PROFILE_ID" \

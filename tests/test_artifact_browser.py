@@ -951,14 +951,15 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert ".measurement-link {" in styles
 
 
-def test_mpk_validation_is_a_compact_accessible_status_mark() -> None:
+def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     script = _browser_source("model-view.js")
     browser = _browser_source()
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert 'test.name === "mpk-validation" && test.status === "passed"' in script
+    assert '["mpk-validation", "deployment-validation"].includes(test.name) && test.status === "passed"' in script
     assert 'class="mpk-validation-mark" tabindex="0" role="img"' in script
-    assert "MPK package integrity verified: archive structure, checksum, and build provenance match." in script
+    assert '"Model deployment" : "MPK package"' in script
+    assert "integrity verified: archive structure, checksum, and build provenance match." in script
     assert '<h3>Validation</h3>' not in browser
     assert ".detail-title-actions" in styles
     compact_controls = ".model-source-link, .original-model-link, .mpk-validation-mark { width: 38px; height: 38px"
