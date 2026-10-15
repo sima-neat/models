@@ -1077,6 +1077,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'reading(sum("maximum"), rails.length > 1 ? "≤ " : "")' in script
     assert "const legend = others.map(" in script
     assert ".rail-split > .rail-soc {" in styles
+    assert "repeating-linear-gradient(135deg, var(--red) 0 2px" in script
     assert ".detail-card tbody tr.depth-2 th" in styles
     assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
     assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script

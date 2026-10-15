@@ -153,9 +153,10 @@ const DETAIL_CARDS = [
 const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);
 // Names for the SoM power rails Sentinel reports, what each rail supplies, and its colour in the power bar.
 // The SoC rails come first: the power bar outlines them as one block, and the SoC rows, not the legend, name them.
+// Both are red, the SoC's colour; Non-MLA is striped so it stays distinct from the MLA.
 const RAILS = {
   power_rail_mla_watts: ["MLA core (0.68 V)", "Supplies the MLA.", "var(--red)"],
-  power_rail_soc_ddr_vdd_watts: ["Non-MLA SoC (VDD)", "Supplies the SoC logic outside the MLA, the memory controller, and DDR activity.", "var(--blue)"],
+  power_rail_soc_ddr_vdd_watts: ["Non-MLA SoC (VDD)", "Supplies the SoC logic outside the MLA, the memory controller, and DDR activity.", "repeating-linear-gradient(135deg, var(--red) 0 2px, color-mix(in srgb, var(--red) 25%, var(--surface-raised)) 2px 4px)"],
   power_rail_soc_ddr_vddq_watts: ["DRAM I/O (VDDQ)", "Supplies the SoC to DRAM interface.", "var(--amber)"],
   power_rail_soc_ddr_vdd2h_watts: ["DRAM (VDD2H)", "Supplies part of the DRAM.", "var(--violet)"],
   power_rail_pcie_eth_watts: ["PCIe and Ethernet PHY", "Supplies the PCIe and Ethernet PHYs.", "var(--green)"],
