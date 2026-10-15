@@ -427,9 +427,12 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     jobs = workflow["jobs"]
     report = jobs["report-partial-publication"]
     script = step(report, "List the builds that did not publish")["run"]
-    program = jq_program(script, "| jq")
+    program = jq_program(script, "jq")
 
     assert report["needs"] == ["plan", "compile", "publish-catalog"]
+    # 100 jobs per page answers HTTP 502 on a full catalog rebuild.
+    assert "jobs?per_page=50" in script
+    assert "for attempt in 1 2 3" in script
     assert report["if"].startswith("always() &&")
     assert report["permissions"] == {"actions": "read", "contents": "read"}
     # The filter matches the compile job's name, and no other job shares its prefix.

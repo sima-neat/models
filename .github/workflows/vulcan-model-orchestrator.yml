@@ -485,13 +485,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          jobs="$RUNNER_TEMP/run-jobs.json"
           failed="$RUNNER_TEMP/failed-model-jobs.json"
-          gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
-            | jq '[.[].jobs[] | select(
+          # GitHub answers HTTP 502 for 100 jobs per page on a run with about 100 jobs; 50 succeeds.
+          for attempt in 1 2 3; do
+            if gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=50" > "$jobs"; then
+              break
+            fi
+            if (( attempt == 3 )); then
+              echo "::error::Could not list this run's jobs, so the builds that did not publish are unknown."
+              exit 1
+            fi
+            sleep $(( attempt * 15 ))
+          done
+          jq '[.[].jobs[] | select(
                 (.name | startswith("Compile ")) and
                 .conclusion != "success" and .conclusion != "skipped"
-              ) | {name, conclusion, html_url}]' > "$failed"
+              ) | {name, conclusion, html_url}]' "$jobs" > "$failed"
           count="$(jq 'length' "$failed")"
           if (( count == 0 )); then
             echo "All selected model builds published." >> "$GITHUB_STEP_SUMMARY"
