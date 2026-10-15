@@ -1070,7 +1070,14 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'const rows = [["Section", "Metric", "Value", "Unit", "Key", "Note"]];' in script
     assert 'download="${escapeHtml(csvFileName(benchmark))}">${icons.download}Download CSV' in script
     assert "data:text/csv;charset=utf-8," in script
-    assert '["SoC", "power_rail_soc_ddr_vdd_watts"' in script
+    # SoC power is the sum of its MLA and Non-MLA rails, nested under SoM; its peak is an upper bound.
+    assert '["SoC", "soc", "MLA plus Non-MLA.' in script
+    assert '["Non-MLA", "power_rail_soc_ddr_vdd_watts",' in script
+    assert 'const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];' in script
+    assert 'reading(sum("maximum"), rails.length > 1 ? "≤ " : "")' in script
+    assert "const legend = others.map(" in script
+    assert ".rail-split > .rail-soc {" in styles
+    assert ".detail-card tbody tr.depth-2 th" in styles
     assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
     assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script
     assert "power: { extra: railSplit(measurements) }" in script

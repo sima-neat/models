@@ -158,8 +158,9 @@ everything longer sits in one expandable row.
   hero, and Overview are already on the page.
 - **Performance** shows throughput, latency, SoM power, and energy per
   inference for each component, one number per tile. **Benchmark details** is
-  performance, heat, and CPU cards, with power (SoM, SoC, MLA, and each
-  power rail) and memory cards beside them,
+  performance, heat, and CPU cards, with power (SoM; SoC as the sum of its
+  MLA and Non-MLA rails; and each other power rail) and memory cards beside
+  them,
   then any other measurements and a footer with the telemetry source and
   runtime beside **Raw result** and **Download CSV** (every reading of the
   component in one table).

@@ -121,7 +121,8 @@ function metricRow({ label, text, unit }) {
 const KPI_METRICS = ["throughput_fps", "latency_avg_ms", "avg_power_watts", "energy_per_inference_joules"];
 
 // Benchmark details: one row per reading, with its label, its metrics, and a short explanation shown
-// behind an (i) mark, one line per value when a row has several. A row names a rail when its colour should match that rail in the power bar.
+// behind an (i) mark, one line per value when a row has several. A row names a rail when its colour should match that rail in the power bar,
+// and a depth when it is part of the row above it.
 const DETAIL_CARDS = [
   ["performance", "Performance", "gauge", [], [
     ["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"], "Async: several inputs in flight.\nSync: one input at a time."],
@@ -138,8 +139,9 @@ const DETAIL_CARDS = [
   ]],
   ["power", "Power", "power", ["Average", "Peak"], [
     ["SoM", ["avg_power_watts", "peak_power_watts"], "Sum of all SoM rails."],
-    ["SoC", "power_rail_soc_ddr_vdd_watts", "SoC and DRAM core rail (VDD)."],
-    ["MLA", ["avg_mla_power_watts", "peak_mla_power_watts"], "MLA core rail (0.68 V).", "power_rail_mla_watts"],
+    ["SoC", "soc", "MLA plus Non-MLA.\nPeak: sum of their peaks, an upper bound.", null, 1],
+    ["MLA", ["avg_mla_power_watts", "peak_mla_power_watts"], "MLA core rail (0.68 V).", "power_rail_mla_watts", 2],
+    ["Non-MLA", "power_rail_soc_ddr_vdd_watts", "SoC and DDR VDD rail: the SoC outside the MLA.", null, 2],
   ]],
   ["memory", "Memory", "memory", ["Average", "Peak"], [
     ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Memory allocated to the MLA."],
@@ -150,9 +152,10 @@ const DETAIL_CARDS = [
 // Performance, heat, and CPU fill the left column; power, memory, and any other measurements the right.
 const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);
 // Names for the SoM power rails Sentinel reports, what each rail supplies, and its colour in the power bar.
+// The SoC rails come first: the power bar outlines them as one block, and the SoC rows, not the legend, name them.
 const RAILS = {
-  power_rail_soc_ddr_vdd_watts: ["SoC and DRAM core (VDD)", "Supplies the SoC logic and DRAM core.", "var(--blue)"],
   power_rail_mla_watts: ["MLA core (0.68 V)", "Supplies the MLA.", "var(--red)"],
+  power_rail_soc_ddr_vdd_watts: ["Non-MLA SoC (VDD)", "Supplies the SoC logic outside the MLA, the memory controller, and DDR activity.", "var(--blue)"],
   power_rail_soc_ddr_vddq_watts: ["DRAM I/O (VDDQ)", "Supplies the SoC to DRAM interface.", "var(--amber)"],
   power_rail_soc_ddr_vdd2h_watts: ["DRAM (VDD2H)", "Supplies part of the DRAM.", "var(--violet)"],
   power_rail_pcie_eth_watts: ["PCIe and Ethernet PHY", "Supplies the PCIe and Ethernet PHYs.", "var(--green)"],
@@ -190,14 +193,22 @@ function powerRails(measurements) {
   return (measurements.peak_power_watts?.details?.breakdown || []).filter((rail) => Number.isFinite(rail.mean));
 }
 
-// The average and peak of one SoM rail, from the rail details of peak SoM power.
+// The SoC draws on two SoM rails: the MLA's own and the one for the rest of the SoC.
+const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];
+
+// The average and peak of one SoM rail, or of the SoC rails together, from the rail details of peak SoM power.
+// Rails peak at different moments, so the sum of their peaks is only an upper bound on the SoC peak.
 function railReadings(measurements, key) {
-  const rail = powerRails(measurements).find((candidate) => candidate.key === key);
-  const reading = (value) => Number.isFinite(value) && { text: value.toFixed(2), unit: "W" };
-  return rail ? [reading(rail.mean), reading(rail.maximum)] : [];
+  const keys = key === "soc" ? SOC_RAILS : [key];
+  const rails = powerRails(measurements).filter((rail) => keys.includes(rail.key));
+  if (rails.length !== keys.length) return [];
+  const sum = (field) => rails.reduce((total, rail) => total + rail[field], 0);
+  const reading = (value, bound = "") => Number.isFinite(value) && { text: `${bound}${value.toFixed(2)}`, unit: "W" };
+  return [reading(sum("mean")), reading(sum("maximum"), rails.length > 1 ? "≤ " : "")];
 }
 
 function railDot(key) {
+  if (key === "soc") return `<i class="rail-dot rail-dot-soc" aria-hidden="true"></i>`;
   return RAILS[key] ? `<i class="rail-dot" style="background:${RAILS[key][2]}" aria-hidden="true"></i>` : "";
 }
 
@@ -215,13 +226,20 @@ function namedRails(measurements) {
     .map((rail) => ({ ...rail, name: RAILS[rail.key]?.[0] || rail.label, info: RAILS[rail.key]?.[1], colour: RAILS[rail.key]?.[2] || "var(--ink-faint)" }));
 }
 
-// The SoM power each rail draws on average, as one bar split by rail.
+// The SoM power each rail draws on average, as one bar split by rail. The SoC rails sit in one outlined block
+// that matches the SoC row, and the legend lists only the rails the table does not.
 function railSplit(measurements) {
   const rails = namedRails(measurements).filter((rail) => rail.mean > 0);
   const total = rails.reduce((sum, rail) => sum + rail.mean, 0);
   if (rails.length < 2 || total <= 0) return "";
-  const segments = rails.map((rail) => `<span style="flex-grow:${rail.mean.toFixed(4)};background:${rail.colour}"></span>`).join("");
-  const legend = rails.map((rail) => `<li><i aria-hidden="true" style="background:${rail.colour}"></i>${readingLabel(rail.name)}${infoMark(rail.info)}<b>${rail.mean.toFixed(2)} W</b></li>`).join("");
+  const segment = (rail) => `<span style="flex-grow:${rail.mean.toFixed(4)};background:${rail.colour}"></span>`;
+  const soc = rails.filter((rail) => SOC_RAILS.includes(rail.key));
+  const others = rails.filter((rail) => !SOC_RAILS.includes(rail.key));
+  const socBlock = soc.length
+    ? `<span class="rail-soc" style="flex-grow:${soc.reduce((sum, rail) => sum + rail.mean, 0).toFixed(4)}">${soc.map(segment).join("")}</span>`
+    : "";
+  const segments = socBlock + others.map(segment).join("");
+  const legend = others.map((rail) => `<li><i aria-hidden="true" style="background:${rail.colour}"></i>${readingLabel(rail.name)}${infoMark(rail.info)}<b>${rail.mean.toFixed(2)} W</b></li>`).join("");
   return `<p class="metric-caption">Average SoM power by rail</p><div class="rail-split" role="img" aria-label="${escapeHtml(rails.map((rail) => `${rail.name} ${rail.mean.toFixed(2)} W`).join(", "))}">${segments}</div><ul class="rail-legend">${legend}</ul>`;
 }
 
@@ -240,12 +258,12 @@ function coreLoad(cores) {
 
 function detailCard(measurements, [id, title, icon, columns, readings], { note, extra } = {}) {
   const rows = readings
-    .map(([label, keys, info, rail]) => ({
-      label, info, rail: rail || (Array.isArray(keys) ? null : keys),
+    .map(([label, keys, info, rail, depth]) => ({
+      label, info, depth, rail: rail || (Array.isArray(keys) ? null : keys),
       values: Array.isArray(keys) ? keys.map((key) => measuredValue(key, measurements[key])) : railReadings(measurements, keys),
     }))
     .filter((row) => row.values.some(Boolean))
-    .map((row) => `<tr><th scope="row">${railDot(row.rail)}${readingLabel(row.label)}${infoMark(row.info)}</th>${columns.length ? row.values.map(readingCell).join("") : joinedCell(row.values)}</tr>`);
+    .map((row) => `<tr${row.depth ? ` class="depth-${row.depth}"` : ""}><th scope="row">${railDot(row.rail)}${readingLabel(row.label)}${infoMark(row.info)}</th>${columns.length ? row.values.map(readingCell).join("") : joinedCell(row.values)}</tr>`);
   if (!rows.length) return null;
   const head = columns.length ? `<thead><tr><td></td>${columns.map((column) => `<th scope="col">${escapeHtml(column)}</th>`).join("")}</tr></thead>` : "";
   return {
