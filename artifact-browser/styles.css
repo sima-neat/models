@@ -442,7 +442,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .core-track i { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink-soft); }
 .core-load .busiest .core-track b { background: var(--blue); }
 .core-load .busiest > span { color: var(--ink); }
-.core-legend { display: flex; justify-content: flex-end; gap: 16px; }
+.core-legend { display: flex; justify-content: center; gap: 16px; }
 .core-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .core-legend b { width: 14px; height: 6px; border-radius: 999px; background: var(--blue); }
 .core-legend i { width: 2px; height: 10px; border-radius: 1px; background: var(--ink-soft); }
