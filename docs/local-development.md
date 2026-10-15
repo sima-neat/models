@@ -367,8 +367,20 @@ scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/
 model-registry verify-artifact /path/to/output/qwen3_5_2b/modalix_a16w4_4k/model --write-manifest
 ```
 
-The runner verifies the pinned checkpoint download, calls the model's `compile.sh`,
-runs `llima-deploy`, and packs the complete deployment. Activate the matching LLiMa
-and Model Compiler tools first. No benchmark or accuracy stage runs unless declared.
+Activate the matching LLiMa and pinned Model Compiler tools first. The recipe
+only calls `llima-compile`; the runner verifies the pinned checkpoint download,
+calls that recipe, and runs `llima-deploy`. It writes
+`qwen3_5_2b/modalix_a16w4_4k/model/deployment/` with `devkit/`, `elf_files/`,
+and any `npy_files/`. Verification writes `deployment-manifest.json` beside
+the folder. `compile-outputs.json` points to `model/deployment-manifest.json`
+and hashes that index; it does not point to an archive.
+
+Qwen3.5-2B sets `build-on-demand: true`. Pushes validate and publish its
+metadata but never compile or measure it. For CI, manually dispatch
+**Vulcan Model Orchestrator** with `models=qwen3_5_2b` and
+`profiles=modalix_a16w4_4k`. The profile uses the expensive runner with twelve
+jobs, 4096 tokens, 448×448 input, and group size 128. A direct planner call requires
+`--include-on-demand --models qwen3_5_2b --profiles modalix_a16w4_4k`.
+No benchmark or accuracy stage runs unless declared.
 See [LLiMa model definitions](adding-a-model.md#llima-language-and-vision-language-models)
 for the source and package contracts.

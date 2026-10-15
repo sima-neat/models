@@ -959,7 +959,7 @@ def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     assert '["mpk-validation", "deployment-validation"].includes(test.name) && test.status === "passed"' in script
     assert 'class="mpk-validation-mark" tabindex="0" role="img"' in script
     assert '"Model deployment" : "MPK package"' in script
-    assert "integrity verified: archive structure, checksum, and build provenance match." in script
+    assert "integrity verified: file structure, checksum, and build provenance match." in script
     assert '<h3>Validation</h3>' not in browser
     assert ".detail-title-actions" in styles
     compact_controls = ".model-source-link, .original-model-link, .mpk-validation-mark { width: 38px; height: 38px"
@@ -1005,7 +1005,7 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert "${icons.download}<span>Download components</span>" in script
     assert '<dl class="package-facts">' in script
     assert '<dt>Size</dt>' in script
-    assert '<dt>SHA-256</dt>' in script
+    assert 'Manifest SHA-256' in script
     assert "Download individual components" not in browser
     assert 'class="download-button"' not in browser
     assert 'class="artifact-main"' not in browser
@@ -1036,7 +1036,7 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
 
     assert 'artifact.artifact_type === "model-pack"' in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
-    assert 'artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
+    assert 'artifacts.map((artifact) => keyValue(artifactDelivery(artifact) === "archive" ? "SHA-256" : "Manifest SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
     assert '|| artifacts[0]' not in browser
 
 
@@ -1581,3 +1581,21 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     # A component row is a disclosure keyed by its run, with compile parameters nested inside it.
     assert 'disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta)' in component_row
     assert 'disclosure(`parameters:${run.id}`, "Compile parameters"' in component_row
+
+
+def test_preview_native_deployments_use_manifest_and_path_preserving_files(tmp_path: Path) -> None:
+    api = "/v1/repositories/sima-neat/models"
+    with _preview(tmp_path) as base:
+        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
+        model = next(model for model in catalog["catalog"]["document"]["models"]
+                     if model["categories"]["model_type"] in {"llm", "vlm"})
+        for record in [model["builds"][0], model["packages"][0]]:
+            artifacts = _get_json(f"{base}/v1/runs/{record['run_id']}")["artifacts"]
+            manifest, *files = artifacts
+            assert manifest["media_type"] == "application/json"
+            assert manifest["metadata"]["layout"] == "directory"
+            assert manifest["metadata"]["storage_backend"] == "s3"
+            assert manifest["metadata"]["file_count"] == len(files)
+            assert manifest["metadata"]["deployment_size_bytes"] == sum(file["size_bytes"] for file in files)
+            assert manifest["size_bytes"] < manifest["metadata"]["deployment_size_bytes"]
+            assert all(file["artifact_type"] == "model-file" and file["metadata"]["path"] for file in files)

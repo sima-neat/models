@@ -13,6 +13,7 @@
     "id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
+    "build-on-demand": {"type": "boolean", "default": false},
     "model_type": {"$ref": "#/$defs/taxonomyId"},
     "tasks": {"$ref": "#/$defs/taxonomyIdSet"},
     "modalities": {"$ref": "#/$defs/modalities"},

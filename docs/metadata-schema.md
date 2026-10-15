@@ -46,6 +46,13 @@ sanctioned taxonomy values.
 `upstream` records human-reviewable provenance. Downloadable inputs belong in
 a `conversion`, component, or resource `source`, where exact bytes are pinned.
 
+Optional top-level `build-on-demand` is a boolean, default `false`, for any
+model requiring explicit build selection. When `true`, pushes validate the
+model and publish its metadata but never compile or measure it. Manual
+selection requires model and profile IDs. This field changes scheduling and
+catalog metadata only; it is excluded from compilation fingerprints. See
+[on-demand builds](adding-a-model.md#on-demand-builds).
+
 ## Conversion
 
 `conversion` is optional. It names the upstream checkpoints that
@@ -401,15 +408,40 @@ must still compile and measure every supported build locally before submitting
 it.
 
 
-### LLiMa checkpoint and deployment formats
+## LLiMa checkpoint and deployment formats
 
 A Hugging Face component uses `interface.format: huggingface` and `recipe: scripts/compile.sh`.
 Its source is a verified `file_set` with `config.json` as the entrypoint. Public inputs and
 outputs describe the generation API rather than individual accelerator graphs. A complete
 LLiMa deployment is one component, including its vision encoder when present.
 
-Native compile outputs carry `artifact_path` and `artifact_sha256`; `compile-result.json`
-marks `format: llima`. The published artifact is a deployment ZIP. Retrieval packages mark
-that component `format: llima`, with `path: .` naming the extracted model folder. Its checksum
-identifies the original compile artifact; `files` checksums identify each installed file.
-Existing ONNX/MPK metadata and packages retain their format.
+The compiled component contains `deployment/` and a sibling
+`deployment-manifest.json`. `compile-outputs.json` carries `artifact_path`
+(`model/deployment-manifest.json` for the `model` component) and
+`artifact_sha256`, the SHA-256 of that JSON index. `compile-result.json`
+marks `format: llima` and `layout: directory`; its `size_bytes` is the sum
+of deployment file sizes.
+
+A native full package is a deployment folder with `manifest.json` at its
+root. Its component uses `format: llima`, `path: .`, and the compile index's
+checksum. Both manifests list deployment files with exactly these fields:
+
+```text
+files: [{path, artifact, sha256, size_bytes}]
+```
+
+`path` is relative to the deployment root. `artifact` is the stable logical
+name `file-<sha256(relative POSIX path)>`; it does not encode a storage URL.
+In a published package, every reference names a `model-file` artifact on
+that same package run. The root artifact is `package`, type `model-package`,
+media type `application/json`. Native compile runs use root artifact `llima`,
+type `model-pack`, also a JSON index. Their artifact metadata includes
+`layout: directory`, `storage_backend: s3`, `deployment_size_bytes`, and
+`file_count`.
+
+Files use content-addressed S3 storage, reused between compile and package
+publication. Each file must be at most 5 GiB until multipart uploads
+([#292](https://github.com/sima-neat/models/issues/292)); aggregate deployment
+size has no limit. Retrieval uses public resolved artifact URLs to preserve
+the directory and verify each file's size and SHA-256. Existing ONNX/MPK
+metadata and packages retain their format.

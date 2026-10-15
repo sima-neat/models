@@ -1,6 +1,6 @@
 name: Vulcan Model Compile
 
-# Compile one authorized compile invocation, publish it, update the catalog, and start its DevKit stages.
+# Compile and publish one authorized invocation, update approved builds, and start its DevKit stages.
 # vulcan-model-orchestrator.yml calls this once per selected invocation, so one build never waits on another.
 
 on:
@@ -348,7 +348,7 @@ jobs:
 
       - name: Assemble the packages this build completes
         id: packages
-        if: inputs.publishable
+        if: inputs.publishable || fromJSON(inputs.entry).build_on_demand
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -365,7 +365,7 @@ jobs:
           echo "Assembled $count model package(s)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the finalized packages
-        if: inputs.publishable && steps.packages.outputs.count != '0'
+        if: (inputs.publishable || fromJSON(inputs.entry).build_on_demand) && steps.packages.outputs.count != '0'
         run: |
           set -euo pipefail
           model-registry publish-package \
@@ -378,7 +378,7 @@ jobs:
             --json > "$RUNNER_TEMP/package-publication.json"
 
       - name: Publish this build in the catalog
-        if: inputs.publishable
+        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
         run: |
           set -euo pipefail
           : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"

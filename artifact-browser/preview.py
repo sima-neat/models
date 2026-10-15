@@ -111,6 +111,7 @@ def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, A
                 "build_profile_id": entry["build_profile_id"],
                 "component_id": component_id,
                 "compile_fingerprint": entry["build_fingerprint"],
+                "compile_invocation_id": entry["build_fingerprint"],
                 "run_id": _id("compile", sha, entry["model_id"], entry["build_profile_id"], component_id),
                 "artifact_sha256": _sha256("mpk", sha, entry["model_id"], entry["build_profile_id"], component_id),
             })
@@ -237,6 +238,7 @@ def _models_list(document: dict, runs: dict[str, dict], compiler: str) -> list[d
             **{key: model[key] for key in ("display_name", "description", "maturity", "license", "categories")},
             **_model_fields(model),
             "documentation": model["documentation"],
+            **({"build_on_demand": True} if model.get("build_on_demand") else {}),
             "catalog_revision": document["catalog_revision"],
             "taxonomy_sha256": document["taxonomy_sha256"],
             "builds": builds,
@@ -411,7 +413,7 @@ def _index() -> dict[str, Any]:
             documentation[model["documentation"]["run_id"]] = model["id"]
             for build in model["builds"]:
                 builds[build["run_id"]] = (source, build)
-                if build["validation_fingerprint"]:
+                if build.get("validation_fingerprint"):
                     accuracy[build["validation_fingerprint"]] = (source, build)
             for package in model["packages"]:
                 packages[package["run_id"]] = (source, package)
@@ -436,6 +438,25 @@ def _measurement_run(run_id: str, run_type: str, build_run_id: str) -> dict:
         "commit_sha": _repository()["revisions"][-1]["sha"],
         "ci_run_url": f"https://github.com/sima-neat/models/actions/runs/{workflow}",
     }
+
+
+def _deployment_artifacts(archive: dict, run_id: str) -> list[dict]:
+    """Native deployments use a small JSON index and separate path-preserving payload files."""
+    paths = ["model.json", "weights/model.bin", "runtime/config.json"]
+    total = archive["size_bytes"]
+    files = [{
+        "name": f"file-{hashlib.sha256(path.encode()).hexdigest()}",
+        "artifact_type": "model-file", "media_type": "application/octet-stream",
+        "sha256": _sha256("deployment-file", run_id, path),
+        "size_bytes": total // len(paths) + (total % len(paths) if index == 0 else 0),
+        "metadata": {"path": path},
+    } for index, path in enumerate(paths)]
+    return [{
+        **archive, "name": "package" if archive["artifact_type"] == "model-package" else "llima",
+        "size_bytes": 2048, "media_type": "application/json",
+        "metadata": {**archive.get("metadata", {}), "layout": "directory", "storage_backend": "s3",
+                     "file_count": len(files), "deployment_size_bytes": total},
+    }, *files]
 
 
 class PreviewHandler(SimpleHTTPRequestHandler):
@@ -557,7 +578,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             model, package = index["packages"][run_id]
             _, media_type = _package_file(model, package)
             # The same artifact shape the registry publisher records for a full package.
-            self._json({"run": index["runs"][run_id], "artifacts": [{
+            artifact = {
                 "name": "package",
                 "artifact_type": "model-package",
                 "sha256": package["artifact_sha256"],
@@ -570,7 +591,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "manifest_sha256": package["package_fingerprint"],
                     "component_run_ids": package["component_run_ids"],
                 },
-            }]})
+            }
+            artifacts = _deployment_artifacts(artifact, run_id) if model["model_type"] in {"llm", "vlm"} else [artifact]
+            self._json({"run": index["runs"][run_id], "artifacts": artifacts})
         elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
             model, package = index["packages"][run_id]
             filename, _ = _package_file(model, package)
@@ -585,13 +608,14 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         run = _index()["runs"][run_id]
         native = run["metadata"].get("artifact_kind") == "llima"
         if not rest:
-            self._json({"run": run, "artifacts": [{
-                "name": f"{model['id']}_{build['build_profile_id']}_llima.zip" if native else "mpk",
+            artifact = {
+                "name": "llima" if native else "mpk",
                 "artifact_type": "model-pack",
                 "sha256": build["artifact_sha256"],
                 "size_bytes": 8_000_000 + int(_fraction("mpk-size", run_id) * 300_000_000),
                 "media_type": "application/zip" if native else "application/gzip",
-            }]})
+            }
+            self._json({"run": run, "artifacts": _deployment_artifacts(artifact, run_id) if native else [artifact]})
         elif rest == ["provenance"]:
             self._json({"run": run, **_provenance(model, build, compiler)})
         elif rest == ["test-results"]:
@@ -606,7 +630,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({"run_id": run_id, "measurements": [
                 {"name": "compile.duration", "numeric_value": round(180.0 + _fraction("compile", run_id) * 900.0, 1)},
             ]})
-        elif rest == ["benchmarks", "latest"] and build["benchmark_fingerprint"]:
+        elif rest == ["benchmarks", "latest"] and build.get("benchmark_fingerprint"):
             self._json({
                 "benchmark_run": {"id": _id("benchmark", run_id)},
                 "result": _benchmark_result(model, build, compiler),

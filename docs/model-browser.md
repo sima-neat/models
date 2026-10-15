@@ -137,5 +137,20 @@ page. The preview is for checking content and layout; the real numbers come
 from CI after merge.
 
 
-LLiMa builds download as complete deployment ZIPs. Their model size and archive-validation
-indicator refer to the whole deployment; vision MPK downloads retain their existing format.
+LLiMa deployments are folders. **Download folder** shows the same
+`sima-cli models download` command as **Copy CLI command**; the CLI retrieves
+the manifest's files, preserves their paths, and verifies their checksums.
+The displayed size covers all deployment files, and **Manifest SHA-256**
+identifies the index. The JSON index itself is not a model archive. Existing
+vision archives and previously published LLiMa ZIPs keep their direct downloads.
+
+When the registry resolves an approved deployment to Hugging Face, the dialog
+shows its repository, pinned commit revision, and optional subdirectory. The
+repository link opens that exact deployment revision. This deployment location
+is separate from the original source checkpoint linked in the page header.
+
+Models built on demand can appear before they have an approved deployment.
+Their card says **Built on demand** and opens the model's description and
+Overview; download actions appear once a deployment is available. Completed
+candidate runs remain in **Build history** until the registry approves them;
+they do not replace the catalog's approved build.

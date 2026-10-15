@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import zipfile
 from datetime import datetime, timezone
@@ -9,7 +11,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .artifact import verify_llima
+from .artifact import deployment_files, verify_artifact
 from .errors import ValidationError
 from .fetch import Fetcher, sha256_file
 from .model import load_and_validate_model
@@ -40,6 +42,15 @@ def _add_file(archive: zipfile.ZipFile, name: str, path: Path) -> None:
         archive.writestr(_zip_info(name), stream.read())
 
 
+def _link_or_copy(source: str, destination: str) -> str:
+    """Reuse local payloads without copying multi-gigabyte weights when possible."""
+    try:
+        os.link(source, destination)
+        return destination
+    except OSError:
+        return shutil.copyfile(source, destination)
+
+
 def assemble_package(
     *,
     repository: str | Path,
@@ -68,7 +79,8 @@ def assemble_package(
     if build_profile_id not in package["build_profiles"]:
         raise ValidationError(f"package {model_id}/{package_id} does not support build profile {build_profile_id}")
 
-    native_archive = None
+    native_deployment = None
+    native_files: list[dict[str, Any]] = []
     component_entries: list[dict[str, Any]] = []
     component_files: list[tuple[str, Path]] = []
     provenance_identity: dict[str, str] | None = None
@@ -92,21 +104,27 @@ def assemble_package(
             field: str(provenance.get(field) or "")
             for field in ("git_sha", "environment", "compiler_version", "compiler_label", "target")
         }
+        if provenance.get("llima_version"):
+            current_identity["llima_version"] = str(provenance["llima_version"])
         if provenance_identity is None:
             provenance_identity = current_identity
         elif current_identity != provenance_identity:
             raise ValidationError(f"{result_dir}: component provenance is incompatible with its package siblings")
 
-        archive_name = result.get("archive")
+        native = components[component_id]["interface"]["format"] == "huggingface"
+        archive_name = result.get("manifest" if native else "archive")
         if not isinstance(archive_name, str) or not archive_name:
             raise ValidationError(f"{result_dir}: compile result archive must be a non-empty string")
         component_archive = result_dir / archive_name
         if component_archive.parent != result_dir or not component_archive.is_file():
             raise ValidationError(f"{result_dir}: component archive is missing")
         digest, size = sha256_file(component_archive)
+        if native:
+            verified = verify_artifact(result_dir)
+            size = verified["size_bytes"]
+            native_files = deployment_files(_load_json(component_archive, "deployment manifest"))
         if digest != result.get("sha256") or size != result.get("size_bytes"):
             raise ValidationError(f"{result_dir}: component archive does not match compile-result.json")
-        native = components[component_id]["interface"]["format"] == "huggingface"
         if native:
             if package["composition"] not in compositions or compositions[package["composition"]]["type"] != "single":
                 raise ValidationError("A LLiMa package uses a single deployment composition")
@@ -114,7 +132,7 @@ def assemble_package(
                 raise ValidationError("A LLiMa package contains one complete deployment and no extra resources")
             if result.get("format") != "llima":
                 raise ValidationError("Hugging Face compile result must declare format llima")
-            native_archive = component_archive
+            native_deployment = result_dir / "deployment"
         package_path = "." if native else archive_name
         component_files.append((package_path, component_archive))
         publication_path = result_dir / "registry-publication.json"
@@ -189,8 +207,8 @@ def assemble_package(
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
     ]
-    if native_archive is not None:
-        installed_files = verify_llima(native_archive)
+    if native_deployment is not None:
+        installed_files = native_files
     manifest = {
         "model_id": model_id,
         "display_name": model["display_name"],
@@ -213,8 +231,29 @@ def assemble_package(
         first = errors[0]
         location = ".".join(str(part) for part in first.absolute_path) or "manifest"
         raise ValidationError(f"package manifest {location}: {first.message}")
+    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
     package_dir = output_root / model_id / build_profile_id / "packages" / package_id
     package_dir.mkdir(parents=True, exist_ok=True)
+    if native_deployment is not None:
+        deployment = package_dir / "deployment"
+        if deployment.resolve().is_relative_to(native_deployment.resolve()):
+            raise ValidationError("package output must be outside the compiled deployment")
+        if deployment.exists():
+            shutil.rmtree(deployment)
+        shutil.copytree(native_deployment, deployment, copy_function=_link_or_copy)
+        (deployment / "manifest.json").write_bytes(manifest_bytes)
+        result = {
+            "status": "success", "model_id": model_id, "package_id": package_id,
+            "build_profile_id": build_profile_id, "layout": "directory",
+            "manifest_path": "deployment/manifest.json",
+            "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "size_bytes": sum(item["size_bytes"] for item in installed_files),
+            "built_at": datetime.now(timezone.utc).isoformat(), "manifest": manifest,
+        }
+        (package_dir / "package-result.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return result
     # A lone MPK is the package itself; anything more ships as a flat ZIP of the installed files.
     if len(packaged_files) == 1:
         bundle_name = packaged_files[0][0]

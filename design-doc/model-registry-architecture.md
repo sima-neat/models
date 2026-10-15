@@ -51,8 +51,9 @@ Common download, checksum, cache, MPK validation, result import, and
 publication logic stays under `tools/`. A model directory owns the code that is
 specific to that model: the compile recipe, any surgery that cannot be
 expressed as shared parameters, and its performance, accuracy, and conversion
-scripts. The recipe's product is one directly consumable `*_mpk.tar.gz` per
-component, not an ONNX or compiler intermediate.
+scripts. ONNX recipes produce one directly consumable `*_mpk.tar.gz` per
+component. LLiMa recipes produce compiler output that the shared runner
+deploys into a complete model folder.
 
 The canonical product name is **Model Registry**. Code and paths use
 `model-registry` or `model_registry`. The word `modelzoo` is used only when
@@ -78,16 +79,16 @@ this table. Modules marked CI only are removed from the author package by
 | `model.py` | loading and validating `model.yaml` and the model folder (`load_models`), and reading a model's declarations: compile invocations, profiles, components |
 | `compile_matrix.py` | the compile matrix: one entry per declared compile invocation (`build_matrix`) |
 | `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
-| `stage_plan.py` | which builds compile and which DevKit stages run on a push (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
+| `stage_plan.py` | which builds compile and which DevKit stages run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
 | `core_benchmark.py` | packaging Core's measurements for publication |
 | `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
 | `fidelity_config.py` | finding a build's fidelity entry and checking its result |
-| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and native ZIP packing |
+| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and deployment file indexes |
 | `artifact_metadata.py` | publication metadata validation |
-| `package.py` | assembling model packages from component MPKs |
+| `package.py` | assembling model packages from component MPKs or a complete native deployment folder |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `source.py` | source identity and URL redaction |
@@ -105,7 +106,7 @@ result depends on.
 
 | Stage | Model script | Key | Registry record |
 | --- | --- | --- | --- |
-| compile | `compile.py` | `compile_key` in `stage_keys.py` | compile run per component, recorded in the branch catalog |
+| compile | `compile.py` or `compile.sh` | `compile_key` in `stage_keys.py` | compile run per component, recorded in the branch catalog |
 | performance | `performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
 | accuracy | `accuracy.py` | `accuracy_key` in `stage_keys.py` | `model_accuracy` run under the result component's compile run |
 
@@ -126,7 +127,7 @@ push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
        -> on main and develop: publish that model browser to staging
-  -> plan: compare stage keys with the branch catalog and registry runs
+  -> plan: compare stage keys with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
   -> compile (Vulcan Model Compile, per selected build)
@@ -142,7 +143,8 @@ DevKit stages (per build)
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
 compile key, or when a maintainer forces a rebuild. A reused build is queued
 for the DevKit stages whose keys have no completed run. DevKit stages run only
-in staging and only for Modalix targets.
+in staging and only for Modalix targets. On-demand models require the explicit
+manual selection described below before either stage can run.
 
 ### Branches, merges, and concurrent pushes
 
@@ -164,8 +166,8 @@ in staging and only for Modalix targets.
   own builds and the builds `develop` recompiled. A profile no catalog matches
   compiles. A sibling feature branch is never a source.
 - **Merge.** A merge is a push to `develop`, which compares with its own
-  catalog. Builds the merged branch changed compile again on `develop`, and
-  their DevKit stages run again; builds the branch compiled are not reused.
+  catalog. Automatic builds changed by the merge compile again on `develop`,
+  and their DevKit stages run again; builds the branch compiled are not reused.
 - **Newer push.** It cancels the running orchestrator of the same ref
   (manual dispatches run to completion). Builds that already published stay;
   builds left pending are planned again. Dispatched DevKit runs continue. A
@@ -197,7 +199,7 @@ verifies its output and publishes it.
 
 ## Artifact publication contract
 
-Each published build verifies its MPKs and provenance, uploads each archive to
+Each published ONNX build verifies its MPKs and provenance, uploads each archive to
 a collision-resistant immutable S3 key with native SHA-256, and records one
 compile run per component through IAM-authenticated, idempotent API calls. The
 run records the immutable source, the compile key, the compiler identity, the
@@ -215,14 +217,63 @@ registry purge endpoint; branch creation calls the restore endpoint. Retention
 operates on registered runs and exact S3 object versions.
 
 
+## On-demand builds
+
+Any expensive model may set top-level `build-on-demand: true`; the default is
+`false`. Pushes validate its contract and publish catalog metadata but never
+compile or measure it. Existing automatic models keep their scheduling.
+The flag changes scheduling and catalog metadata only, never compile keys.
+An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
+`profiles`; `plan-stages --include-on-demand` also requires both selectors.
+For Qwen3.5-2B use `models=qwen3_5_2b`, `profiles=modalix_a16w4_4k`.
+
+Published candidate runs carry metadata `build_on_demand: true`. Their
+artifacts carry `retention_class: on-demand` and metadata
+`build_on_demand: true`. These markers provide the NeatOps integration
+contract: **current NeatOps branch purge does not yet honor them**. Backend
+retention support is required to protect a candidate when its branch is
+deleted; this repository does not implement that protection.
+
+Promotion requests identify the exact run, model, profile, source Git SHA,
+configuration, validation evidence, and target branch. This repository records the
+original source, compile fingerprint, compiler identity, LLiMa version when
+available, and validation results. NeatOps/backend owns cross-branch
+compatibility checks, approval, rebuild decisions, and administrator promotion
+of the existing candidate to `develop` and later `main`, preserving original
+provenance. That integration is external to this repository; promotion does
+not create an automatic models build, release, or PR.
+
+Promotion retains S3 storage. A separate generic, explicitly manual,
+`main`-only `release-to-hf` workflow is follow-up
+[#293](https://github.com/sima-neat/models/issues/293); it may initially cover
+LLiMa and later other model types. After an immutable Hugging Face copy is
+verified, NeatOps owns the backend transaction that switches the active
+artifact location and cleans up S3. Promotion does not trigger that workflow,
+and pushes never upload to Hugging Face. The backend resolves approved
+cross-branch references and active public download URLs; the CLI downloads
+and verifies files.
+
 ## LLiMa builds
 
-The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging Face
-component. It runs `scripts/compile.sh`, then deploys and packs the output as one ZIP.
-ONNX builds keep their existing runner and compile-key inputs. Source file sets use the same pinned, checksum-verified
-downloader as vision models. The recipe owns only the `llima-compile` invocation.
+The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging
+Face component. The shared downloader assembles its pinned, verified file
+set; the recipe only calls `llima-compile`. The runner then runs
+`llima-deploy` into `<model>/<profile>/<component>/deployment/`, containing
+`devkit/`, `elf_files/`, and any `npy_files/`. `verify-artifact --write-manifest`
+writes `deployment-manifest.json` beside the folder. Compile outputs point to
+that index and its SHA-256. ONNX builds retain their runner and compile-key
+inputs.
 
-Publication records a `llima` model-pack artifact instead of `mpk`. The compile run,
-provenance and catalog lifecycle are shared; registry restore selects the artifact kind
-from the source interface. Final packages flatten the deployment into the model folder.
-Empty measurement declarations schedule no board stages.
+Publication registers deployment files as `model-file` artifacts and the
+compile index as the `llima` `model-pack` artifact. A native full package is
+the deployment folder with root `manifest.json`, published as the `package`
+`model-package` JSON artifact. Its manifest references files on that same
+package run. Content-addressed S3 objects are reused between compile and
+package publication. Retrieval preserves the folder and verifies every file
+through public resolved URLs. See the [metadata contract](../docs/metadata-schema.md#llima-checkpoint-and-deployment-formats)
+for manifest fields, publication metadata, and the temporary 5 GiB per-file
+upload limit. Aggregate deployment size has no limit.
+
+Empty measurement declarations schedule no board stages. Qwen's defaults
+and the separate performance and accuracy follow-ups are in the
+[author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).

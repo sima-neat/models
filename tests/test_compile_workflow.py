@@ -36,6 +36,7 @@ def evaluate(condition: str, values: dict[str, object]) -> bool:
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
     expression = expression.replace("&&", " and ").replace("||", " or ")
+    expression = re.sub(r"!(?!=)", " not ", expression)
     return eval(expression, {"__builtins__": {}}, {})
 
 
@@ -201,7 +202,7 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     )
 
 
-def test_targeted_profile_or_component_dispatch_is_compile_only() -> None:
+def test_targeted_profile_or_component_dispatch_skips_catalog_updates() -> None:
     select = load(WORKFLOW)["jobs"]["select"]
     scope = next(item for item in select["steps"] if item.get("id") == "scope")
 
@@ -211,6 +212,28 @@ def test_targeted_profile_or_component_dispatch_is_compile_only() -> None:
         "REQUESTED_COMPONENTS": "${{ inputs.components }}",
     }
     assert "publishable=false" in scope["run"]
+
+
+@pytest.mark.parametrize(
+    ("manual", "models", "profiles", "expected"),
+    [(False, "resnet_50", "modalix_bf16", False), (True, "", "", False),
+     (True, "resnet_50", "", True), (True, "resnet_50", "modalix_bf16", True)],
+)
+def test_only_explicit_manual_model_selection_enables_on_demand_builds(
+    manual: bool, models: str, profiles: str, expected: bool,
+) -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
+    selection = plan["run"].split('plan="$(model-registry plan-stages', 1)[0]
+    result = subprocess.run(
+        ["bash", "-c", selection + '\nprintf "%s\\n" "${scope_args[@]}"'],
+        env={**os.environ, "REGISTRY_READ_API_URL": "https://registry.invalid", "MANUAL_BUILD": str(manual).lower(),
+             "REQUESTED_MODELS": models, "REQUESTED_PROFILES": profiles, "REQUESTED_COMPONENTS": "",
+             "FORCE_REBUILD_ALL": "true"},
+        capture_output=True, text=True, check=True,
+    )
+
+    assert ("--include-on-demand" in result.stdout.splitlines()) is expected
+    assert "--force-rebuild-all" in result.stdout.splitlines()
 
 
 def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
@@ -769,19 +792,35 @@ def test_start_script_starts_the_other_builds_after_a_failure(tmp_path: Path) ->
     assert len(calls.read_text(encoding="utf-8").splitlines()) == 2
 
 
-def test_packages_and_catalog_update_only_for_publishable_builds() -> None:
+def test_on_demand_candidates_publish_packages_without_catalog_updates() -> None:
     publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
     assemble = step(publish, "Assemble the packages this build completes")
     packages = step(publish, "Publish the finalized packages")
     catalog = step(publish, "Publish this build in the catalog")
 
-    assert assemble["if"] == "inputs.publishable"
+    assert assemble["if"] == "inputs.publishable || fromJSON(inputs.entry).build_on_demand"
     assert "--all" in assemble["run"]
-    assert packages["if"] == "inputs.publishable && steps.packages.outputs.count != '0'"
+    assert packages["if"] == (
+        "(inputs.publishable || fromJSON(inputs.entry).build_on_demand) && steps.packages.outputs.count != '0'"
+    )
     assert "model-registry publish-package" in packages["run"]
-    assert catalog["if"] == "inputs.publishable"
+    assert catalog["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
     assert "--compiled-dir _compiled" in catalog["run"]
     assert '--base-branches "$BASE_BRANCHES"' in catalog["run"]
+
+
+@pytest.mark.parametrize("publishable", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_candidate_package_and_catalog_conditions(publishable: bool, on_demand: bool) -> None:
+    publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
+    values = {"inputs.publishable": publishable, "fromJSON(inputs.entry).build_on_demand": on_demand,
+              "steps.packages.outputs.count": "1"}
+
+    assert evaluate(step(publish, "Assemble the packages this build completes")["if"], values) is (
+        publishable or on_demand
+    )
+    assert evaluate(step(publish, "Publish the finalized packages")["if"], values) is (publishable or on_demand)
+    assert evaluate(step(publish, "Publish this build in the catalog")["if"], values) is (publishable and not on_demand)
 
 
 def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:

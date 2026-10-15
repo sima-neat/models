@@ -1,6 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
+import { artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
@@ -46,7 +47,7 @@ function artifactValidationMark(tests = []) {
   const passed = tests.some((test) => ["mpk-validation", "deployment-validation"].includes(test.name) && test.status === "passed");
   if (!passed) return "";
   const label = tests.some((test) => test.name === "deployment-validation") ? "Model deployment" : "MPK package";
-  const message = `${label} integrity verified: archive structure, checksum, and build provenance match.`;
+  const message = `${label} integrity verified: file structure, checksum, and build provenance match.`;
   return `<span class="mpk-validation-mark" tabindex="0" role="img" aria-label="${message}" data-tooltip="${message}">✓</span>`;
 }
 
@@ -473,9 +474,9 @@ function componentRow(detail, single) {
   const artifacts = modelPackArtifacts(detail.summary.artifacts);
   const tests = detail.tests.test_results || [];
   const parameters = detail.provenance.parameters?.parameters?.compile_parameters || {};
-  const mpkBytes = artifacts.reduce((total, artifact) => total + (Number.isFinite(artifact.size_bytes) ? artifact.size_bytes : 0), 0);
+  const mpkBytes = artifacts.reduce((total, artifact) => total + (Number.isFinite(deploymentSize(artifact)) ? deploymentSize(artifact) : 0), 0);
   const artifactRows = artifacts.length
-    ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
+    ? artifacts.map((artifact) => keyValue(artifactDelivery(artifact) === "archive" ? "SHA-256" : "Manifest SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
   const meta = [mpkBytes ? `${run.metadata?.artifact_kind === "llima" ? "Model" : "MPK"} ${formatBytes(mpkBytes)}` : "", parameters.precision && precisionLabel(parameters.precision)]
     .filter(Boolean).join(" · ");
@@ -787,7 +788,8 @@ function targetName(run) {
 }
 
 function cliDownloadCommand(variant) {
-  return `sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch ${branchName(variant.anchor.git_ref)}`;
+  const branch = catalogMode() ? elements["branch-filter"].value : "";
+  return `sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch ${branch || branchName(variant.anchor.git_ref)}`;
 }
 
 function sectionNavigation(sections) {
@@ -800,13 +802,15 @@ function sectionNavigation(sections) {
 // A single-component package is that component's MPK, so only multi-component builds offer components.
 function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent) {
   const run = variant.anchor;
+  const folder = packageArtifact && artifactDelivery(packageArtifact) !== "archive";
+  const location = packageArtifact && huggingFaceLocation(packageArtifact);
   const components = hasArtifacts && !(fullPackage && singleComponent)
     ? `<button class="action-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download components</span></button>`
     : "";
   if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
-    <div class="package-card-copy"><strong>Full package</strong><span>${packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span></div>
-    ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
+    <div class="package-card-copy"><strong>Full package</strong><span>${folder ? "All deployment files in their original folder structure. Use the CLI to download and verify each file." : packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span>${location ? `<a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">Deployment on Hugging Face ↗</a>` : ""}</div>
+    ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</dd></div><div><dt>${folder ? "Manifest SHA-256" : "SHA-256"}</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
     <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
   </div>`;
 }
@@ -845,6 +849,8 @@ export function renderDetail(variant) {
   const validated = details.every((detail) => artifactValidationMark(detail.tests.test_results || []));
   const fullPackage = variantPackage(variant.runs);
   const packageArtifact = (variant.packageSummary?.artifacts || []).find((item) => item.artifact_type === "model-package");
+  const downloadArtifact = packageArtifact || details.flatMap((detail) => modelPackArtifacts(detail.summary.artifacts))[0];
+  const downloadLabel = downloadArtifact && artifactDelivery(downloadArtifact) !== "archive" ? "Download folder" : "Download";
   const originalModel = inputs.map(originalModelLink).find(Boolean);
   const builtAt = Math.max(...variant.runs.map((item) => Date.parse(item.finished_at || item.created_at || "") || 0));
   const singleComponent = details.length === 1;
@@ -854,8 +860,8 @@ export function renderDetail(variant) {
     : details;
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
-    ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</small>` : ""}</button>`
-    : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download</span></button>` : "";
+    ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`
+    : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>${downloadLabel}</span></button>` : "";
   const sections = [
     overviewMarkup && ["overview-section", "Overview"],
     ["components-section", "Performance"],
@@ -915,4 +921,19 @@ export function renderDetail(variant) {
 
 export function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {
   return `<div class="error-state">${closable ? `<nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">Back to models</button></nav>` : ""}<span>!</span><p class="kicker">Connection error</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><button type="button" data-action="retry">Try again</button></div>`;
+}
+
+// An on-demand catalog entry can describe a model before any deployment has been approved.
+export function renderUnbuiltModel(model) {
+  showView("model");
+  state.selectedId = null;
+  state.selectedVariantKey = null;
+  const documentation = model.documentation ? { ...model.documentation, run_id: null } : null;
+  elements["detail-pane"].innerHTML = `<div class="detail-content">
+    <nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">Models</button><span aria-hidden="true">/</span><span aria-current="page">${escapeHtml(model.display_name || model.model_id)}</span></nav>
+    <header class="detail-title"><div class="detail-title-copy"><h2>${escapeHtml(model.display_name || model.model_id)}</h2>${model.description ? `<p class="lede">${escapeHtml(model.description)}</p>` : ""}</div></header>
+    <p class="section-lede">Built on demand. No approved deployment is available yet.</p>
+    ${overviewSection({ ...model, documentation })}
+    ${model.license ? `<section class="details-section"><h3>License</h3><p>${escapeHtml(typeof model.license === "string" ? model.license : model.license.spdx)}</p></section>` : ""}
+  </div>`;
 }

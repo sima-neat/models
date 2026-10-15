@@ -40,10 +40,21 @@ and give a new job a new module named after what it does.
 LLMs and VLMs declare the complete model as one component, with a pinned Hugging
 Face `file_set`, `interface.format: huggingface`, and `scripts/compile.sh`. The
 recipe only calls `llima-compile`; `scripts/run_llima_compilation.sh` downloads,
-deploys and packs its output. Validate the deployment ZIP with `model-registry verify-artifact`.
+compiles, and runs `llima-deploy` into the component's `deployment/` folder.
+`model-registry verify-artifact --write-manifest` verifies that folder and writes
+`deployment-manifest.json` beside it. Publication preserves the folder as
+individually registered files; native builds never create a deployment ZIP.
 Do not enumerate generated layers as components or nest model archives in packages.
 Only declared performance and accuracy stages run; leave their lists empty until
 implemented. See [LLiMa model definitions](docs/adding-a-model.md#llima-language-and-vision-language-models).
+
+Any expensive model may set top-level `build-on-demand: true` (default `false`).
+Pushes still validate it and publish catalog metadata, but never compile or
+measure it. A manual **Vulcan Model Orchestrator** dispatch must select its
+`models` and `profiles`; the planner also requires `--include-on-demand`.
+The flag changes scheduling and catalog metadata only, never stage keys.
+See [on-demand builds](design-doc/model-registry-architecture.md#on-demand-builds)
+for the external NeatOps retention and promotion dependencies.
 
 ## Tests
 

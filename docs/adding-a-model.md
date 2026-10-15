@@ -260,7 +260,8 @@ Each stage has a stage key, a SHA-256 of everything its result depends on. CI
 compiles a build only when neither the branch's catalog nor, on a feature
 branch, a base branch's catalog records a build with its current compile key.
 It runs a DevKit stage only when no completed registry run carries that stage's
-current key.
+current key. Models with `build-on-demand: true` require an explicit manual
+selection before either stage can run; see [on-demand builds](#on-demand-builds).
 
 | Stage | Key inputs |
 | --- | --- |
@@ -274,6 +275,7 @@ recompiled build is always remeasured.
 | Change | Reruns |
 | --- | --- |
 | README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
@@ -466,6 +468,20 @@ runs. Continue with [Qualify locally](local-development.md) and complete the
 full loop for every build before submitting.
 
 
+## On-demand builds
+
+Set top-level `build-on-demand: true` for any model whose expensive builds
+should run only on request. The default is `false`; existing automatic ONNX
+builds keep their scheduling. Pushes validate on-demand models and publish
+their metadata, but never compile or measure them, even when inputs change.
+This flag is not part of the compile fingerprint.
+
+To build Qwen3.5-2B, dispatch **Vulcan Model Orchestrator** with
+`models=qwen3_5_2b` and `profiles=modalix_a16w4_4k`. Both selections are
+required for an on-demand build. Direct `plan-stages` calls must also pass
+`--include-on-demand`. See the [architecture contract](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#on-demand-builds)
+for candidate retention, promotion requests, and external NeatOps work.
+
 ## LLiMa language and vision-language models
 
 Declare a complete language model as one component, with `interface.format: huggingface`,
@@ -481,7 +497,7 @@ The executable recipe takes two positional paths:
 set -euo pipefail
 llima-compile "$1" -o "$2" \
   --max_num_tokens 4096 --language_group_size 128 \
-  --input_height 448 --input_width 448 --jobs 6 --log_level INFO
+  --input_height 448 --input_width 448 --jobs 12 --log_level INFO
 ```
 
 Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
@@ -491,25 +507,30 @@ runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
 scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
 ```
 
-The runner downloads the pinned files, invokes the recipe, runs `llima-deploy`, and
-writes one `*_llima.zip` plus `compile-outputs.json`. Native outputs use `artifact_path`
-and `artifact_sha256`; existing vision outputs keep their MPK fields. Check either format with
-`model-registry verify-artifact <component-output> --write-manifest`; `verify-mpk` remains
-available for MPKs. `model-registry pack-llima <deployed-directory> <archive>` can package
-an existing deployment without compiling again.
+The runner downloads the pinned files, invokes the recipe, and runs
+`llima-deploy` into `<output-root>/<model>/<profile>/<component>/deployment/`.
+This folder contains `devkit/`, `elf_files/`, and any `npy_files/`. Run
+`model-registry verify-artifact <component-output> --write-manifest` to check
+the deployment and write `deployment-manifest.json` beside it. The verifier
+rejects incomplete configurations, missing executables, unsafe paths, and links.
 
-The deployed ZIP contains `devkit/`, `elf_files/` and any `npy_files/` directly. The shared
-verifier rejects incomplete configurations, missing executables, unsafe paths and links.
-CI records the usual compiler and source provenance and publishes the ZIP as a `llima`
-model-pack artifact. Final retrieval packages flatten that deployment below the model
-folder, add the package manifest, and mark the component `format: llima`, `path: .`.
-There are no nested model archives. Large files are streamed during packaging.
+`compile-outputs.json` uses `artifact_path: model/deployment-manifest.json`
+for Qwen's `model` component and `artifact_sha256` for that index file's hash.
+ONNX outputs retain their MPK fields. Publication registers the deployment's
+files individually, with a JSON index named `llima`. A native full package is
+the deployment folder with `manifest.json` at its root; its component uses
+`format: llima`, `path: .`. Retrieval preserves the folder and verifies each
+file. See the [manifest and metadata contract](metadata-schema.md#llima-checkpoint-and-deployment-formats).
+No native stage creates a deployment ZIP.
 
 The native compile key covers its runner, `tools/model_registry/artifact.py` and
-`tools/model_registry/cli.py` for packing and verification. ONNX builds retain
+`tools/model_registry/cli.py` for deployment verification. ONNX builds retain
 their existing runner and compile keys.
 README and hero changes remain outside compile identities.
 
 Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corresponding
-stage is implemented. This schedules compilation and publication only. Benchmark and
-accuracy recipes can be added separately when a GenAI measurement contract is available.
+stage is implemented. A manual Qwen build compiles and publishes only; performance
+and accuracy are separate follow-ups [#294](https://github.com/sima-neat/models/issues/294)
+and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen profile
+uses the expensive runner with twelve compile jobs, 4096 tokens, 448×448 input,
+and language group size 128.

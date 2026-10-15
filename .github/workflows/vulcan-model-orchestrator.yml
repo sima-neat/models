@@ -16,7 +16,7 @@ on:
         required: false
         type: string
       profiles:
-        description: Comma-separated build profile IDs within selected models; leave empty to plan every build profile
+        description: Comma-separated build profile IDs; on-demand models require explicit model and profile IDs
         required: false
         type: string
       components:
@@ -138,7 +138,7 @@ jobs:
           publishable=true
           if [[ -n "${REQUESTED_PROFILES:-}" || -n "${REQUESTED_COMPONENTS:-}" ]]; then
             publishable=false
-            echo "Targeted build-profile dispatch is compile-only; catalog publication is skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Targeted dispatch skips catalog publication; on-demand packages publish as candidates for approval." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
 
@@ -220,6 +220,7 @@ jobs:
           REQUESTED_PROFILES: ${{ inputs.profiles }}
           REQUESTED_COMPONENTS: ${{ inputs.components }}
           FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
+          MANUAL_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
@@ -228,6 +229,9 @@ jobs:
           [[ -z "${REQUESTED_PROFILES:-}" ]] || scope_args+=(--profiles "$REQUESTED_PROFILES")
           [[ -z "${REQUESTED_COMPONENTS:-}" ]] || scope_args+=(--components "$REQUESTED_COMPONENTS")
           [[ "${FORCE_REBUILD_ALL:-false}" != "true" ]] || scope_args+=(--force-rebuild-all)
+          if [[ "$MANUAL_BUILD" == "true" && -n "${REQUESTED_MODELS:-}" ]]; then
+            scope_args+=(--include-on-demand)
+          fi
           plan="$(model-registry plan-stages --repository . \
             --read-api-url "$REGISTRY_READ_API_URL" \
             --compiler-version "$COMPILER_IDENTITY" \

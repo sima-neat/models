@@ -1,4 +1,4 @@
-import { variantDownloads, prepareDownloads, startDownloads, packageFormat } from "./downloads.js";
+import { variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand } from "./downloads.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
@@ -19,7 +19,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel,
+  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, renderUnbuiltModel, errorPanel,
 } from "./model-view.js";
 
 function writeCategoryFilterUrl() {
@@ -139,7 +139,31 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
   elements["download-dialog"].querySelector(".download-note").hidden = true;
   elements["download-status"].textContent = "";
   elements["download-confirm"].disabled = true;
+  elements["download-confirm"].hidden = false;
   elements["download-confirm"].textContent = confirmLabel;
+}
+
+function folderDownloadInstructions(run, downloads) {
+  pendingDownloads = null;
+  const current = state.models.some((model) => model.model_id === run.metadata?.model_id
+    && (model.builds?.some((build) => build.run_id === run.id)
+      || model.packages?.some((item) => item.run_id === run.id)));
+  const command = current ? cliDownloadCommand(run, elements["branch-filter"].value) : null;
+  elements["download-description"].textContent = "Download this deployment as a folder with its original paths. The CLI verifies each file against the deployment manifest.";
+  elements["download-list"].hidden = true;
+  elements["download-package-info"].hidden = false;
+  elements["download-package-info"].innerHTML = downloads.map((item) => {
+    const location = item.delivery === "huggingface" ? huggingFaceLocation(item.artifact) : null;
+    return `<dt>Deployment</dt><dd>${escapeHtml(item.component)} · ${escapeHtml(formatBytes(item.size))}${item.artifact.metadata?.file_count ? ` · ${escapeHtml(item.artifact.metadata.file_count)} files` : ""}</dd>
+      <dt>Storage</dt><dd>${item.delivery === "huggingface" ? "Hugging Face" : "Registry folder"}</dd>
+      ${location ? `<dt>Repository</dt><dd><a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">${escapeHtml(location.repo_id)} ↗</a></dd><dt>Revision</dt><dd><code>${escapeHtml(location.revision)}</code></dd>${location.subdirectory ? `<dt>Folder</dt><dd>${escapeHtml(location.subdirectory)}</dd>` : ""}` : item.delivery === "huggingface" ? `<dt>Repository</dt><dd>Pinned repository location unavailable. Refresh the catalog to retry.</dd>` : ""}`;
+  }).join("") + (command ? `<dt>Download command</dt><dd><code>${escapeHtml(command)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(command)}" aria-label="Copy deployment download command">${icons.copy}</button></dd>` : `<dt>Download command</dt><dd>Open the current catalog variant for its verified CLI download command.</dd>`);
+  elements["download-confirm"].hidden = true;
+  const note = elements["download-dialog"].querySelector(".download-note");
+  note.hidden = false;
+  note.textContent = downloads.some((item) => item.delivery === "huggingface")
+    ? "The repository link opens the compiled deployment at its pinned revision. Use that revision and folder when downloading from Hugging Face."
+    : "The JSON manifest describes the deployment. The CLI retrieves its files and preserves the folder structure.";
 }
 
 async function downloadVariant(runId) {
@@ -155,6 +179,10 @@ async function downloadVariant(runId) {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
     const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
     if (request !== downloadRequest || !dialog.open) return;
+    if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
+      folderDownloadInstructions(summary.run, downloads);
+      return;
+    }
     pendingDownloads = downloads;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id
       ? profileLabel(summary.run) : "Selected variant";
@@ -195,11 +223,15 @@ async function downloadPackage(runId) {
       runId: run.id,
       component: "Full package",
       name: artifact.name,
-      size: artifact.size_bytes,
+      size: deploymentSize(artifact), artifact, delivery: artifactDelivery(artifact),
     }], api);
     const filename = downloads[0].filename;
     const format = packageFormat(artifact, filename);
     if (request !== downloadRequest || !dialog.open) return;
+    if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
+      folderDownloadInstructions(run, downloads);
+      return;
+    }
     pendingDownloads = downloads;
     const license = metadata.license || {};
     const redistribution = license.redistribution
@@ -229,6 +261,10 @@ async function downloadPackage(runId) {
 }
 
 elements["download-cancel"].addEventListener("click", () => elements["download-dialog"].close());
+elements["download-dialog"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (button) copyText(button.dataset.copy);
+});
 elements["download-dialog"].addEventListener("close", () => {
   downloadRequest += 1;
   pendingDownloads = null;
@@ -589,6 +625,11 @@ elements["clear-filters"].addEventListener("click", async () => {
 elements["result-list"].addEventListener("click", (event) => {
   const run = event.target.closest("[data-run-id]");
   if (run) selectRun(run.dataset.runId);
+  const unbuilt = event.target.closest("[data-model-unbuilt]");
+  if (unbuilt) {
+    const model = state.models.find((item) => item.model_id === unbuilt.dataset.modelUnbuilt);
+    if (model) renderUnbuiltModel(model);
+  }
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
   if (event.target.closest('[data-action="retry"]')) initialize();
 });

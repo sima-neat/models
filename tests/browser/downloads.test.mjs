@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {variantDownloads, prepareDownloads, startDownloads, packageFormat} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
+const {variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
@@ -118,4 +118,68 @@ test('LLiMa suffix downloads retain the native ZIP format', async () => {
     return {artifact: {download_url: 'https://example.com/model.zip'}};
   });
   assert.equal(ready[0].filename, items[0].downloadFilename);
+});
+
+
+const folder = {
+  name: 'llima', artifact_type: 'model-pack', media_type: 'application/json', size_bytes: 2048,
+  metadata: {layout: 'directory', storage_backend: 's3', deployment_size_bytes: 4_000_000_000, file_count: 301},
+};
+
+test('native folder uses aggregate deployment size and never requests an archive name', async () => {
+  const native = {...run, id: 'llima-run', metadata: {...run.metadata, component_id: 'model', artifact_kind: 'llima'}};
+  const catalog = {model_id: 'rf_detr_small', builds: [{run_id: native.id, component_id: 'model',
+    build_profile_id: 'mixed', artifact_suffix: 'native'}]};
+  const items = await variantDownloads(native, async path => path.includes('/repositories/')
+    ? {runs: [native]} : {artifacts: [folder, {name: 'file-layer', artifact_type: 'model-file'}]}, catalog);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].size, 4_000_000_000);
+  assert.equal(items[0].downloadFilename, null);
+  const ready = await prepareDownloads(items, async path => {
+    assert.ok(!path.includes('download_filename'));
+    return {artifact: {download_url: 'https://example.com/deployment-index.json'}};
+  });
+  assert.equal(ready[0].delivery, 'directory');
+  assert.equal(ready[0].url, null);
+  let frames = 0;
+  assert.throws(() => startDownloads(ready, {createElement: () => { frames += 1; }}), /Folder deployments/);
+  assert.equal(frames, 0);
+});
+
+test('resolved storage location determines Hugging Face delivery independently of source and S3', async () => {
+  const revision = 'a'.repeat(40);
+  const [ready] = await prepareDownloads([{runId: run.id, name: 'llima', component: 'model', artifact: folder}], async () => ({
+    artifact: {metadata: {storage_backend: 'huggingface', huggingface: {repo_id: 'sima-ai/compiled', revision, subdirectory: 'a16w4/context 4096'}}},
+  }));
+  assert.equal(ready.delivery, 'huggingface');
+  assert.equal(ready.url, null);
+  assert.equal(huggingFaceLocation(ready.artifact).url,
+    `https://huggingface.co/sima-ai/compiled/tree/${revision}/a16w4/context%204096`);
+  assert.equal(ready.size, 4_000_000_000);
+  assert.throws(() => startDownloads([ready], {}), /Folder deployments/);
+});
+
+test('Hugging Face deployment links require immutable revisions and safe repository paths', () => {
+  for (const location of [
+    {repo_id: 'sima-ai/compiled', revision: 'main'},
+    {repo_id: 'https://example.com/model', revision: 'a'.repeat(40)},
+    {repo_id: 'sima-ai/compiled', revision: 'a'.repeat(40), subdirectory: '../source'},
+    {repo_id: 'sima-ai/compiled', revision: 'a'.repeat(40), subdirectory: '/source'},
+    {repo_id: 'sima-ai/compiled', revision: 'a'.repeat(40), subdirectory: 'x\\y'},
+  ]) assert.equal(huggingFaceLocation({metadata: {huggingface: location}}), null);
+});
+
+test('JSON indexes are folders even when older metadata omitted the explicit layout', () => {
+  assert.equal(artifactDelivery({media_type: 'application/json; charset=utf-8', size_bytes: 40}), 'directory');
+  assert.equal(deploymentSize({media_type: 'application/json', size_bytes: 40}), undefined);
+  assert.equal(artifactDelivery({media_type: 'application/zip'}), 'archive');
+  assert.equal(cliDownloadCommand(run), 'sima-cli models download --id rf_detr_small --variant mixed --branch develop');
+});
+
+
+test('an approved deployment command targets the selected catalog branch and keeps source provenance', () => {
+  const source = {...run, git_ref: 'refs/heads/feature/native-candidate'};
+  assert.equal(cliDownloadCommand(source, 'develop'),
+    'sima-cli models download --id rf_detr_small --variant mixed --branch develop');
+  assert.equal(source.git_ref, 'refs/heads/feature/native-candidate');
 });

@@ -2,8 +2,9 @@
 
 A client-only web interface for the public SiMa.ai Model Registry read APIs.
 The browser calls the registry directly; there is no application backend,
-credential handling, or proxy middleware. Downloads use the temporary URL
-returned by the registry directly.
+credential handling, or proxy middleware. Archive downloads use the temporary URL
+returned by the registry directly. Folder deployments show CLI retrieval
+instructions, and Hugging Face deployments link to the resolved, pinned revision.
 
 For an app-only development loop, run from the Models repository:
 
@@ -237,6 +238,30 @@ model page; `preview.py` serves the same data from `models/`. Run
 `preview.py`.
 
 ## Downloading model variants
+
+Native LLiMa deployments use a JSON index (`model-pack`, or `model-package`
+for the complete package) with `metadata.layout: directory` and separate
+`model-file` payload artifacts. The browser shows the aggregate
+`metadata.deployment_size_bytes`, not the small index size. **Download folder**
+opens instructions for `sima-cli models download`, which preserves paths and
+checks each file. It never starts individual browser downloads for a deployment
+folder or renames its JSON index to a ZIP.
+
+Delivery is determined from the backend-resolved artifact. A resolved
+`metadata.storage_backend: huggingface` has
+`metadata.huggingface: {repo_id, revision, subdirectory?}`; `revision` is an
+immutable 40-character commit. The dialog links to that exact repository
+revision and folder. This location describes the compiled deployment and is
+independent of the source checkpoint links. Storage selection and approval
+remain backend responsibilities.
+
+An on-demand catalog entry without an approved build is listed as **Built on
+demand** and opens its metadata without download actions. Newer completed
+candidate runs remain in history; only the backend's catalog can replace an
+approved on-demand build.
+
+The following confirmation flow applies to archive deployments, including
+previously published LLiMa ZIPs.
 
 The model download button includes every model-pack component from the selected
 variant's workflow build, commit, branch, target, and compiler. All

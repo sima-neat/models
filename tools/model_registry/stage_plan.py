@@ -250,10 +250,12 @@ def plan_stages(
     profile_ids: list[str] | None = None,
     component_ids: list[str] | None = None,
     force_rebuild_all: bool = False,
+    include_on_demand: bool = False,
 ) -> dict[str, Any]:
     """Select compile invocations whose compile key changed, and the board stages reused builds lack.
 
-    Without a reader, nothing is known to be published, so every selected invocation compiles.
+    On-demand models require explicit model/profile selection and include_on_demand.
+    Without a reader, every selected automatic invocation compiles.
     """
     root = Path(repository).expanduser().resolve()
     models = load_models(root)
@@ -265,6 +267,10 @@ def plan_stages(
         repository=root,
         compiler_version=compiler_version,
     )["include"]
+    if include_on_demand and any(entry.get("build_on_demand", False) for entry in head) and not (
+        model_ids and profile_ids
+    ):
+        raise ValidationError("on-demand builds require explicit --models and --profiles")
     document = None
     if read is not None:
         if not read_api_url:
@@ -276,6 +282,8 @@ def plan_stages(
     compile_entries: list[dict[str, Any]] = []
     measure_entries: list[dict[str, Any]] = []
     for entry in head:
+        if entry.get("build_on_demand", False) and not include_on_demand:
+            continue
         prior = {
             component_id: builds.get((entry["model_id"], entry["build_profile_id"], component_id))
             for component_id in entry["component_ids"]

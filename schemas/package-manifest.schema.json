@@ -82,8 +82,9 @@
         "required": ["path", "sha256", "size_bytes"],
         "properties": {
           "path": {"$ref": "#/$defs/path"},
+          "artifact": {"type": "string", "pattern": "^file-[0-9a-f]{64}$"},
           "sha256": {"$ref": "#/$defs/sha256"},
-          "size_bytes": {"type": "integer", "minimum": 1}
+          "size_bytes": {"type": "integer", "minimum": 0}
         }
       }
     },

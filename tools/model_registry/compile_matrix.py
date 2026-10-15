@@ -82,6 +82,8 @@ def build_matrix(
                 }
                 if model["components"][0]["interface"]["format"] == "huggingface":
                     entry["runner_script"] = "scripts/run_llima_compilation.sh"
+                if model.get("build-on-demand", False):
+                    entry["build_on_demand"] = True
                 if repository is not None and compiler_version is not None:
                     entry["build_fingerprint"] = compile_key(
                         repository, model_id, profile["id"], invocation["id"], compiler_version

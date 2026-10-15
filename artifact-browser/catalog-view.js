@@ -37,7 +37,7 @@ export function populateCategoryFilters() {
     const element = elements[elementId];
     const selection = state.categorySelection[elementId] || "";
     const selected = Object.hasOwn(state.taxonomy[section] || {}, selection) ? selection : "";
-    const values = [...new Set([selected, ...state.runs.flatMap((run) => run[field] ?? [])])].filter(Boolean);
+    const values = [...new Set([selected, ...state.runs.flatMap((run) => run[field] ?? []), ...state.models.flatMap((model) => model[field] ?? [])])].filter(Boolean);
     element.innerHTML = filterOptions(section, values, emptyLabel);
     element.value = selected;
     state.categorySelection[elementId] = selected;
@@ -224,7 +224,7 @@ function filteredModels() {
       && (!current.architecture_id || model.architecture_id === current.architecture_id)
       && (!current.architecture_paradigm || model.architecture_paradigm === current.architecture_paradigm)
       && (!current.input_modality || (model.input_modalities || []).includes(current.input_modality));
-    return matches && builds.length ? [{ ...model, builds }] : [];
+    return matches && (builds.length || (model.build_on_demand && !model.builds?.length && !current.compiler)) ? [{ ...model, builds }] : [];
   });
 }
 
@@ -318,11 +318,11 @@ function modelCardImage(model) {
 function renderModelCard(model) {
   const profiles = profileGroups(model);
   const active = activeModelBuild(model);
-  const run = runFromCatalogBuild(model, active.build);
+  const run = active.build ? runFromCatalogBuild(model, active.build) : null;
   const displayName = model.display_name || model.model_id;
   const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
-  const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
-  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
+  const variants = run ? `${profiles.length} variant${profiles.length === 1 ? "" : "s"}` : "Built on demand";
+  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" ${run ? `data-run-id="${escapeHtml(run.id)}"` : `data-model-unbuilt="${escapeHtml(model.model_id)}"`}>
     ${modelCardImage(model)}
     <span class="model-card-body">
       <strong>${escapeHtml(displayName)}</strong>

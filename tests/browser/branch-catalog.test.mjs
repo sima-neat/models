@@ -60,3 +60,37 @@ test('catalog runs are resolved by commit, then by id for runs the list omits', 
   assert.equal(paths.filter((path) => path.includes('commit_sha=')).length, 1);
   assert.deepEqual(paths.filter((path) => path.startsWith('/v1/runs/')), ['/v1/runs/superseded']);
 });
+
+
+test('completed candidates never replace an on-demand catalog approved build or package', () => {
+  const candidate = run('candidate', 'resnet_50', feature, '2026-10-02T00:00:00Z');
+  const approved = {...catalog[0], build_on_demand: true};
+  const models = branchModels([candidate, resnet], [], [approved]);
+  assert.equal(models[0].builds[0].run_id, resnet.id);
+  assert.equal(models[0].packages[0].run_id, 'resnet-package');
+});
+
+test('an unbuilt on-demand definition remains metadata with no synthetic usable run', () => {
+  const definition = {model_id: 'qwen', display_name: 'Qwen', build_on_demand: true, builds: [], packages: []};
+  const candidate = run('candidate', 'qwen', feature, '2026-10-02T00:00:00Z');
+  assert.deepEqual(branchModels([candidate], [], [definition]), [definition]);
+  assert.deepEqual(branchModels([candidate], [], [definition], '3.0.0'), []);
+});
+
+test('catalog deployment metadata survives branch selection', () => {
+  const definition = {...catalog[0], build_on_demand: true,
+    builds: [{...catalog[0].builds[0], layout: 'directory', storage_backend: 's3'}],
+    packages: [{...catalog[0].packages[0], layout: 'directory', storage_backend: 's3'}]};
+  const [model] = branchModels([resnet], [], [definition]);
+  assert.equal(model.builds[0].layout, 'directory');
+  assert.equal(model.packages[0].storage_backend, 's3');
+});
+
+
+test('unapproved packages cannot replace the catalog package of an on-demand build', () => {
+  const approved = {...catalog[0], build_on_demand: true};
+  const candidate = {id: 'candidate-package', status: 'completed', run_type: 'model_package',
+    metadata: {model_id: 'resnet_50', build_profile_id: 'int8', component_run_ids: {model: resnet.id}}};
+  const [model] = branchModels([resnet], [candidate], [approved]);
+  assert.deepEqual(model.packages.map((item) => item.run_id), ['resnet-package']);
+});

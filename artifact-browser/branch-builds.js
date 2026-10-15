@@ -121,6 +121,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     }
   }
   for (const group of variantBuilds(runs)) {
+    // On-demand candidates become public only when the backend records them in the catalog.
+    if (definitions.get(group.modelId)?.build_on_demand) continue;
     const key = variantKey(group.modelId, group.profile);
     const previous = latest.get(key);
     // A build holding every run the catalog names is the catalog's build, with all its components.
@@ -131,6 +133,11 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   }
 
   const models = new Map();
+  for (const definition of catalogModels) {
+    if (definition.build_on_demand && !definition.builds?.length && !compiler) {
+      models.set(definition.model_id, { ...definition, builds: [], packages: [] });
+    }
+  }
   for (const group of latest.values()) {
     const definition = definitions.get(group.modelId) || { model_id: group.modelId, display_name: group.modelId };
     if (!models.has(group.modelId)) models.set(group.modelId, { ...definition, builds: [], packages: [] });
@@ -139,6 +146,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
       const component = run.metadata?.component_id || "model";
       const exactBuild = definition.builds?.find((build) => build.run_id === run.id);
       model.builds.push({
+        ...exactBuild,
         run_id: run.id,
         run,
         build_profile_id: group.profile,
@@ -157,7 +165,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   for (const model of models.values()) {
     // A package belongs to the shown build when it bundles exactly that build's component runs.
     const candidates = [
-      ...packageRuns.filter((run) => run.status === "completed" && run.run_type === "model_package"
+      ...packageRuns.filter((run) => !model.build_on_demand && run.status === "completed" && run.run_type === "model_package"
         && run.metadata?.model_id === model.model_id)
         .map((run) => ({ run_id: run.id, build_profile_id: run.metadata.build_profile_id, component_run_ids: run.metadata.component_run_ids || {} })),
       ...(definitions.get(model.model_id)?.packages || []),
@@ -168,7 +176,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
       if (!builds.length || Object.keys(components).length !== builds.length
         || !builds.every((build) => components[build.component_id] === build.run_id)
         || model.packages.some((known) => known.run_id === item.run_id)) continue;
-      model.packages.push({ run_id: item.run_id, build_profile_id: item.build_profile_id, component_run_ids: components });
+      model.packages.push({ ...item, run_id: item.run_id, build_profile_id: item.build_profile_id, component_run_ids: components });
     }
     model.packages.sort((a, b) => {
       const left = packageRuns.find((run) => run.id === a.run_id);

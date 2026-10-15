@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -565,6 +566,123 @@ def test_offline_plan_compiles_everything(stage_repository: Path) -> None:
         ("w16a16", ["performance"], ["model"]),
         ("w8a8", ["performance", "accuracy"], ["model"]),
     ]
+
+
+def _mark_on_demand(repository: Path) -> None:
+    definition = repository / "models" / PLAN_MODEL / "model.yaml"
+    definition.write_text(definition.read_text(encoding="utf-8") + "\nbuild-on-demand: true\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("force_rebuild_all", [False, True])
+@pytest.mark.parametrize("published", [False, True])
+def test_on_demand_models_never_compile_or_measure_automatically(
+    stage_repository: Path, force_rebuild_all: bool, published: bool,
+) -> None:
+    document = _published_catalog(stage_repository)
+    _mark_on_demand(stage_repository)
+    _edit(stage_repository, "scripts/compile.py")
+    registry = FakeRegistry({BRANCH: document} if published else {}, set())
+
+    plan = _plan(stage_repository, registry, force_rebuild_all=force_rebuild_all)
+
+    assert plan["compile"] == {"include": []}
+    assert plan["measure"] == {"include": []}
+    assert registry.resolved() == []
+
+
+def test_manual_model_only_selection_keeps_ordinary_builds(stage_repository: Path) -> None:
+    plan = _plan(stage_repository, None, model_ids=[PLAN_MODEL], include_on_demand=True)
+
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert all("build_on_demand" not in entry for entry in plan["compile"]["include"])
+
+
+@pytest.mark.parametrize("scope", [{}, {"model_ids": [PLAN_MODEL]}, {"profile_ids": ["modalix_bf16"]}])
+def test_manual_on_demand_build_requires_explicit_model_and_profile(stage_repository: Path, scope: dict) -> None:
+    _mark_on_demand(stage_repository)
+
+    with pytest.raises(ValidationError, match="explicit --models and --profiles"):
+        _plan(stage_repository, None, include_on_demand=True, **scope)
+
+
+def test_manual_on_demand_build_selects_only_requested_model_and_profile(stage_repository: Path) -> None:
+    _mark_on_demand(stage_repository)
+    shutil.copytree(FIXTURE, stage_repository / "models" / "fixture_model")
+
+    plan = _plan(
+        stage_repository, None, model_ids=[PLAN_MODEL], profile_ids=["modalix_bf16"], include_on_demand=True,
+    )
+
+    assert len(plan["compile"]["include"]) == 1
+    entry = plan["compile"]["include"][0]
+    assert (entry["model_id"], entry["build_profile_id"], entry["build_on_demand"]) == (
+        PLAN_MODEL, "modalix_bf16", True,
+    )
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_catalog_lists_unbuilt_on_demand_models_without_pending_builds(
+    stage_repository: Path, incremental: bool,
+) -> None:
+    _mark_on_demand(stage_repository)
+
+    document = build_catalog_snapshot(
+        repository=stage_repository, branch=BRANCH, git_sha="b" * 40, incremental=incremental,
+    )
+
+    assert document["models"][0]["build_on_demand"] is True
+    assert document["models"][0]["builds"] == []
+    assert document["models"][0]["packages"] == []
+    assert document.get("pending_builds", []) == []
+
+
+@pytest.mark.parametrize("candidate_receipts", [False, True])
+def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_changes(
+    stage_repository: Path, tmp_path: Path, candidate_receipts: bool,
+) -> None:
+    previous = _published_catalog(stage_repository)
+    approved = previous["models"][0]
+    approved["builds"][0]["compiler_identity"] = "approved-compiler"
+    approved["packages"] = [{
+        "package_id": "default", "build_profile_id": "modalix_bf16", "run_id": "approved-package",
+        "artifact_sha256": "c" * 64, "size_bytes": 20, "package_fingerprint": "d" * 64,
+        "component_run_ids": {"model": approved["builds"][0]["run_id"]},
+        "layout": "deployment_files", "storage_backend": "huggingface",
+        "deployment_size_bytes": 200, "file_count": 5,
+    }]
+    _mark_on_demand(stage_repository)
+    _edit(stage_repository, "scripts/compile.py")
+    invocation = build_matrix(
+        load_models(stage_repository), [PLAN_MODEL], ["modalix_bf16"],
+        repository=stage_repository, compiler_version=COMPILER_VERSION,
+    )["include"][0]
+    assert approved["builds"][0]["compile_fingerprint"] != invocation["build_fingerprint"]
+    selected_matrix = tmp_path / "selected.json"
+    selected_matrix.write_text(json.dumps({"include": [invocation]}), encoding="utf-8")
+    compiled_dir, package_dir = tmp_path / "compiled", tmp_path / "packages"
+    if candidate_receipts:
+        component = compiled_dir / PLAN_MODEL / "modalix_bf16" / "model"
+        component.mkdir(parents=True)
+        (component / "registry-publication.json").write_text(json.dumps({"runs": [{
+            "model_id": PLAN_MODEL, "build_profile_id": "modalix_bf16", "component_id": "model",
+            "run_id": "candidate-compile", "artifact_sha256": "e" * 64,
+            "compile_fingerprint": invocation["build_fingerprint"],
+        }]}), encoding="utf-8")
+        package = package_dir / PLAN_MODEL / "modalix_bf16" / "packages" / "default"
+        package.mkdir(parents=True)
+        (package / "registry-publication.json").write_text(json.dumps({"packages": [{
+            **approved["packages"][0], "model_id": PLAN_MODEL, "run_id": "candidate-package",
+            "manifest_sha256": "d" * 64, "component_run_ids": {"model": "candidate-compile"},
+        }]}), encoding="utf-8")
+
+    document = build_catalog_snapshot(
+        repository=stage_repository, branch=BRANCH, git_sha="b" * 40, previous=previous,
+        selected_matrix=selected_matrix, compiled_dir=compiled_dir, package_dir=package_dir, incremental=True,
+    )
+
+    assert document["models"][0]["builds"] == approved["builds"]
+    assert document["models"][0]["packages"] == approved["packages"]
+    assert document["pending_builds"] == []
 
 
 @pytest.mark.parametrize("failing", ["/catalogs/current?", "/resolve?"])

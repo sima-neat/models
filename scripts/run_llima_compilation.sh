@@ -43,9 +43,9 @@ work="$(mktemp -d "$(dirname "$PROFILE_OUTPUT_DIR")/.llima-XXXXXXXX")"
 trap 'rm -rf "$work"' EXIT
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BUILD_PROFILE_ID="$BUILD_PROFILE_ID" bash "$MODEL_DIR/scripts/compile.sh" "$checkpoint" "$work/compiled"
-llima-deploy "$work/compiled" "$work/deployed"
-"$PYTHON" -m model_registry pack-llima "$work/deployed" \
-  "$PROFILE_OUTPUT_DIR/$component_id/${MODEL_ID}_llima.zip"
+mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
+llima-deploy "$work/compiled" "$PROFILE_OUTPUT_DIR/$component_id/deployment"
+"$PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component_id" --write-manifest
 printf '{"scope": "compile_recipe", "started_at": "%s", "finished_at": "%s"}\n' \
   "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_OUTPUT_DIR/compile-timing.json"
 

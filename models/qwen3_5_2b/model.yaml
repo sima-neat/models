@@ -1,4 +1,5 @@
 id: qwen3_5_2b
+build-on-demand: true
 display_name: Qwen3.5-2B
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
@@ -112,6 +113,7 @@ calibrations: []
 build_profiles:
 - id: modalix_a16w4_4k
   target: modalix
+  runner_class: expensive
   components:
   - id: model
     parameters:
