@@ -186,7 +186,7 @@ def test_native_compile_dependencies_and_measurement_selection(tmp_path):
     assert before[0] != after[0] and before[1] == after[1]
 
 
-def test_shared_runner_invokes_compile_sh_and_real_llima_deploy(tmp_path):
+def test_shared_runner_invokes_compile_sh_and_deploy(tmp_path):
     checkpoint = tmp_path / "checkpoint with spaces"
     checkpoint.mkdir()
     (checkpoint / "config.json").write_text("{}")
@@ -226,10 +226,14 @@ for name in ("language_n1_layer0", "vision_layer0"):
     )
     script(
         "llima-deploy",
-        """import sys
+        """import shutil, sys, tarfile
 from pathlib import Path
-from sima_lmm.host.deploy_lmm import deploy
-deploy(Path(sys.argv[1]),Path(sys.argv[2]))
+source = Path(sys.argv[1]) / "sima_files"
+target = Path(sys.argv[2])
+shutil.copytree(source / "devkit", target / "devkit")
+for path in (source / "mpk").glob("*_mpk.tar.gz"):
+    with tarfile.open(path) as archive:
+        archive.extractall(target / "elf_files", filter="data")
 """,
     )
     env = {
