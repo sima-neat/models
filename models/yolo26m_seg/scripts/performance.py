@@ -28,11 +28,11 @@ options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.YoloV26Seg
 options.top_k = 100
 model = pyneat.Model(args.mpk, options)
-# 1000 samples size the latency pass. The throughput pass runs for at least 180 s, so board
-# telemetry, read every 2 s, has about 90 samples.
+# 1000 samples size the latency pass. The throughput pass runs for at least 60 s, so board
+# telemetry, read every 2 s, has about 30 samples.
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
-benchmark_options.min_duration_ms = 180000
+benchmark_options.min_duration_ms = 60000
 report = model.benchmark(benchmark_options)
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
