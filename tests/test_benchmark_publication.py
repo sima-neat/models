@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from model_registry.benchmark_publication import (
+    _measurements,
     benchmark_identity_document,
     load_benchmark_result,
     publish_accuracy_run,
@@ -760,3 +761,34 @@ def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Pat
             request=lambda *_: pytest.fail("no registry request is expected"),
             artifact_store=FakeStore(),
         )
+
+
+def test_board_telemetry_metrics_are_published_as_measurements():
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
+
+    assert {
+        "board.power.peak", "board.mla_power.avg", "board.mla_power.peak", "board.die_temperature.avg",
+        "board.die_temperature.peak", "board.som_temperature.avg", "board.som_temperature.peak",
+        "board.cpu_usage.avg", "board.cpu_usage.peak",
+        "model.mla_memory.avg", "model.mla_memory.peak", "board.cma_memory.avg", "board.cma_memory.peak",
+        "board.linux_memory.avg", "board.linux_memory.peak",
+    } <= set(measurements)
+    assert measurements["board.die_temperature.peak"]["unit"] == "°C"
+    assert measurements["board.die_temperature.peak"]["aggregation"] == "max"
+    assert measurements["board.cpu_usage.avg"]["aggregation"] == "mean"
+    assert measurements["board.power.peak"]["sample_count"] == 15
+
+
+def test_latency_percentiles_and_busiest_core_are_published():
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    measured = {"status": "measured", "reason": None, "aggregation": "raw", "minimum": None, "maximum": None,
+                "standard_deviation": None, "sample_count": 1}
+    result["metrics"]["latency_p99_ms"] = {**measured, "unit": "ms", "value": 3.1}
+    result["metrics"]["avg_cpu_core_usage_pct"] = {**measured, "unit": "%", "value": 61.0, "aggregation": "mean"}
+    result["metrics"]["peak_cpu_core_usage_pct"] = {**measured, "unit": "%", "value": 98.5, "aggregation": "max"}
+    measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
+
+    assert measurements["model.latency.p99"]["value"] == 3.1
+    assert measurements["board.cpu_core_usage.avg"]["value"] == 61.0
+    assert measurements["board.cpu_core_usage.peak"]["value"] == 98.5

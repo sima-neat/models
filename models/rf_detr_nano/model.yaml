@@ -12,7 +12,6 @@ modalities:
   - class_scores
 architecture:
   id: rf_detr
-  variant: nano_coco_384x384
 owners:
 - '@sima-neat/models'
 license:

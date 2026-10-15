@@ -240,8 +240,9 @@ has at most one `devkit_script` accuracy entry. Every component with a
 `benchmark` entry in a build profile gets its own performance result.
 
 Follow [Accuracy and fidelity](local-accuracy-development.md) for the fidelity
-and accuracy contracts and [DevKit performance](benchmarking.md) for the
-performance script.
+and accuracy contracts. Start `performance.py` from the [canonical
+script](benchmarking.md#the-performance-script): it writes Core's whole
+benchmark report, including the board telemetry the model page shows.
 
 ## 9. Know what a change reruns
 

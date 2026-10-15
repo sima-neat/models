@@ -64,15 +64,20 @@ this checkout defines; a model added or removed there appears or disappears
 without changes to the preview. Only what a board or the registry would produce
 is synthetic: run IDs, timestamps, sizes, and measured values. Two catalog
 revisions give every variant an older build in its history.
-The base three-trial result fixture is stored in
-`artifact-browser/fixtures/performance-result-v4.json` and can be edited to
-exercise other metric values or availability states. Its
-`preview_only_extension_metric` is deliberately synthetic and exists only to
-verify that unknown additive metrics render gracefully.
+The preview's benchmark results start from
+`artifact-browser/fixtures/performance-result-v5.json`, a ResNet-50 result
+that `import-core-benchmark` produced from a DevKit Core benchmark, so its
+board telemetry and power rails are real readings; the preview varies only
+speed, energy, and MLA memory per build. Edit it to exercise other metric
+values or availability states. The three-trial
+`artifact-browser/fixtures/performance-result-v4.json` keeps the schema-4
+shape the registry still serves. Its `preview_only_extension_metric` is
+deliberately synthetic and exists only to verify that unknown additive metrics
+render gracefully.
 
 Benchmark adapters preserve every metric that follows the result contract.
 Known metrics receive curated labels, formatting, and a place in a benchmark
-group; unknown additive metrics appear automatically under Other measurements.
+card; unknown additive metrics appear automatically under Other measurements.
 Unsupported schema versions still
 link to the raw result instead of guessing at incompatible structures.
 
@@ -114,8 +119,10 @@ additional branches from returned runs. Full
 provenance, validation, and metric views load only after a build is selected.
 Public discovery requests completed builds only. The primary search matches
 model, build-profile, and component names together with category names. Task and
-architecture filters sit beside the cards; branch, compiler, type, paradigm, and
-input filters stay under **More filters**, which opens when one of them is active.
+model family filters sit beside the cards; architecture, type, input, branch, and
+compiler filters stay under **More filters**, which opens when one of them is active.
+Each filter lists only the values the loaded builds use, and a filter with fewer
+than two values is hidden unless it is set.
 On narrow screens the filters move into a drawer whose button shows the
 active-filter count.
 The branch filter defaults to `develop`. A branch selected by the user is saved per
@@ -149,10 +156,13 @@ everything longer sits in one expandable row.
   card** loads the README on first open, checks its SHA-256 against the
   catalog, and renders it from the section after Overview, because the title,
   hero, and Overview are already on the page.
-- **Performance** shows throughput, latency, board power, and energy per
-  inference for each component. **Benchmark details** shows the speed, heat,
-  memory, and startup groups, metrics the runtime did not report, and the
-  result schema, tool, and raw-result link.
+- **Performance** shows throughput, latency, SoM power, and energy per
+  inference for each component, one number per tile. **Benchmark details** is
+  performance, heat, and CPU cards, with power (SoM, SoC, MLA, and each
+  power rail) and memory cards beside them,
+  then any other measurements and a footer with the telemetry source and
+  runtime beside **Raw result** and **Download CSV** (every reading of the
+  component in one table).
 - **Accuracy** shows the status, the first four metrics, and the scope.
   **Evaluation details** explains status and coverage and lists the context
   and remaining metrics.
@@ -175,7 +185,7 @@ page fills the first empty picker with that variant. The link records the picks
 as `view=compare&build=<model id>.<build profile>`, one `build` per picker, so
 a shared link reopens the same comparison.
 
-The table shows task, component count, throughput, latency, board power,
+The table shows task, component count, throughput, latency, SoM power,
 energy per inference, and the headline accuracy metric with its published
 score. A multi-component build lists one line per component and never adds
 them up. Bold marks the best value among single-component builds, or among the
@@ -214,7 +224,7 @@ opens that component's row (`component:<run id>`). Opening the
 
 Buttons with an icon start actions (download, copy). Blue text with ↗ is
 reserved for links that leave the browser. Cards group related numbers only
-(the KPI tiles, benchmark groups, and the package); the rest of the page uses
+(the KPI tiles, benchmark cards, and the package); the rest of the page uses
 sections and thin rules.
 
 `website/scripts/assemble-portal.mjs` renames every module with the revision

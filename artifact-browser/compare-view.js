@@ -29,7 +29,7 @@ export function writePicksToUrl(url) {
 const PERFORMANCE_ROWS = [
   ["throughput_fps", "Throughput"],
   ["latency_avg_ms", "Latency"],
-  ["avg_power_watts", "Board power"],
+  ["avg_power_watts", "SoM power"],
   ["energy_per_inference_joules", "Energy per inference"],
 ];
 

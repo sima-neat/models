@@ -3,7 +3,7 @@
 The performance stage measures each compiled component on a Modalix DevKit.
 Each model owns `scripts/performance.py`, which loads one MPK with
 `pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
-inputs, warmup, latency and throughput measurement, power telemetry, and runner
+inputs, warmup, latency and throughput measurement, board telemetry, and runner
 lifetime. There is no shared benchmark executor and no model-specific timing
 loop.
 
@@ -18,8 +18,10 @@ sima-cli neat install --env production --type minimal '<neat-core.install_target
 ~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
 ```
 
-The scripts use the existing `BenchmarkReport` fields; no Core extension is
-required.
+Core's board installer also installs Sentinel, the DevKit telemetry daemon.
+Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel
+over the throughput pass. Without Sentinel the benchmark still measures speed,
+and the report names why the board telemetry is missing.
 
 Results are measured with the MLA at 1 GHz, the highest clock its devfreq
 governor offers. Throughput and power depend on the clock, while model outputs
@@ -54,33 +56,48 @@ import json
 
 import pyneat
 
+
+def report_json(value):
+    """Return a Core report object as JSON values, so new report fields need no script change."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, list):
+        return [report_json(item) for item in value]
+    return {
+        name: report_json(getattr(value, name))
+        for name in dir(value)
+        if not name.startswith("_") and not callable(getattr(value, name))
+    }
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--mpk", required=True)
 parser.add_argument("--output", required=True)
 args = parser.parse_args()
 
+model = pyneat.Model(args.mpk)
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
-model = pyneat.Model(args.mpk)
 report = model.benchmark(benchmark_options)
 with open(args.output, "w", encoding="utf-8") as output:
     json.dump({
         "core_version": pyneat.__version__,
-        "latency_ms": report.latency_ms,
-        "fps": report.fps,
-        "avg_power_watts": report.avg_power_watts,
-        "energy_joules": report.energy_joules,
+        **report_json(report),
         "samples": benchmark_options.num_samples,
         "execution_plan": json.loads(model.execution_plan().to_json()),
     }, output, allow_nan=False)
 ```
 
-Scripts measure 1000 samples rather than Core's default of 100. At about
-1000 FPS, 100 samples last about 0.1 s, so startup and ramp-up dominate the
-throughput window and the 100 ms power sampling catches the board before it
-reaches full load: YOLO26n INT8 measured about 945 FPS and 8.7 W with 100
-samples, and about 1040 FPS and 11.9 W with 1000. The script reports its
-sample count because the registry divides total energy by it.
+`report_json` writes every field of Core's `BenchmarkReport`, including its
+`telemetry`, so a field Core adds later reaches the registry without editing
+each script. Keep the function in the script: the script runs under the DevKit's
+PyNeat interpreter, which cannot import the registry tooling.
+
+Scripts measure 1000 samples rather than Core's default of 100. The samples
+size the latency pass and the energy the registry divides per inference, so the
+script reports its sample count. Core keeps the throughput pass running for at
+least 30 seconds (`BenchmarkOptions.min_duration_ms`), so Sentinel, which
+samples every 2 seconds, records about 15 readings of the loaded board.
 
 The script also records the Model's execution plan: each step, the processor
 it runs on, and the tensors between steps. The plan comes from the same Model
@@ -108,16 +125,50 @@ Default-MPK results are a baseline of their own. Do not compare them with
 historical YOLO measurements that configured image preprocessing and
 BoxDecode explicitly.
 
-Core reports mean latency, throughput in logical inferences per second, average
-power, and total energy. The registry derives energy per inference by dividing
-total energy by the sample count times the compiled batch size. Missing power
-stays unavailable. A `benchmark` entry's `required_metrics` must be present for
-publication; RF-DETR requires average power and energy per inference.
+Core reports mean latency and its p50, p95, and p99 percentiles, throughput in
+logical inferences per second, average SoM power, and total energy. The
+registry derives energy per inference by dividing total energy by the sample
+count times the compiled batch size.
+Missing power stays unavailable. A `benchmark` entry's `required_metrics` must
+be present for publication; RF-DETR requires average power and energy per
+inference.
 
-Percentiles, initialization timings, peak MLA memory, and temperature traces
-are not exported by this Core API. Results mark those metrics unavailable
-rather than estimating them or copying them from old results. Adding them
-belongs in Core before Models consumes them.
+`import-core-benchmark` maps the Sentinel telemetry to these metrics, each over
+the throughput pass:
+
+| Metric | Reading |
+| --- | --- |
+| `peak_power_watts` | Peak SoM power, with the average and peak of each power rail in its details |
+| `avg_mla_power_watts`, `peak_mla_power_watts` | MLA rail power |
+| `avg_die_temperature_c`, `peak_die_temperature_c` | SoC temperature: the hottest on-die sensor at each sample |
+| `avg_board_temperature_c`, `peak_board_temperature_c` | SoM temperature: the hotter of the top-side and bottom-side board sensors |
+| `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage averaged over all cores |
+| `avg_cpu_core_usage_pct`, `peak_cpu_core_usage_pct` | The busiest CPU core: the highest per-core average, and the highest per-core peak, which can be different cores |
+| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory |
+| `avg_cma_memory_mib`, `peak_cma_memory_mib` | The contiguous memory (CMA) pool in use |
+| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Linux memory in use |
+
+The CMA reading covers the whole pool, which EV74 and other drivers share and
+Linux lends to other memory, so it is not the model's memory alone. The
+individual temperature sensors and CPU cores are not registry metrics; they
+stay in the result's `core_report`, where the browser reads the per-core
+load.
+
+A reading with no samples is unavailable. Its reason says whether Sentinel did
+not run (`sentinel_telemetry_unavailable`), ran without that reading
+(`not_measured_by_sentinel`), or the Core report does not include it
+(`not_reported_by_core_benchmark`), as in a Core release from before that
+reading. Latency percentiles missing from an older report have the same reason.
+Add a reading by adding a row to `TELEMETRY_METRICS` in
+`tools/model_registry/core_benchmark.py`, its measurement name in
+`benchmark_publication.py`, and its label in the browser's `metrics.js`. It
+appears under **Other measurements** until `DETAIL_CARDS` in
+`model-view.js` gives it a row in one of the Benchmark details cards.
+
+Initialization timings and MLA memory before and after the run are not exported
+by this Core API. Results mark those metrics unavailable rather than estimating
+them or copying them from old results. Adding them belongs in Core before
+Models consumes them.
 
 ## CI and registry publication
 

@@ -177,10 +177,24 @@ function modelCategory(model, name, fallback) {
   return model[name] ?? fallback;
 }
 
-export function runFromCatalogBuild(model, build) {
-  if (build.run) return build.run;
+// Categories come from the current catalog: a reused build keeps the ones it was compiled with.
+function catalogCategories(model) {
   const categories = model.categories || {};
   const architecture = categories.architecture || {};
+  return {
+    model_type: modelCategory(model, "model_type", categories.model_type),
+    architecture_id: modelCategory(model, "architecture_id", architecture.id),
+    architecture_paradigm: modelCategory(model, "architecture_paradigm", architecture.paradigm),
+    tasks: modelCategory(model, "tasks", categories.tasks) || [],
+    input_modalities: modelCategory(model, "input_modalities", categories.input_modalities) || [],
+    output_modalities: modelCategory(model, "output_modalities", categories.output_modalities) || [],
+    model_tags: modelCategory(model, "model_tags", categories.tags) || [],
+    model_categories: categories,
+  };
+}
+
+export function runFromCatalogBuild(model, build) {
+  if (build.run) return { ...build.run, ...catalogCategories(model) };
   const branch = elements["branch-filter"].value || DEFAULT_BRANCH;
   return {
     id: build.run_id,
@@ -201,14 +215,7 @@ export function runFromCatalogBuild(model, build) {
       component_id: componentId(build),
       compile_invocation_id: build.compile_invocation_id,
     },
-    model_type: modelCategory(model, "model_type", categories.model_type),
-    architecture_id: modelCategory(model, "architecture_id", architecture.id),
-    architecture_paradigm: modelCategory(model, "architecture_paradigm", architecture.paradigm),
-    tasks: modelCategory(model, "tasks", categories.tasks) || [],
-    input_modalities: modelCategory(model, "input_modalities", categories.input_modalities) || [],
-    output_modalities: modelCategory(model, "output_modalities", categories.output_modalities) || [],
-    model_tags: modelCategory(model, "model_tags", categories.tags) || [],
-    model_categories: categories,
+    ...catalogCategories(model),
   };
 }
 
@@ -319,11 +326,15 @@ export function modelPackArtifacts(artifacts) {
   return (artifacts || []).filter((artifact) => artifact.artifact_type === "model-pack");
 }
 
+// The catalog view describes its builds by the current catalog; history describes each build by the
+// catalog at its own revision, when that has been loaded.
 export function catalogModelForRun(run) {
   const modelId = run.metadata?.model_id;
+  const current = state.models.find((model) => model.model_id === modelId) || null;
+  if (state.catalogMode !== "runs" && current?.builds?.some((build) => build.run_id === run.id)) return current;
   const key = `${run.git_ref || ""}:${run.commit_sha || ""}:${modelId || ""}`;
   const historical = state.historicalCatalogModels.get(key);
-  return historical?.model_id ? historical : state.models.find((model) => model.model_id === modelId) || null;
+  return historical?.model_id ? historical : current;
 }
 
 export async function loadHistoricalCatalogModel(run) {

@@ -349,6 +349,29 @@ def test_int8_variants_are_listed_first() -> None:
     assert json.loads(result.stdout) == ["modalix_int8", "modalix_int8_bf16", "a_fp32", "modalix_bf16"]
 
 
+def test_catalog_view_prefers_the_current_catalog_over_cached_history() -> None:
+    script = _browser_source("api.js")
+    start = script.index("export function catalogModelForRun(")
+    helper = script[start:script.index("\n}\n", start) + 3]
+    run = {"id": "reused", "git_ref": "refs/heads/develop", "commit_sha": "old", "metadata": {"model_id": "yolo26n"}}
+    probe = f"""
+const state = {{
+  models: [{{model_id: "yolo26n", family: "yolo", builds: [{{run_id: "reused"}}]}}],
+  historicalCatalogModels: new Map([["refs/heads/develop:old:yolo26n", {{model_id: "yolo26n", family: "yolo_26"}}]]),
+}};
+const families = ["models", "runs"].map((mode) => {{
+  state.catalogMode = mode;
+  return catalogModelForRun({json.dumps(run)}).family;
+}});
+console.log(JSON.stringify(families));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", helper + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == ["yolo", "yolo_26"]
+
+
 def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
     browser = _browser_source()
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
@@ -739,7 +762,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert "Roboto:wght@400;500;600;700" in html
     assert "IBM+Plex+Mono" in html
     assert '<h1 class="sr-only">Model Registry</h1>' in html
-    assert "Search models, tasks, or architectures" in html
+    assert "Search models, tasks, or families" in html
     assert 'class="page-header"' not in html
     assert "Trace every" not in html
     assert '<header class="catalog-intro">' in html
@@ -809,6 +832,20 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     assert '"architecture-filter": "architecture_id"' in script
     assert "setCategoryFiltersDisabled(true)" in script
     assert "Category filters are temporarily unavailable" in script
+
+
+def test_filters_list_only_used_values_and_hide_without_a_choice() -> None:
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    script = _browser_source("catalog-view.js")
+
+    assert '<span>Model family</span><select id="architecture-filter">' in html
+    assert '<span>Architecture</span><select id="paradigm-filter">' in html
+    assert "state.runs.flatMap((run) => run[field] ?? [])" in script
+    assert "if (build.run) return { ...build.run, ...catalogCategories(model) };" in _browser_source("api.js")
+    model_view = _browser_source("model-view.js")
+    assert "const categories = catalogModel?.categories || run.model_categories || {};" in model_view
+    assert 'element.closest("label").hidden = element.options.length < 3 && !element.value' in script
+    assert 'hideFilterWithoutChoice(elements["compiler-filter"])' in script
 
 
 def test_category_filters_are_server_side_and_shareable() -> None:
@@ -1010,27 +1047,49 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
     assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]])" in adapters
     assert "Object.entries(result.metrics || {})" in adapters
-    assert "Object.entries(trial)" in adapters
     assert "/benchmarks/latest" in script
-    # Benchmark details group the measurements into cards; unknown metrics land in Other measurements.
-    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload)' in script
-    for group in ['["speed", "Speed"', '["heat", "Power & heat"', '["memory", "MLA memory"', '["startup", "Startup"']:
-        assert group in script
-    assert 'metricGroup("other", "Other measurements"' in script
+    # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
+    assert "KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key]))" in script
+    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", details.markup' in script
+    for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
+                 '["memory", "Memory"']:
+        assert card in script
+    assert 'const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);' in script
+    assert '["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"]' in script
+    assert "(benchmark.batchSize * 1000) / latency.value" in script
+    assert "batchSize: result.configuration?.workload?.batch_size" in adapters
+    assert "cpuCores: cpuCores(result.core_report)" in adapters
+    assert "report?.telemetry?.cpu_cores_usage_pct" in adapters
+    assert "coreLoad(benchmark.cpuCores)" in script
+    assert '<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p>' in script
+    assert ".core-load {" in styles
+    assert '<span class="qualifier">' in script
+    assert '["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"]' in script
+    assert "cpuCount: result.environment?.cpu_count" in adapters
+    assert "`${benchmark.cpuCount} cores`" in script
+    assert 'const rows = [["Section", "Metric", "Value", "Unit", "Key", "Note"]];' in script
+    assert 'download="${escapeHtml(csvFileName(benchmark))}">${icons.download}Download CSV' in script
+    assert "data:text/csv;charset=utf-8," in script
+    assert '["SoC", "power_rail_soc_ddr_vdd_watts"' in script
+    assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
+    assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script
+    assert "power: { extra: railSplit(measurements) }" in script
+    assert 'power_rail_mla_watts: ["MLA core (0.68 V)"' in script
+    assert ".rail-split" in styles
+    assert ".detail-cards" in styles
+    assert ".info-mark::after { content: attr(data-tooltip);" in styles
+    assert "telemetryText(benchmark.telemetry)" in script
+    assert "metric-group" not in browser
+    assert "Other measurements</h4>" in script
     assert "mlaFrequencyHz: result.environment?.mla_frequency_hz" in adapters
     assert "cpuFrequencyKhz: result.environment?.cpu_frequency_khz" in adapters
-    assert 'clockRow("MLA clock", benchmark.mlaFrequencyHz / 1e6)' in script
-    assert 'clockRow("CPU clock", benchmark.cpuFrequencyKhz / 1e3)' in script
-    assert "Not reported by this runtime:" in script
+    assert 'clock("MLA", benchmark.mlaFrequencyHz / 1e6)' in script
+    assert 'clock("CPU", benchmark.cpuFrequencyKhz / 1e3)' in script
+    assert '["Runtime", benchmark.tool]' in script
+    assert '<footer class="benchmark-footer"><dl class="benchmark-provenance">' in script
+    assert ".benchmark-action {" in styles
     assert "data-trial-metric" not in browser
     assert "trialChart" not in browser
-    assert 'item.sensor.toLowerCase() === "temp1"' in script
-    assert 'class="sparkline"' in script
-    assert 'role="img"' in script
-    assert ".sparkline-line" in styles
-    assert '.metric-group[data-group="heat"]' in styles
-    assert "temperature_samples" in adapters
-    assert "sensor_id" in adapters
     assert "fallbackMetricLabel" in script
     assert "mla_memory_peak_delta_mib" in script
     assert "time_to_first_inference_ms" in script
@@ -1211,7 +1270,7 @@ def test_compare_is_a_page_of_three_pickers_over_one_table() -> None:
     assert 'if (compareLink) state.comparePicks = picksFromUrl(link);' in script
     # The model page the reader came from fills the first empty picker.
     assert "if (viewed && !state.comparePicks.includes(viewed) && empty >= 0)" in script
-    rows = ("Throughput", "Latency", "Board power", "Energy per inference", "Headline metric", "Published")
+    rows = ("Throughput", "Latency", "SoM power", "Energy per inference", "Headline metric", "Published")
     for row in (f'"{label}"' for label in rows):
         assert row in script
     assert '<span class="sr-only"> (best)</span>' in script

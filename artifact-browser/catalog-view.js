@@ -10,28 +10,38 @@ import {
   runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl,
 } from "./api.js";
 
-function taxonomyOptions(section, emptyLabel) {
-  const entries = state.taxonomy?.[section] || {};
-  return `<option value="">${escapeHtml(emptyLabel)}</option>${Object.entries(entries)
-    .sort((left, right) => left[1].display_name.localeCompare(right[1].display_name))
-    .map(([id, entry]) => `<option value="${escapeHtml(id)}">${escapeHtml(entry.display_name)}</option>`)
+// A filter lists only the values the loaded builds use, labeled from the taxonomy.
+function filterOptions(section, values, emptyLabel) {
+  return `<option value="">${escapeHtml(emptyLabel)}</option>${values
+    .map((id) => [id, taxonomyLabel(section, id)])
+    .sort((left, right) => left[1].localeCompare(right[1]))
+    .map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`)
     .join("")}`;
 }
 
+// A filter with fewer than two values to choose from is hidden unless it is set.
+function hideFilterWithoutChoice(element) {
+  element.closest("label").hidden = element.options.length < 3 && !element.value;
+}
+
 export function populateCategoryFilters() {
+  if (!state.taxonomy) return;
   const definitions = [
-    ["model-type-filter", "model_types", "Any type"],
-    ["task-filter", "tasks", "Any task"],
-    ["architecture-filter", "architectures", "Any architecture"],
-    ["paradigm-filter", "architecture_paradigms", "Any paradigm"],
-    ["input-modality-filter", "modalities", "Any input"],
+    ["model-type-filter", "model_types", "model_type", "Any type"],
+    ["task-filter", "tasks", "tasks", "Any task"],
+    ["architecture-filter", "architectures", "architecture_id", "Any family"],
+    ["paradigm-filter", "architecture_paradigms", "architecture_paradigm", "Any architecture"],
+    ["input-modality-filter", "modalities", "input_modalities", "Any input"],
   ];
-  definitions.forEach(([elementId, section, emptyLabel]) => {
+  definitions.forEach(([elementId, section, field, emptyLabel]) => {
     const element = elements[elementId];
-    element.innerHTML = taxonomyOptions(section, emptyLabel);
-    const selected = state.categorySelection[elementId] || "";
-    element.value = [...element.options].some((option) => option.value === selected) ? selected : "";
-    state.categorySelection[elementId] = element.value;
+    const selection = state.categorySelection[elementId] || "";
+    const selected = Object.hasOwn(state.taxonomy[section] || {}, selection) ? selection : "";
+    const values = [...new Set([selected, ...state.runs.flatMap((run) => run[field] ?? [])])].filter(Boolean);
+    element.innerHTML = filterOptions(section, values, emptyLabel);
+    element.value = selected;
+    state.categorySelection[elementId] = selected;
+    hideFilterWithoutChoice(element);
   });
 }
 
@@ -239,6 +249,9 @@ function populateFilters({ persistBranchFallback = false } = {}) {
     writeBranchPreference(selectedBranch);
   }
   elements["compiler-filter"].value = compilers.includes(selectedCompiler) ? selectedCompiler : "";
+  hideFilterWithoutChoice(elements["branch-filter"]);
+  hideFilterWithoutChoice(elements["compiler-filter"]);
+  populateCategoryFilters();
   updateFilterDisclosure();
 }
 

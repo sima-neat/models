@@ -11,8 +11,7 @@ modalities:
   - bounding_boxes
   - class_scores
 architecture:
-  id: yolo_26
-  variant: n_p2_tiny_drone
+  id: yolo
 owners:
 - '@sima-neat/models'
 license:
