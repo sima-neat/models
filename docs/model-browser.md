@@ -34,6 +34,10 @@ performance, and headline accuracy. A model with several components lists each
 component on its own line, and the best value is marked in bold only against
 the same component of another build, or between single-component builds.
 
+**Buy**, at the right of the top bar, opens the DevKit store at
+[devkit.sima.ai](https://devkit.sima.ai/) in a new tab. On a phone, the top
+bar shortens **Developer docs** to **Docs**.
+
 ## The model page
 
 Selecting a card opens the model page. The page is built to be read at a glance:

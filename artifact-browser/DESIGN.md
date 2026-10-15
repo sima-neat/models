@@ -40,6 +40,9 @@ the details stay attached to the graph they describe.
 
 Actions and links look different. An action (download, copy) is a
 button with an icon. Blue text ending in ↗ is a link that leaves the browser.
+The top bar's Buy link to the DevKit store is the exception: it is a filled
+pill that mirrors the Buy button on sima.ai, so the store looks the same from
+both sites.
 
 ## Design Principles
 
