@@ -46,6 +46,7 @@
     },
     "fidelity": {"type": "array", "items": {"$ref": "#/$defs/fidelityEntry"}},
     "accuracy": {"type": "array", "items": {"$ref": "#/$defs/accuracyEntry"}},
+    "published_metrics": {"type": "array", "items": {"$ref": "#/$defs/publishedMetrics"}},
     "benchmark": {"type": "array", "items": {"$ref": "#/$defs/benchmarkEntry"}},
     "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
   },
@@ -387,18 +388,24 @@
           }
         },
         "metrics": {"$ref": "#/$defs/accuracyMetricNames"},
-        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"},
-        "reference": {
-          "description": "Published scores of the source model, in the units accuracy.py reports, to compare with each measurement.",
-          "type": "object", "additionalProperties": false, "required": ["source", "metrics"],
-          "properties": {
-            "source": {"type": "string", "format": "uri", "pattern": "^https://"},
-            "metrics": {
-              "type": "object", "minProperties": 1,
-              "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
-              "additionalProperties": {"type": "number"}
-            }
-          }
+        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"}
+      }
+    },
+    "publishedMetrics": {
+      "description": "Scores the source model's authors published for these weights, copied from a pinned page.",
+      "type": "object", "additionalProperties": false, "required": ["source", "dataset", "conditions", "metrics"],
+      "properties": {
+        "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "dataset": {
+          "type": "object", "additionalProperties": false, "required": ["id", "split"],
+          "properties": {"id": {"$ref": "#/$defs/datasetId"}, "split": {"$ref": "#/$defs/datasetId"}}
+        },
+        "conditions": {"type": "string", "minLength": 1},
+        "note": {"type": "string", "minLength": 1},
+        "metrics": {
+          "type": "object", "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+          "additionalProperties": {"type": "number"}
         }
       }
     },

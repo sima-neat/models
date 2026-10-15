@@ -165,7 +165,10 @@ everything longer sits in one expandable row.
   component in one table).
 - **Accuracy** shows the status, the first four metrics, and the scope.
   **Evaluation details** explains status and coverage and lists the context
-  and remaining metrics.
+  and remaining metrics. **Published scores** lists each `published_metrics`
+  entry of `model.yaml` with its dataset, conditions, and source; a published
+  score sits beside a measured one only when both name the same dataset. A
+  build without an accuracy result shows only the published scores.
 - **Details** shows the package card (size, SHA-256, **Download package**,
   **Download components**), then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, numerical
@@ -232,7 +235,10 @@ for the deployed portal and fails when a module imports a file missing from its
 `fingerprintedAssets` list, so add a new module there.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
-model page; `preview.py` serves the same data from `models/`. Run
+model page, and `published-metrics.<revision>.json` from each
+`published_metrics`; `preview.py` serves the same data from `models/`.
+`accuracy-metrics.js` keeps the metric labels of
+`taxonomies/accuracy-metrics.yaml`, and a test keeps the two in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for
 `preview.py`.
 

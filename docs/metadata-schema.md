@@ -352,7 +352,6 @@ the accuracy stage:
 | `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
 | `metrics` | Metric names the script may report. |
 | `required_metrics` | Optional subset of `metrics` that every result must contain. |
-| `reference` | Optional published scores of the source model: an HTTPS `source` and `metrics`, a map from metric names in `metrics` to values in the script's units. Each value is published as that metric's `reference`. |
 
 A build profile has at most one `devkit_script` entry, and its scoped
 components must compile in one invocation.
@@ -386,6 +385,37 @@ See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
 performance](benchmarking.md) for the scripts and results, and [what a change
 reruns](adding-a-model.md#9-know-what-a-change-reruns) for how each section
 feeds the stage keys.
+
+## Published metrics
+
+`published_metrics` lists the scores the source model's authors published for
+these weights, copied by hand from a pinned page. The model page shows them
+beside the measured scores, and on their own when no build has an accuracy
+result yet. Each entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `source` | HTTPS URL of the page that prints the scores, pinned to a commit or revision. |
+| `dataset` | `id` and `split` of the evaluation set, such as `{id: coco-2017, split: val}`. |
+| `conditions` | How the authors measured, such as input size, preprocessing, and precision. |
+| `note` | Optional caveat a reader needs, such as a split the source does not name. |
+| `metrics` | A map from metric names to values. |
+
+```yaml
+published_metrics:
+- source: https://huggingface.co/Ultralytics/YOLO26/blob/<revision>/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS-free one-to-one head
+  metrics: {coco_keypoint_map: 0.572, coco_keypoint_ap50: 0.833}
+```
+
+Metric names come from
+[`taxonomies/accuracy-metrics.yaml`](https://github.com/sima-neat/models/blob/develop/taxonomies/accuracy-metrics.yaml),
+the names `accuracy.py` reports, and every value is a ratio from 0 to 1. Record
+only numbers the source prints, not values derived from them. Two entries may
+not give the same metric for the same dataset. A published score appears beside
+a measured one only when both name the same dataset `id`. The field feeds no
+stage key, so editing it reruns nothing.
 
 ## Validation
 

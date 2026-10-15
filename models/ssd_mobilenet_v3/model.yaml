@@ -306,6 +306,11 @@ accuracy:
       passed: true
   note: The QAT source is full-COCO accuracy-gated before bundling; compiled raw-head quality is independently gated, while
     decoded accuracy and performance remain pending Modalix hardware qualification.
+published_metrics:
+- source: https://github.com/pytorch/vision/blob/126fc22ce33e6c2426edcf9ed540810c178fe9ce/torchvision/models/detection/ssdlite.py
+  dataset: {id: coco-2017, split: val}
+  conditions: 320x320, torchvision COCO_V1 weights
+  metrics: {coco_map: 0.213}
 benchmark:
 - id: modalix_latency
   scope:

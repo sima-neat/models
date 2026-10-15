@@ -239,6 +239,10 @@ Fidelity is diagnostic numerical agreement, not task accuracy. A build profile
 has at most one `devkit_script` accuracy entry. Every component with a
 `benchmark` entry in a build profile gets its own performance result.
 
+Record the scores the source model's authors published under
+[`published_metrics`](metadata-schema.md#published-metrics), with the dataset,
+conditions, and pinned page of each.
+
 Follow [Accuracy and fidelity](local-accuracy-development.md) for the fidelity
 and accuracy contracts. Start `performance.py` from the [canonical
 script](benchmarking.md#the-performance-script): it writes Core's whole
@@ -263,7 +267,7 @@ recompiled build is always remeasured.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `published_metrics`, `convert.py`, registry tooling outside a stage's tooling | nothing |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |

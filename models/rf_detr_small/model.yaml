@@ -239,9 +239,11 @@ accuracy:
   required_metrics: [coco_map]
   # accuracy.py clips boxes to the image, as Roboflow added in rf-detr#1168. Clipping
   # can only raise IoU, so scores from earlier upstream releases are not comparable.
-  reference:
-    source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
-    metrics: {coco_map: 0.530, coco_ap50: 0.721}
+published_metrics:
+- source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 512x512
+  metrics: {coco_map: 0.530, coco_ap50: 0.721}
 benchmark:
 - id: backbone_modalix
   scope: {type: component, component: backbone}

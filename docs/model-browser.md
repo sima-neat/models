@@ -95,8 +95,11 @@ order:
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
    **Evaluation details** explains the status and coverage and lists
-   the remaining metrics, each with its published score when `model.yaml`
-   records one.
+   the remaining metrics, each with its published score when
+   `published_metrics` in `model.yaml` records one for the measured dataset.
+   **Published scores** lists every published entry with its dataset,
+   conditions, and source. A build with no accuracy result yet shows only the
+   published scores.
 4. **Details.** The package with its size, checksum, and download buttons,
    then rows for build provenance (the commit and workflow that compiled the
    build), source models, and each component's files,
@@ -104,8 +107,8 @@ order:
 5. **License.** The SPDX identifier, whether redistribution is allowed, and the
    attribution.
 
-A section that has no data, such as Accuracy for a model without an accuracy
-entry, is left out. Components are measured on their own, so the latencies of a
+A section that has no data, such as Accuracy for a model with neither an
+accuracy result nor published scores, is left out. Components are measured on their own, so the latencies of a
 multi-component model do not add up to end-to-end latency; the page says so.
 
 ## Preview your model locally

@@ -33,6 +33,7 @@ from model_registry.dependencies import resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fidelity_config import find_fidelity_config  # noqa: E402
 from model_registry.model import component_pipelines, load_models, profile_component_for  # noqa: E402
+from model_registry.published_metrics import published_metrics_by_model  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
 BRANCH = "develop"
@@ -329,17 +330,23 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
 
 
 def _accuracy_result(model: dict, build: dict) -> dict[str, Any]:
-    """A DevKit accuracy result for the metrics, dataset, and reference the model's accuracy entry declares."""
+    """A DevKit accuracy result for the metrics and dataset the model's accuracy entry declares.
+
+    Each metric lands a little below the source model's published score on that dataset, when there is one.
+    """
     config = find_devkit_accuracy_config(model, build["build_profile_id"])
-    reference = config.get("reference", {}).get("metrics", {})
+    published = {
+        name: value
+        for entry in model.get("published_metrics", [])
+        if entry["dataset"]["id"] == config["dataset"]["id"]
+        for name, value in entry["metrics"].items()
+    }
     key = (model["id"], build["build_profile_id"])
     metrics = {}
     for name in config["metrics"]:
-        expected = reference.get(name, 0.3 + _fraction("reference", *key, name) * 0.6)
-        metric = {"value": round(expected * (0.9 + _fraction("accuracy", *key, name) * 0.08), 4)}
-        metrics[name] = {**metric, "unit": "ratio", "direction": "higher", **(
-            {"reference": reference[name]} if name in reference else {}
-        )}
+        expected = published.get(name, 0.3 + _fraction("reference", *key, name) * 0.6)
+        value = round(expected * (0.9 + _fraction("accuracy", *key, name) * 0.08), 4)
+        metrics[name] = {"value": value, "unit": "ratio", "direction": "higher"}
     samples = 500 + int(_fraction("samples", *key) * 4500)
     return {
         "schema_version": 2,
@@ -468,6 +475,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
                 "text/javascript",
             )
+        elif path == "/published-metrics.json":
+            self._json(published_metrics_by_model(_repository()["models"]))
         elif path == "/component-pipelines.json":
             # The unbuilt sources request this name; an assembled portal requests the file it ships.
             self._json(component_pipelines(_repository()["models"]))
