@@ -101,23 +101,12 @@ export function executionGraph(plan) {
   return { steps, tensors };
 }
 
-function adaptV1(result) {
-  return { ...common(result), orchestration: null };
-}
-
-function adaptV2(result) {
+function adaptResult(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-function adaptV3(result) {
-  return { ...common(result), orchestration: result.orchestration || null };
-}
-
-function adaptV4(result) {
-  return { ...common(result), orchestration: result.orchestration || null };
-}
-
-export const benchmarkAdapters = new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]]);
+// Formats 2-5 share one reader; the registry still serves older develop builds in formats 2-4.
+export const benchmarkAdapters = new Map([[2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]]);
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

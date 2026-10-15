@@ -64,11 +64,10 @@ def single_metric(value: float, unit: str) -> dict:
 
 
 def valid_result(tmp_path: Path) -> Path:
-    """A Core benchmark result, built from the browser's last pre-Core fixture."""
-    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v4.json").read_text())
-    result["schema_version"] = 5
+    """A Core benchmark result, built from the browser's fixture."""
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
-    result["identity"]["canonicalization_version"] = 5
+    result["model"]["build_profile_id"] = "modalix_bf16"
     result["core_report"] = {
         "core_version": "3.0.0",
         "latency_ms": 3.6,
@@ -179,10 +178,13 @@ def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("version", [2, 3, 4])
-def test_rejects_results_older_than_the_core_benchmark(version: int) -> None:
-    path = ROOT / "artifact-browser" / "fixtures" / f"performance-result-v{version}.json"
+def test_rejects_results_older_than_the_core_benchmark(tmp_path: Path, version: int) -> None:
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
+    result["schema_version"] = version
+    path = tmp_path / "performance-result.json"
+    path.write_text(json.dumps(result), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="^benchmark result "):
+    with pytest.raises(ValidationError, match="^benchmark result schema_version: 5 was expected"):
         load_benchmark_result(path)
 
 
@@ -764,7 +766,7 @@ def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Pat
 
 
 def test_board_telemetry_metrics_are_published_as_measurements():
-    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
 
     assert {
@@ -781,7 +783,7 @@ def test_board_telemetry_metrics_are_published_as_measurements():
 
 
 def test_latency_percentiles_and_busiest_core_are_published():
-    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result-v5.json").read_text())
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     measured = {"status": "measured", "reason": None, "aggregation": "raw", "minimum": None, "maximum": None,
                 "standard_deviation": None, "sample_count": 1}
     result["metrics"]["latency_p99_ms"] = {**measured, "unit": "ms", "value": 3.1}

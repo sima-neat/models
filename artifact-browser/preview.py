@@ -289,7 +289,7 @@ def _provenance(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
 @cache
 def _benchmark_template() -> dict[str, Any]:
     # A ResNet-50 result imported from a DevKit Core benchmark, so board telemetry keeps real proportions.
-    return json.loads((BROWSER / "fixtures" / "performance-result-v5.json").read_text(encoding="utf-8"))
+    return json.loads((BROWSER / "fixtures" / "performance-result.json").read_text(encoding="utf-8"))
 
 
 def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
@@ -584,7 +584,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({
                 "benchmark_run": {"id": _id("benchmark", run_id)},
                 "result": _benchmark_result(model, build, compiler),
-                "result_artifact_url": "/fixtures/performance-result-v5.json",
+                "result_artifact_url": "/fixtures/performance-result.json",
             })
         elif rest == ["benchmarks", "latest"]:
             self._not_found("benchmark_not_found")
@@ -598,7 +598,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def _download_link(self) -> None:
         self._json({"artifact": {
-            "download_url": "/fixtures/performance-result-v5.json", "download_url_expires_in": 300,
+            "download_url": "/fixtures/performance-result.json", "download_url_expires_in": 300,
         }})
 
     def translate_path(self, path: str) -> str:

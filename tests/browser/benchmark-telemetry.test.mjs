@@ -3,11 +3,11 @@ import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 
 const {adaptBenchmarkResult} = await import(new URL('../../artifact-browser/benchmark-adapters.js', import.meta.url));
-const fixture = (version) => JSON.parse(readFileSync(
-  new URL(`../../artifact-browser/fixtures/performance-result-v${version}.json`, import.meta.url), 'utf8'));
+const fixture = () => JSON.parse(readFileSync(
+  new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url), 'utf8'));
 
 test('names the Sentinel source and window of a schema-5 result', () => {
-  const benchmark = adaptBenchmarkResult(fixture(5)).value;
+  const benchmark = adaptBenchmarkResult(fixture()).value;
   assert.equal(benchmark.telemetry.status, 'ok');
   assert.equal(benchmark.telemetry.samples, 15);
   assert.equal(benchmark.telemetry.intervalMs, 1999);
@@ -16,7 +16,7 @@ test('names the Sentinel source and window of a schema-5 result', () => {
 });
 
 test('keeps the rail breakdown on peak SoM power', () => {
-  const {measurements} = adaptBenchmarkResult(fixture(5)).value;
+  const {measurements} = adaptBenchmarkResult(fixture()).value;
   const rails = measurements.peak_power_watts.details.breakdown;
   assert.ok(rails.length > 1);
   assert.ok(rails.every((rail) => rail.unit === 'W' && rail.mean <= rail.maximum));
@@ -24,13 +24,20 @@ test('keeps the rail breakdown on peak SoM power', () => {
   assert.equal(measurements.peak_die_temperature_c.unit, '°C');
 });
 
-test('reports no telemetry source for a result from before Sentinel', () => {
-  assert.equal(adaptBenchmarkResult(fixture(4)).value.telemetry, null);
+test('reports no telemetry source when the Core report has no telemetry', () => {
+  const result = fixture();
+  delete result.core_report.telemetry;
+  assert.equal(adaptBenchmarkResult(result).value.telemetry, null);
 });
 
 test('names the model, build, and component a result measured', () => {
-  const benchmark = adaptBenchmarkResult(fixture(5)).value;
+  const benchmark = adaptBenchmarkResult(fixture()).value;
   assert.equal(benchmark.modelId, 'resnet_50');
   assert.equal(benchmark.buildProfileId, 'modalix_int8');
   assert.equal(benchmark.componentId, 'model');
+});
+
+test('reads the older formats the registry still serves and no others', () => {
+  const kinds = [1, 2, 3, 4, 5, 6].map((version) => adaptBenchmarkResult({...fixture(), schema_version: version}).kind);
+  assert.deepEqual(kinds, ['unsupported', 'supported', 'supported', 'supported', 'supported', 'unsupported']);
 });

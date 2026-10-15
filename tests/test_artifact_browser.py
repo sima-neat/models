@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
+from model_registry.benchmark_publication import load_benchmark_result
 from model_registry.model import load_models
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -210,7 +211,7 @@ def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -
     with _preview(tmp_path) as base:
         status = {}
         for request in (
-            "/fixtures/performance-result-v4.json",
+            "/fixtures/performance-result.json",
             "/fixtures/../../README.md",
             "/fixtures/%2e%2e/%2e%2e/README.md",
             "/fixtures/../../../../../../etc/hosts",
@@ -223,7 +224,7 @@ def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -
             status[request] = response.stdout
 
     assert status == {
-        "/fixtures/performance-result-v4.json": "200",
+        "/fixtures/performance-result.json": "200",
         "/fixtures/../../README.md": "404",
         "/fixtures/%2e%2e/%2e%2e/README.md": "404",
         "/fixtures/../../../../../../etc/hosts": "404",
@@ -1014,7 +1015,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]])" in adapters
+    assert "new Map([[2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]])" in adapters
     assert "Object.entries(result.metrics || {})" in adapters
     assert "/benchmarks/latest" in script
     # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
@@ -1398,19 +1399,12 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert ".license-attribution" in styles
 
 
-def test_local_preview_fixture_is_extensible_schema_v4_and_server_is_same_origin() -> None:
-    # The registry still serves published schema-4 results, so the browser keeps a fixture of that shape.
-    fixture_path = BROWSER / "fixtures" / "performance-result-v4.json"
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+def test_local_preview_fixture_is_a_current_result_and_server_is_same_origin() -> None:
     server = (ROOT / "artifact-browser" / "preview.py").read_text(encoding="utf-8")
     script = _browser_source("app.js")
 
-    assert fixture["schema_version"] == 4
-    assert fixture["metrics"]["mla_memory_peak_delta_mib"]["value"] == 136.5
-    assert fixture["metrics"]["time_to_first_inference_ms"]["value"] == 348.7
-    assert fixture["metrics"]["preview_only_extension_metric"]["unit"] == "mock-units"
-    assert fixture["metrics"]["preview_only_extension_metric"]["details"]["synthetic"] is True
-    assert len(fixture["trials"]) == 3
+    # The fixture follows the current result format, so publication accepts it unchanged.
+    load_benchmark_result(BROWSER / "fixtures" / "performance-result.json")
     assert 'apiBase: location.origin' in server
     assert "127\\.0\\.0\\.1|localhost" in script
 

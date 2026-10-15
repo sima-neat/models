@@ -65,15 +65,13 @@ without changes to the preview. Only what a board or the registry would produce
 is synthetic: run IDs, timestamps, sizes, and measured values. Two catalog
 revisions give every variant an older build in its history.
 The preview's benchmark results start from
-`artifact-browser/fixtures/performance-result-v5.json`, a ResNet-50 result
+`artifact-browser/fixtures/performance-result.json`, a ResNet-50 result
 that `import-core-benchmark` produced from a DevKit Core benchmark, so its
 board telemetry and power rails are real readings; the preview varies only
 speed, energy, and MLA memory per build. Edit it to exercise other metric
-values or availability states. The three-trial
-`artifact-browser/fixtures/performance-result-v4.json` keeps the schema-4
-shape the registry still serves. Its `preview_only_extension_metric` is
-deliberately synthetic and exists only to verify that unknown additive metrics
-render gracefully.
+values or availability states. When the result format changes, regenerate
+this file in the new format and remove the benchmark adapters for formats the
+registry no longer serves.
 
 Benchmark adapters preserve every metric that follows the result contract.
 Known metrics receive curated labels, formatting, and a place in a benchmark
