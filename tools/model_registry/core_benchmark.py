@@ -35,25 +35,30 @@ UNAVAILABLE_UNITS = {
     "model_load_ms": "ms",
     "time_to_first_inference_ms": "ms",
     "mla_memory_baseline_mib": "MiB",
-    "mla_memory_peak_mib": "MiB",
     "mla_memory_peak_delta_mib": "MiB",
     "mla_memory_final_mib": "MiB",
 }
 # Board telemetry Core's benchmark reads from Sentinel over the throughput window: each registry
 # metric names its report telemetry field, the statistic, the unit Sentinel reports, and the field
-# whose entries break it down. A list field (one entry per sensor) reports its hottest entry.
+# whose entries break it down. A list field (one entry per CPU core) reports its busiest entry for
+# that statistic, so the average and the peak of the busiest core can come from different cores.
 TELEMETRY_METRICS = {
     "peak_power_watts": ("power_som_watts", "maximum", "W", "power_rails_watts"),
     "avg_mla_power_watts": ("power_mla_watts", "mean", "W", None),
     "peak_mla_power_watts": ("power_mla_watts", "maximum", "W", None),
     "avg_die_temperature_c": ("die_temperature_max_c", "mean", "C", None),
-    "peak_die_temperature_c": ("die_temperature_max_c", "maximum", "C", "die_temperatures_c"),
-    "peak_board_temperature_c": ("board_temperatures_c", "maximum", "C", "board_temperatures_c"),
+    "peak_die_temperature_c": ("die_temperature_max_c", "maximum", "C", None),
+    "avg_board_temperature_c": ("board_temperatures_c", "mean", "C", None),
+    "peak_board_temperature_c": ("board_temperatures_c", "maximum", "C", None),
     "avg_cpu_usage_pct": ("cpu_usage_pct", "mean", "%", None),
     "peak_cpu_usage_pct": ("cpu_usage_pct", "maximum", "%", None),
-    "peak_cpu_core_usage_pct": ("cpu_cores_usage_pct", "maximum", "%", "cpu_cores_usage_pct"),
+    "avg_cpu_core_usage_pct": ("cpu_cores_usage_pct", "mean", "%", None),
+    "peak_cpu_core_usage_pct": ("cpu_cores_usage_pct", "maximum", "%", None),
+    "mla_memory_avg_mib": ("mla_memory_mib", "mean", "MiB", None),
     "mla_memory_peak_mib": ("mla_memory_mib", "maximum", "MiB", None),
+    "avg_cma_memory_mib": ("cma_memory_mib", "mean", "MiB", None),
     "peak_cma_memory_mib": ("cma_memory_mib", "maximum", "MiB", None),
+    "avg_linux_memory_mib": ("linux_memory_used_mib", "mean", "MiB", None),
     "peak_linux_memory_mib": ("linux_memory_used_mib", "maximum", "MiB", None),
 }
 AGGREGATIONS = {"mean": "mean", "maximum": "max"}

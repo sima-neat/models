@@ -15,12 +15,12 @@ test('names the Sentinel source and window of a schema-5 result', () => {
   assert.match(benchmark.telemetry.sentinelVersion, /\S/);
 });
 
-test('keeps the rail and sensor breakdown on the metrics that summarize them', () => {
+test('keeps the rail breakdown on peak SoM power', () => {
   const {measurements} = adaptBenchmarkResult(fixture(5)).value;
   const rails = measurements.peak_power_watts.details.breakdown;
   assert.ok(rails.length > 1);
   assert.ok(rails.every((rail) => rail.unit === 'W' && rail.mean <= rail.maximum));
-  assert.ok(measurements.peak_die_temperature_c.details.breakdown.length > 0);
+  assert.equal(measurements.peak_die_temperature_c.details.breakdown, undefined);
   assert.equal(measurements.peak_die_temperature_c.unit, '°C');
 });
 

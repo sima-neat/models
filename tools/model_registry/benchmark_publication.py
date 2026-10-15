@@ -196,12 +196,17 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
         "peak_mla_power_watts": ("board.mla_power.peak", "lower"),
         "avg_die_temperature_c": ("board.die_temperature.avg", "lower"),
         "peak_die_temperature_c": ("board.die_temperature.peak", "lower"),
-        "peak_board_temperature_c": ("board.temperature.peak", "lower"),
+        "avg_board_temperature_c": ("board.som_temperature.avg", "lower"),
+        "peak_board_temperature_c": ("board.som_temperature.peak", "lower"),
         "avg_cpu_usage_pct": ("board.cpu_usage.avg", "lower"),
         "peak_cpu_usage_pct": ("board.cpu_usage.peak", "lower"),
+        "avg_cpu_core_usage_pct": ("board.cpu_core_usage.avg", "lower"),
         "peak_cpu_core_usage_pct": ("board.cpu_core_usage.peak", "lower"),
+        "mla_memory_avg_mib": ("model.mla_memory.avg", "lower"),
         "mla_memory_peak_mib": ("model.mla_memory.peak", "lower"),
+        "avg_cma_memory_mib": ("board.cma_memory.avg", "lower"),
         "peak_cma_memory_mib": ("board.cma_memory.peak", "lower"),
+        "avg_linux_memory_mib": ("board.linux_memory.avg", "lower"),
         "peak_linux_memory_mib": ("board.linux_memory.peak", "lower"),
     }
     dimensions = {

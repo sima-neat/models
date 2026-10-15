@@ -248,67 +248,18 @@
       "minimum": 41.07,
       "maximum": 43.28,
       "standard_deviation": null,
-      "sample_count": 15,
-      "details": {
-        "breakdown": [
-          {
-            "key": "rtsn_0",
-            "label": "MLA RTSN-0",
-            "unit": "C",
-            "samples": 15,
-            "mean": 41.85266666666667,
-            "maximum": 42.73
-          },
-          {
-            "key": "rtsn_1",
-            "label": "MLA RTSN-1",
-            "unit": "C",
-            "samples": 15,
-            "mean": 42.211999999999996,
-            "maximum": 43.28
-          },
-          {
-            "key": "rtsn_2",
-            "label": "MLA RTSN-2",
-            "unit": "C",
-            "samples": 15,
-            "mean": 41.408666666666676,
-            "maximum": 42.45
-          },
-          {
-            "key": "rtsn_3",
-            "label": "MLA RTSN-3",
-            "unit": "C",
-            "samples": 15,
-            "mean": 41.464666666666666,
-            "maximum": 42.45
-          },
-          {
-            "key": "rtsn_4",
-            "label": "APU RTSN-4",
-            "unit": "C",
-            "samples": 15,
-            "mean": 41.68600000000001,
-            "maximum": 42.45
-          },
-          {
-            "key": "rtsn_5",
-            "label": "CVU RTSN-5",
-            "unit": "C",
-            "samples": 15,
-            "mean": 40.63533333333334,
-            "maximum": 41.48
-          },
-          {
-            "key": "rtsn_6",
-            "label": "TOP RTSN-6",
-            "unit": "C",
-            "samples": 15,
-            "mean": 42.275999999999996,
-            "maximum": 43.0
-          }
-        ]
-      }
+      "sample_count": 15
+    },
+    "avg_board_temperature_c": {
+      "status": "measured",
+      "reason": null,
+      "unit": "°C",
+      "aggregation": "mean",
+      "value": 43.9,
+      "minimum": 43.125,
+      "maximum": 44.625,
+      "standard_deviation": null,
+      "sample_count": 15
     },
     "peak_board_temperature_c": {
       "status": "measured",
@@ -319,27 +270,7 @@
       "minimum": 43.125,
       "maximum": 44.625,
       "standard_deviation": null,
-      "sample_count": 15,
-      "details": {
-        "breakdown": [
-          {
-            "key": "lm96163_temp1",
-            "label": "LM96163 temp1",
-            "unit": "C",
-            "samples": 15,
-            "mean": 40.93333333333333,
-            "maximum": 42.0
-          },
-          {
-            "key": "lm96163_temp2",
-            "label": "LM96163 temp2",
-            "unit": "C",
-            "samples": 15,
-            "mean": 43.9,
-            "maximum": 44.625
-          }
-        ]
-      }
+      "sample_count": 15
     },
     "avg_cpu_usage_pct": {
       "status": "measured",
@@ -371,17 +302,6 @@
       "value": 29.65234375,
       "minimum": 29.65234375,
       "maximum": 29.65234375,
-      "standard_deviation": null,
-      "sample_count": 15
-    },
-    "peak_cma_memory_mib": {
-      "status": "measured",
-      "reason": null,
-      "unit": "MiB",
-      "aggregation": "max",
-      "value": 867.1796875,
-      "minimum": 856.515625,
-      "maximum": 867.1796875,
       "standard_deviation": null,
       "sample_count": 15
     },
@@ -472,6 +392,72 @@
       "maximum": null,
       "standard_deviation": null,
       "sample_count": 0
+    },
+    "avg_cpu_core_usage_pct": {
+      "status": "unavailable",
+      "reason": "not_reported_by_core_benchmark",
+      "unit": "%",
+      "aggregation": "mean",
+      "value": null,
+      "minimum": null,
+      "maximum": null,
+      "standard_deviation": null,
+      "sample_count": 0
+    },
+    "peak_cpu_core_usage_pct": {
+      "status": "unavailable",
+      "reason": "not_reported_by_core_benchmark",
+      "unit": "%",
+      "aggregation": "max",
+      "value": null,
+      "minimum": null,
+      "maximum": null,
+      "standard_deviation": null,
+      "sample_count": 0
+    },
+    "mla_memory_avg_mib": {
+      "status": "measured",
+      "reason": null,
+      "unit": "MiB",
+      "aggregation": "mean",
+      "value": 29.65234375,
+      "minimum": 29.65234375,
+      "maximum": 29.65234375,
+      "standard_deviation": null,
+      "sample_count": 15
+    },
+    "avg_linux_memory_mib": {
+      "status": "measured",
+      "reason": null,
+      "unit": "MiB",
+      "aggregation": "mean",
+      "value": 600.32421875,
+      "minimum": 590.6875,
+      "maximum": 607.53125,
+      "standard_deviation": null,
+      "sample_count": 15
+    },
+    "avg_cma_memory_mib": {
+      "status": "measured",
+      "reason": null,
+      "unit": "MiB",
+      "aggregation": "mean",
+      "value": 863.8244791666667,
+      "minimum": 856.515625,
+      "maximum": 867.1796875,
+      "standard_deviation": null,
+      "sample_count": 15
+    },
+    "peak_cma_memory_mib": {
+      "status": "measured",
+      "reason": null,
+      "unit": "MiB",
+      "aggregation": "max",
+      "value": 867.1796875,
+      "minimum": 856.515625,
+      "maximum": 867.1796875,
+      "standard_deviation": null,
+      "sample_count": 15
     }
   },
   "trials": [],

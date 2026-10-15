@@ -246,19 +246,23 @@ def test_sentinel_telemetry_becomes_board_metrics(core_inputs, tmp_path):
     assert metrics["avg_mla_power_watts"]["value"] == 1.9
     assert metrics["avg_mla_power_watts"]["aggregation"] == "mean"
     assert metrics["peak_die_temperature_c"]["unit"] == "°C"
-    # A list field reports its hottest sensor.
-    assert metrics["peak_board_temperature_c"]["value"] == 44.6
     assert metrics["avg_cpu_usage_pct"]["value"] == 7.8
+    assert metrics["mla_memory_avg_mib"]["value"] == 29.6
     assert metrics["mla_memory_peak_mib"]["status"] == "measured"
     assert metrics["mla_memory_peak_mib"]["value"] == 29.7
-    assert metrics["peak_cma_memory_mib"]["sample_count"] == 15
+    assert metrics["avg_linux_memory_mib"]["value"] == 600.0
+    assert metrics["peak_linux_memory_mib"]["sample_count"] == 15
+    # Only the power rails are kept; the sensors and cores stay in the raw Core report.
     assert [rail["key"] for rail in metrics["peak_power_watts"]["details"]["breakdown"]] == ["soc", "mla"]
-    assert len(metrics["peak_die_temperature_c"]["details"]["breakdown"]) == 2
-    assert "details" not in metrics["avg_cpu_usage_pct"]
+    assert [name for name, metric in metrics.items() if "details" in metric] == ["peak_power_watts"]
     # The busiest core stands out even though the all-core average stays low.
+    assert metrics["avg_cpu_core_usage_pct"]["value"] == 61.0
     assert metrics["peak_cpu_core_usage_pct"]["value"] == 98.5
-    assert [core["key"] for core in metrics["peak_cpu_core_usage_pct"]["details"]["breakdown"]] == [
-        "cpu_core_0_usage_pct", "cpu_core_1_usage_pct"]
+    assert metrics["avg_cma_memory_mib"]["value"] == 863.8
+    assert metrics["peak_cma_memory_mib"]["value"] == 867.2
+    # The hotter SoM board sensor stands for the board.
+    assert metrics["avg_board_temperature_c"]["value"] == 43.9
+    assert metrics["peak_board_temperature_c"]["value"] == 44.6
     assert metrics["mla_memory_peak_delta_mib"]["reason"] == "not_reported_by_core_benchmark"
 
 
@@ -277,7 +281,7 @@ def test_readings_an_older_core_does_not_report_are_unavailable(core_inputs, tmp
     with_report(core_inputs, telemetry=telemetry)
     metrics = package(core_inputs, tmp_path)["metrics"]
 
-    for name in ("latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "peak_cpu_core_usage_pct"):
+    for name in ("latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "avg_cpu_core_usage_pct", "peak_cpu_core_usage_pct"):
         assert metrics[name]["status"] == "unavailable", name
         assert metrics[name]["reason"] == "not_reported_by_core_benchmark", name
 

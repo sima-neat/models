@@ -138,15 +138,21 @@ the throughput pass:
 
 | Metric | Reading |
 | --- | --- |
-| `peak_power_watts` | Peak SoM power, with each power rail in its details |
+| `peak_power_watts` | Peak SoM power, with the average and peak of each power rail in its details |
 | `avg_mla_power_watts`, `peak_mla_power_watts` | MLA rail power |
-| `avg_die_temperature_c`, `peak_die_temperature_c` | Hottest die sensor, with each die sensor in the peak's details |
-| `peak_board_temperature_c` | Hottest board sensor, with each board sensor in its details |
+| `avg_die_temperature_c`, `peak_die_temperature_c` | SoC temperature: the hottest on-die sensor at each sample |
+| `avg_board_temperature_c`, `peak_board_temperature_c` | SoM temperature: the hotter of the top-side and bottom-side board sensors |
 | `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage averaged over all cores |
-| `peak_cpu_core_usage_pct` | Peak usage of the busiest CPU core, with each core in its details |
-| `mla_memory_peak_mib` | Peak MLA memory |
-| `peak_cma_memory_mib` | Peak EV74 memory: the contiguous memory (CMA) pool in use |
-| `peak_linux_memory_mib` | Peak Linux memory in use |
+| `avg_cpu_core_usage_pct`, `peak_cpu_core_usage_pct` | The busiest CPU core: the highest per-core average, and the highest per-core peak, which can be different cores |
+| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory |
+| `avg_cma_memory_mib`, `peak_cma_memory_mib` | The contiguous memory (CMA) pool in use |
+| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Linux memory in use |
+
+The CMA reading covers the whole pool, which EV74 and other drivers share and
+Linux lends to other memory, so it is not the model's memory alone. The
+individual temperature sensors and CPU cores are not registry metrics; they
+stay in the result's `core_report`, where the browser reads the per-core
+load.
 
 A reading with no samples is unavailable. Its reason says whether Sentinel did
 not run (`sentinel_telemetry_unavailable`), ran without that reading
