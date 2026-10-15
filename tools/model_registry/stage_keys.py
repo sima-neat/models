@@ -35,8 +35,13 @@ MODEL_COMPILE_INPUT_PATHS = {
     ),
 }
 
-# Shared code on the compile path; a change to it recompiles every model.
+# The runner used by ONNX builds.
 COMPILE_TOOLING = ("scripts/run_model_compilation.sh",)
+LLIMA_COMPILE_TOOLING = (
+    "scripts/run_llima_compilation.sh",
+    "tools/model_registry/artifact.py",
+    "tools/model_registry/cli.py",
+)
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
@@ -102,7 +107,8 @@ def _file_digests(root: Path, required: list[str], optional: list[str] = ()) -> 
 def _compile_input_files(root: Path, model_id: str, *, native: bool = False) -> list[Path]:
     """Code the compile runs: the shared runner, model scripts, and any declared training code."""
     candidates: list[Path] = []
-    for prefix in (*COMPILE_TOOLING, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
+    tooling = LLIMA_COMPILE_TOOLING if native else COMPILE_TOOLING
+    for prefix in (*tooling, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
         path = root / prefix.rstrip("/")
         if path.is_file():
             candidates.append(path)
@@ -111,8 +117,6 @@ def _compile_input_files(root: Path, model_id: str, *, native: bool = False) -> 
         else:
             raise ValidationError(f"model compile input not found: {path}")
     model_dir = root / "models" / model_id
-    if native:
-        candidates.append(root / "tools/model_registry/artifact.py")
     candidates.extend(
         item
         for item in (model_dir / SCRIPTS_DIR).rglob("*")

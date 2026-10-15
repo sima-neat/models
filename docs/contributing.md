@@ -156,7 +156,8 @@ on the reviewed revision:
 3. **Authorize.** Each requested runner class is checked against the protected
    environment specification.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
-   access, `scripts/run_model_compilation.sh` runs the recipe, every MPK is
+   access, the backend's runner (`run_model_compilation.sh` for ONNX or
+   `run_llima_compilation.sh` for LLiMa) runs the recipe. Each artifact is
    verified with its provenance, and the model's compile tests check the
    output. A failing test leaves the build unpublished.
 5. **Publish.** A GitHub-hosted job verifies the complete component set,

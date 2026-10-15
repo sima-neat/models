@@ -16,10 +16,11 @@ byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
-| Model-owned `scripts/compile.py` or `scripts/compile.sh` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
+| Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
+| Model-owned `scripts/compile.sh` | Calls `llima-compile` with the model's settings; receives checkpoint and output paths and `BUILD_PROFILE_ID`. |
 | Model-owned `scripts/performance.py` | Benchmarks one MPK with Neat Core on a Modalix DevKit. |
 | Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
-| Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
+| Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_llima_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, the compile matrix, and compile-output and MPK checks. CI installs the full command surface for stage planning, packaging, provenance, and publication. |
 | GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run only `Target Branch Checks` and the description check, `PR Sanitization`. |
 | Model Compiler runner | An ephemeral self-hosted runner with the pinned Model Compiler. Compiles one build with read-only repository access. |
@@ -129,7 +130,7 @@ push (Vulcan Model Orchestrator, every push)
   -> authorize: check requested runner classes
   -> initialize the catalog: mark selected builds pending
   -> compile (Vulcan Model Compile, per selected build)
-       compile: run_model_compilation.sh, verify-mpk, the model's compile tests (self-hosted, read-only)
+       compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
   -> publish the catalog snapshot
   -> measure: start the DevKit stages that reused builds still lack
@@ -216,8 +217,9 @@ operates on registered runs and exact S3 object versions.
 
 ## LLiMa builds
 
-The shared compile runner dispatches `scripts/compile.sh` for a Hugging Face component,
-then deploys and packs it as one ZIP. Source file sets use the same pinned, checksum-verified
+The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging Face
+component. It runs `scripts/compile.sh`, then deploys and packs the output as one ZIP.
+ONNX builds keep their existing runner and compile-key inputs. Source file sets use the same pinned, checksum-verified
 downloader as vision models. The recipe owns only the `llima-compile` invocation.
 
 Publication records a `llima` model-pack artifact instead of `mpk`. The compile run,

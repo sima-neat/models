@@ -615,3 +615,38 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
     )
 
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
+
+
+@pytest.mark.parametrize(
+    ("relative", "native_changed", "onnx_changed"),
+    [
+        ("scripts/run_llima_compilation.sh", True, False),
+        ("tools/model_registry/artifact.py", True, False),
+        ("tools/model_registry/cli.py", True, False),
+        ("scripts/run_model_compilation.sh", False, True),
+    ],
+)
+def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, native_changed, onnx_changed):
+    native_id = "qwen3_5_2b"
+    native = load_and_validate_model(ROOT / "models" / native_id)
+    entry = build_matrix({native_id: native}, [native_id])["include"][0]
+    assert entry["runner_script"] == "scripts/run_llima_compilation.sh"
+    assert entry["benchmark_component_ids"] == [] and entry["accuracy_id"] is None
+    repository = tmp_path / "repository"
+    for folder in ("schemas", "taxonomies", "deps", "scripts", "tools"):
+        shutil.copytree(ROOT / folder, repository / folder, ignore=shutil.ignore_patterns("__pycache__"))
+    for name in (native_id, "resnet_50"):
+        shutil.copytree(ROOT / "models" / name, repository / "models" / name)
+
+    def keys():
+        return [
+            compile_key(repository, name, profile, "model", "compiler")
+            for name, profile in ((native_id, "modalix_a16w4_4k"), ("resnet_50", "modalix_bf16"))
+        ]
+
+    before = keys()
+    path = repository / relative
+    path.write_text(path.read_text() + "\n# tooling change\n")
+    after = keys()
+    assert (before[0] != after[0]) == native_changed
+    assert (before[1] != after[1]) == onnx_changed

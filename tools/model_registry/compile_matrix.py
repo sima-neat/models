@@ -81,7 +81,7 @@ def build_matrix(
                     ),
                 }
                 if model["components"][0]["interface"]["format"] == "huggingface":
-                    entry["recipe"] = "scripts/compile.sh"
+                    entry["runner_script"] = "scripts/run_llima_compilation.sh"
                 if repository is not None and compiler_version is not None:
                     entry["build_fingerprint"] = compile_key(
                         repository, model_id, profile["id"], invocation["id"], compiler_version

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile one model invocation with compile.py or compile.sh and record its artifacts.
+# Compile one compile invocation of a model with its scripts/compile.py and record the MPKs it produced.
 #
 # Usage: run_model_compilation.sh <model_dir> <build_profile> <compile_invocation> <output_root>
 #
@@ -81,24 +81,12 @@ fi
 rm -rf "$PROFILE_OUTPUT_DIR"
 mkdir -p "$(dirname "$PROFILE_OUTPUT_DIR")"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-recipe="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("recipe", "scripts/compile.py"))' <<< "$invocation")"
-if [[ "$recipe" == "scripts/compile.sh" ]]; then
-  command -v llima-compile >/dev/null || { echo "LLiMa is missing from the Model Compiler environment" >&2; exit 1; }
-  command -v llima-deploy >/dev/null || { echo "llima-deploy is missing from the Model Compiler environment" >&2; exit 1; }
-  native_work="$(mktemp -d "$(dirname "$PROFILE_OUTPUT_DIR")/.llima-XXXXXXXX")"
-  trap 'rm -rf "$native_work"' EXIT
-  bash "$MODEL_DIR/$recipe" "$(dirname "$source_path")" "$native_work/compiled"
-  llima-deploy "$native_work/compiled" "$native_work/deployed"
-  "$PYTHON" -m model_registry pack-llima "$native_work/deployed" \
-    "$PROFILE_OUTPUT_DIR/${components[0]}/${MODEL_ID}_llima.zip"
-else
 "$PYTHON" "$MODEL_DIR/scripts/compile.py" \
   --model "$source_path" \
   --output-dir "$PROFILE_OUTPUT_DIR" \
   --build-profile "$BUILD_PROFILE_ID" \
   --compile-invocation "$COMPILE_INVOCATION_ID" \
   "${dataset_args[@]}"
-fi
 if [[ ! -d "$PROFILE_OUTPUT_DIR" ]]; then
   echo "$MODEL_DIR/scripts/compile.py wrote no output directory $PROFILE_OUTPUT_DIR" >&2
   exit 1

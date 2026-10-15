@@ -360,10 +360,10 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 
 ## Compile a LLiMa model
 
-For a Hugging Face language or vision-language model, use the same shared runner:
+For a Hugging Face language or vision-language model, use the LLiMa runner:
 
 ```bash
-scripts/run_model_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
+scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
 model-registry verify-artifact /path/to/output/qwen3_5_2b/modalix_a16w4_4k/model --write-manifest
 ```
 

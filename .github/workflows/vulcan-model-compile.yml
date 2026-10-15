@@ -73,6 +73,7 @@ jobs:
       MODEL_DIR: ${{ fromJSON(inputs.entry).model_dir }}
       BUILD_PROFILE_ID: ${{ fromJSON(inputs.entry).build_profile_id }}
       COMPILE_INVOCATION_ID: ${{ fromJSON(inputs.entry).compile_invocation_id }}
+      COMPILE_RUNNER: ${{ fromJSON(inputs.entry).runner_script || 'scripts/run_model_compilation.sh' }}
       COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).component_ids, ',') }}
       TARGET: ${{ fromJSON(inputs.entry).target }}
       EXPECTED_COMPILER_VERSION: ${{ inputs.model_compiler_version }}
@@ -187,7 +188,7 @@ jobs:
           type activate-model-compiler
           activate-model-compiler
           command -v mla-masm
-          scripts/run_model_compilation.sh "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"
+          "$COMPILE_RUNNER" "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"
           BASH
 
       - name: Verify every MPK and record its provenance

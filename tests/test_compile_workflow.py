@@ -490,9 +490,12 @@ def test_compile_script_runs_in_activated_model_compiler_shell() -> None:
     assert "source /etc/profile.d/vulcan-model-compiler.sh" in script
     assert "type activate-model-compiler" in script
     assert "command -v mla-masm" in script
-    assert script.index("activate-model-compiler") < script.index("scripts/run_model_compilation.sh")
+    assert compile_job["env"]["COMPILE_RUNNER"] == (
+        "${{ fromJSON(inputs.entry).runner_script || 'scripts/run_model_compilation.sh' }}"
+    )
+    assert script.index("activate-model-compiler") < script.index('"$COMPILE_RUNNER"')
     assert (
-        'scripts/run_model_compilation.sh "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"'
+        '"$COMPILE_RUNNER" "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"'
         in script
     )
     order = [

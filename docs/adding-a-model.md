@@ -264,7 +264,7 @@ current key.
 
 | Stage | Key inputs |
 | --- | --- |
-| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the shared `scripts/run_model_compilation.sh`, and the Model Compiler version; LLiMa builds additionally include `tools/model_registry/artifact.py` |
+| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and backend tooling: `scripts/run_model_compilation.sh` for ONNX; `scripts/run_llima_compilation.sh`, `tools/model_registry/artifact.py`, and `tools/model_registry/cli.py` for LLiMa |
 | performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
@@ -279,7 +279,9 @@ recompiled build is always remeasured.
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
 | a compile input of a model | that model's affected builds, then their DevKit stages |
-| the Model Compiler pin or `scripts/run_model_compilation.sh` | every build, then every DevKit stage |
+| the Model Compiler pin | every build, then every DevKit stage |
+| `scripts/run_model_compilation.sh` | ONNX builds, then their DevKit stages |
+| `scripts/run_llima_compilation.sh`, `artifact.py`, or `cli.py` | LLiMa builds, then their declared DevKit stages |
 
 The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
 in `tools/model_registry/stage_keys.py`.
@@ -479,13 +481,14 @@ The executable recipe takes two positional paths:
 set -euo pipefail
 llima-compile "$1" -o "$2" \
   --max_num_tokens 4096 --language_group_size 128 \
-  --input_height 448 --input_width 448 -j 16 --log_level INFO
+  --input_height 448 --input_width 448 --jobs 6 --log_level INFO
 ```
 
-Run it through the usual shared runner, with Model Compiler and LLiMa activated:
+Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
+runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
 
 ```bash
-scripts/run_model_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
+scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
 ```
 
 The runner downloads the pinned files, invokes the recipe, runs `llima-deploy`, and
@@ -502,8 +505,9 @@ model-pack artifact. Final retrieval packages flatten that deployment below the 
 folder, add the package manifest, and mark the component `format: llima`, `path: .`.
 There are no nested model archives. Large files are streamed during packaging.
 
-The native compile key also covers `tools/model_registry/artifact.py`, which implements
-its packing and verification. Existing vision keys do not acquire that dependency.
+The native compile key covers its runner, `tools/model_registry/artifact.py` and
+`tools/model_registry/cli.py` for packing and verification. ONNX builds retain
+their existing runner and compile keys.
 README and hero changes remain outside compile identities.
 
 Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corresponding
