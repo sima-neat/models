@@ -46,26 +46,33 @@ tab, whatever order `model.yaml` declares. Sections appear in this order:
    outputs** and **Building applications** sections, so the title, hero, and
    overview are never shown twice. The README follows the
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
-2. **Performance.** For each component: throughput, average latency, SoM
-   power, and energy per inference from its DevKit benchmark. The line below
-   them names the workload: **Core default MPK** when the benchmark script uses
-   Core's defaults, or the script's own selection, such as **YoloV26 box
-   decoder, top 100**, followed by preprocessing and postprocessing.
+2. **Performance.** For each component, four tiles with one number each:
+   throughput, average latency, average SoM power, and energy per inference.
+   The line below them names the workload: **Core default MPK**
+   when the benchmark script uses Core's defaults, or the script's own
+   selection, such as **YoloV26 box decoder, top 100**, followed by
+   preprocessing, postprocessing, and the MLA and CPU clocks.
    **Execution graph** then draws the steps the component runs, from input to
    output, each tagged with the processor it runs on; the step on the MLA is
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
-   scale, and zero point. **Benchmark details** groups every measurement into
-   speed (latency and its percentiles), power and energy (SoM and MLA power,
-   with the average power of each rail), heat and load (die and board
-   temperature, CPU usage over all cores and on the busiest core), memory (MLA,
-   EV74, and Linux memory), and startup (model load and time to first
-   inference). Its
-   last line names the Sentinel version and the samples behind the board
-   readings, or why they are missing. **Power rails, sensors, and CPU cores**
-   lists the average and peak of every power rail, temperature sensor, and CPU
-   core. A metric the browser does not recognize appears under **Other
-   measurements**, so a new metric shows up without a browser change. A
+   scale, and zero point. **Benchmark details** has three cards on the left:
+   **Performance** with asynchronous and synchronous throughput in one row
+   (synchronous from the mean latency), the mean latency, and the p50, p95,
+   and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
+   and **CPU** with the core count, the load over all cores and on the
+   busiest core, and a bar per core with its average and peak. On the right,
+   **Power** has the average and peak of SoM, SoC, and MLA power, then the
+   average power of each SoM rail, coloured to match the SoC and MLA rows, and
+   **Memory** has MLA, CMA pool, and Linux memory. Readings other than latency
+   and throughput cover the throughput pass. The (i) mark beside a reading or
+   rail explains what it measures. The footer lists the telemetry (the
+   Sentinel version and the samples behind the board readings, or why they
+   are missing) and the runtime. Beside it, **Raw result** opens the result
+   JSON and **Download CSV** saves one table of the component's context,
+   every metric, every SoM rail, and every CPU core. A metric the browser does
+   not place in the tiles or the cards appears under **Other measurements**,
+   so a new metric shows up without a browser change. A
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.

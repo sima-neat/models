@@ -979,34 +979,49 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
     assert "new Map([[1, adaptV1], [2, adaptV2], [3, adaptV3], [4, adaptV4], [5, adaptV4]])" in adapters
     assert "Object.entries(result.metrics || {})" in adapters
-    assert "Object.entries(trial)" in adapters
     assert "/benchmarks/latest" in script
-    # Benchmark details group the measurements into cards; unknown metrics land in Other measurements.
-    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload)' in script
-    for group in ['["speed", "Speed"', '["power", "Power & energy"', '["heat", "Heat & load"', '["memory", "Memory"',
-                  '["startup", "Startup"']:
-        assert group in script
-    # Sentinel telemetry: the rail split, and the rails and sensors behind the totals.
-    assert "power: railSplit(measurements)" in script
-    assert '"Power rails, sensors, and CPU cores"' in script
-    assert 'breakdownTable("CPU cores", cores, "%", 1)' in script
-    assert "telemetryText(benchmark.telemetry)" in script
+    # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
+    assert "KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key]))" in script
+    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", details.markup' in script
+    for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
+                 '["memory", "Memory"']:
+        assert card in script
+    assert 'const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);' in script
+    assert '["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"]' in script
+    assert "(benchmark.batchSize * 1000) / latency.value" in script
+    assert "batchSize: result.configuration?.workload?.batch_size" in adapters
+    assert "cpuCores: cpuCores(result.core_report)" in adapters
+    assert "report?.telemetry?.cpu_cores_usage_pct" in adapters
+    assert "coreLoad(benchmark.cpuCores)" in script
+    assert '<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p>' in script
+    assert ".core-load {" in styles
+    assert '<span class="qualifier">' in script
+    assert '["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"]' in script
+    assert "cpuCount: result.environment?.cpu_count" in adapters
+    assert "`${benchmark.cpuCount} cores`" in script
+    assert 'const rows = [["Section", "Metric", "Value", "Unit", "Key", "Note"]];' in script
+    assert 'download="${escapeHtml(csvFileName(benchmark))}">${icons.download}Download CSV' in script
+    assert "data:text/csv;charset=utf-8," in script
+    assert '["SoC", "power_rail_soc_ddr_vdd_watts"' in script
+    assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
+    assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script
+    assert "power: { extra: railSplit(measurements) }" in script
+    assert 'power_rail_mla_watts: ["MLA core (0.68 V)"' in script
     assert ".rail-split" in styles
-    assert 'metricGroup("other", "Other measurements"' in script
+    assert ".detail-cards" in styles
+    assert ".info-mark::after { content: attr(data-tooltip);" in styles
+    assert "telemetryText(benchmark.telemetry)" in script
+    assert "metric-group" not in browser
+    assert "Other measurements</h4>" in script
     assert "mlaFrequencyHz: result.environment?.mla_frequency_hz" in adapters
     assert "cpuFrequencyKhz: result.environment?.cpu_frequency_khz" in adapters
-    assert 'clockRow("MLA clock", benchmark.mlaFrequencyHz / 1e6)' in script
-    assert 'clockRow("CPU clock", benchmark.cpuFrequencyKhz / 1e3)' in script
-    assert "Not reported by this runtime:" in script
+    assert 'clock("MLA", benchmark.mlaFrequencyHz / 1e6)' in script
+    assert 'clock("CPU", benchmark.cpuFrequencyKhz / 1e3)' in script
+    assert '["Runtime", benchmark.tool]' in script
+    assert '<footer class="benchmark-footer"><dl class="benchmark-provenance">' in script
+    assert ".benchmark-action {" in styles
     assert "data-trial-metric" not in browser
     assert "trialChart" not in browser
-    assert 'item.sensor.toLowerCase() === "temp1"' in script
-    assert 'class="sparkline"' in script
-    assert 'role="img"' in script
-    assert ".sparkline-line" in styles
-    assert '.metric-group[data-group="heat"]' in styles
-    assert "temperature_samples" in adapters
-    assert "sensor_id" in adapters
     assert "fallbackMetricLabel" in script
     assert "mla_memory_peak_delta_mib" in script
     assert "time_to_first_inference_ms" in script

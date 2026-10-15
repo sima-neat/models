@@ -161,7 +161,9 @@ not run (`sentinel_telemetry_unavailable`), ran without that reading
 reading. Latency percentiles missing from an older report have the same reason.
 Add a reading by adding a row to `TELEMETRY_METRICS` in
 `tools/model_registry/core_benchmark.py`, its measurement name in
-`benchmark_publication.py`, and its label in the browser's `metrics.js`.
+`benchmark_publication.py`, and its label in the browser's `metrics.js`. It
+appears under **Other measurements** until `DETAIL_CARDS` in
+`model-view.js` gives it a row in one of the Benchmark details cards.
 
 Initialization timings and MLA memory before and after the run are not exported
 by this Core API. Results mark those metrics unavailable rather than estimating

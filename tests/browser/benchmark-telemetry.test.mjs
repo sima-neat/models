@@ -27,3 +27,10 @@ test('keeps the rail breakdown on peak SoM power', () => {
 test('reports no telemetry source for a result from before Sentinel', () => {
   assert.equal(adaptBenchmarkResult(fixture(4)).value.telemetry, null);
 });
+
+test('names the model, build, and component a result measured', () => {
+  const benchmark = adaptBenchmarkResult(fixture(5)).value;
+  assert.equal(benchmark.modelId, 'resnet_50');
+  assert.equal(benchmark.buildProfileId, 'modalix_int8');
+  assert.equal(benchmark.componentId, 'model');
+});

@@ -92,237 +92,265 @@ function detailTag(icon, value, kind) {
   return `<span class="detail-tag detail-tag-${kind}">${icon}<span>${escapeHtml(value)}</span></span>`;
 }
 
-// Benchmark details group the measurements by what they tell a reader. A metric this browser does not
-// know yet still appears, under Other measurements.
-const METRIC_GROUPS = [
-  ["speed", "Speed", "gauge", ["latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "throughput_fps"]],
-  ["power", "Power & energy", "power", [
-    "avg_power_watts", "peak_power_watts", "avg_mla_power_watts", "peak_mla_power_watts",
-    "energy_per_inference_joules", "energy_joules",
-  ]],
-  ["heat", "Heat & load", "thermometer", [
-    "avg_die_temperature_c", "peak_die_temperature_c", "peak_board_temperature_c",
-    "avg_cpu_usage_pct", "peak_cpu_usage_pct", "peak_cpu_core_usage_pct",
-  ]],
-  ["memory", "Memory", "memory", [
-    "mla_memory_baseline_mib", "mla_memory_peak_mib", "mla_memory_peak_delta_mib", "mla_memory_final_mib",
-    "peak_cma_memory_mib", "peak_linux_memory_mib",
-  ]],
-  ["startup", "Startup", "timer", ["model_load_ms", "time_to_first_inference_ms"]],
-];
-
-// Inside the Memory card the word memory is implied, so its rows use shorter names.
-const GROUP_LABELS = {
-  mla_memory_baseline_mib: "MLA before loading",
-  mla_memory_peak_mib: "Peak MLA",
-  mla_memory_peak_delta_mib: "Peak MLA increase",
-  mla_memory_final_mib: "MLA after the run",
-  peak_cma_memory_mib: "Peak EV74 (CMA)",
-  peak_linux_memory_mib: "Peak Linux used",
-};
-
 function measuredValue(key, metric) {
   const definition = metricDefinition(key, metric);
   const display = metricDisplay(metric, definition);
-  return display && { label: definition.label, text: display.value.toFixed(display.digits), unit: display.unit, value: display.value };
+  return display && { label: definition.label, text: display.value.toFixed(display.digits), unit: display.unit };
 }
 
 function metricRow({ label, text, unit }) {
   return `<div class="metric-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(text)}<small>${escapeHtml(unit)}</small></dd></div>`;
 }
 
-function latencyTrials(trials, measurements) {
-  const definition = metricDefinition("latency_avg_ms", measurements.latency_avg_ms);
-  const measured = trials.filter((trial) => Number.isFinite(trial.metrics.latency_avg_ms));
-  if (measured.length < 2) return "";
-  const values = measured.map((trial) => trial.metrics.latency_avg_ms * definition.scale);
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const spread = mean ? ((Math.max(...values) - Math.min(...values)) / mean) * 100 : 0;
-  const chips = measured.map((trial, index) => `<span>${trial.number} · <b>${values[index].toFixed(definition.digits)}</b></span>`).join("");
-  return `<div class="trial-chips" role="list" aria-label="Average latency per trial">${chips}</div><p class="metric-caption">Latency per trial in ${escapeHtml(definition.unit)} · spread ${spread.toFixed(1)}%</p>`;
+// The headline metrics, one number each.
+const KPI_METRICS = ["throughput_fps", "latency_avg_ms", "avg_power_watts", "energy_per_inference_joules"];
+
+// Benchmark details: one row per reading, with its label, its metrics, and a short explanation shown
+// behind an (i) mark, one line per value when a row has several. A row names a rail when its colour should match that rail in the power bar.
+const DETAIL_CARDS = [
+  ["performance", "Performance", "gauge", [], [
+    ["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"], "Async: several inputs in flight.\nSync: one input at a time."],
+    ["Latency (mean)", ["latency_avg_ms"], "Mean time for one inference."],
+    ["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"], "p50: 50% of inferences are faster.\np95: 95% are faster.\np99: 99% are faster."],
+  ]],
+  ["heat", "Heat", "thermometer", ["Average", "Peak"], [
+    ["SoC", ["avg_die_temperature_c", "peak_die_temperature_c"], "Hottest SoC die sensor."],
+    ["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"], "Hottest SoM board sensor."],
+  ]],
+  ["cpu", "CPU", "compiler", ["Average", "Peak"], [
+    ["All cores", ["avg_cpu_usage_pct", "peak_cpu_usage_pct"], "Mean load across all cores."],
+    ["Busiest core", ["avg_cpu_core_usage_pct", "peak_cpu_core_usage_pct"], "Load on the most loaded core."],
+  ]],
+  ["power", "Power", "power", ["Average", "Peak"], [
+    ["SoM", ["avg_power_watts", "peak_power_watts"], "Sum of all SoM rails."],
+    ["SoC", "power_rail_soc_ddr_vdd_watts", "SoC and DRAM core rail (VDD)."],
+    ["MLA", ["avg_mla_power_watts", "peak_mla_power_watts"], "MLA core rail (0.68 V).", "power_rail_mla_watts"],
+  ]],
+  ["memory", "Memory", "memory", ["Average", "Peak"], [
+    ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Memory allocated to the MLA."],
+    ["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"], "Contiguous memory in use, shared with other drivers."],
+    ["Linux", ["avg_linux_memory_mib", "peak_linux_memory_mib"], "Memory used by Linux and its processes."],
+  ]],
+];
+// Performance, heat, and CPU fill the left column; power, memory, and any other measurements the right.
+const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);
+// Names for the SoM power rails Sentinel reports, what each rail supplies, and its colour in the power bar.
+const RAILS = {
+  power_rail_soc_ddr_vdd_watts: ["SoC and DRAM core (VDD)", "Supplies the SoC logic and DRAM core.", "var(--blue)"],
+  power_rail_mla_watts: ["MLA core (0.68 V)", "Supplies the MLA.", "var(--red)"],
+  power_rail_soc_ddr_vddq_watts: ["DRAM I/O (VDDQ)", "Supplies the SoC to DRAM interface.", "var(--amber)"],
+  power_rail_soc_ddr_vdd2h_watts: ["DRAM (VDD2H)", "Supplies part of the DRAM.", "var(--violet)"],
+  power_rail_pcie_eth_watts: ["PCIe and Ethernet PHY", "Supplies the PCIe and Ethernet PHYs.", "var(--green)"],
+  power_rail_hdmi_watts: ["HDMI PHY (1.2 V)", "Supplies the HDMI PHY.", "var(--ink-soft)"],
+  power_rail_platform_1v8_watts: ["SoM platform (1.8 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--blue) 50%, var(--surface-raised))"],
+  power_rail_platform_3v3_watts: ["SoM platform (3.3 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--green) 50%, var(--surface-raised))"],
+};
+// The tiles and cards place these metrics; any other measured metric is listed under Other measurements.
+// Benchmark energy is energy per inference times the sample count, so it is not shown again.
+const PLACED_METRICS = new Set([
+  ...KPI_METRICS, "energy_joules",
+  ...DETAIL_CARDS.flatMap(([, , , , rows]) => rows.flatMap(([, keys]) => (Array.isArray(keys) ? keys : []))),
+]);
+
+function kpiTile(key, metric) {
+  const value = measuredValue(key, metric);
+  return value ? `<div class="kpi"><span>${escapeHtml(value.label)}</span><strong>${escapeHtml(value.text)}<small>${escapeHtml(value.unit.replace("/inference", ""))}</small></strong></div>` : "";
 }
 
-// The hottest temp1 sensor is the board's die temperature; other sensors are only used without one.
-function temperatureSamples(series) {
-  if (!series.length) return null;
-  const hottest = (candidates) => [...candidates].sort((left, right) => (
-    Math.max(...right.samples.map((sample) => sample.celsius))
-    - Math.max(...left.samples.map((sample) => sample.celsius))
-  ))[0];
-  const temp1 = series.filter((item) => item.sensor.toLowerCase() === "temp1");
-  return hottest(temp1.length ? temp1 : series);
+function infoMark(text) {
+  return text ? `<span class="info-mark" tabindex="0" role="img" aria-label="${escapeHtml(text)}" data-tooltip="${escapeHtml(text)}">i</span>` : "";
 }
 
-function temperatureRow(selected) {
-  const samples = selected.samples;
-  return metricRow({
-    label: "Temperature",
-    text: `${samples[0].celsius.toFixed(1)} → ${samples.at(-1).celsius.toFixed(1)}`,
-    unit: "°C",
-  });
+// A label's trailing "(...)" qualifier, such as "Latency (p50 / p95 / p99)", is set in quieter text after the name.
+function readingLabel(label) {
+  const [, name, qualifier] = /^(.*?)\s*\(([^()]+)\)$/.exec(label) || [null, label, ""];
+  return `${escapeHtml(name)}${qualifier ? `<span class="qualifier">(${escapeHtml(qualifier)})</span>` : ""}`;
 }
 
-function temperatureSparkline(selected) {
-  const samples = selected.samples;
-  const temperatures = samples.map((sample) => sample.celsius);
-  const startTime = Math.min(...samples.map((sample) => sample.timestamp));
-  const elapsed = Math.max(Math.max(...samples.map((sample) => sample.timestamp)) - startTime, 1);
-  const minimum = Math.min(...temperatures);
-  const maximum = Math.max(...temperatures);
-  const spread = maximum - minimum || 1;
-  const width = 300;
-  const height = 56;
-  const x = (timestamp) => ((timestamp - startTime) / elapsed) * width;
-  const y = (celsius) => 6 + ((maximum - celsius) / spread) * (height - 12);
-  const line = samples.map((sample, index) => `${index ? "L" : "M"}${x(sample.timestamp).toFixed(1)} ${y(sample.celsius).toFixed(1)}`).join(" ");
-  const sampleLabel = selected.legacy && samples.length === 2 ? "start and end only" : `${samples.length} samples`;
-  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(selected.label)} temperature from ${minimum.toFixed(1)} to ${maximum.toFixed(1)} °C over ${samples.length} samples"><path class="sparkline-area" d="${line} L${width} ${height} L0 ${height} Z"/><path class="sparkline-line" d="${line}"/></svg><p class="metric-caption">${escapeHtml(selected.label)} · ${sampleLabel}</p>`;
+function readingCell(value) {
+  return `<td>${value ? `${escapeHtml(value.text)}<small>${escapeHtml(value.unit)}</small>` : "—"}</td>`;
 }
 
-// A bar from zero to `total`: the muted part runs to `first`, the accent part from there to the end.
-function proportionBar(first, total, label, legend) {
-  const split = Math.min(Math.max(first / total, 0), 1) * 100;
-  return `<div class="metric-bar" role="img" aria-label="${escapeHtml(label)}"><svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="metric-bar-first" width="${split.toFixed(2)}" height="8"/><rect class="metric-bar-rest" x="${split.toFixed(2)}" width="${(100 - split).toFixed(2)}" height="8"/></svg></div><div class="metric-bar-legend">${legend.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+function powerRails(measurements) {
+  return (measurements.peak_power_watts?.details?.breakdown || []).filter((rail) => Number.isFinite(rail.mean));
 }
 
-function memoryBar(measurements) {
-  const before = measuredValue("mla_memory_baseline_mib", measurements.mla_memory_baseline_mib);
-  const peak = measuredValue("mla_memory_peak_mib", measurements.mla_memory_peak_mib);
-  if (!before || !peak || peak.value <= 0) return "";
-  return proportionBar(before.value, peak.value, `MLA memory rises from ${before.text} ${before.unit} before loading to a ${peak.text} ${peak.unit} peak`, [
-    `Before ${before.text} ${before.unit}`, `Peak ${peak.text} ${peak.unit}`,
-  ]);
+// The average and peak of one SoM rail, from the rail details of peak SoM power.
+function railReadings(measurements, key) {
+  const rail = powerRails(measurements).find((candidate) => candidate.key === key);
+  const reading = (value) => Number.isFinite(value) && { text: value.toFixed(2), unit: "W" };
+  return rail ? [reading(rail.mean), reading(rail.maximum)] : [];
+}
+
+function railDot(key) {
+  return RAILS[key] ? `<i class="rail-dot" style="background:${RAILS[key][2]}" aria-hidden="true"></i>` : "";
+}
+
+// A card without columns shows a row's readings in one cell, such as latency percentiles: "36.0 / 37.8 / 39.6 ms".
+function joinedCell(values) {
+  const unit = values.find(Boolean)?.unit || "";
+  return `<td>${values.map((value) => escapeHtml(value ? value.text : "—")).join(" / ")}<small>${escapeHtml(unit)}</small></td>`;
+}
+
+// The SoM rails in RAILS order, with their names, explanations, and colours.
+function namedRails(measurements) {
+  const known = Object.keys(RAILS);
+  return powerRails(measurements)
+    .sort((a, b) => (known.indexOf(a.key) + 1 || 99) - (known.indexOf(b.key) + 1 || 99))
+    .map((rail) => ({ ...rail, name: RAILS[rail.key]?.[0] || rail.label, info: RAILS[rail.key]?.[1], colour: RAILS[rail.key]?.[2] || "var(--ink-faint)" }));
 }
 
 // The SoM power each rail draws on average, as one bar split by rail.
 function railSplit(measurements) {
-  const rails = (measurements.peak_power_watts?.details?.breakdown || [])
-    .filter((rail) => Number.isFinite(rail.mean) && rail.mean > 0);
+  const rails = namedRails(measurements).filter((rail) => rail.mean > 0);
   const total = rails.reduce((sum, rail) => sum + rail.mean, 0);
   if (rails.length < 2 || total <= 0) return "";
-  const segments = rails.map((rail) => `<span style="flex-grow:${rail.mean.toFixed(4)}"></span>`).join("");
-  const legend = rails.map((rail) => `<li><i aria-hidden="true"></i>${escapeHtml(rail.label)}<b>${rail.mean.toFixed(2)} W</b></li>`).join("");
-  return `<p class="metric-caption">Average power by rail</p><div class="rail-split" role="img" aria-label="${escapeHtml(rails.map((rail) => `${rail.label} ${rail.mean.toFixed(2)} W`).join(", "))}">${segments}</div><ul class="rail-legend">${legend}</ul>`;
+  const segments = rails.map((rail) => `<span style="flex-grow:${rail.mean.toFixed(4)};background:${rail.colour}"></span>`).join("");
+  const legend = rails.map((rail) => `<li><i aria-hidden="true" style="background:${rail.colour}"></i>${readingLabel(rail.name)}${infoMark(rail.info)}<b>${rail.mean.toFixed(2)} W</b></li>`).join("");
+  return `<p class="metric-caption">Average SoM power by rail</p><div class="rail-split" role="img" aria-label="${escapeHtml(rails.map((rail) => `${rail.name} ${rail.mean.toFixed(2)} W`).join(", "))}">${segments}</div><ul class="rail-legend">${legend}</ul>`;
 }
 
-function startupTimeline(measurements) {
-  const load = measuredValue("model_load_ms", measurements.model_load_ms);
-  const first = measuredValue("time_to_first_inference_ms", measurements.time_to_first_inference_ms);
-  if (!load || !first || first.value <= 0) return "";
-  return proportionBar(load.value, first.value, `Loading takes ${load.text} ${load.unit} of the ${first.text} ${first.unit} before the first inference`, [
-    `Load ${load.text} ${load.unit}`, `First inference ${first.text} ${first.unit}`,
-  ]);
+// The load of each CPU core: a bar for the average and a tick for the peak, in two columns of cores.
+function coreLoad(cores) {
+  if (cores.length < 2) return "";
+  const busiest = cores.reduce((top, core, index) => (core.mean > cores[top].mean ? index : top), 0);
+  const percent = (value) => Math.min(100, Math.max(0, value)).toFixed(1);
+  const rows = cores.map((core, index) => {
+    const peak = Number.isFinite(core.maximum) ? `<i style="left:${percent(core.maximum)}%"></i>` : "";
+    const summary = `Core ${index}: ${core.mean.toFixed(1)}% average${Number.isFinite(core.maximum) ? `, ${core.maximum.toFixed(1)}% peak` : ""}`;
+    return `<li${index === busiest ? ' class="busiest"' : ""} title="${summary}" aria-label="${summary}"><span>C${index}</span><span class="core-track"><b style="width:${percent(core.mean)}%"></b>${peak}</span><span>${core.mean.toFixed(0)}%</span></li>`;
+  }).join("");
+  return `<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p><ul class="core-load" style="--core-rows:${Math.ceil(cores.length / 2)}">${rows}</ul>`;
 }
 
-function metricGroup(id, title, icon, rows, extra = "") {
-  return `<div class="metric-group" data-group="${id}"><h4><i aria-hidden="true">${icons[icon]}</i>${escapeHtml(title)}</h4><dl>${rows.join("")}</dl>${extra}</div>`;
-}
-
-function metricGroups(benchmark) {
-  const { measurements } = benchmark;
-  const rowsFor = (keys) => keys.map((key) => {
-    const value = measurements[key] && measuredValue(key, measurements[key]);
-    return value && metricRow({ ...value, label: GROUP_LABELS[key] || value.label });
-  }).filter(Boolean);
-  const temperature = temperatureSamples(benchmark.temperatureSeries);
-  const extras = {
-    speed: latencyTrials(benchmark.trials, measurements),
-    power: railSplit(measurements),
-    heat: temperature ? temperatureSparkline(temperature) : "",
-    memory: memoryBar(measurements),
-    startup: startupTimeline(measurements),
+function detailCard(measurements, [id, title, icon, columns, readings], { note, extra } = {}) {
+  const rows = readings
+    .map(([label, keys, info, rail]) => ({
+      label, info, rail: rail || (Array.isArray(keys) ? null : keys),
+      values: Array.isArray(keys) ? keys.map((key) => measuredValue(key, measurements[key])) : railReadings(measurements, keys),
+    }))
+    .filter((row) => row.values.some(Boolean))
+    .map((row) => `<tr><th scope="row">${railDot(row.rail)}${readingLabel(row.label)}${infoMark(row.info)}</th>${columns.length ? row.values.map(readingCell).join("") : joinedCell(row.values)}</tr>`);
+  if (!rows.length) return null;
+  const head = columns.length ? `<thead><tr><td></td>${columns.map((column) => `<th scope="col">${escapeHtml(column)}</th>`).join("")}</tr></thead>` : "";
+  return {
+    id,
+    title,
+    markup: `<div class="detail-card"><h4><i aria-hidden="true">${icons[icon]}</i>${escapeHtml(title)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</h4><table>${head}<tbody>${rows.join("")}</tbody></table>${extra || ""}</div>`,
   };
-  // The MLA and CPU clocks bound the speed a result can reach, so the Speed card shows the clocks it ran at.
-  const clockRow = (label, megahertz) => Number.isFinite(megahertz)
-    ? metricRow({ label, text: megahertz.toLocaleString(), unit: "MHz" })
-    : "";
-  const conditions = {
-    speed: [
-      clockRow("MLA clock", benchmark.mlaFrequencyHz / 1e6),
-      clockRow("CPU clock", benchmark.cpuFrequencyKhz / 1e3),
-    ],
-    heat: [temperature ? temperatureRow(temperature) : ""],
-  };
-  const groups = METRIC_GROUPS.map(([id, title, icon, keys]) => {
-    const rows = [...rowsFor(keys), ...(conditions[id] || [])].filter(Boolean);
-    return rows.length ? { title, markup: metricGroup(id, title, icon, rows, extras[id]) } : null;
-  }).filter(Boolean);
-  const known = new Set(METRIC_GROUPS.flatMap(([, , , keys]) => keys));
-  const otherRows = rowsFor(Object.keys(measurements).filter((key) => !known.has(key)).sort());
-  if (otherRows.length) groups.push({ title: "Other", markup: metricGroup("other", "Other measurements", "benchmark", otherRows) });
-  const unavailable = Object.entries(measurements)
-    .filter(([key, metric]) => !measuredValue(key, metric))
-    .map(([key, metric]) => metricDefinition(key, metric).label);
-  return { groups, unavailable };
 }
 
 // Names the board telemetry source, or why the board readings are missing.
 function telemetryText(telemetry) {
   if (!telemetry) return "";
-  if (telemetry.status !== "ok") return `Board telemetry unavailable: ${telemetry.status || "unknown reason"}`;
+  if (telemetry.status !== "ok") return `Unavailable: ${telemetry.status || "unknown reason"}`;
   const interval = telemetry.intervalMs ? ` every ${(telemetry.intervalMs / 1000).toFixed(0)} s` : "";
   const window = telemetry.windowMs ? ` over ${(telemetry.windowMs / 1000).toFixed(1)} s` : "";
-  return `Board telemetry: Sentinel ${telemetry.sentinelVersion}, ${telemetry.samples} samples${interval}${window}`;
+  return `Sentinel ${telemetry.sentinelVersion} · ${telemetry.samples} samples${interval}${window}`;
+}
+
+// Synchronous throughput: the latency loop runs one input at a time, so it completes one batch per mean latency.
+function syncThroughput(benchmark) {
+  const latency = benchmark.measurements.latency_avg_ms;
+  if (latency?.status !== "measured" || !(latency.value > 0) || !(benchmark.batchSize > 0)) return null;
+  return { status: "measured", value: (benchmark.batchSize * 1000) / latency.value, unit: benchmark.measurements.throughput_fps?.unit };
 }
 
 function benchmarkDetails(benchmark, payload) {
-  const { groups, unavailable } = metricGroups(benchmark);
-  const source = [telemetryText(benchmark.telemetry), `Result schema v${benchmark.schemaVersion}`, benchmark.tool]
-    .filter(Boolean).map(escapeHtml).join(" · ");
+  const { measurements } = benchmark;
+  const readings = { ...measurements, sync_throughput_fps: syncThroughput(benchmark) };
+  const additions = {
+    cpu: { note: benchmark.cpuCount > 0 && `${benchmark.cpuCount} cores`, extra: coreLoad(benchmark.cpuCores) },
+    power: { extra: railSplit(measurements) },
+  };
+  const cards = DETAIL_CARDS.map((card) => detailCard(readings, card, additions[card[0]])).filter(Boolean);
+  const otherRows = Object.keys(measurements).filter((key) => !PLACED_METRICS.has(key)).sort()
+    .map((key) => measuredValue(key, measurements[key])).filter(Boolean).map(metricRow);
+  if (otherRows.length) {
+    cards.push({ id: "other", title: "Other", markup: `<div class="detail-card"><h4><i aria-hidden="true">${icons.benchmark}</i>Other measurements</h4><dl>${otherRows.join("")}</dl></div>` });
+  }
+  const column = (right) => `<div class="detail-column">${cards
+    .filter((card) => RIGHT_COLUMN_CARDS.has(card.id) === right)
+    .map((card) => card.markup).join("")}</div>`;
+  const provenance = [
+    ["Telemetry", telemetryText(benchmark.telemetry)],
+    ["Runtime", benchmark.tool],
+  ].filter(([, text]) => text).map(([term, text]) => `<div><dt>${term}</dt><dd>${escapeHtml(text)}</dd></div>`).join("");
   const raw = payload.result_artifact_url
-    ? ` · <a href="${escapeHtml(payload.result_artifact_url)}" target="_blank" rel="noreferrer">Raw result ${icons.external}</a>`
+    ? `<a class="benchmark-action" href="${escapeHtml(payload.result_artifact_url)}" target="_blank" rel="noreferrer">Raw result${icons.external}</a>`
     : "";
-  return `<div class="metric-groups">${groups.map((group) => group.markup).join("")}</div>
-    ${unavailable.length ? `<p class="metric-unavailable">Not reported by this runtime: ${escapeHtml(unavailable.join(", "))}.</p>` : ""}
-    <p class="metric-source">${source}${raw}</p>`;
+  const csv = `<a class="benchmark-action" href="${escapeHtml(csvDataUrl(benchmarkCsv(benchmark, readings)))}" download="${escapeHtml(csvFileName(benchmark))}">${icons.download}Download CSV</a>`;
+  return {
+    titles: cards.map((card) => card.title),
+    markup: `<div class="detail-cards">${column(false)}${column(true)}</div>
+    <footer class="benchmark-footer"><dl class="benchmark-provenance">${provenance}</dl><div class="benchmark-actions">${raw}${csv}</div></footer>`,
+  };
 }
 
-// One row per power rail, temperature sensor, or CPU core, with its average and peak over the throughput window.
-function breakdownTable(title, entries, unit, digits) {
-  const rows = entries.filter((entry) => Number.isFinite(entry.mean) && Number.isFinite(entry.maximum))
-    .map((entry) => `<tr><th scope="row">${escapeHtml(entry.label)}</th><td>${entry.mean.toFixed(digits)} ${escapeHtml(unit)}</td><td>${entry.maximum.toFixed(digits)} ${escapeHtml(unit)}</td></tr>`);
-  return rows.length
-    ? `<div><h5 class="breakdown-title">${escapeHtml(title)}</h5><div class="tensor-table breakdown-table"><table><thead><tr><th scope="col">${escapeHtml(title.replace(/s$/, ""))}</th><th scope="col">Average</th><th scope="col">Peak</th></tr></thead><tbody>${rows.join("")}</tbody></table></div></div>`
-    : "";
+// The CSV download: every reading of one component as one table. Context comes first, then each
+// card's metrics, every SoM rail, every CPU core, and the remaining measurements.
+const CSV_EXTRA_METRICS = { power: ["energy_per_inference_joules", "energy_joules"] };
+
+function benchmarkCsv(benchmark, readings) {
+  const rows = [["Section", "Metric", "Value", "Unit", "Key", "Note"]];
+  const add = (section, metric, value, unit = "", key = "", note = "") => rows.push([section, metric, value ?? "", unit, key, note]);
+  const telemetry = benchmark.telemetry;
+  const seconds = (milliseconds) => Number.isFinite(milliseconds) && (milliseconds / 1000).toFixed(1);
+  [
+    ["Model", benchmark.modelId], ["Build", benchmark.buildProfileId], ["Component", benchmark.componentId],
+    ["Workload", benchmark.workload], ["Platform", benchmark.platformVersion], ["Neat", benchmark.neatVersion],
+    ["MLA clock", Number.isFinite(benchmark.mlaFrequencyHz) && benchmark.mlaFrequencyHz / 1e6, "MHz"],
+    ["CPU clock", Number.isFinite(benchmark.cpuFrequencyKhz) && benchmark.cpuFrequencyKhz / 1e3, "MHz"],
+    ["CPU cores", benchmark.cpuCount], ["Batch size", benchmark.batchSize], ["Samples per trial", benchmark.samples],
+    ["Measured", benchmark.timestamp], ["Board telemetry", telemetry?.status], ["Sentinel", telemetry?.sentinelVersion],
+    ["Telemetry samples", telemetry?.samples], ["Telemetry interval", seconds(telemetry?.intervalMs), "s"],
+    ["Telemetry window", seconds(telemetry?.windowMs), "s"], ["Tool", benchmark.tool], ["Result schema", benchmark.schemaVersion],
+  ].filter(([, value]) => value || value === 0).forEach(([name, value, unit]) => add("Context", name, value, unit));
+  const metric = (section, key) => {
+    const reading = readings[key];
+    if (!reading) return;
+    const definition = metricDefinition(key, reading);
+    const shown = measuredValue(key, reading);
+    const note = !shown ? `Not reported${reading.reason ? `: ${reading.reason}` : ""}` : key === "sync_throughput_fps" ? "From the mean latency" : "";
+    add(section, definition.label, shown?.text, shown?.unit ?? definition.unit, key, note);
+  };
+  const placed = new Set();
+  DETAIL_CARDS.forEach(([id, title, , , cardRows]) => {
+    [...cardRows.flatMap(([, keys]) => (Array.isArray(keys) ? keys : [])), ...(CSV_EXTRA_METRICS[id] || [])]
+      .forEach((key) => { placed.add(key); metric(title, key); });
+  });
+  namedRails(benchmark.measurements).forEach((rail) => {
+    add("Power rails", `${rail.name}, average`, rail.mean.toFixed(2), "W", rail.key);
+    if (Number.isFinite(rail.maximum)) add("Power rails", `${rail.name}, peak`, rail.maximum.toFixed(2), "W", rail.key);
+  });
+  benchmark.cpuCores.forEach((core, index) => {
+    add("CPU cores", `Core ${index}, average`, core.mean.toFixed(1), "%");
+    if (Number.isFinite(core.maximum)) add("CPU cores", `Core ${index}, peak`, core.maximum.toFixed(1), "%");
+  });
+  Object.keys(benchmark.measurements).filter((key) => !placed.has(key)).sort().forEach((key) => metric("Other", key));
+  const cell = (value) => (/[",\r\n]/.test(String(value)) ? `"${String(value).replaceAll('"', '""')}"` : String(value));
+  return rows.map((row) => row.map(cell).join(",")).join("\r\n");
 }
 
-// The power rails, temperature sensors, and CPU cores behind the Power and Heat & load totals.
-function boardBreakdown(measurements, runId) {
-  const parts = (key) => measurements[key]?.details?.breakdown || [];
-  const rails = parts("peak_power_watts");
-  const sensors = [...parts("peak_die_temperature_c"), ...parts("peak_board_temperature_c")];
-  const cores = parts("peak_cpu_core_usage_pct");
-  const tables = [
-    breakdownTable("Power rails", rails, "W", 2),
-    breakdownTable("Temperature sensors", sensors, "°C", 1),
-    breakdownTable("CPU cores", cores, "%", 1),
-  ].filter(Boolean);
-  if (!tables.length) return "";
-  const meta = [rails.length && `${rails.length} rails`, sensors.length && `${sensors.length} sensors`, cores.length && `${cores.length} cores`]
-    .filter(Boolean).join(" · ");
-  return disclosure(`board:${runId}`, "Power rails, sensors, and CPU cores", `<div class="breakdown">${tables.join("")}</div>`, meta);
+// The byte order mark lets spreadsheet applications read the file as UTF-8, for units such as °C.
+function csvDataUrl(csv) {
+  return `data:text/csv;charset=utf-8,${encodeURIComponent(`\uFEFF${csv}\r\n`)}`;
 }
 
-// The performance tiles of each component, with the hint shown under each value.
-const KPI_METRICS = [
-  ["throughput_fps", "Inferences per second"],
-  ["latency_avg_ms", "Average per inference"],
-  ["avg_power_watts", "Average while running"],
-  ["energy_per_inference_joules", "SoM power ÷ throughput"],
-];
-
-function kpiTile(key, metric, hint) {
-  const definition = metricDefinition(key, metric);
-  const display = metricDisplay(metric, definition);
-  if (!display) return "";
-  return `<div class="kpi"><span>${escapeHtml(definition.label)}</span><strong>${escapeHtml(display.value.toFixed(display.digits))}<small>${escapeHtml(display.unit.replace("/inference", ""))}</small></strong><small>${escapeHtml(hint)}</small></div>`;
+function csvFileName(benchmark) {
+  const name = [benchmark.modelId, benchmark.buildProfileId, benchmark.componentId].filter(Boolean).join("-") || "model";
+  return `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}-benchmark.csv`;
 }
 
+// The MLA and CPU clocks bound the speed a result can reach, so the context names the clocks it ran at.
 function benchmarkContext(benchmark) {
+  const clock = (name, megahertz) => Number.isFinite(megahertz) && `${name} ${megahertz.toLocaleString()} MHz`;
   return [
     benchmark.workload,
     benchmark.platformVersion && `Platform ${benchmark.platformVersion}`,
     benchmark.neatVersion && `Neat ${benchmark.neatVersion}`,
+    clock("MLA", benchmark.mlaFrequencyHz / 1e6),
+    clock("CPU", benchmark.cpuFrequencyKhz / 1e3),
     Number.isFinite(benchmark.samples) && `${benchmark.samples.toLocaleString()} samples per trial`,
     benchmark.timestamp && `Measured ${formatDate(benchmark.timestamp, false)}`,
   ].filter(Boolean).join(" · ");
@@ -354,16 +382,12 @@ function componentBenchmark(payload, runId) {
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
-  const peak = measuredValue("peak_power_watts", benchmark.measurements.peak_power_watts);
-  const tiles = KPI_METRICS.map(([key, hint]) => kpiTile(
-    key, benchmark.measurements[key], key === "avg_power_watts" && peak ? `Peak ${peak.text} ${peak.unit} while running` : hint,
-  )).join("");
-  const { groups } = metricGroups(benchmark);
+  const tiles = KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key])).join("");
+  const details = benchmarkDetails(benchmark, payload);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}</p>
     ${executionGraphSection(benchmark.executionGraph, runId)}
-    ${disclosure(`benchmark:${runId}`, "Benchmark details", benchmarkDetails(benchmark, payload), groups.map((group) => group.title).join(" · "))}
-    ${boardBreakdown(benchmark.measurements, runId)}`;
+    ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".

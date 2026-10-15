@@ -98,7 +98,7 @@ in the same commit.
 | the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
 | a new model's `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script): it writes the whole Core `BenchmarkReport` through its own `report_json`, so board telemetry and later Core fields reach the registry |
-| a Core benchmark reading the registry should publish | a row in `TELEMETRY_METRICS` in `core_benchmark.py`, its measurement name in `benchmark_publication.py`, its label in the browser's `metrics.js`, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
+| a Core benchmark reading the registry should publish | a row in `TELEMETRY_METRICS` in `core_benchmark.py`, its measurement name in `benchmark_publication.py`, its label in the browser's `metrics.js`, its row in `DETAIL_CARDS` in `model-view.js` when a Benchmark details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a model script | the model's test of that behavior under `tests/build/` or `tests/measure/` |

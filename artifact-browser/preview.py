@@ -302,13 +302,20 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
     power = result["metrics"]["avg_power_watts"]["value"]
     samples = result["configuration"]["samples"]
+    # Pipelining makes asynchronous throughput exceed one input per mean latency; keep the template's ratio.
+    pipelining = result["metrics"]["throughput_fps"]["value"] * result["metrics"]["latency_avg_ms"]["value"] / 1000.0
+    throughput = round(pipelining * 1000.0 / latency, 1)
     values = {
         "latency_avg_ms": latency,
-        "throughput_fps": round(1000.0 / latency, 1),
-        "energy_joules": round(power * latency * samples / 1000.0, 2),
-        "energy_per_inference_joules": round(power * latency / 1000.0, 5),
+        "throughput_fps": throughput,
+        "energy_joules": round(power * samples / throughput, 2),
+        "energy_per_inference_joules": round(power / throughput, 5),
         "mla_memory_peak_mib": round(16.0 + _fraction("memory", *key) * 240.0, 1),
     }
+    memory = result["metrics"]["mla_memory_peak_mib"]
+    values["mla_memory_avg_mib"] = round(
+        values["mla_memory_peak_mib"] * result["metrics"]["mla_memory_avg_mib"]["value"] / memory["value"], 1,
+    )
     # The rest of the board telemetry keeps the template's DevKit readings.
     for name, value in values.items():
         metric = result["metrics"][name]

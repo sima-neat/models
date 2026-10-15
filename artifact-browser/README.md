@@ -67,7 +67,7 @@ revisions give every variant an older build in its history.
 The preview's benchmark results start from
 `artifact-browser/fixtures/performance-result-v5.json`, a ResNet-50 result
 that `import-core-benchmark` produced from a DevKit Core benchmark, so its
-board telemetry, rails, and sensors are real readings; the preview varies only
+board telemetry and power rails are real readings; the preview varies only
 speed, energy, and MLA memory per build. Edit it to exercise other metric
 values or availability states. The three-trial
 `artifact-browser/fixtures/performance-result-v4.json` keeps the schema-4
@@ -77,7 +77,7 @@ render gracefully.
 
 Benchmark adapters preserve every metric that follows the result contract.
 Known metrics receive curated labels, formatting, and a place in a benchmark
-group; unknown additive metrics appear automatically under Other measurements.
+card; unknown additive metrics appear automatically under Other measurements.
 Unsupported schema versions still
 link to the raw result instead of guessing at incompatible structures.
 
@@ -155,11 +155,12 @@ everything longer sits in one expandable row.
   catalog, and renders it from the section after Overview, because the title,
   hero, and Overview are already on the page.
 - **Performance** shows throughput, latency, SoM power, and energy per
-  inference for each component. **Benchmark details** shows the speed, power
-  and energy, heat and load, memory, and startup groups, metrics the runtime
-  did not report, the board telemetry source, and the result schema, tool, and
-  raw-result link. **Power rails, sensors, and CPU cores** lists each rail,
-  temperature sensor, and CPU core when the result carries them.
+  inference for each component, one number per tile. **Benchmark details** is
+  performance, heat, and CPU cards, with power (SoM, SoC, MLA, and each
+  power rail) and memory cards beside them,
+  then any other measurements and a footer with the telemetry source and
+  runtime beside **Raw result** and **Download CSV** (every reading of the
+  component in one table).
 - **Accuracy** shows the status, the first four metrics, and the scope.
   **Evaluation details** explains status and coverage and lists the context
   and remaining metrics.
@@ -221,7 +222,7 @@ opens that component's row (`component:<run id>`). Opening the
 
 Buttons with an icon start actions (download, copy). Blue text with ↗ is
 reserved for links that leave the browser. Cards group related numbers only
-(the KPI tiles, benchmark groups, and the package); the rest of the page uses
+(the KPI tiles, benchmark cards, and the package); the rest of the page uses
 sections and thin rules.
 
 `website/scripts/assemble-portal.mjs` renames every module with the revision
