@@ -886,6 +886,7 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert "${escapeHtml(dataset.split || \"\")}${sourceMarkup}</p>" in script
     assert "return { report: devkitPayload.result, run: devkitPayload.run };" in script
     assert "return { report: legacyDevkit.summary, run: detail.benchmarkRun };" in script
+    assert "return { report: detail.accuracy?.result || fallback?.summary, run: detail.summary.run };" in script
     assert ".measurement-link {" in styles
 
 

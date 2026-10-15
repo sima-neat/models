@@ -445,7 +445,7 @@ function orderedAccuracyMetrics(report) {
 }
 
 // The DevKit accuracy run wins over the legacy result on the benchmark run, which wins over compile-run
-// accuracy. A result carries the run that measured it when the page loaded that run.
+// accuracy. Each result carries the run that measured it.
 function accuracyResult(detail, devkitPayload) {
   const fallback = (detail.tests.test_results || [])
     .find((item) => item.suite === "accuracy" && item.summary?.schema_version === 1);
@@ -453,7 +453,7 @@ function accuracyResult(detail, devkitPayload) {
     .find((item) => item.suite === "accuracy" && item.summary?.schema_version === 2);
   if (devkitPayload?.result) return { report: devkitPayload.result, run: devkitPayload.run };
   if (legacyDevkit) return { report: legacyDevkit.summary, run: detail.benchmarkRun };
-  return { report: detail.accuracy?.result || fallback?.summary, run: null };
+  return { report: detail.accuracy?.result || fallback?.summary, run: detail.summary.run };
 }
 
 function variantAccuracy(variant) {
