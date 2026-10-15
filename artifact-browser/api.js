@@ -317,11 +317,15 @@ export function modelPackArtifacts(artifacts) {
   return (artifacts || []).filter((artifact) => artifact.artifact_type === "model-pack");
 }
 
+// The catalog view describes its builds by the current catalog; history describes each build by the
+// catalog at its own revision, when that has been loaded.
 export function catalogModelForRun(run) {
   const modelId = run.metadata?.model_id;
+  const current = state.models.find((model) => model.model_id === modelId) || null;
+  if (state.catalogMode !== "runs" && current?.builds?.some((build) => build.run_id === run.id)) return current;
   const key = `${run.git_ref || ""}:${run.commit_sha || ""}:${modelId || ""}`;
   const historical = state.historicalCatalogModels.get(key);
-  return historical?.model_id ? historical : state.models.find((model) => model.model_id === modelId) || null;
+  return historical?.model_id ? historical : current;
 }
 
 export async function loadHistoricalCatalogModel(run) {

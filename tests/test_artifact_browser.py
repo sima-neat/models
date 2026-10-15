@@ -349,6 +349,29 @@ def test_int8_variants_are_listed_first() -> None:
     assert json.loads(result.stdout) == ["modalix_int8", "modalix_int8_bf16", "a_fp32", "modalix_bf16"]
 
 
+def test_catalog_view_prefers_the_current_catalog_over_cached_history() -> None:
+    script = _browser_source("api.js")
+    start = script.index("export function catalogModelForRun(")
+    helper = script[start:script.index("\n}\n", start) + 3]
+    run = {"id": "reused", "git_ref": "refs/heads/develop", "commit_sha": "old", "metadata": {"model_id": "yolo26n"}}
+    probe = f"""
+const state = {{
+  models: [{{model_id: "yolo26n", family: "yolo", builds: [{{run_id: "reused"}}]}}],
+  historicalCatalogModels: new Map([["refs/heads/develop:old:yolo26n", {{model_id: "yolo26n", family: "yolo_26"}}]]),
+}};
+const families = ["models", "runs"].map((mode) => {{
+  state.catalogMode = mode;
+  return catalogModelForRun({json.dumps(run)}).family;
+}});
+console.log(JSON.stringify(families));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", helper + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == ["yolo", "yolo_26"]
+
+
 def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
     browser = _browser_source()
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
