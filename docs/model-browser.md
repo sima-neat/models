@@ -71,7 +71,7 @@ order:
    **Power** has the average and peak of SoM power, then SoC power indented
    under it, then the two rails that add up to SoC power indented under SoC:
    MLA and Non-MLA (the rest of the SoC). Rails peak at different moments, so
-   the SoC peak is the sum of the two peaks, shown with ≤ as an upper bound.
+   the SoC peak is the sum of the two peaks, an upper bound.
    A bar splits the average SoM power by rail; the two SoC rails sit in one
    block outlined like the SoC row's mark and coloured like the MLA and
    Non-MLA rows, and a legend names the other rails. **Memory** has MLA, CMA

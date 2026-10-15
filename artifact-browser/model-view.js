@@ -204,8 +204,8 @@ function railReadings(measurements, key) {
   const rails = powerRails(measurements).filter((rail) => keys.includes(rail.key));
   if (rails.length !== keys.length) return [];
   const sum = (field) => rails.reduce((total, rail) => total + rail[field], 0);
-  const reading = (value, bound = "") => Number.isFinite(value) && { text: `${bound}${value.toFixed(2)}`, unit: "W" };
-  return [reading(sum("mean")), reading(sum("maximum"), rails.length > 1 ? "≤ " : "")];
+  const reading = (value) => Number.isFinite(value) && { text: value.toFixed(2), unit: "W" };
+  return [reading(sum("mean")), reading(sum("maximum"))];
 }
 
 function railDot(key) {

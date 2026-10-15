@@ -1074,7 +1074,8 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert '["SoC", "soc", "MLA plus Non-MLA.' in script
     assert '["Non-MLA", "power_rail_soc_ddr_vdd_watts",' in script
     assert 'const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];' in script
-    assert 'reading(sum("maximum"), rails.length > 1 ? "≤ " : "")' in script
+    assert 'return [reading(sum("mean")), reading(sum("maximum"))];' in script
+    assert "≤" not in script
     assert "const legend = others.map(" in script
     assert ".rail-split > .rail-soc {" in styles
     assert "repeating-linear-gradient(135deg, var(--red) 0 2px" in script
