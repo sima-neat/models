@@ -7,7 +7,7 @@ references; the Model Registry semantic validator resolves those references
 against this file.
 
 Do not copy sanctioned lists into model definitions, browser code, API code, or
-database migrations. Individual schema-version 2 models declare references:
+database migrations. Each model declares references:
 
 ```yaml
 model_type: vision

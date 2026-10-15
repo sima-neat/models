@@ -39,8 +39,8 @@ models/<model-id>/scripts/surgery.py                # only when declared
 ```
 
 A taxonomy change may also be necessary, but it changes a repository-wide
-published contract. Explain it separately and follow the immutable versioning
-rules in [Model categorization taxonomy](model-taxonomy.md).
+published contract. Explain it separately and follow the publication rules in
+[Model categorization taxonomy](model-taxonomy.md).
 
 Put common lifecycle behavior in `tools/`; do not copy download, cache,
 checksum, MPK validation, or publication code into a model directory. Changes

@@ -999,14 +999,12 @@ def _fidelity_result(
         first = errors[0]
         location = ".".join(str(part) for part in first.absolute_path) or "<root>"
         raise ValidationError(f"{path}: numerical fidelity {location}: {first.message}")
+    # The schema fixes the format version; these fields must name the build being published.
     expected = {
-        "schema_version": 1,
         "model_id": model_id,
         "build_profile_id": build_profile_id,
         "component_id": component_id,
     }
-    if not isinstance(report, dict):
-        raise ValidationError(f"{path}: numerical fidelity result must be an object")
     for field, value in expected.items():
         if report.get(field) != value:
             raise ValidationError(f"{path}: numerical fidelity {field} must be {value!r}")
