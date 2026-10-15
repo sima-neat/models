@@ -37,7 +37,7 @@ test('names the model, build, and component a result measured', () => {
   assert.equal(benchmark.componentId, 'model');
 });
 
-test('reads the older formats the registry still serves and no others', () => {
+test('reads every published format and no unknown one', () => {
   const kinds = [1, 2, 3, 4, 5, 6].map((version) => adaptBenchmarkResult({...fixture(), schema_version: version}).kind);
-  assert.deepEqual(kinds, ['unsupported', 'supported', 'supported', 'supported', 'supported', 'unsupported']);
+  assert.deepEqual(kinds, ['supported', 'supported', 'supported', 'supported', 'supported', 'unsupported']);
 });

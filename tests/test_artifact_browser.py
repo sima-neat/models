@@ -1015,7 +1015,8 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    assert "new Map([[2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]])" in adapters
+    every_format = ", ".join(f"[{version}, adaptResult]" for version in range(1, 6))
+    assert f"new Map([{every_format}])" in adapters
     assert "Object.entries(result.metrics || {})" in adapters
     assert "/benchmarks/latest" in script
     # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.

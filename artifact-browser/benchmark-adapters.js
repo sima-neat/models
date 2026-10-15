@@ -105,8 +105,8 @@ function adaptResult(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-// Formats 2-5 share one reader; the registry still serves older develop builds in formats 2-4.
-export const benchmarkAdapters = new Map([[2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]]);
+// Every published format stays readable; formats 1-5 share one reader.
+export const benchmarkAdapters = new Map([[1, adaptResult], [2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]]);
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

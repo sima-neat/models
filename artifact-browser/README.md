@@ -69,9 +69,10 @@ The preview's benchmark results start from
 that `import-core-benchmark` produced from a DevKit Core benchmark, so its
 board telemetry and power rails are real readings; the preview varies only
 speed, energy, and MLA memory per build. Edit it to exercise other metric
-values or availability states. When the result format changes, regenerate
-this file in the new format and remove the benchmark adapters for formats the
-registry no longer serves.
+values or availability states. Keep one fixture per benchmark adapter, not
+per schema version: a new format that needs its own adapter adds its own
+fixture and tests, and the existing fixture keeps covering the older formats.
+Keep an adapter for every published schema version.
 
 Benchmark adapters preserve every metric that follows the result contract.
 Known metrics receive curated labels, formatting, and a place in a benchmark
