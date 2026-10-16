@@ -496,75 +496,45 @@ def test_matrix_records_fingerprints_without_catalog_carry_forward(model_reposit
     assert all(len(entry["build_fingerprint"]) == 64 for entry in matrix["include"])
 
 @pytest.mark.parametrize("grouped", [False, True])
-def test_artifact_suffix_updates_catalog_without_rebuilding(model_repository: Path, grouped: bool) -> None:
+def test_artifact_suffix_change_recompiles_only_its_invocation(model_repository: Path, grouped: bool) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text())
     if grouped:
         _declare_grouped_invocation(model)
         manifest.write_text(yaml.safe_dump(model))
-    base = "1" * 40
-    models = load_models(model_repository)
-    matrix = build_matrix(
-        models,
-        sorted(models),
-        repository=model_repository,
-        compiler_version=COMPILER_VERSION,
-    )
-    prior = {"models": [
-        {"id": model_id, "builds": [
-            {
-                "build_profile_id": entry["build_profile_id"], "component_id": component_id,
-                "compile_fingerprint": entry["build_fingerprint"], "artifact_sha256": "a" * 64,
-                "run_id": f"run-{model_id}-{component_id}",
-            }
-            for entry in matrix["include"] if entry["model_id"] == model_id
-            for component_id in entry["component_ids"]
-        ]} for model_id in models
-    ]}
-    previous = build_catalog_snapshot(repository=model_repository, branch="develop", git_sha=base, previous=prior)
-    for suffix in ("model_int8", "model_preview", None):
-        binding = model["build_profiles"][0]["components"][0]
-        if suffix is None:
-            binding.pop("artifact_suffix")
-        else:
-            binding["artifact_suffix"] = suffix
-        manifest.write_text(yaml.safe_dump(model))
-        head = f"{int(base[0]) + 1}" * 40
-        # The download name is catalog metadata: it never changes a compile key.
-        assert [
-            entry["build_fingerprint"]
-            for entry in build_matrix(
-                load_models(model_repository),
-                sorted(models),
-                repository=model_repository,
-                compiler_version=COMPILER_VERSION,
-            )["include"]
-        ] == [entry["build_fingerprint"] for entry in matrix["include"]]
-        current = build_catalog_snapshot(
-            repository=model_repository, branch="develop", git_sha=head, previous=previous,
-        )
-        alpha = next(item for item in current["models"] if item["id"] == "alpha")
-        build = next(item for item in alpha["builds"] if item["component_id"] == "model")
-        assert build.get("artifact_suffix") == suffix
-        if suffix is None:
-            assert "artifact_suffix" not in build
-        normalized = [copy.deepcopy(previous["models"]), copy.deepcopy(current["models"])]
-        for entries in normalized:
-            for item in entries:
-                for entry in item["builds"]:
-                    entry.pop("artifact_suffix", None)
-        # All identities, hashes and stage fingerprints are retained, including siblings.
-        assert normalized[0] == normalized[1]
-        previous, base = current, head
+
+    def fingerprints() -> dict[tuple[str, str, str], str]:
+        models = load_models(model_repository)
+        matrix = build_matrix(models, sorted(models), repository=model_repository, compiler_version=COMPILER_VERSION)
+        return {
+            (entry["model_id"], entry["build_profile_id"], entry["compile_invocation_id"]): entry["build_fingerprint"]
+            for entry in matrix["include"]
+        }
+
+    before = fingerprints()
+    profile = model["build_profiles"][0]
+    binding = profile["components"][0]
+    binding["artifact_suffix"] = "model_preview"
+    manifest.write_text(yaml.safe_dump(model))
+    after = fingerprints()
+
+    # The compiler names the MPK from the suffix, so only the invocation that compiles it reruns.
+    changed = {key for key in before if before[key] != after[key]}
+    assert len(changed) == 1
+    assert next(iter(changed))[:2] == ("alpha", profile["id"])
 
     binding["artifact_suffix"] = "a" * 256
     manifest.write_text(yaml.safe_dump(model))
     with pytest.raises(ValidationError, match="filename limit"):
-        build_catalog_snapshot(repository=model_repository, branch="develop", git_sha=head, previous=previous)
+        build_catalog_snapshot(repository=model_repository, branch="develop", git_sha="1" * 40)
 
 
 @pytest.mark.parametrize("source", ["base", "target", "stale", "missing", "forbidden"])
 def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_repository: Path, source: str) -> None:
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "model_int8"
+    manifest.write_text(yaml.safe_dump(model))
     models = load_models(model_repository)
     matrix = build_matrix(
         models,
@@ -585,10 +555,6 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     ]}
     if source == "stale":
         prior["models"][0]["builds"][0]["compile_fingerprint"] = "0" * 64
-    manifest = model_repository / "models" / "alpha" / "model.yaml"
-    model = yaml.safe_load(manifest.read_text())
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "model_int8"
-    manifest.write_text(yaml.safe_dump(model))
     reads, writes = [], []
 
     def read(url):

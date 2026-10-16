@@ -242,9 +242,8 @@ when useful. For example, RF-DETR uses `backbone_w8a8_mse_bcr` and `transformer_
 one `w8a8_w16a16` profile. The suffix is explicit and is not inferred from
 precision. The complete download basename must fit within 255 characters.
 
-The suffix is not a compile key input, so changing it reruns no stage. The
-catalog and browser downloads pick up the new name at once; the compiled MPK
-and its package take it at the next compile.
+The compiler builds the suffix into the MPK, so the suffix is a compile key
+input: changing it recompiles that component's invocation.
 
 Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
 from the shared vocabulary, for example `w8a8_mse` or
