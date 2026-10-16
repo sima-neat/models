@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {analyzeLayers, selectLayers} from '../../artifact-browser/layer-stats.js';
+import {analyzeLayers, selectLayers, layerTimeScale} from '../../artifact-browser/layer-stats.js';
 import {adaptBenchmarkResult} from '../../artifact-browser/benchmark-adapters.js';
 
 const row = (name, time, stage = 0) => ({name, total_execution_time_us: time, stage_index: stage});
@@ -17,13 +17,13 @@ test('preserves compiler order, duplicate names, zero times and gaps between MLA
   assert.deepEqual(analysis.layers.map(layer => layer.order), [1, 2, 3, 4, 5]);
 });
 
-test('search never changes the percentage denominator of the selected stage', () => {
+test('search never changes the component percentage denominator', () => {
   const analysis = analyzeLayers(rows);
-  const selected = selectLayers(analysis, {stage: '0', query: ' CoNV '});
-  assert.deepEqual(selected.layers.map(layer => layer.name), ['conv']);
-  assert.equal(selected.totalUs, 40);
-  assert.equal(selected.count, 3);
-  assert.equal(selected.zeroCount, 1);
+  const selected = selectLayers(analysis, {query: ' CoNV '});
+  assert.deepEqual(selected.layers.map(layer => layer.name), ['conv', 'conv']);
+  assert.equal(selected.totalUs, 70);
+  assert.equal(selected.count, 5);
+  assert.equal(selected.zeroCount, 2);
   assert.equal(selected.top10Share, 100);
   assert.equal(selectLayers(analysis, {query: 'missing'}).layers.length, 0);
 });
@@ -33,11 +33,10 @@ test('top ten share includes ten layers only', () => {
   assert.equal(selectLayers(analysis).top10Share, 50);
 });
 
-test('all-zero and nonexistent stages produce finite summaries', () => {
+test('all-zero profiles produce finite summaries', () => {
   const analysis = analyzeLayers([row('noop', 0)]);
   assert.equal(selectLayers(analysis).top10Share, 0);
   assert.equal(selectLayers(analysis).zeroCount, 1);
-  assert.equal(selectLayers(analysis, {stage: '2'}).totalUs, 0);
 });
 
 test('missing or malformed data never produces a partially rendered misleading profile', () => {
@@ -57,4 +56,14 @@ test('adapters expose layer analysis for saved reports and historical core repor
   assert.equal(adaptBenchmarkResult(old).value.layerAnalysis.totalUs, 70);
   delete old.core_report.layer_stats;
   assert.equal(adaptBenchmarkResult(old).value.layerAnalysis, null);
+});
+
+test('timing bars have a fixed, finite microsecond axis independent of the search', () => {
+  const analysis = analyzeLayers([row('slow', 578.71), row('fast', 20)]);
+  assert.equal(layerTimeScale(analysis), 600);
+  selectLayers(analysis, {query: 'fast'});
+  assert.equal(layerTimeScale(analysis), 600);
+  assert.equal(layerTimeScale(analyzeLayers([row('noop', 0)])), 1);
+  assert.equal(layerTimeScale(analyzeLayers([row('small', 0.04)])), 0.04);
+  assert.equal(layerTimeScale(analyzeLayers([row('large', Number.MAX_VALUE)])), Number.MAX_VALUE);
 });

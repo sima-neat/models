@@ -65,15 +65,15 @@ async function checkLayerAnalysis(browser, url) {
       const panel = page.locator('[data-layer-analysis]').first();
       await panel.waitFor({state: 'visible'});
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      if (await panel.locator('.layer-chart li').count() !== 15) throw new Error('layer chart must show 15 rows');
-      await panel.locator('[data-layer-filter="stage"]').selectOption('2');
+      if (await panel.locator('.layer-table tbody tr').count() !== 48) throw new Error('layer list must show every row');
+      if (await panel.locator('[data-layer-filter="stage"]').count()) throw new Error('stage dropdown should be absent');
+      const axis = await panel.locator('.layer-axis').innerText();
       await panel.locator('[data-layer-filter="query"]').fill('RESHAPE');
+      if (await panel.locator('.layer-axis').innerText() !== axis) throw new Error('search changed the time axis');
       const summary = await panel.locator('.layer-summary').innerText();
-      if (await panel.locator('.layer-chart li').count() !== 8) throw new Error('stage/name filtering failed');
+      if (await panel.locator('.layer-table tbody tr').count() !== 16) throw new Error('name filtering failed');
       await panel.locator('[data-layer-filter="order"]').selectOption('compiler');
-      await panel.locator('[data-disclosure^="layer-table:"] > summary').click();
-      if (await panel.locator('.layer-table tbody tr').count() !== 8) throw new Error('full layer table did not filter');
-      if (await panel.locator('.layer-table tbody tr').first().locator('td').first().innerText() !== '27') {
+      if (await panel.locator('.layer-table tbody tr').first().locator('.layer-name small').innerText() !== 'Stage 0 · #3') {
         throw new Error('compiler order lost after sorting');
       }
       await panel.locator('[data-layer-filter="query"]').fill('no such layer');

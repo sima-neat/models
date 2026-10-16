@@ -1,6 +1,6 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
-import { selectLayers } from "./layer-stats.js";
+import { selectLayers, layerTimeScale } from "./layer-stats.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
@@ -416,45 +416,36 @@ function executionGraphSection(graph, runId) {
 
 const layerTime = (value) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-function layerAnalysisBody(analysis, view, runId) {
-  const selection = selectLayers(analysis, view);
-  const { layers, totalUs, count, zeroCount, top10Share } = selection;
-  const share = (time) => totalUs > 0 ? time / totalUs * 100 : 0;
-  const shown = layers.slice(0, 15);
-  const maxUs = Math.max(...shown.map((layer) => layer.timeUs), 0);
-  const selected = (value, current) => String(value) === String(current) ? " selected" : "";
-  const bars = shown.map((layer) => `<li>
-    <span class="layer-chart-name" title="${escapeHtml(layer.name)}">${escapeHtml(layer.name)}<small>Stage ${layer.stage} · #${layer.order}</small></span>
-    <span class="layer-bar-track" aria-hidden="true"><span style="width:${maxUs > 0 ? layer.timeUs / maxUs * 100 : 0}%"></span></span>
-    <span class="layer-chart-value">${layerTime(layer.timeUs)} <small>µs · ${share(layer.timeUs).toFixed(1)}%</small></span>
-  </li>`).join("");
-  const rows = layers.map((layer) => `<tr><td>${layer.order}</td><td>${layer.stage}</td>
-    <th scope="row">${escapeHtml(layer.name)}</th><td>${layerTime(layer.timeUs)}</td><td>${share(layer.timeUs).toFixed(2)}%</td></tr>`).join("");
-  const table = `<div class="layer-table-scroll" tabindex="0" role="region" aria-label="Compiled layer timings"><table class="layer-table">
-    <thead><tr><th scope="col">Order</th><th scope="col">Stage</th><th scope="col">Compiled layer</th><th scope="col">Time (µs)</th><th scope="col">Share</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
+function layerAnalysisBody(analysis, view) {
+  const { layers, totalUs, count, zeroCount, top10Share } = selectLayers(analysis, view);
+  const scaleUs = layerTimeScale(analysis);
+  const rows = layers.map((layer) => `<tr>
+    <th scope="row" class="layer-name">${escapeHtml(layer.name)}<small>Stage ${layer.stage} · #${layer.order}</small></th>
+    <td class="layer-timing"><span class="layer-bar-track" aria-hidden="true"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span><span>${layerTime(layer.timeUs)}</span></td>
+    <td class="layer-share">${(totalUs > 0 ? layer.timeUs / totalUs * 100 : 0).toFixed(2)}%</td>
+  </tr>`).join("");
   return `<div class="layer-summary">
     <div><strong>${layerTime(totalUs)} <small>µs</small></strong><span>Profiled MLA time</span></div>
     <div><strong>${count.toLocaleString()}</strong><span>Compiled layers · ${zeroCount} zero-time</span></div>
     <div><strong>${top10Share.toFixed(1)}<small>%</small></strong><span>Time in 10 slowest layers</span></div>
   </div>
-  <p class="layer-explanation">Timings come from a separate MLA profiling pass. Shares use the selected stages’ profiled time, not end-to-end latency. Names identify compiled layers; they may differ from ONNX operators.</p>
+  <p class="layer-explanation">Timings come from a separate MLA profiling pass. Shares use the component’s profiled time, not end-to-end latency. Names identify compiled layers; they may differ from ONNX operators.</p>
   <div class="layer-controls">
-    <label>Stage<select data-layer-filter="stage"><option value="all"${selected("all", view.stage)}>All MLA stages</option>${analysis.stages.map((stage) => `<option value="${stage.index}"${selected(stage.index, view.stage)}>Stage ${stage.index}</option>`).join("")}</select></label>
     <label class="layer-search">Layer name<input type="search" data-layer-filter="query" value="${escapeHtml(view.query)}" placeholder="Search compiled layers" autocomplete="off"></label>
-    <label>Order<select data-layer-filter="order"><option value="time"${selected("time", view.order)}>Slowest first</option><option value="compiler"${selected("compiler", view.order)}>Compiler order</option></select></label>
+    <label>Order<select data-layer-filter="order"><option value="time"${view.order === "time" ? " selected" : ""}>Slowest first</option><option value="compiler"${view.order === "compiler" ? " selected" : ""}>Compiler order</option></select></label>
   </div>
-  <p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers${layers.length > 15 ? " · chart shows first 15" : ""}</p>
-  ${layers.length ? `<ol class="layer-chart" aria-label="Layer execution times">${bars}</ol>
-    ${disclosure(`layer-table:${runId}`, "All matching layers", table, `${layers.length.toLocaleString()} layers`)}` : '<p class="muted-message">No layers match this search.</p>'}`;
+  <p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers</p>
+  ${layers.length ? `<div class="layer-table-scroll" tabindex="0" role="region" aria-label="Compiled layer timings"><table class="layer-table">
+    <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time (µs)<span class="layer-axis" aria-label="Scale: 0 to ${layerTime(scaleUs)} microseconds"><span>0</span><span>${layerTime(scaleUs / 2)}</span><span>${layerTime(scaleUs)}</span></span></th><th scope="col">Share</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>` : '<p class="muted-message">No layers match this search.</p>'}`;
 }
 
 function layerAnalysisSection(analysis, runId) {
   if (!analysis) return "";
-  const view = state.layerViews.get(runId)?.view || { stage: "all", query: "", order: "time" };
+  const view = state.layerViews.get(runId)?.view || { query: "", order: "time" };
   state.layerViews.set(runId, { analysis, view });
   return disclosure(`layers:${runId}`, "Layer analysis",
-    `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view, runId)}</div>`,
+    `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view)}</div>`,
     `${analysis.layers.length.toLocaleString()} layers · ${layerTime(analysis.totalUs)} µs MLA`);
 }
 
@@ -468,7 +459,7 @@ export function updateLayerAnalysis(event) {
   view[field] = control.value;
   const start = control.selectionStart;
   const end = control.selectionEnd;
-  panel.innerHTML = layerAnalysisBody(analysis, view, runId);
+  panel.innerHTML = layerAnalysisBody(analysis, view);
   const replacement = panel.querySelector(`[data-layer-filter="${field}"]`);
   replacement.focus({ preventScroll: true });
   if (field === "query") replacement.setSelectionRange(start, end);

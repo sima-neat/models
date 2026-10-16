@@ -131,10 +131,11 @@ invalidating their compile keys. Historical results without layer stats stay
 readable; new measurements add the analysis view.
 
 The model browser's **Layer analysis** shows the profiled MLA time, layer count,
-and share in the ten slowest layers. A bar chart shows up to 15 matching layers;
-stage selection, name search, and sorting by time or compiler order also apply
-to the full table. Percentages use all layers in the selected stages, even when
-a search hides some. **Download CSV** includes every layer in compiler order.
+and share in the ten slowest layers. A single scrollable table pairs each layer name with its timing bar, execution
+time and share. Bars use a fixed microsecond axis that stays unchanged when
+filtering. Search by name or sort by time or compiler order; every matching
+layer is included. Percentages use all profiled layers in the component, even
+when a search hides some. Stage indices remain visible on each row. **Download CSV** includes every layer in compiler order.
 
 ## Workload and measurements
 

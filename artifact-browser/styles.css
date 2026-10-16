@@ -635,33 +635,34 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .layer-summary strong small { font-size: 14px; font-weight: 500; }
 .layer-summary span, .layer-explanation, .layer-results { color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
 .layer-explanation { max-width: 760px; margin: 0 0 20px; }
-.layer-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.layer-controls { display: flex; gap: 12px; align-items: end; }
 .layer-controls label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
 .layer-controls select, .layer-controls input { box-sizing: border-box; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; }
-.layer-search { flex: 1; min-width: 160px; }
+.layer-search { flex: 1; min-width: 0; }
 .layer-controls :is(input, select):focus-visible, .layer-table-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .layer-results { margin: 16px 0 12px; }
-.layer-chart { list-style: none; padding: 0; margin: 0 0 20px; }
-.layer-chart li { display: grid; grid-template-columns: minmax(100px, 2fr) minmax(50px, 3fr) minmax(100px, 1fr); align-items: center; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.layer-chart-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 12px; }
-.layer-chart-name small { display: block; color: var(--ink-soft); font-size: 10px; margin-top: 3px; }
-.layer-bar-track { display: block; height: 12px; border-radius: 3px; background: var(--green-soft); overflow: hidden; }
-.layer-bar-track > span { display: block; height: 100%; background: var(--green); border-radius: inherit; }
-.layer-chart-value { text-align: right; font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
-.layer-chart-value small { display: block; color: var(--ink-soft); font-size: 10px; margin-top: 3px; }
-.layer-table-scroll { overflow: auto; max-height: 440px; }
-.layer-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
-.layer-table th, .layer-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
-.layer-table thead th { position: sticky; top: 0; background: var(--surface); color: var(--ink-soft); font-weight: 600; }
+.layer-table-scroll { overflow: auto; max-height: 640px; }
+.layer-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+.layer-table th, .layer-table td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.layer-table thead th { position: sticky; top: 0; z-index: 1; background: var(--canvas); color: var(--ink-soft); font-size: 11px; font-weight: 600; }
+.layer-table th:first-child { width: 45%; padding-left: 0; }
+.layer-table th:last-child { width: 65px; }
 .layer-table tbody th { font-weight: 400; }
-.layer-table th:nth-last-child(-n+2), .layer-table td:nth-last-child(-n+2) { text-align: right; }
+.layer-axis { display: flex; justify-content: space-between; gap: 4px; margin-top: 8px; font-size: 10px; font-weight: 400; }
+.layer-name { overflow-wrap: anywhere; }
+.layer-name small { display: block; color: var(--ink-soft); font-size: 10px; margin-top: 4px; }
+.layer-timing > span:last-child { display: block; text-align: right; }
+.layer-bar-track { display: block; height: 12px; margin-bottom: 4px; border-radius: 3px; background: var(--green-soft); overflow: hidden; }
+.layer-bar-track > span { display: block; height: 100%; background: var(--green); border-radius: inherit; }
+.layer-table .layer-share, .layer-table th:last-child { text-align: right; padding-right: 0; }
 @media (max-width: 600px) {
   .layer-summary { gap: 10px; }
   .layer-summary strong { font-size: 19px; }
   .layer-summary span { font-size: 10px; }
   .layer-controls { gap: 10px; }
-  .layer-search { order: -1; flex-basis: 100%; }
-  .layer-controls label:not(.layer-search) { flex: 1; }
-  .layer-chart li { grid-template-columns: minmax(80px, 1.5fr) minmax(30px, 1fr) 80px; gap: 8px; }
-  .layer-chart-name, .layer-chart-value { font-size: 11px; }
+  .layer-controls select { max-width: 130px; }
+  .layer-table { font-size: 11px; }
+  .layer-table th, .layer-table td { padding: 10px 6px; }
+  .layer-table th:last-child { width: 42px; }
+  .layer-table thead th { font-size: 10px; }
 }

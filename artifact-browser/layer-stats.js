@@ -20,8 +20,8 @@ export function analyzeLayers(rows) {
   return { layers, totalUs, stages: [...stages.values()].sort((a, b) => a.index - b.index) };
 }
 
-export function selectLayers(analysis, { stage = "all", query = "", order = "time" } = {}) {
-  const selected = stage === "all" ? analysis.layers : analysis.layers.filter((layer) => layer.stage === Number(stage));
+export function selectLayers(analysis, { query = "", order = "time" } = {}) {
+  const selected = analysis.layers;
   const totalUs = selected.reduce((sum, layer) => sum + layer.timeUs, 0);
   const ranked = [...selected].sort((a, b) => b.timeUs - a.timeUs || a.order - b.order);
   const top10Us = ranked.slice(0, 10).reduce((sum, layer) => sum + layer.timeUs, 0);
@@ -32,4 +32,13 @@ export function selectLayers(analysis, { stage = "all", query = "", order = "tim
     zeroCount: selected.filter((layer) => layer.timeUs === 0).length,
     top10Share: totalUs > 0 ? top10Us / totalUs * 100 : 0,
   };
+}
+
+// One fixed microsecond axis for the component, even when a search hides its slowest layer.
+export function layerTimeScale(analysis) {
+  const maximum = analysis.layers.reduce((value, layer) => Math.max(value, layer.timeUs), 0);
+  if (!maximum) return 1;
+  const step = 10 ** Math.floor(Math.log10(maximum));
+  const rounded = Math.ceil(maximum / step) * step;
+  return Number.isFinite(rounded) ? rounded : maximum;
 }
