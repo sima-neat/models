@@ -512,7 +512,7 @@ The executable recipe takes two positional paths followed by compiler options:
 #!/usr/bin/env bash
 set -euo pipefail
 llima-compile "$1" -o "$2" \
-  "${@:3}" --jobs 12 --log_level INFO
+  "${@:3}" --jobs 6 --log_level INFO
 ```
 
 Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
@@ -547,5 +547,5 @@ Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corr
 stage is implemented. A manual Qwen build compiles and publishes only; performance
 and accuracy are separate follow-ups [#294](https://github.com/sima-neat/models/issues/294)
 and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen profile
-uses the expensive runner with twelve compile jobs, 4096 tokens, 448×448 input,
+uses the default runner with six compile jobs, 4096 tokens, 448×448 input,
 and language group size 128.

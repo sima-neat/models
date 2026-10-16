@@ -8,4 +8,4 @@ if [[ $# -lt 2 ]]; then
 fi
 llima-compile "$1" -o "$2" \
   "${@:3}" \
-  --jobs 12 --log_level INFO
+  --jobs 6 --log_level INFO
