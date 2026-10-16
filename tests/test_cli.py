@@ -26,6 +26,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
         "make-benchmark-manifest",
         "publish",
         "publish-candidate",
+        "publish-branch-deployment",
         "publish-benchmark",
         "publish-catalog",
         "resolve-base",

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {approvedModel, branchModels, catalogBuildRuns} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
+const {selectedModel, branchModels, catalogBuildRuns} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
 
 const run = (id, model, ref, time, extra = {}) => ({
   id, repository: 'sima-neat/models', run_type: 'model_compile', status: 'completed', git_ref: ref,
@@ -57,7 +57,7 @@ test('approved subset packages cannot become full-model downloads', () => {
       {package_id: 'complete', run_id: 'complete-package'},
     ]}},
   };
-  const projected = approvedModel(definition);
+  const projected = selectedModel(definition);
   assert.deepEqual(projected.packages.map(item => item.component_run_ids), [
     {backbone: 'backbone'}, {backbone: 'backbone', head: 'head'},
   ]);
@@ -117,34 +117,43 @@ test('completed candidates never replace an on-demand catalog approved build or 
   assert.equal(models[0].packages[0].run_id, 'resnet-package');
 });
 
-test('a selected feature branch shows its successful on-demand build without promotion', () => {
-  const definition = {model_id: 'qwen', display_name: 'Qwen', build_on_demand: true, builds: [], packages: []};
+test('feature catalogs show finalized selections rather than arbitrary completed runs', async () => {
   const candidate = run('candidate', 'qwen', feature, '2026-10-02T00:00:00Z');
-  const branch = 'feat/ui';
-  assert.deepEqual(branchModels([], [], [definition], '', branch), []);
-  assert.deepEqual(branchModels([{...candidate, status: 'failed'}], [], [definition], '', branch), []);
-  assert.deepEqual(branchModels([candidate], [], [definition]), []);
-  for (const other of ['develop', 'main', 'feat/other']) {
-    assert.deepEqual(branchModels([candidate], [], [definition], '', other), []);
-  }
-  const [model] = branchModels([candidate], [], [definition], '', branch);
+  const newer = run('newer', 'qwen', feature, '2026-10-03T00:00:00Z');
+  const definition = {model_id: 'qwen', display_name: 'Qwen', build_on_demand: true, builds: [], packages: []};
+  assert.deepEqual(branchModels([candidate], [], [definition], '', 'feat/ui'), []);
+  const selected = {...definition, branch_deployments: {int8: {artifacts: [
+    {component_id: 'model', run_id: candidate.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
+  ]}}};
+  const resolved = await catalogBuildRuns([selected], [newer], async path => {
+    assert.equal(path, `/v1/runs/${candidate.id}`);
+    return {run: candidate};
+  }, '/v1/repositories/sima-neat/models');
+  const [model] = branchModels([newer, ...resolved], [], [selected]);
   assert.equal(model.builds[0].run_id, candidate.id);
+  assert.equal(model.builds[0].artifact_name, 'llima');
   assert.deepEqual(definition.builds, []);
-  assert.deepEqual(branchModels([candidate], [], [definition], '2.1.3', branch), []);
-  assert.equal(branchModels([candidate], [], [definition], '3.0.0', branch)[0].builds[0].run_id, candidate.id);
+  assert.deepEqual(branchModels([candidate], [], [selected], '2.1.3'), []);
 });
 
-test('feature branch candidates replace inherited builds and keep their matching package', () => {
+test('branch selections replace inherited approvals and pin their matching package', () => {
   const candidate = run('candidate', 'resnet_50', feature, '2026-10-02T00:00:00Z');
-  const definition = {...catalog[0], build_on_demand: true};
-  const packageRun = {id: 'candidate-package', git_ref: feature, status: 'completed', run_type: 'model_package',
+  const definition = {...catalog[0], build_on_demand: true,
+    build_requirements: {int8: {packages: [{id: 'default', component_ids: ['model']}]}},
+    approved_deployments: {int8: {artifacts: [
+      {component_id: 'model', run_id: resnet.id, artifact_name: 'llima'},
+    ]}},
+    branch_deployments: {int8: {artifacts: [
+      {component_id: 'model', run_id: candidate.id, artifact_name: 'llima'},
+      {package_id: 'default', run_id: 'candidate-package', artifact_name: 'package'},
+    ]}},
+  };
+  const packageRun = {id: 'unselected-package', git_ref: feature, status: 'completed', run_type: 'model_package',
     metadata: {model_id: 'resnet_50', build_profile_id: 'int8', component_run_ids: {model: candidate.id}}};
-  const [model] = branchModels([candidate, resnet], [packageRun], [definition], '', 'feat/ui');
+  const [model] = branchModels([candidate, resnet], [packageRun], [definition]);
   assert.equal(model.builds[0].run_id, candidate.id);
-  assert.deepEqual(model.packages.map(item => item.run_id), [packageRun.id]);
-  const [developModel] = branchModels([candidate, resnet], [packageRun], [definition], '', 'develop');
-  assert.equal(developModel.builds[0].run_id, resnet.id);
-  assert.deepEqual(developModel.packages.map(item => item.run_id), ['resnet-package']);
+  assert.deepEqual(model.packages.map(item => item.run_id), ['candidate-package']);
+  assert.equal(selectedModel({...definition, branch_deployments: undefined}).builds[0].run_id, resnet.id);
 });
 
 test('catalog deployment metadata survives branch selection', () => {

@@ -62,7 +62,9 @@ Staging publication uses `publish-candidate` once per complete model/profile;
 it binds every required compile/package run before registering on-demand
 artifacts. Ordinary catalog documentation remains branch-retained. Publish
 target `build_requirements` using existing compile keys and consume server-owned
-`approved_deployments`; never synthesize approval. See
+`approved_deployments`. After finalization, `publish-branch-deployment` selects
+the candidate in its feature catalog; readers consume server-owned
+`branch_deployments` before inherited approvals. Never synthesize approval. See
 [on-demand builds](design-doc/model-registry-architecture.md#on-demand-builds).
 
 ## Tests

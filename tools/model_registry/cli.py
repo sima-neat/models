@@ -280,6 +280,14 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     candidate.add_argument("--summary", type=Path)
     candidate.add_argument("--json", action="store_true", dest="json_output")
 
+    branch_deployment = subcommands.add_parser(
+        "publish-branch-deployment", help="select a finalized candidate in its source feature-branch catalog"
+    )
+    branch_deployment.add_argument("--candidate", type=Path, required=True)
+    branch_deployment.add_argument("--api-url", required=True)
+    branch_deployment.add_argument("--read-api-url", required=True)
+    branch_deployment.add_argument("--aws-region", default="us-west-2")
+
     publish_package = subcommands.add_parser(
         "publish-package", help="publish assembled full-model packages to the Vulcan registry"
     )
@@ -1044,6 +1052,14 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _publish(args)
         if args.command == "publish-candidate":
             return _publish_candidate(args)
+        if args.command == "publish-branch-deployment":
+            from .candidates import publish_branch_deployment
+
+            result = publish_branch_deployment(
+                args.candidate, api_url=args.api_url, read_api_url=args.read_api_url, aws_region=args.aws_region,
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
         if args.command == "publish-package":
             return _publish_package(args)
         if args.command == "publish-accuracy":

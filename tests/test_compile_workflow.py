@@ -32,7 +32,7 @@ def step_index(job: dict, name: str) -> int:
 
 def evaluate(condition: str, values: dict[str, object]) -> bool:
     """Evaluate a GitHub Actions condition after substituting every context reference it uses."""
-    expression = condition
+    expression = " ".join(condition.splitlines())
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
     expression = expression.replace("&&", " and ").replace("||", " or ")
@@ -332,10 +332,45 @@ def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
     assert '--base-branches "$BASE_BRANCHES"' in publish["run"]
 
 
+@pytest.mark.parametrize(("branch", "on_demand", "publishable", "expected"), [
+    ("feature/llima-models", True, "false", True),
+    ("feature/llima-models", False, "false", False),
+    ("develop", True, "false", False),
+    ("main", True, "false", False),
+    ("master", True, "false", False),
+    ("develop", False, "true", True),
+])
+def test_targeted_candidates_publish_feature_requirements_before_compiling(branch, on_demand, publishable, expected):
+    condition = load(WORKFLOW)["jobs"]["initialize-catalog"]["if"]
+    assert evaluate(condition, {
+        "!cancelled()": True,
+        "github.ref": f"refs/heads/{branch}",
+        "needs.select.outputs.publishable": publishable,
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.authorize-runner-classes.result": "success",
+        "contains(fromJSON(needs.authorize-runner-classes.outputs.matrix).include.*.build_on_demand, true)": on_demand,
+    }) is expected
+
+
+def test_native_candidates_are_not_published_again_by_the_multi_invocation_job():
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
+    program = jq_program(plan["run"], 'candidate_matrix="$(jq -c')
+    native = {"model_id": "qwen", "build_profile_id": "w4a16", "build_on_demand": True,
+              "runner_script": "scripts/run_llima_compilation.sh"}
+    generic = {"model_id": "vision", "build_profile_id": "w8a8", "build_on_demand": True,
+               "runner_script": "scripts/run_model_compilation.sh"}
+    assert run_jq(program, {"include": [native, generic, generic, {**generic, "build_on_demand": False}]}) == {
+        "include": [{"model_id": "vision", "build_profile_id": "w8a8"}],
+    }
+
+
 @pytest.mark.parametrize(
     ("publishable", "initialize_result", "expected"),
     [
         ("false", "skipped", True),
+        ("false", "success", True),
+        ("false", "failure", False),
+        ("false", "cancelled", False),
         ("true", "success", True),
         ("true", "skipped", False),
         ("true", "failure", False),
@@ -625,7 +660,10 @@ def test_build_is_published_from_a_hosted_runner() -> None:
     download = step(publish, "Download this compiler output")
 
     assert publish["needs"] == "compile"
-    assert publish["if"] == "${{ !fromJSON(inputs.entry).build_on_demand }}"
+    assert publish["if"] == (
+        "${{ !fromJSON(inputs.entry).build_on_demand || "
+        "fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' }}"
+    )
     assert publish["runs-on"] == "ubuntu-latest"
     assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
     assert upload["with"]["name"].startswith("compiler-output-")
@@ -795,20 +833,29 @@ def test_start_script_starts_the_other_builds_after_a_failure(tmp_path: Path) ->
     assert len(calls.read_text(encoding="utf-8").splitlines()) == 2
 
 
-def test_on_demand_candidates_publish_packages_without_catalog_updates() -> None:
+def test_native_candidates_finalize_and_select_in_the_existing_publish_job() -> None:
     publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
     assemble = step(publish, "Assemble the packages this build completes")
     packages = step(publish, "Publish the finalized packages")
     catalog = step(publish, "Publish this build in the catalog")
 
-    assert publish["if"] == "${{ !fromJSON(inputs.entry).build_on_demand }}"
-    assert assemble["if"] == "inputs.publishable"
+    finalize = step(publish, "Publish and finalize the complete candidate")
+    select = step(publish, "Publish this candidate in the feature-branch catalog")
+    assert finalize["if"] == "fromJSON(inputs.entry).build_on_demand"
+    assert "model-registry publish-candidate --repository . --dist-dir _compiled" in finalize["run"]
+    assert "model-registry publish-branch-deployment --candidate _candidate/candidate.json" in select["run"]
+    assert step_index(publish, finalize["name"]) < step_index(publish, select["name"])
+    assert "inputs.publishable" not in select["if"]
+    for branch in ("develop", "main", "master"):
+        assert f"github.ref != 'refs/heads/{branch}'" in select["if"]
+    assert step(publish, "Publish the complete component set")["if"] == "${{ !fromJSON(inputs.entry).build_on_demand }}"
+    assert assemble["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
     assert "--all" in assemble["run"]
     assert packages["if"] == (
-        "inputs.publishable && steps.packages.outputs.count != '0'"
+        "inputs.publishable && !fromJSON(inputs.entry).build_on_demand && steps.packages.outputs.count != '0'"
     )
     assert "model-registry publish-package" in packages["run"]
-    assert catalog["if"] == "inputs.publishable"
+    assert catalog["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
     assert "--compiled-dir _compiled" in catalog["run"]
     assert '--base-branches "$BASE_BRANCHES"' in catalog["run"]
 
@@ -825,6 +872,7 @@ def test_candidates_join_every_invocation_and_never_promote_catalog() -> None:
     assert not download["with"].get("merge-multiple", False)
     text = (ROOT / ".github/workflows/vulcan-model-candidate.yml").read_text()
     assert "model-registry publish-candidate" in text
+    assert "model-registry publish-branch-deployment" in text
     assert "publish-catalog" not in text
     assert "--summary" in text
 

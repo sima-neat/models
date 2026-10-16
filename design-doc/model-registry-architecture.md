@@ -81,7 +81,7 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
 | `stage_plan.py` | which builds compile and which DevKit stages run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
-| `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization and retry receipts (CI only) |
+| `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
 | `core_benchmark.py` | packaging Core's measurements for publication |
@@ -131,11 +131,12 @@ push (Vulcan Model Orchestrator, every push)
        -> on main and develop: publish that model browser to staging
   -> plan: compare stage keys with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
-  -> initialize the catalog: mark selected builds pending
+  -> initialize the catalog: publish model requirements and mark automatic builds pending
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
-       on-demand: wait for all invocations, then publish one complete candidate without a catalog update
+       on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
+       other on-demand: join all invocations before finalization and feature selection
   -> publish the catalog snapshot
   -> measure: start the DevKit stages that reused builds still lack
 DevKit stages (per build)
@@ -231,7 +232,9 @@ An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
 In staging, `publish-candidate` waits for every invocation of the selected
-model/profile. It registers one versioned contract, binds each compile and
+model/profile. A single-component LLiMa build does this in its existing Publish
+job; other on-demand models join their invocations in the candidate job.
+It registers one versioned contract, binds each compile and
 package run before publishing its records, and declares every required file.
 New uploads use the returned candidate prefix, with shared payloads reused
 within that candidate. Every run is completed before candidate finalization.
@@ -260,6 +263,16 @@ existing compile keys, compiler pin, and package topology, even before a build
 exists. Vulcan owns `approved_deployments`; readers resolve its original compile
 and package roots through the existing artifact APIs. The producer never
 manufactures approval or copies candidate requirements into the target.
+
+For feature builds, the workflow publishes these requirements before compiling.
+After finalization, `publish-branch-deployment` calls Vulcan's `branch-deployments`
+endpoint with the frozen candidate ID/digest and current catalog snapshot. A
+snapshot conflict reloads the catalog and retries with a new body-bound key;
+failed selection can be retried without recompilation. Vulcan atomically selects
+and protects the deployment in `branch_deployments`, without approving it.
+Readers prefer that profile's branch selection over inherited approvals and
+legacy builds; unselected completed runs cannot replace it. PR #256's API and
+migration must be deployed before using this publication step.
 
 Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
 approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).

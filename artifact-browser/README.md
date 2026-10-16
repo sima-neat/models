@@ -261,10 +261,11 @@ revision and folder. This location describes the compiled deployment and is
 independent of the source checkpoint links. Storage selection and approval
 remain backend responsibilities.
 
-Selecting a feature branch shows its successfully published on-demand builds,
-including candidates that have not been promoted. Metadata alone does not create
-a card. Develop and Main show the backend's approved selections; a feature-branch
-candidate cannot replace them. Completed candidates also remain in build history.
+Selecting a feature branch shows its finalized `branch_deployments`, including
+candidates that have not been promoted. They take precedence over inherited
+`approved_deployments`. Metadata and unselected runs do not create on-demand
+cards or replace a selection. Develop and Main show approved selections.
+Completed candidates also remain in build history.
 Approved package membership comes from the profile's `build_requirements`. Only
 packages covering every shown component are offered as full-model downloads.
 

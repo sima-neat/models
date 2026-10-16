@@ -1,4 +1,4 @@
-import { approvedModel, variantBuildRuns } from "./branch-builds.js";
+import { selectedModel, variantBuildRuns } from "./branch-builds.js";
 
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
@@ -29,11 +29,11 @@ export function cliDownloadCommand(run, catalogBranch, staging = false) {
 
 // Keep component discovery independent of the visible search and compiler filters.
 export async function variantDownloads(run, api, catalogModel = null) {
-  if (catalogModel) catalogModel = approvedModel(catalogModel);
+  if (catalogModel) catalogModel = selectedModel(catalogModel);
   const modelId = run.metadata?.model_id;
   const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
   const packs = (summary) => (summary.artifacts || []).filter((item) => item.artifact_type === "model-pack");
-  const roots = catalogModel?.approved_deployments?.[profile]
+  const roots = (catalogModel?.branch_deployments?.[profile] || catalogModel?.approved_deployments?.[profile])
     ? catalogModel.builds.filter((build) => build.build_profile_id === profile) : [];
   const selected = roots.some((build) => build.run_id === run.id) ? roots : [];
   const runs = selected.length ? await Promise.all(selected.map(async (build) =>

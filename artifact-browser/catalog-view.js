@@ -1,5 +1,5 @@
 // Model catalog and build history: filters, search, and the result list.
-import { approvedModel, branchModels, variantBuilds } from "./branch-builds.js";
+import { selectedModel, branchModels, variantBuilds } from "./branch-builds.js";
 import {
   DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
@@ -97,7 +97,7 @@ export function updateFilterDisclosure() {
 }
 
 export function applyCatalog(payload, { append = false, cache = true } = {}) {
-  const models = Array.isArray(payload.models) ? payload.models.map(approvedModel) : [];
+  const models = Array.isArray(payload.models) ? payload.models.map(selectedModel) : [];
   const runs = Array.isArray(payload.runs) ? payload.runs : [];
   const modelsMode = payload.mode === "models"
     || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
@@ -108,7 +108,7 @@ export function applyCatalog(payload, { append = false, cache = true } = {}) {
       state.packageRuns = payload.packageRuns || [];
       state.catalogDefinitions = payload.catalogDefinitions || [];
       state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
-        elements["compiler-filter"].value, state.preferredBranch ?? elements["branch-filter"].value);
+        elements["compiler-filter"].value);
     } else {
       state.models = append ? [...state.models, ...models] : models;
     }

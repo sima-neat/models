@@ -155,7 +155,8 @@ shows its repository, pinned commit revision, and optional subdirectory. The
 repository link opens that exact deployment revision. This deployment location
 is separate from the original source checkpoint linked in the page header.
 
-Select a feature branch to browse its successfully published on-demand builds
-before promotion. Publishing metadata alone does not create a card. Develop and
+Select a feature branch to browse its finalized on-demand builds selected in
+that branch's catalog before promotion. Metadata and unselected runs do not
+create a card. Develop and
 Main continue to show the registry's approved deployments. Feature-branch
 candidates do not replace those selections and also appear in **Build history**.

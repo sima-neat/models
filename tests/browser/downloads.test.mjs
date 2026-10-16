@@ -13,8 +13,9 @@ const summary = (item) => ({run: item, artifacts: [
   {name: 'numerical-fidelity', artifact_type: 'numerical-fidelity'},
 ]});
 
-test('approved downloads use exact selected roots without rediscovering newer component runs', async () => {
-  const catalog = {model_id: 'rf_detr_small', builds: [], approved_deployments: {
+for (const field of ['approved_deployments', 'branch_deployments']) {
+test(`${field} downloads use exact roots without rediscovering newer component runs`, async () => {
+  const catalog = {model_id: 'rf_detr_small', builds: [], [field]: {
     mixed: {artifacts: [
       {component_id: 'transformer', run_id: run.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
       {component_id: 'backbone', run_id: backbone.id, artifact_name: 'mpk', layout: 'archive', format: 'mpk'},
@@ -30,6 +31,18 @@ test('approved downloads use exact selected roots without rediscovering newer co
   }, catalog);
   assert.deepEqual(downloads.map(item => item.name), ['mpk', 'llima']);
 });
+
+test(`${field} downloads fail if a selected root is unavailable`, async () => {
+  const catalog = {[field]: {mixed: {artifacts: [
+    {component_id: 'transformer', run_id: run.id, artifact_name: 'missing'},
+  ]}}};
+  await assert.rejects(variantDownloads(run, async path => {
+    assert.equal(path, `/v1/runs/${run.id}`);
+    return summary(run);
+  }, catalog), /No model file is available/);
+});
+}
+
 
 test('a historical download keeps its requested run when the current catalog approves a different candidate', async () => {
   const catalog = {model_id: 'rf_detr_small', approved_deployments: {mixed: {artifacts: [

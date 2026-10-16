@@ -488,7 +488,8 @@ required for an on-demand build. Use staging; production candidate publication
 is not enabled. Direct `plan-stages` calls must also pass `--include-on-demand`.
 The workflow publishes all invocations and packages as one retained candidate.
 Its summary shows the candidate ID, immutable digest, source and protection;
-publication does not approve it or change the selected catalog build.
+on a feature branch it also selects the finalized deployment for that branch's
+website and CLI downloads. This does not approve it for Develop or Main.
 Retry failed jobs within the seven-day assembly deadline; after expiry start a
 new workflow run. See the [architecture contract](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#on-demand-builds)
 for retention and the separate promotion workflow.

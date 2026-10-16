@@ -37,6 +37,7 @@ jobs:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
       REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
       AWS_REGION: ${{ inputs.aws_region }}
       ARTIFACT_BUCKET: ${{ inputs.artifact_bucket }}
       KMS_KEY_ID: ${{ inputs.artifact_kms_key_id }}
@@ -83,6 +84,12 @@ jobs:
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$GITHUB_STEP_SUMMARY"
 
+      - name: Publish this candidate in the feature-branch catalog
+        if: github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+        run: |
+          model-registry publish-branch-deployment --candidate _candidate/candidate.json \
+            --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" --aws-region "$AWS_REGION"
+
       - name: Retain publication receipts even when publication fails
         if: always()
         uses: actions/upload-artifact@v7
@@ -91,6 +98,7 @@ jobs:
           path: |
             _candidate/candidate.json
             _candidate/publication.json
+            _candidate/branch-publication.json
             _candidate/uploads/*.json
           if-no-files-found: ignore
           retention-days: 14

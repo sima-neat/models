@@ -12,15 +12,19 @@ from .model import load_models
 from .package import _link_or_copy, assemble_package
 from .registry import (
     JsonObject,
+    ReadRequest,
+    RegistryPublicationError,
     Request,
     S3ArtifactStore,
     SigV4RegistryClient,
     _head_matrix,
     _preflight_compilations,
+    _public_registry_json,
     canonical_sha256,
     publish_compilations,
     publish_packages,
 )
+from .stage_plan import read_current_catalog
 
 DEPLOYMENTS = "/v1/repositories/sima-neat/models/deployments"
 
@@ -30,6 +34,48 @@ def _save(path: Path, value: JsonObject) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def publish_branch_deployment(
+    candidate_file: str | Path, *, api_url: str, read_api_url: str, aws_region: str,
+    request: Request | None = None, read_request: ReadRequest | None = None,
+) -> JsonObject:
+    """Select a finalized candidate in its source feature catalog without approving it."""
+    path = Path(candidate_file)
+    try:
+        candidate = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValidationError(f"could not read candidate receipt {path}: {exc}") from exc
+    if (not isinstance(candidate, dict) or candidate.get("state") != "finalized"
+            or not candidate.get("deployment_id") or not candidate.get("manifest_digest")):
+        raise ValidationError("branch publication requires a finalized candidate receipt")
+    ref = candidate.get("git_ref", "")
+    if not isinstance(ref, str) or not ref.startswith("refs/heads/") or ref in {
+        "refs/heads/",
+        "refs/heads/develop", "refs/heads/main", "refs/heads/master",
+    }:
+        raise ValidationError("unapproved deployment selection requires a source feature branch")
+    client = SigV4RegistryClient(api_url, aws_region, request=request)
+    for attempt in range(8):
+        record, _ = read_current_catalog(
+            read_request or _public_registry_json, read_api_url, ref.removeprefix("refs/heads/"),
+        )
+        if record is None:
+            raise ValidationError("publish the feature-branch model requirements before selecting its deployment")
+        body = {
+            "git_ref": ref, "deployment_id": candidate["deployment_id"],
+            "manifest_digest": candidate["manifest_digest"], "expected_snapshot": record["canonical_sha256"],
+        }
+        try:
+            result = client.request("POST", DEPLOYMENTS.rsplit("/", 1)[0] + "/branch-deployments", body,
+                                    "branch-deployment-" + canonical_sha256(body))
+        except RegistryPublicationError as exc:
+            if "catalog_snapshot_conflict" not in str(exc) or attempt == 7:
+                raise
+            continue
+        _save(path.parent / "branch-publication.json", result)
+        return result
+    raise AssertionError("unreachable")
 
 
 def publish_candidate(

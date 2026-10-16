@@ -138,7 +138,7 @@ jobs:
           publishable=true
           if [[ -n "${REQUESTED_PROFILES:-}" || -n "${REQUESTED_COMPONENTS:-}" ]]; then
             publishable=false
-            echo "Targeted dispatch skips catalog publication; on-demand packages publish as candidates for approval." >> "$GITHUB_STEP_SUMMARY"
+            echo "Targeted dispatch skips ordinary build updates; finalized on-demand candidates are selected in their feature catalog." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
 
@@ -244,9 +244,9 @@ jobs:
           # The DevKit stages run on Modalix boards only.
           measure_matrix="$(jq -c '{include: [.measure.include[] | select(.target == "modalix")]}' <<< "$plan")"
           compile_count="$(jq -r '.include | length' <<< "$compile_matrix")"
-          candidate_matrix="$(jq -c '{include: [.include[] | select(.build_on_demand) | {model_id, build_profile_id}] | unique}' <<< "$compile_matrix")"
+          candidate_matrix="$(jq -c '{include: [.include[] | select(.build_on_demand and .runner_script != "scripts/run_llima_compilation.sh") | {model_id, build_profile_id}] | unique}' <<< "$compile_matrix")"
           candidate_count="$(jq -r '.include | length' <<< "$candidate_matrix")"
-          if [[ "$candidate_count" != "0" && "$VULCAN_ENVIRONMENT" != "staging" ]]; then
+          if [[ "$VULCAN_ENVIRONMENT" != "staging" ]] && jq -e '.include | any(.build_on_demand)' <<< "$compile_matrix" >/dev/null; then
             echo "On-demand candidate publication is currently enabled only in staging." >&2
             exit 1
           fi
@@ -324,9 +324,11 @@ jobs:
     needs: [select, resolve-vulcan-config, authorize-runner-classes]
     if: >-
       !cancelled() &&
-      needs.select.outputs.publishable == 'true' &&
       needs.resolve-vulcan-config.result == 'success' &&
-      needs.authorize-runner-classes.result == 'success'
+      needs.authorize-runner-classes.result == 'success' &&
+      (needs.select.outputs.publishable == 'true' ||
+       (github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' &&
+        contains(fromJSON(needs.authorize-runner-classes.outputs.matrix).include.*.build_on_demand, true)))
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
@@ -375,7 +377,8 @@ jobs:
       !cancelled() &&
       needs.resolve-vulcan-config.result == 'success' &&
       needs.authorize-runner-classes.result == 'success' &&
-      (needs.select.outputs.publishable != 'true' || needs.initialize-catalog.result == 'success')
+      (needs.initialize-catalog.result == 'success' ||
+       (needs.select.outputs.publishable != 'true' && needs.initialize-catalog.result == 'skipped'))
     permissions:
       actions: write
       contents: read

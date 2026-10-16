@@ -186,7 +186,11 @@ components and can force every selected build to recompile, which also
 applies a changed model test at once; otherwise a changed test applies the next
 time its stage runs. A dispatch that
 names build profiles or components compiles and publishes those builds but
-does not publish packages or update the catalog.
+skips ordinary package and catalog updates. On-demand builds publish their
+complete candidate, including packages; a feature-branch run also selects it
+in that branch's catalog after finalization. LLiMa does this in the existing
+Publish job; models with multiple invocations join them before publication.
+Develop and Main still require separate approval and promotion.
 
 ## Review and merge expectations
 

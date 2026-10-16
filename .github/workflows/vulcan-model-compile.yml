@@ -249,7 +249,7 @@ jobs:
   publish:
     name: Publish
     needs: compile
-    if: ${{ !fromJSON(inputs.entry).build_on_demand }}
+    if: ${{ !fromJSON(inputs.entry).build_on_demand || fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.vulcan_environment }}
     permissions:
@@ -310,6 +310,7 @@ jobs:
           role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Publish the complete component set
+        if: ${{ !fromJSON(inputs.entry).build_on_demand }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
@@ -327,6 +328,47 @@ jobs:
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           echo "Published $MODEL_ID/$BUILD_PROFILE_ID components: $COMPONENT_IDS." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore candidate publication receipts
+        if: fromJSON(inputs.entry).build_on_demand && github.run_attempt != '1'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: candidate-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}-*
+          path: _candidate
+          merge-multiple: true
+
+      - name: Publish and finalize the complete candidate
+        if: fromJSON(inputs.entry).build_on_demand
+        run: |
+          model-registry publish-candidate --repository . --dist-dir _compiled --output-dir _candidate \
+            --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" \
+            --api-url "$REGISTRY_API_URL" --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
+            --environment "$VULCAN_ENVIRONMENT" --branch "$GITHUB_REF_NAME" --git-sha "$GITHUB_SHA" \
+            --github-run-id "$GITHUB_RUN_ID" --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish this candidate in the feature-branch catalog
+        if: >-
+          fromJSON(inputs.entry).build_on_demand && github.ref != 'refs/heads/develop' &&
+          github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+        run: |
+          model-registry publish-branch-deployment --candidate _candidate/candidate.json \
+            --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" --aws-region "$AWS_REGION"
+
+      - name: Retain candidate publication receipts
+        if: always() && fromJSON(inputs.entry).build_on_demand
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}-${{ github.run_attempt }}
+          path: |
+            _candidate/candidate.json
+            _candidate/publication.json
+            _candidate/branch-publication.json
+            _candidate/uploads/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Retain the published model output for the DevKit stages
         uses: actions/upload-artifact@v7
@@ -349,7 +391,7 @@ jobs:
 
       - name: Assemble the packages this build completes
         id: packages
-        if: inputs.publishable
+        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -366,7 +408,7 @@ jobs:
           echo "Assembled $count model package(s)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the finalized packages
-        if: inputs.publishable && steps.packages.outputs.count != '0'
+        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand && steps.packages.outputs.count != '0'
         run: |
           set -euo pipefail
           model-registry publish-package \
@@ -379,7 +421,7 @@ jobs:
             --json > "$RUNNER_TEMP/package-publication.json"
 
       - name: Publish this build in the catalog
-        if: inputs.publishable
+        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
         run: |
           set -euo pipefail
           : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
