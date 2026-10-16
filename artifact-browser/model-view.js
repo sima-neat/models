@@ -421,7 +421,7 @@ function layerAnalysisBody(analysis, view) {
   const scaleUs = layerTimeScale(analysis);
   const rows = layers.map((layer) => `<tr>
     <th scope="row" class="layer-name">${escapeHtml(layer.name)}<small>Stage ${layer.stage} · #${layer.order}</small></th>
-    <td class="layer-timing"><span class="layer-bar-track" aria-hidden="true"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span><span>${layerTime(layer.timeUs)}</span></td>
+    <td class="layer-timing"><div class="layer-timing-value"><span class="layer-bar-track" aria-hidden="true"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span><span>${layerTime(layer.timeUs)}</span></div></td>
     <td class="layer-share">${(totalUs > 0 ? layer.timeUs / totalUs * 100 : 0).toFixed(2)}%</td>
   </tr>`).join("");
   return `<div class="layer-summary">

@@ -629,40 +629,49 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .download-actions button:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
 
 /* Layer profiling stays scoped to one benchmark component. */
-.layer-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 8px 0 16px; }
-.layer-summary > div { display: flex; flex-direction: column; gap: 4px; }
-.layer-summary strong { color: var(--ink); font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.layer-summary strong small { font-size: 14px; font-weight: 500; }
-.layer-summary span, .layer-explanation, .layer-results { color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
-.layer-explanation { max-width: 760px; margin: 0 0 20px; }
-.layer-controls { display: flex; gap: 12px; align-items: end; }
-.layer-controls label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
-.layer-controls select, .layer-controls input { box-sizing: border-box; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; }
+.layer-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 8px 0 20px; }
+.layer-summary > div { display: flex; flex-direction: column; gap: 6px; }
+.layer-summary strong { color: var(--ink); font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.layer-summary strong small { font-size: 15px; font-weight: 500; }
+.layer-summary span, .layer-explanation, .layer-results { color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.layer-explanation { max-width: 850px; margin: 0 0 24px; }
+.layer-controls { display: flex; gap: 16px; align-items: end; }
+.layer-controls label { display: flex; flex-direction: column; gap: 8px; color: var(--ink-soft); font-size: 13px; font-weight: 600; }
+.layer-controls select, .layer-controls input { box-sizing: border-box; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
 .layer-search { flex: 1; min-width: 0; }
 .layer-controls :is(input, select):focus-visible, .layer-table-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.layer-results { margin: 16px 0 12px; }
-.layer-table-scroll { overflow: auto; max-height: 640px; }
-.layer-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
-.layer-table th, .layer-table td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: left; }
-.layer-table thead th { position: sticky; top: 0; z-index: 1; background: var(--canvas); color: var(--ink-soft); font-size: 11px; font-weight: 600; }
-.layer-table th:first-child { width: 45%; padding-left: 0; }
-.layer-table th:last-child { width: 65px; }
+.layer-results { margin: 18px 0 12px; }
+.layer-table-scroll { box-sizing: border-box; overflow: auto; scrollbar-gutter: stable; padding-inline-end: 16px; max-height: 640px; }
+.layer-table { --layer-time-value-width: 88px; --layer-time-gap: 16px; width: 100%; table-layout: fixed; border-collapse: collapse; color: var(--ink); font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.layer-table th, .layer-table td { padding: 16px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.layer-table thead th { position: sticky; top: 0; z-index: 1; vertical-align: top; background: var(--canvas); color: var(--ink-soft); font-size: 13px; font-weight: 600; }
+.layer-table th:first-child { width: 43%; padding-left: 0; }
+.layer-table th:last-child { width: 88px; }
 .layer-table tbody th { font-weight: 400; }
-.layer-axis { display: flex; justify-content: space-between; gap: 4px; margin-top: 8px; font-size: 10px; font-weight: 400; }
+.layer-axis { display: flex; justify-content: space-between; gap: 4px; margin-top: 10px; margin-inline-end: calc(var(--layer-time-value-width) + var(--layer-time-gap)); font-size: 12px; font-weight: 400; }
 .layer-name { overflow-wrap: anywhere; }
-.layer-name small { display: block; color: var(--ink-soft); font-size: 10px; margin-top: 4px; }
-.layer-timing > span:last-child { display: block; text-align: right; }
-.layer-bar-track { display: block; height: 12px; margin-bottom: 4px; border-radius: 3px; background: var(--green-soft); overflow: hidden; }
+.layer-name small { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
+.layer-timing-value { display: grid; grid-template-columns: minmax(0, 1fr) var(--layer-time-value-width); align-items: center; gap: var(--layer-time-gap); }
+.layer-timing-value > span:last-child { text-align: right; white-space: nowrap; }
+.layer-bar-track { display: block; height: 12px; border-radius: 3px; background: var(--green-soft); overflow: hidden; }
 .layer-bar-track > span { display: block; height: 100%; background: var(--green); border-radius: inherit; }
-.layer-table .layer-share, .layer-table th:last-child { text-align: right; padding-right: 0; }
+.layer-table .layer-share, .layer-table th:last-child { text-align: right; padding-right: 0; white-space: nowrap; }
 @media (max-width: 600px) {
-  .layer-summary { gap: 10px; }
-  .layer-summary strong { font-size: 19px; }
-  .layer-summary span { font-size: 10px; }
-  .layer-controls { gap: 10px; }
-  .layer-controls select { max-width: 130px; }
-  .layer-table { font-size: 11px; }
-  .layer-table th, .layer-table td { padding: 10px 6px; }
-  .layer-table th:last-child { width: 42px; }
-  .layer-table thead th { font-size: 10px; }
+  .layer-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .layer-summary > div:first-child { grid-column: 1 / -1; }
+  .layer-summary strong { font-size: 20px; }
+  .layer-summary span { font-size: 12px; }
+  .layer-controls { gap: 12px; }
+  .layer-controls select { max-width: 146px; }
+  .layer-table-scroll { padding-inline-end: 12px; }
+  .layer-table { --layer-time-value-width: 64px; --layer-time-gap: 8px; font-size: 13px; }
+  .layer-table th, .layer-table td { padding: 14px 8px; }
+  .layer-table th:first-child { width: 55%; }
+  .layer-table th:last-child { width: 58px; }
+  .layer-table thead th { font-size: 12px; }
+  .layer-name small { font-size: 11px; }
+  .layer-timing-value { display: block; text-align: right; }
+  .layer-timing-value > span:last-child { display: block; }
+  .layer-table .layer-bar-track, .layer-table .layer-axis { display: none; }
+  .layer-table thead th:nth-child(2) { text-align: right; }
 }

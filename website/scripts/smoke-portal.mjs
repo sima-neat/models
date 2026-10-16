@@ -67,6 +67,28 @@ async function checkLayerAnalysis(browser, url) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       if (await panel.locator('.layer-table tbody tr').count() !== 48) throw new Error('layer list must show every row');
       if (await panel.locator('[data-layer-filter="stage"]').count()) throw new Error('stage dropdown should be absent');
+      // Force a classic scrollbar and the widest percentage, which exposed clipping on desktop.
+      await page.addStyleTag({content: '.layer-table-scroll::-webkit-scrollbar { width: 18px; height: 18px; }'});
+      const layout = await panel.evaluate(panel => {
+        const region = panel.querySelector('.layer-table-scroll');
+        const share = panel.querySelector('.layer-share');
+        share.textContent = '100.00%';
+        const text = document.createRange();
+        text.selectNodeContents(share);
+        const cell = share.getBoundingClientRect();
+        const bounds = region.getBoundingClientRect();
+        const textBounds = text.getBoundingClientRect();
+        const time = panel.querySelector('.layer-timing-value > span:last-child').getBoundingClientRect();
+        return {
+          rightPadding: bounds.left + region.clientWidth - cell.right,
+          fits: textBounds.left >= cell.left && textBounds.right <= cell.right,
+          numericAlignment: Math.abs((textBounds.top + textBounds.bottom - time.top - time.bottom) / 2),
+          fontSize: Number.parseFloat(getComputedStyle(share).fontSize),
+        };
+      });
+      if (layout.rightPadding < 10 || !layout.fits) throw new Error('Share column is clipped by the scrollbar');
+      if (layout.numericAlignment > 1) throw new Error('Time and share values are not aligned');
+      if (layout.fontSize < 13) throw new Error('Layer text is too small');
       const axis = await panel.locator('.layer-axis').innerText();
       await panel.locator('[data-layer-filter="query"]').fill('RESHAPE');
       if (await panel.locator('.layer-axis').innerText() !== axis) throw new Error('search changed the time axis');
