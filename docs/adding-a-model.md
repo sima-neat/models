@@ -241,7 +241,8 @@ has at most one `devkit_script` accuracy entry. Every component with a
 
 Record the scores the source model's authors published under
 [`published_metrics`](metadata-schema.md#published-metrics), with the dataset,
-conditions, and pinned page of each.
+conditions, and pinned page of each. Record only numbers the page prints for
+these weights; leave the field out when none are published.
 
 Follow [Accuracy and fidelity](local-accuracy-development.md) for the fidelity
 and accuracy contracts. Start `performance.py` from the [canonical

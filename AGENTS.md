@@ -150,7 +150,8 @@ in the same commit.
 
 1. Declare the change in `model.yaml` and the model's `scripts/` and
    `tests/`, following [adding a model](docs/adding-a-model.md) and the
-   [metadata schema](docs/metadata-schema.md).
+   [metadata schema](docs/metadata-schema.md). Record the source model's
+   published scores in `published_metrics`.
 2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
 3. Compile each changed build in the pinned Model Compiler with
    `scripts/run_model_compilation.sh` and check every MPK with
