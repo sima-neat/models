@@ -157,3 +157,61 @@ def test_invalid_spec_revision_is_rejected() -> None:
     spec["model_runner_approvals_revision"] = "mutable"
     with pytest.raises(ValidationError, match="lowercase SHA-256"):
         _authorize(_matrix(), spec)
+
+
+def _shared_spec(*approvals: dict) -> dict:
+    records = [
+        {key: value for key, value in approval.items() if key not in {"environment", "approved_at", "expires_at"}}
+        for approval in approvals
+    ]
+    return {**_spec(*records), "model_runner_approvals_schema_version": 2}
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_shared_approval_authorizes_identical_capacity_and_provenance(environment: str) -> None:
+    result = authorize_runner_matrix(
+        _matrix("expensive"), _shared_spec(_approval()),
+        repository="sima-neat/models", environment=environment,
+        now=datetime(2040, 1, 1, tzinfo=timezone.utc),
+    )["include"][0]
+    assert result["runner_class"] == "expensive"
+    assert result["runner_approval_id"] == "sima-neat/models:efficientdet_d3:modalix_int8_1536:model"
+    assert result["runner_approval_spec_revision"] == REVISION
+
+
+@pytest.mark.parametrize("version", [0, 3, "2", None, True])
+def test_unknown_approval_schema_fails_closed(version: object) -> None:
+    spec = {**_shared_spec(_approval()), "model_runner_approvals_schema_version": version}
+    with pytest.raises(ValidationError, match="schema version"):
+        _authorize(_matrix("expensive"), spec)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("environment", "staging"), ("expires_at", "2027-01-01T00:00:00Z"), ("approved_at", "2026-09-01T00:00:00Z"),
+])
+def test_shared_approval_rejects_legacy_controls(field: str, value: str) -> None:
+    spec = _shared_spec(_approval())
+    spec["model_runner_approvals"][0][field] = value
+    with pytest.raises(ValidationError, match="cannot contain"):
+        _authorize(_matrix("expensive"), spec)
+
+
+def test_shared_approval_preserves_ceiling_and_component_scope() -> None:
+    with pytest.raises(ValidationError, match="above approved maximum"):
+        _authorize(_matrix("most-expensive"), _shared_spec(_approval()))
+    with pytest.raises(ValidationError, match="no unique"):
+        _authorize(_grouped_matrix("expensive"), _shared_spec(_approval()))
+    with pytest.raises(ValidationError, match="duplicate"):
+        _authorize(_matrix("expensive"), _shared_spec(_approval(), _approval()))
+    with pytest.raises(ValidationError, match="no unique"):
+        _authorize(_matrix("expensive"), _shared_spec(_approval(build_profile_id="another_profile")))
+
+
+def test_shared_grouped_approval_records_all_components() -> None:
+    result = _authorize(
+        _grouped_matrix("expensive"), _shared_spec(_approval(), _approval(component_id="postprocessor")),
+    )["include"][0]
+    assert result["runner_approval_ids"] == [
+        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model",
+        "sima-neat/models:efficientdet_d3:modalix_int8_1536:postprocessor",
+    ]

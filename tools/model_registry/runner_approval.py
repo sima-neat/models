@@ -41,6 +41,10 @@ def _non_empty_string(record: dict[str, Any], field: str, index: int) -> str:
 
 
 def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list[dict[str, Any]]]:
+    schema_version = spec.get("model_runner_approvals_schema_version", 1)
+    if type(schema_version) is not int or schema_version not in (1, 2):
+        raise ValidationError("unsupported Vulcan model runner approvals schema version")
+    shared = schema_version == 2
     revision = spec.get("model_runner_approvals_revision")
     if not isinstance(revision, str) or _SPEC_REVISION.fullmatch(revision) is None:
         raise ValidationError("Vulcan spec model_runner_approvals_revision must be a lowercase SHA-256")
@@ -60,6 +64,8 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
         if "build_profile_id" in record or "component_id" in record:
             component_id = _non_empty_string(record, "component_id", index)
             build_profile_id = _non_empty_string(record, "build_profile_id", index)
+        elif shared:
+            raise ValidationError("shared Vulcan runner approvals require exact build-profile/component fields")
         else:
             # Before contract v2, one variant always produced one MPK. Preserve
             # those approvals only for the conventional single component; a
@@ -68,7 +74,12 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
             build_profile_id = _non_empty_string(record, "variant_id", index)
             record["component_id"] = component_id
             record["build_profile_id"] = build_profile_id
-        environment = _non_empty_string(record, "environment", index)
+        if shared:
+            if any(field in record for field in ("environment", "approved_at", "expires_at")):
+                raise ValidationError("shared Vulcan runner approvals cannot contain environment or timestamp controls")
+            environment = ""
+        else:
+            environment = _non_empty_string(record, "environment", index)
         maximum = _non_empty_string(record, "maximum_runner_class", index)
         _non_empty_string(record, "approved_by", index)
         _non_empty_string(record, "reason", index)
@@ -87,15 +98,16 @@ def _validated_approvals(spec: dict[str, Any], now: datetime) -> tuple[str, list
                 f"model_runner_approvals[{index}].maximum_runner_class must be expensive or most-expensive"
             )
 
-        approved_at = _timestamp(record.get("approved_at"), f"model_runner_approvals[{index}].approved_at")
-        if approved_at > now:
-            raise ValidationError(f"model_runner_approvals[{index}].approved_at is in the future")
-        expires_at_raw = record.get("expires_at")
-        if expires_at_raw is not None:
-            expires_at = _timestamp(expires_at_raw, f"model_runner_approvals[{index}].expires_at")
-            if expires_at <= approved_at:
-                raise ValidationError(f"model_runner_approvals[{index}].expires_at must follow approved_at")
-            record["_expires_at"] = expires_at
+        if not shared:
+            approved_at = _timestamp(record.get("approved_at"), f"model_runner_approvals[{index}].approved_at")
+            if approved_at > now:
+                raise ValidationError(f"model_runner_approvals[{index}].approved_at is in the future")
+            expires_at_raw = record.get("expires_at")
+            if expires_at_raw is not None:
+                expires_at = _timestamp(expires_at_raw, f"model_runner_approvals[{index}].expires_at")
+                if expires_at <= approved_at:
+                    raise ValidationError(f"model_runner_approvals[{index}].expires_at must follow approved_at")
+                record["_expires_at"] = expires_at
 
         identity = (repository, model_id, component_id, build_profile_id, environment)
         if identity in identities:
@@ -177,7 +189,8 @@ def authorize_runner_matrix(
                     and record["model_id"] == model_id
                     and record["component_id"] == component_id
                     and record["build_profile_id"] == build_profile_id
-                    and record["environment"] == environment
+                    and (vulcan_spec.get("model_runner_approvals_schema_version") == 2
+                         or record["environment"] == environment)
                 ]
                 if len(matches) != 1:
                     raise ValidationError(
@@ -198,7 +211,8 @@ def authorize_runner_matrix(
                         f"above approved maximum {maximum}"
                     )
                 approval_ids.append(
-                    f"{repository}:{model_id}:{build_profile_id}:{component_id}:{environment}"
+                    f"{repository}:{model_id}:{build_profile_id}:{component_id}"
+                    + ("" if vulcan_spec.get("model_runner_approvals_schema_version") == 2 else f":{environment}")
                 )
 
         entry["requested_runner_class"] = requested

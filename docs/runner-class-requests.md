@@ -61,27 +61,29 @@ The Vulcan approval must identify, at minimum:
 | model ID | Identifies the model requesting elevated resources. |
 | build profile ID | Limits approval to one target-wide configuration. |
 | component ID | Limits approval to the independently compiled unit with measured need. |
-| environment | Separates development, staging, and production authority. |
 | maximum runner class | Caps the class that the scaler may provision. |
-| approver and approval time | Provides an auditable decision record. |
+| owner | Identifies responsibility; Git history records the decision. |
 | reason and evidence | Records measurements such as peak memory, timeout, or a benchmark run. |
-| expiry or review condition | Prevents exceptional capacity from becoming permanent without review. |
+
+Vulcan authors these grants in `config/model-runner-approvals.json`. Groups share
+owner, evidence, maximum class, and exact targets across a list of model IDs.
+Staging and production consume the same catalog. Grants have no expiration or
+environment scope; removal or modification in source control changes authority
+when deployed. Compilation grants do not authorize ONNX conversion.
 
 An illustrative Vulcan record is:
 
 ```yaml
+model_runner_approvals_schema_version: 2
 model_runner_approvals:
   - repository: sima-neat/models
     model_id: example_detector
     build_profile_id: w16a16
     component_id: detector
-    environment: staging
     maximum_runner_class: expensive
     approved_by: platform-team
-    approved_at: "2026-09-01T16:00:00Z"
     reason: Default runner exceeded its memory limit during compilation.
     evidence: https://github.com/sima-neat/models/actions/runs/123456789
-    expires_at: "2026-12-01T00:00:00Z"
 ```
 
 This example communicates the required semantics; the Vulcan specification
@@ -109,11 +111,10 @@ job scheduling and scaler provisioning
 ```
 
 The admission check matches repository, model ID, build profile ID, component
-ID, environment, and
-requested class against the Vulcan record. It returns only an approved logical
+ID, and requested class against the Vulcan record. It returns only an approved logical
 runner label.
 
-During the v2 migration, an existing `variant_id` approval without the new
+For legacy published schema version 1, an existing `variant_id` approval without the new
 fields is interpreted as that build profile for the conventional single
 component named `model`. It cannot authorize a newly introduced named
 component. Replace legacy approvals with explicitly scoped records when they
@@ -123,7 +124,7 @@ The workflow and scaler must fail closed when:
 
 - the requested class is unknown;
 - an elevated request has no matching approval;
-- the approval is expired, malformed, or for another environment;
+- the approval is malformed or the specification version is unsupported;
 - the requested class exceeds the approved maximum; or
 - the approval service or specification cannot be verified.
 
@@ -139,7 +140,7 @@ directly from untrusted event input.
 
 Pull-request checks validate the requested class against the schema, but they
 do not read the protected Vulcan specification or run admission. The first
-trusted push after merge performs that lookup. A missing, expired, or mismatched
+trusted push after merge performs that lookup. A missing or mismatched
 approval fails before the self-hosted compile job is scheduled.
 
 ## Model author workflow
@@ -170,3 +171,18 @@ Compilation results should record:
 
 This allows cost, reliability, and compile-time analysis without coupling the
 model manifest to a particular EC2 instance type.
+
+
+## Shared-policy rollout compatibility
+
+The admission reader accepts published approval schema version 2 (shared,
+durable grants) and legacy version 1 (including its environment and timestamp
+restrictions) so the reader can be released before Vulcan changes its policy.
+A missing version means legacy version 1. Unknown versions fail closed. Version
+2 rejects legacy environment and timestamp fields rather than ignoring them.
+Version 2 approval IDs omit the environment; identical builds in staging and
+production record the same approval ID and policy revision.
+
+Release this reader to every active workflow revision before deploying Vulcan's
+version 2 specification. Do not roll back to an older reader while version 2 is
+published. Legacy support can be removed once all environments have migrated.
