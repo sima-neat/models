@@ -17,8 +17,9 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'styles', 'config',
+  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'brand', 'styles', 'config',
 ];
+const stylesheets = ['brand', 'styles'];
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
@@ -26,12 +27,13 @@ cpSync(docsBuild, output, {recursive: true});
 cpSync(join(browser, 'favicon.svg'), join(output, 'favicon.svg'));
 
 for (const asset of fingerprintedAssets) {
-  const extension = asset === 'styles' ? 'css' : 'js';
+  const extension = stylesheets.includes(asset) ? 'css' : 'js';
   cpSync(join(browser, `${asset}.${extension}`), join(output, `${asset}.${revision}.${extension}`));
 }
 
 let browserHtml = readFileSync(join(browser, 'index.html'), 'utf8');
 browserHtml = browserHtml
+  .replace('href="brand.css"', `href="brand.${revision}.css"`)
   .replace('href="styles.css"', `href="styles.${revision}.css"`)
   .replace('src="config.js"', `src="config.${revision}.js"`)
   .replace('src="app.js"', `src="app.${revision}.js"`);
@@ -50,7 +52,7 @@ if (!apiSource.includes(`"${pipelinesUrl}"`)) {
 }
 writeFileSync(apiModule, apiSource.replace(`"${pipelinesUrl}"`, `"./${pipelinesFile}"`));
 
-const modules = fingerprintedAssets.filter((asset) => asset !== 'styles');
+const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset));
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {
   const path = join(output, `${asset}.${revision}.js`);

@@ -8,20 +8,20 @@
   --ink-faint: #646d76;
   --line: #dfe3e6;
   --line-strong: #c7cdd2;
-  --blue: #376f9f;
-  --blue-soft: #e9f0f6;
+  --blue: var(--sima-blue);
+  --blue-soft: color-mix(in srgb, var(--sima-blue) 15%, var(--surface-raised));
   --filter-surface: color-mix(in srgb, var(--surface) 88%, var(--blue-soft));
-  --green: #197451;
-  --green-soft: #e1f1e9;
+  --green: var(--sima-green);
+  --green-soft: color-mix(in srgb, var(--sima-green) 15%, var(--surface-raised));
   --red: #b6473d;
   --red-soft: #f7e8e4;
-  --amber: #a86712;
-  --amber-soft: #f7ecdc;
-  --violet: #6a5a9e;
-  --violet-soft: #eeebf6;
+  --amber: var(--sima-orange);
+  --amber-soft: color-mix(in srgb, var(--sima-orange) 15%, var(--surface-raised));
+  --violet: var(--sima-purple);
+  --violet-soft: var(--sima-purple);
   --on-blue: #ffffff;
-  --brand: #1f7a3d;
-  --brand-soft: #e8f4ec;
+  --brand: var(--sima-green);
+  --brand-soft: var(--sima-teal);
   --on-brand: #ffffff;
   --font-body: "Roboto", "Helvetica Neue", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -38,20 +38,12 @@
   --ink-faint: #909b9d;
   --line: #323a3d;
   --line-strong: #4a5558;
-  --blue: #82b8ec;
-  --blue-soft: #203b52;
   --filter-surface: color-mix(in srgb, var(--surface) 88%, var(--blue-soft));
-  --green: #75cda5;
-  --green-soft: #1b3b30;
   --red: #f08e82;
   --red-soft: #472b2a;
-  --amber: #e7b36b;
-  --amber-soft: #3d3020;
-  --violet: #b7a8ea;
-  --violet-soft: #2f2a45;
+  --violet-soft: color-mix(in srgb, var(--sima-purple) 15%, var(--surface-raised));
   --on-blue: #10202e;
-  --brand: #6fcb8b;
-  --brand-soft: #1b3326;
+  --brand-soft: color-mix(in srgb, var(--sima-teal) 15%, var(--surface-raised));
   --on-brand: #10241a;
   --shadow: 0 22px 65px rgba(0, 0, 0, 0.25);
 }
@@ -82,8 +74,8 @@ button { color: inherit; }
 .icon-button { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; cursor: pointer; transition: background 180ms ease, border-color 180ms ease, transform 180ms ease; }
 .icon-button:hover { border-color: var(--line); background: var(--surface); }
 .icon-button svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.buy-button { height: 36px; display: inline-flex; align-items: center; padding: 0 1.15rem; border-radius: 9999px; color: #fff; background: #2a77cb; font-size: 15px; font-weight: 500; line-height: 1; text-decoration: none; white-space: nowrap; }
-.buy-button:hover { background: #256bb7; }
+.buy-button { height: 36px; display: inline-flex; align-items: center; padding: 0 1.15rem; border-radius: 9999px; color: #fff; background: var(--blue); font-size: 15px; font-weight: 500; line-height: 1; text-decoration: none; white-space: nowrap; }
+.buy-button:hover { background: color-mix(in srgb, var(--blue) 88%, black); }
 .buy-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .product-nav .nav-short { display: none; }
 
@@ -301,6 +293,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .execution-graph li + li::before { flex: none; margin: 0 10px; color: var(--ink-faint); content: "\2192"; content: "\2192" / ""; }
 .execution-step { --accent: var(--line-strong); --accent-soft: var(--surface); flex: 1; min-width: 0; min-height: 52px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 10px 14px; border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: 10px; background: var(--surface-raised); font-size: 15px; font-weight: 500; }
 .execution-step[data-runs-on="EV74"] { --accent: var(--violet); --accent-soft: var(--violet-soft); }
+.execution-step[data-runs-on="EV74"] small { color: var(--ink); }
 .execution-step[data-runs-on="MLA"] { --accent: var(--blue); --accent-soft: var(--blue-soft); }
 .execution-step[data-runs-on="A65"] { --accent: var(--amber); --accent-soft: var(--amber-soft); }
 .execution-step small { padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font: 500 11px var(--font-mono); letter-spacing: .04em; }

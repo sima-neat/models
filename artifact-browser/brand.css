@@ -1,0 +1,9 @@
+/* SiMa.ai brand colors, shared by the model browser and the developer docs. */
+:root {
+  --sima-blue: #5998DD;
+  --sima-teal: #C0E8DB;
+  --sima-green: #2A9C4F;
+  --sima-lime: #A4CC2D;
+  --sima-purple: #D1CEE6;
+  --sima-orange: #D26728;
+}

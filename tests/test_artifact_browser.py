@@ -49,6 +49,7 @@ def test_artifact_browser_assets_exist() -> None:
         "branch-builds.js",
         "downloads.js",
         "markdown.js",
+        "brand.css",
         "styles.css",
         "config.js",
         "favicon.svg",
@@ -244,7 +245,7 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "process.env.GITHUB_SHA" in assemble
     for asset in (
         "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
-        "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config",
+        "benchmark-adapters", "branch-builds", "downloads", "markdown", "brand", "styles", "config",
     ):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
@@ -569,11 +570,30 @@ def test_developer_docs_use_the_catalog_visual_system() -> None:
     docs_styles = DOCS_STYLES.read_text(encoding="utf-8")
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
 
-    for color in ("#f7f8f9", "#f1f3f5", "#ffffff", "#20262c", "#5f6972", "#dfe3e6", "#376f9f"):
+    for color in ("#f7f8f9", "#f1f3f5", "#ffffff", "#20262c", "#5f6972", "#dfe3e6"):
         assert color in browser_styles
         assert color in docs_styles
     assert "font-size: clamp(2rem, 3vw, 2.65rem)" in docs_styles
     assert "style: 'light'" in config
+
+
+def test_browser_and_docs_draw_accents_from_the_sima_brand_palette() -> None:
+    brand = (BROWSER / "brand.css").read_text(encoding="utf-8")
+    browser_styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
+    docs_styles = DOCS_STYLES.read_text(encoding="utf-8")
+
+    for name, color in (
+        ("blue", "#5998DD"), ("teal", "#C0E8DB"), ("green", "#2A9C4F"),
+        ("lime", "#A4CC2D"), ("purple", "#D1CEE6"), ("orange", "#D26728"),
+    ):
+        assert f"--sima-{name}: {color};" in brand
+    assert '<link rel="stylesheet" href="brand.css" />' in (BROWSER / "index.html").read_text(encoding="utf-8")
+    assert "@import '../../../artifact-browser/brand.css';" in docs_styles
+    accent = re.compile(r"--(?:portal-)?(?:blue|green|amber|violet|brand|ifm-color-primary)[\w-]*:\s*([^;]+);")
+    for styles in (browser_styles, docs_styles):
+        values = accent.findall(styles)
+        assert values
+        assert not [value for value in values if "#" in value]
 
 
 def test_developer_docs_use_the_catalog_theme_toggle_behavior() -> None:

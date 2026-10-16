@@ -1,4 +1,5 @@
 @import '@fontsource-variable/roboto';
+@import '../../../artifact-browser/brand.css';
 
 :root {
   --portal-canvas: #f7f8f9;
@@ -9,17 +10,17 @@
   --portal-ink-faint: #646d76;
   --portal-line: #dfe3e6;
   --portal-line-strong: #c7cdd2;
-  --portal-blue: #376f9f;
-  --portal-blue-soft: #e9f0f6;
-  --portal-green: #197451;
-  --portal-green-soft: #e1f1e9;
+  --portal-blue: var(--sima-blue);
+  --portal-blue-soft: color-mix(in srgb, var(--sima-blue) 15%, var(--portal-raised));
+  --portal-green: var(--sima-green);
+  --portal-green-soft: color-mix(in srgb, var(--sima-green) 15%, var(--portal-raised));
   --ifm-color-primary: var(--portal-blue);
-  --ifm-color-primary-dark: #30638f;
-  --ifm-color-primary-darker: #2d5d87;
-  --ifm-color-primary-darkest: #254d70;
-  --ifm-color-primary-light: #427dab;
-  --ifm-color-primary-lighter: #4a84b0;
-  --ifm-color-primary-lightest: #6c9cbe;
+  --ifm-color-primary-dark: color-mix(in srgb, var(--sima-blue) 90%, black);
+  --ifm-color-primary-darker: color-mix(in srgb, var(--sima-blue) 85%, black);
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--sima-blue) 70%, black);
+  --ifm-color-primary-light: color-mix(in srgb, var(--sima-blue) 90%, white);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--sima-blue) 85%, white);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--sima-blue) 70%, white);
   --ifm-background-color: var(--portal-canvas);
   --ifm-background-surface-color: var(--portal-raised);
   --ifm-font-color-base: var(--portal-ink);
@@ -50,16 +51,6 @@
   --portal-ink-faint: #909b9d;
   --portal-line: #323a3d;
   --portal-line-strong: #4a5558;
-  --portal-blue: #82b8ec;
-  --portal-blue-soft: #203b52;
-  --portal-green: #75cda5;
-  --portal-green-soft: #1b3b30;
-  --ifm-color-primary-dark: #6da8df;
-  --ifm-color-primary-darker: #63a1dc;
-  --ifm-color-primary-darkest: #3f89ce;
-  --ifm-color-primary-light: #97c5ef;
-  --ifm-color-primary-lighter: #a1caf1;
-  --ifm-color-primary-lightest: #c5dff7;
   --ifm-background-color: var(--portal-canvas);
   --ifm-background-surface-color: var(--portal-raised);
 }
