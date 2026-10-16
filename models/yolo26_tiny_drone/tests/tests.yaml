@@ -3,6 +3,6 @@ compile:
 performance:
   run_tests: true
   expected:
-    modalix_int8_tessellation_mla:
+    w8a8:
       model:
         throughput_fps: 31.6

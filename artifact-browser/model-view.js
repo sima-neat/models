@@ -1,8 +1,9 @@
 // Model page: performance, accuracy, model card, build details, and license.
+import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
-import { icons, escapeHtml, branchName, shortSha, profileLabel, showToast, disclosure } from "./ui.js";
+import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
   metricDefinition, metricDisplay, formatDate, formatDuration,
   formatBytes,
@@ -11,6 +12,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
+import { packageFormat } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -120,6 +122,21 @@ function metricRow({ label, text, unit }) {
 // The headline metrics, one number each.
 const KPI_METRICS = ["throughput_fps", "latency_avg_ms", "avg_power_watts", "energy_per_inference_joules"];
 
+// The SoC draws on two SoM rails: the MLA's own and the one for the rest of the SoC.
+const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];
+// Names for the SoM power rails Sentinel reports, what each rail supplies, and its colour in the power bar.
+// The SoC rails come first: the power bar outlines them as one block, and the SoC rows name them.
+// Both are red, the SoC's colour; Non-MLA is striped so it stays distinct from the MLA.
+const RAILS = {
+  power_rail_mla_watts: ["MLA core (0.68 V)", "Supplies the MLA.", "var(--red)"],
+  power_rail_soc_ddr_vdd_watts: ["Non-MLA SoC (VDD)", "Supplies the SoC logic outside the MLA, the memory controller, and DDR activity.", "repeating-linear-gradient(135deg, var(--red) 0 2px, color-mix(in srgb, var(--red) 25%, var(--surface-raised)) 2px 4px)"],
+  power_rail_soc_ddr_vddq_watts: ["DRAM I/O (VDDQ)", "Supplies the SoC to DRAM interface.", "var(--amber)"],
+  power_rail_soc_ddr_vdd2h_watts: ["DRAM (VDD2H)", "Supplies part of the DRAM.", "var(--violet)"],
+  power_rail_pcie_eth_watts: ["PCIe and Ethernet PHY", "Supplies the PCIe and Ethernet PHYs.", "var(--green)"],
+  power_rail_hdmi_watts: ["HDMI PHY (1.2 V)", "Supplies the HDMI PHY.", "var(--ink-soft)"],
+  power_rail_platform_1v8_watts: ["SoM platform (1.8 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--blue) 50%, var(--surface-raised))"],
+  power_rail_platform_3v3_watts: ["SoM platform (3.3 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--green) 50%, var(--surface-raised))"],
+};
 // Benchmark details: one row per reading, with its label, its metrics, and a short explanation shown
 // behind an (i) mark, one line per value when a row has several. A row names a rail when its colour should match that rail in the power bar,
 // and a depth when it is part of the row above it.
@@ -142,6 +159,7 @@ const DETAIL_CARDS = [
     ["SoC", "soc", "MLA plus Non-MLA.\nPeak: sum of their peaks, an upper bound.", null, 1],
     ["MLA", ["avg_mla_power_watts", "peak_mla_power_watts"], "MLA core rail (0.68 V).", "power_rail_mla_watts", 2],
     ["Non-MLA", "power_rail_soc_ddr_vdd_watts", "SoC and DDR VDD rail: the SoC outside the MLA.", null, 2],
+    ...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key)).map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1]),
   ]],
   ["memory", "Memory", "memory", ["Average", "Peak"], [
     ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Memory allocated to the MLA."],
@@ -151,19 +169,6 @@ const DETAIL_CARDS = [
 ];
 // Performance, heat, and CPU fill the left column; power, memory, and any other measurements the right.
 const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);
-// Names for the SoM power rails Sentinel reports, what each rail supplies, and its colour in the power bar.
-// The SoC rails come first: the power bar outlines them as one block, and the SoC rows, not the legend, name them.
-// Both are red, the SoC's colour; Non-MLA is striped so it stays distinct from the MLA.
-const RAILS = {
-  power_rail_mla_watts: ["MLA core (0.68 V)", "Supplies the MLA.", "var(--red)"],
-  power_rail_soc_ddr_vdd_watts: ["Non-MLA SoC (VDD)", "Supplies the SoC logic outside the MLA, the memory controller, and DDR activity.", "repeating-linear-gradient(135deg, var(--red) 0 2px, color-mix(in srgb, var(--red) 25%, var(--surface-raised)) 2px 4px)"],
-  power_rail_soc_ddr_vddq_watts: ["DRAM I/O (VDDQ)", "Supplies the SoC to DRAM interface.", "var(--amber)"],
-  power_rail_soc_ddr_vdd2h_watts: ["DRAM (VDD2H)", "Supplies part of the DRAM.", "var(--violet)"],
-  power_rail_pcie_eth_watts: ["PCIe and Ethernet PHY", "Supplies the PCIe and Ethernet PHYs.", "var(--green)"],
-  power_rail_hdmi_watts: ["HDMI PHY (1.2 V)", "Supplies the HDMI PHY.", "var(--ink-soft)"],
-  power_rail_platform_1v8_watts: ["SoM platform (1.8 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--blue) 50%, var(--surface-raised))"],
-  power_rail_platform_3v3_watts: ["SoM platform (3.3 V)", "Supplies other SoM circuits.", "color-mix(in srgb, var(--green) 50%, var(--surface-raised))"],
-};
 // The tiles and cards place these metrics; any other measured metric is listed under Other measurements.
 // Benchmark energy is energy per inference times the sample count, so it is not shown again.
 const PLACED_METRICS = new Set([
@@ -193,9 +198,6 @@ function readingCell(value) {
 function powerRails(measurements) {
   return (measurements.peak_power_watts?.details?.breakdown || []).filter((rail) => Number.isFinite(rail.mean));
 }
-
-// The SoC draws on two SoM rails: the MLA's own and the one for the rest of the SoC.
-const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];
 
 // The average and peak of one SoM rail, or of the SoC rails together, from the rail details of peak SoM power.
 // Rails peak at different moments, so the sum of their peaks is only an upper bound on the SoC peak.
@@ -228,7 +230,7 @@ function namedRails(measurements) {
 }
 
 // The SoM power each rail draws on average, as one bar split by rail. The SoC rails sit in one outlined block
-// that matches the SoC row, and the legend lists only the rails the table does not.
+// that matches the SoC row; the table rows below the bar name every rail.
 function railSplit(measurements) {
   const rails = namedRails(measurements).filter((rail) => rail.mean > 0);
   const total = rails.reduce((sum, rail) => sum + rail.mean, 0);
@@ -240,8 +242,7 @@ function railSplit(measurements) {
     ? `<span class="rail-soc" style="flex-grow:${soc.reduce((sum, rail) => sum + rail.mean, 0).toFixed(4)}">${soc.map(segment).join("")}</span>`
     : "";
   const segments = socBlock + others.map(segment).join("");
-  const legend = others.map((rail) => `<li><i aria-hidden="true" style="background:${rail.colour}"></i>${readingLabel(rail.name)}${infoMark(rail.info)}<b>${rail.mean.toFixed(2)} W</b></li>`).join("");
-  return `<p class="metric-caption">Average SoM power by rail</p><div class="rail-split" role="img" aria-label="${escapeHtml(rails.map((rail) => `${rail.name} ${rail.mean.toFixed(2)} W`).join(", "))}">${segments}</div><ul class="rail-legend">${legend}</ul>`;
+  return `<div class="rail-split" role="img" title="Average SoM power by rail" aria-label="Average SoM power by rail: ${escapeHtml(rails.map((rail) => `${rail.name} ${rail.mean.toFixed(2)} W`).join(", "))}">${segments}</div>`;
 }
 
 // The load of each CPU core: a bar for the average and a tick for the peak, in two columns of cores.
@@ -257,7 +258,7 @@ function coreLoad(cores) {
   return `<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p><ul class="core-load" style="--core-rows:${Math.ceil(cores.length / 2)}">${rows}</ul>`;
 }
 
-function detailCard(measurements, [id, title, icon, columns, readings], { note, extra } = {}) {
+function detailCard(measurements, [id, title, icon, columns, readings], { note, lead, extra } = {}) {
   const rows = readings
     .map(([label, keys, info, rail, depth]) => ({
       label, info, depth, rail: rail || (Array.isArray(keys) ? null : keys),
@@ -270,7 +271,7 @@ function detailCard(measurements, [id, title, icon, columns, readings], { note, 
   return {
     id,
     title,
-    markup: `<div class="detail-card"><h4><i aria-hidden="true">${icons[icon]}</i>${escapeHtml(title)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</h4><table>${head}<tbody>${rows.join("")}</tbody></table>${extra || ""}</div>`,
+    markup: `<div class="detail-card"><h4><i aria-hidden="true">${icons[icon]}</i>${escapeHtml(title)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</h4>${lead || ""}<table>${head}<tbody>${rows.join("")}</tbody></table>${extra || ""}</div>`,
   };
 }
 
@@ -295,7 +296,7 @@ function benchmarkDetails(benchmark, payload) {
   const readings = { ...measurements, sync_throughput_fps: syncThroughput(benchmark) };
   const additions = {
     cpu: { note: benchmark.cpuCount > 0 && `${benchmark.cpuCount} cores`, extra: coreLoad(benchmark.cpuCores) },
-    power: { extra: railSplit(measurements) },
+    power: { lead: railSplit(measurements) },
   };
   const cards = DETAIL_CARDS.map((card) => detailCard(readings, card, additions[card[0]])).filter(Boolean);
   const otherRows = Object.keys(measurements).filter((key) => !PLACED_METRICS.has(key)).sort()
@@ -476,7 +477,8 @@ function componentRow(detail, single) {
   const artifactRows = artifacts.length
     ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
-  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision].filter(Boolean).join(" · ");
+  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision && precisionLabel(parameters.precision)]
+    .filter(Boolean).join(" · ");
   const body = `<dl class="key-grid">
       ${artifactRows}
       ${keyValue("Run ID", run.id, { copy: true, mono: true })}
@@ -495,58 +497,14 @@ function percentage(value, { signed = false } = {}) {
   return `${signed && percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
 }
 
-// Display names for common accuracy metrics; any other metric shows its declared name.
-const ACCURACY_METRIC_LABELS = {
-  top1_accuracy: "Top-1",
-  top5_accuracy: "Top-5",
-  coco_map: "mAP 50–95",
-  coco_ap50: "AP50",
-  coco_ap75: "AP75",
-  coco_ap_small: "AP small",
-  coco_ap_medium: "AP medium",
-  coco_ap_large: "AP large",
-  coco_ar1: "AR@1",
-  coco_ar10: "AR@10",
-  coco_ar100: "AR@100",
-  coco_ar_small: "AR small",
-  coco_ar_medium: "AR medium",
-  coco_ar_large: "AR large",
-  coco_keypoint_map: "Keypoint mAP 50–95",
-  coco_keypoint_ap50: "Keypoint AP50",
-  coco_keypoint_ap75: "Keypoint AP75",
-  coco_keypoint_ap_medium: "Keypoint AP medium",
-  coco_keypoint_ap_large: "Keypoint AP large",
-  coco_keypoint_ar: "Keypoint AR",
-  coco_keypoint_ar50: "Keypoint AR50",
-  coco_keypoint_ar75: "Keypoint AR75",
-  coco_keypoint_ar_medium: "Keypoint AR medium",
-  coco_keypoint_ar_large: "Keypoint AR large",
-  coco_person_box_map: "Person box mAP 50–95",
-  coco_person_box_ap50: "Person box AP50",
-  coco_mask_map: "Mask mAP 50–95",
-  coco_mask_ap50: "Mask AP50",
-  coco_mask_ap75: "Mask AP75",
-  coco_mask_ap_small: "Mask AP small",
-  coco_mask_ap_medium: "Mask AP medium",
-  coco_mask_ap_large: "Mask AP large",
-  coco_mask_ar1: "Mask AR@1",
-  coco_mask_ar10: "Mask AR@10",
-  coco_mask_ar100: "Mask AR@100",
-  coco_mask_ar_small: "Mask AR small",
-  coco_mask_ar_medium: "Mask AR medium",
-  coco_mask_ar_large: "Mask AR large",
-  coco_box_map: "Box mAP 50–95",
-  coco_box_ap50: "Box AP50",
-};
 // The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;
 
 // The registry does not preserve a result's metric order, so known metrics follow the label order and
 // any others follow them in the order they arrive.
 function orderedAccuracyMetrics(report) {
-  const known = Object.keys(ACCURACY_METRIC_LABELS);
-  const rank = (name) => (known.includes(name) ? known.indexOf(name) : known.length);
-  return Object.entries(report.metrics || {}).sort(([left], [right]) => rank(left) - rank(right));
+  const metrics = report.metrics || {};
+  return orderedMetricNames(Object.keys(metrics)).map((name) => [name, metrics[name]]);
 }
 
 // The DevKit accuracy run wins over the legacy result on the benchmark run, which wins over compile-run
@@ -572,14 +530,21 @@ export function accuracyHeadline(variant) {
   if (report?.schema_version === 1) return { label: "Top-1", value: percentage(report.metrics?.candidate?.top1_accuracy), published: "" };
   const [name, metric] = report ? orderedAccuracyMetrics(report)[0] || [] : [];
   if (!name) return null;
-  return { label: ACCURACY_METRIC_LABELS[name] || name, value: accuracyMetricValue(metric), published: publishedAccuracyValue(metric) };
+  const published = publishedScores(variant.published, report.dataset?.id, report.metrics)[name];
+  return { label: accuracyMetricLabel(name), value: accuracyMetricValue(metric), published: publishedAccuracyValue(published) };
 }
 
-function accuracyPanel(result, modelId) {
+function accuracyPanel(result, modelId, published = []) {
   const report = result?.report;
   const source = measurementSource(result?.run, modelId);
-  if (report?.schema_version === 2) return accuracySection(report, accuracyMetricTiles(report), accuracyContextV2(report), accuracyMetricTable(report), source);
-  if (!report || report.schema_version !== 1) return "";
+  const publishedMarkup = published.length
+    ? disclosure("published-scores", "Published scores", publishedTables(published), `${published.length} ${published.length === 1 ? "source" : "sources"}`)
+    : "";
+  if (report?.schema_version === 2) {
+    const scores = publishedScores(published, report.dataset?.id, report.metrics);
+    return accuracySection(report, accuracyMetricTiles(report, scores), accuracyContextV2(report), accuracyMetricTable(report, scores), source, publishedMarkup);
+  }
+  if (!report || report.schema_version !== 1) return publishedAccuracySection(published);
   const candidate = report.metrics?.candidate || {};
   const reference = report.metrics?.reference || {};
   const comparison = report.metrics?.comparison || {};
@@ -589,7 +554,7 @@ function accuracyPanel(result, modelId) {
       <div class="accuracy-metric primary"><span>Candidate top-5</span><strong>${percentage(candidate.top5_accuracy)}</strong><small>Reference ${percentage(reference.top5_accuracy)}</small></div>
       <div class="accuracy-metric"><span>Top-1 agreement</span><strong>${percentage(comparison.top1_agreement)}</strong><small>Candidate vs reference</small></div>
       <div class="accuracy-metric"><span>Top-1 delta</span><strong>${percentage(comparison.top1_delta, { signed: true })}</strong><small>Top-5 ${percentage(comparison.top5_delta, { signed: true })}</small></div>
-    `, `${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}`, "", source);
+    `, `${keyValue("Profile", evaluation.profile)}${keyValue("Scope", report.report_scope)}${keyValue("Workers", report.execution?.workers)}${keyValue("Throughput", Number.isFinite(report.execution?.samples_per_second) ? `${report.execution.samples_per_second.toFixed(2)} images/s` : null)}`, "", source, publishedMarkup);
 }
 
 function accuracyMetricValue(metric) {
@@ -597,31 +562,61 @@ function accuracyMetricValue(metric) {
   return metric.unit === "ratio" ? percentage(metric.value) : `${metric.value.toFixed(4)} ${metric.unit}`;
 }
 
-// A metric's reference is the source model's published score, recorded in the model's accuracy entry.
-function publishedAccuracyValue(metric) {
-  return Number.isFinite(metric?.reference) ? accuracyMetricValue({ ...metric, value: metric.reference }) : "";
+// Published scores are ratios, as taxonomies/accuracy-metrics.yaml requires.
+function publishedAccuracyValue(value) {
+  return Number.isFinite(value) ? percentage(value) : "";
 }
 
-function accuracyMetricTiles(report) {
+function accuracyMetricTiles(report, scores) {
   return orderedAccuracyMetrics(report).slice(0, ACCURACY_SUMMARY_TILES).map(([name, metric], index) => {
-    const published = publishedAccuracyValue(metric);
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
+    const published = publishedAccuracyValue(scores[name]);
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(accuracyMetricValue(metric))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
   }).join("");
 }
 
-function accuracyMetricTable(report) {
+function accuracyMetricTable(report, scores) {
   const rows = orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES).map(([name, metric]) => (
-    `<tr><th scope="row">${escapeHtml(ACCURACY_METRIC_LABELS[name] || name)}</th><td>${escapeHtml(accuracyMetricValue(metric))}</td><td>${escapeHtml(publishedAccuracyValue(metric) || "—")}</td></tr>`
+    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(accuracyMetricValue(metric))}</td><td>${escapeHtml(publishedAccuracyValue(scores[name]) || "—")}</td></tr>`
   )).join("");
   if (!rows) return "";
   return `<div class="benchmark-measurements"><h4>Additional metrics</h4><div class="benchmark-measurements-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+// Conditions are written as a phrase, such as "640x640, FP32"; notes may already end a sentence.
+function sentence(text = "") {
+  return !text || /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+// Each source the model's authors published scores in, with the dataset and conditions they measured on.
+function publishedTables(published) {
+  return published.map((entry) => {
+    const metrics = entry.metrics || {};
+    const rows = orderedMetricNames(Object.keys(metrics)).map((name) => (
+      `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(publishedAccuracyValue(metrics[name]) || "—")}</td></tr>`
+    )).join("");
+    const source = trustedHttpsUrl(entry.source);
+    const link = source ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>` : "";
+    return `<div class="benchmark-measurements published-scores"><h4>${escapeHtml(`${entry.dataset?.id || ""} ${entry.dataset?.split || ""}`.trim())}</h4>
+      <p class="disclosure-text">${escapeHtml(sentence(entry.conditions))}${entry.note ? ` ${escapeHtml(sentence(entry.note))}` : ""}${link}</p>
+      <div class="benchmark-measurements-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
+}
+
+// A build without an accuracy result still shows what the model's authors published.
+function publishedAccuracySection(published) {
+  if (!published.length) return "";
+  return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
+    <div class="detail-section-title"><h3>Accuracy</h3></div>
+    <p class="accuracy-scope">No accuracy result for this build yet. The model's authors published these scores for the source model.</p>
+    ${publishedTables(published)}
+  </section>`;
 }
 
 function accuracyContextV2(report) {
   return `${keyValue("Validation", report.validation?.id)}${keyValue("Measured on", "DevKit")}${keyValue("Core", report.execution?.core_version)}`;
 }
 
-function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "", sourceMarkup = "") {
+function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "", sourceMarkup = "", publishedMarkup = "") {
   const dataset = report.dataset || {};
   const fullCoverage = Number.isInteger(dataset.evaluated_samples)
     && dataset.evaluated_samples === dataset.available_samples;
@@ -650,6 +645,7 @@ function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "",
     <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}${sourceMarkup}</p>
     <div class="accuracy-summary">${metricsMarkup}</div>
     ${disclosure("accuracy", "Evaluation details", details, coverageLabel)}
+    ${publishedMarkup}
   </section>`;
 }
 
@@ -767,7 +763,7 @@ function detailBuildSwitcher(variant) {
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
   const tabs = profiles.map(([profile]) => {
     const selected = profile === variant.profile;
-    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(profile)}</button>`;
+    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(variantLabel(profile))}</button>`;
   }).join("");
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
@@ -794,15 +790,16 @@ function sectionNavigation(sections) {
   )).join("")}</nav>`;
 }
 
-// The package is the glance view of Details: its size and checksum, and the two ways to download it.
-function packageCard(variant, fullPackage, packageArtifact, hasArtifacts) {
+// The package is the glance view of Details: its size and checksum, and the ways to download it.
+// A single-component package is that component's MPK, so only multi-component builds offer components.
+function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent) {
   const run = variant.anchor;
-  const components = hasArtifacts
+  const components = hasArtifacts && !(fullPackage && singleComponent)
     ? `<button class="action-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download components</span></button>`
     : "";
   if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
-    <div class="package-card-copy"><strong>Full package</strong><span>All components and declared runtime resources in one verified ZIP.</span></div>
+    <div class="package-card-copy"><strong>Full package</strong><span>${packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span></div>
     ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
     <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
   </div>`;
@@ -828,7 +825,7 @@ export function renderDetail(variant) {
   const sourceCommit = catalogModel?.documentation?.source_commit || run.commit_sha;
   const sourceUrl = githubModelUrl(run, model, sourceCommit);
   const sourceLabel = `View ${model} source on GitHub at commit ${shortSha(sourceCommit)}`;
-  const accuracyMarkup = accuracyPanel(variantAccuracy(variant), model);
+  const accuracyMarkup = accuracyPanel(variantAccuracy(variant), model, variant.published || []);
   const overviewMarkup = overviewSection(catalogModel);
   const hasArtifacts = details.some((detail) => modelPackArtifacts(detail.summary.artifacts).length);
   // Every component's MPK must pass validation for the build to carry the mark.
@@ -859,7 +856,7 @@ export function renderDetail(variant) {
     <header class="detail-title">
       <div class="detail-title-copy">
         <h2>${escapeHtml(displayName)}</h2>
-        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
+        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.map(precisionLabel).join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
       </div>
       <div class="detail-title-actions">
@@ -883,7 +880,7 @@ export function renderDetail(variant) {
     ${accuracyMarkup}
 
     <section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
-      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts)}
+      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent)}
       <div class="disclosure-list">
         ${disclosure("provenance", "Build provenance", `<dl class="key-grid">
           ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}

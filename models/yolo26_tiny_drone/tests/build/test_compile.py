@@ -1004,7 +1004,7 @@ def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
     assert model["calibrations"][0]["source"]["sha256"] == (
         "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b"
     )
-    assert profile["id"] == "modalix_int8_tessellation_mla"
+    assert profile["id"] == "w8a8"
     assert binding["parameters"]["calibration_samples"] == 128
     assert binding["parameters"]["calibration_tensor_sha256"] == (
         "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"

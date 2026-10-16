@@ -15,7 +15,7 @@ MODEL_DIR = ROOT / "models" / "rf_detr_small"
 def _config() -> dict:
     model = load_and_validate_model(MODEL_DIR)
     return find_fidelity_config(
-        MODEL_DIR, model, build_profile_id="modalix_int8_bf16", component_id="transformer"
+        MODEL_DIR, model, build_profile_id="w8a8_w16a16", component_id="transformer"
     )
 
 

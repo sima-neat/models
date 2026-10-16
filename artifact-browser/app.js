@@ -1,4 +1,4 @@
-import { variantDownloads, prepareDownloads, startDownloads } from "./downloads.js";
+import { variantDownloads, prepareDownloads, startDownloads, packageFormat } from "./downloads.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
@@ -6,7 +6,7 @@ import {
   config, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
   categoryFilters, catalogMode, branchSnapshotMode, currentVariant, showView,
 } from "./state.js";
-import { icons, escapeHtml, branchName, showToast } from "./ui.js";
+import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } from "./ui.js";
 import { formatBytes } from "./metrics.js";
 import {
   api, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
@@ -144,7 +144,6 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
 
 async function downloadVariant(runId) {
   const request = ++downloadRequest;
-  const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
     title: "Download components",
@@ -154,11 +153,11 @@ async function downloadVariant(runId) {
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
-    const model = catalogModels.find((model) => model.model_id === summary.run.metadata?.model_id);
-    const downloads = await prepareDownloads(await variantDownloads(summary.run, api, model), api);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
-    const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id || "Selected variant";
+    const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id
+      ? profileLabel(summary.run) : "Selected variant";
     const fileLabel = downloads.length === 1 ? "file" : "files";
     elements["download-description"].textContent = `${profile} contains ${downloads.length} model ${fileLabel}. ${downloads.length === 1 ? "Confirm to download this variant." : "Download all components to use this variant."}`;
     const note = elements["download-dialog"].querySelector(".download-note");
@@ -178,27 +177,28 @@ async function downloadPackage(runId) {
   resetDownloadDialog({
     title: "Download model package",
     description: "Checking the package manifest and download metadata…",
-    confirmLabel: "Download ZIP",
+    confirmLabel: "Download",
   });
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
     const run = summary.run;
     const artifact = (summary.artifacts || []).find((item) => item.artifact_type === "model-package");
-    if (!run || !artifact) throw new Error("No complete ZIP package is available for this build.");
+    if (!run || !artifact) throw new Error("No complete package is available for this build.");
     const metadata = run.metadata || {};
     const packageId = metadata.package_id || artifact.metadata?.package_id || "default";
     const modelId = metadata.model_id || "model";
-    const profile = metadata.build_profile_id || "build";
+    const profile = metadata.build_profile_id ? variantLabel(metadata.build_profile_id) : "This build";
     const components = Object.keys(metadata.component_run_ids || artifact.metadata?.component_run_ids || {});
-    const filename = `${modelId}_${profile}_${packageId}.zip`;
+    // The registry serves the package under its published filename: the MPK itself, or a ZIP.
     const downloads = await prepareDownloads([{
       runId: run.id,
       component: "Full package",
       name: artifact.name,
       size: artifact.size_bytes,
-      downloadFilename: filename,
     }], api);
+    const filename = downloads[0].filename;
+    const format = packageFormat(artifact, filename);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
     const license = metadata.license || {};
@@ -206,12 +206,14 @@ async function downloadPackage(runId) {
       ? `${license.spdx || "License"} · redistribution ${license.redistribution}`
       : license.spdx || "Not recorded";
     const componentLabel = `${components.length} ${components.length === 1 ? "component" : "components"}`;
-    elements["download-description"].textContent = `${profile} is packaged as one verified ZIP.`;
+    elements["download-description"].textContent = format === "MPK"
+      ? `${profile} is one verified MPK.`
+      : `${profile} is packaged as one verified ZIP.`;
     elements["download-package-info"].hidden = false;
     elements["download-package-info"].innerHTML = `
       <dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd>
       <dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)}</dd>
-      <dt>ZIP size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
+      <dt>${format} size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
       <dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd>
       <dt>License</dt><dd>${escapeHtml(redistribution)}</dd>
       ${license.attribution ? `<dt>Attribution</dt><dd>${escapeHtml(license.attribution)}</dd>` : ""}`;
@@ -219,6 +221,7 @@ async function downloadPackage(runId) {
     note.hidden = true;
     note.textContent = "";
     elements["download-list"].hidden = true;
+    elements["download-confirm"].textContent = `Download ${format}`;
     elements["download-confirm"].disabled = false;
   } catch (error) {
     if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
@@ -449,7 +452,7 @@ async function initialize() {
     state.selectedId = latestVariantRun(linkedVariant)?.id || null;
     if (!state.selectedId) {
       const branch = elements["branch-filter"].value || "any branch";
-      elements["detail-pane"].innerHTML = errorPanel(`No completed ${linkedVariant.profile} build of ${linkedVariant.modelId} was found on ${branch}.`, "Variant not found", { closable: true });
+      elements["detail-pane"].innerHTML = errorPanel(`No completed ${variantLabel(linkedVariant.profile)} build of ${linkedVariant.modelId} was found on ${branch}.`, "Variant not found", { closable: true });
       return;
     }
   }

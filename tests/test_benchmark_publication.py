@@ -64,7 +64,7 @@ def valid_result(tmp_path: Path) -> Path:
     """A Core benchmark result that measured latency and throughput only, built from the browser's fixture."""
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
-    result["model"]["build_profile_id"] = "modalix_bf16"
+    result["model"]["build_profile_id"] = "w16a16"
     report = result["benchmark_report"]
     report.update(latency_ms=3.6, latency_p50_ms=0.0, latency_p95_ms=0.0, latency_p99_ms=0.0, fps=460.0,
                   avg_power_watts=0.0, energy_joules=0.0, peak_power_watts=0.0)
@@ -91,7 +91,7 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
     result["model"].update(
         {
             "id": "rf_detr_small",
-            "build_profile_id": "modalix_int8_bf16",
+            "build_profile_id": "w8a8_w16a16",
             "component_id": component_id,
         }
     )
@@ -122,7 +122,7 @@ def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: P
         repository=ROOT,
         result_root=rf_detr_result_set(tmp_path),
         model_id="rf_detr_small",
-        build_profile_id="modalix_int8_bf16",
+        build_profile_id="w8a8_w16a16",
         component_ids=["backbone", "transformer"],
         git_sha="a" * 40,
     )
@@ -145,7 +145,7 @@ def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> Non
             repository=ROOT,
             result_root=results,
             model_id="rf_detr_small",
-            build_profile_id="modalix_int8_bf16",
+            build_profile_id="w8a8_w16a16",
             component_ids=["backbone"],
             git_sha="a" * 40,
         )
@@ -241,7 +241,7 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert create["parent_run_id"] == COMPILE_RUN_ID
     model = load_and_validate_model(ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json")
     expected_key = performance_key(
-        ROOT, model, "modalix_bf16", "model", compile_run_id=COMPILE_RUN_ID, artifact_sha256=result["model"]["sha256"]
+        ROOT, model, "w16a16", "model", compile_run_id=COMPILE_RUN_ID, artifact_sha256=result["model"]["sha256"]
     )
     assert create["run_fingerprint"] == expected_key
     assert create["run_fingerprint"] != published["result_fingerprint"]
@@ -458,7 +458,7 @@ def test_rejects_tampered_benchmark_identity(tmp_path: Path) -> None:
 def rf_detr_compilation(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     """Write a registered RF-DETR Small compilation: MPKs, compile-outputs.json and each compile run receipt."""
     compiled = tmp_path / "compiled"
-    build = compiled / "rf_detr_small" / "modalix_int8_bf16"
+    build = compiled / "rf_detr_small" / "w8a8_w16a16"
     outputs = []
     digests = {}
     for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items():
@@ -478,7 +478,7 @@ def rf_detr_compilation(tmp_path: Path) -> tuple[Path, dict[str, str]]:
                 {
                     "run_id": run_id,
                     "model_id": "rf_detr_small",
-                    "build_profile_id": "modalix_int8_bf16",
+                    "build_profile_id": "w8a8_w16a16",
                     "component_id": component_id,
                 }
             ]
@@ -493,7 +493,7 @@ def rf_detr_accuracy(tmp_path: Path, artifacts: dict[str, str]) -> Path:
         "schema_version": 2,
         "model": {
             "id": "rf_detr_small",
-            "build_profile_id": "modalix_int8_bf16",
+            "build_profile_id": "w8a8_w16a16",
             "component_id": "transformer",
             "package_id": "default",
             "artifacts": artifacts,
@@ -575,7 +575,7 @@ def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_ru
         component_id: {"run_id": RF_DETR_COMPILE_RUN_IDS[component_id], "artifact_sha256": digests[component_id]}
         for component_id in ("backbone", "transformer")
     }
-    expected_key = accuracy_key(ROOT, model, "modalix_int8_bf16", builds)
+    expected_key = accuracy_key(ROOT, model, "w8a8_w16a16", builds)
 
     create = calls[0][2]
     assert create is not None
@@ -660,7 +660,7 @@ def test_rejects_accuracy_measured_with_other_mpks(tmp_path: Path) -> None:
 
 def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Path) -> None:
     compiled, digests = rf_detr_compilation(tmp_path)
-    (compiled / "rf_detr_small" / "modalix_int8_bf16" / "transformer" / "registry-publication.json").unlink()
+    (compiled / "rf_detr_small" / "w8a8_w16a16" / "transformer" / "registry-publication.json").unlink()
 
     with pytest.raises(ValidationError, match="needs the registered transformer compile run"):
         publish_accuracy_run(

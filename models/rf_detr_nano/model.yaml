@@ -149,11 +149,10 @@ calibrations:
     sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
     size_bytes: 187510866
 build_profiles:
-- id: modalix_int8_bf16
+- id: w8a8_w16a16
   target: modalix
   components:
   - id: backbone
-    artifact_suffix: backbone_int8_mse_bcr
     calibration: coco_images
     parameters:
       precision: int8
@@ -161,7 +160,6 @@ build_profiles:
       calibration_bins: 1024
       calibration_samples: 50
   - id: transformer
-    artifact_suffix: transformer_bf16
     parameters:
       precision: bf16
       calibration_bins: 2048
@@ -201,13 +199,13 @@ packages:
   default: true
   components: [backbone, transformer]
   resources: []
-  build_profiles: [modalix_int8_bf16]
+  build_profiles: [w8a8_w16a16]
   composition: default
   maturity: experimental
 fidelity:
 - id: full_pipeline_fidelity
   scope: {type: package, package: default}
-  build_profiles: [modalix_int8_bf16]
+  build_profiles: [w8a8_w16a16]
   # Reordered queries can lower numerical similarity for equivalent detections,
   # so fidelity does not gate publication.
   status: diagnostic
@@ -226,7 +224,7 @@ fidelity:
 accuracy:
 - id: coco_accuracy
   scope: {type: package, package: default}
-  build_profiles: [modalix_int8_bf16]
+  build_profiles: [w8a8_w16a16]
   engine: devkit_script
   status: ready
   result_component: transformer
@@ -238,13 +236,15 @@ accuracy:
   metrics: [coco_map, coco_ap50, coco_ap75, coco_ap_small, coco_ap_medium, coco_ap_large,
     coco_ar1, coco_ar10, coco_ar100, coco_ar_small, coco_ar_medium, coco_ar_large]
   required_metrics: [coco_map]
-  reference:
-    source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
-    metrics: {coco_map: 0.484, coco_ap50: 0.676}
+published_metrics:
+- source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 384x384
+  metrics: {coco_map: 0.484, coco_ap50: 0.676}
 benchmark:
 - id: backbone_modalix
   scope: {type: component, component: backbone}
-  build_profiles: [modalix_int8_bf16]
+  build_profiles: [w8a8_w16a16]
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.
@@ -252,7 +252,7 @@ benchmark:
   required_metrics: [avg_power_watts, energy_per_inference_joules]
 - id: transformer_modalix
   scope: {type: component, component: transformer}
-  build_profiles: [modalix_int8_bf16]
+  build_profiles: [w8a8_w16a16]
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

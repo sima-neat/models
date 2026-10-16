@@ -43,8 +43,9 @@ bar shortens **Developer docs** to **Docs**.
 Selecting a card opens the model page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. A model with several build profiles shows
-one tab per profile; INT8 profiles come first and the page opens on the first
-tab, whatever order `model.yaml` declares. The GitHub link in the header opens
+one tab per profile, labelled with its variant ID in uppercase, such as
+**W8A8**. Profiles with a W8A8 component come first and the page opens on the
+first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
 the model's folder at the commit the README comes from. Sections appear in this
 order:
 
@@ -72,13 +73,14 @@ order:
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
    and **CPU** with the core count, the load over all cores and on the
    busiest core, and a bar per core with its average and peak. On the right,
-   **Power** has the average and peak of SoM power, then SoC power indented
-   under it, then the two rails that add up to SoC power indented under SoC:
-   MLA and Non-MLA (the rest of the SoC). Rails peak at different moments, so
-   the SoC peak is the sum of the two peaks, an upper bound.
-   A bar splits the average SoM power by rail; the two SoC rails sit in one
-   block outlined like the SoC row's mark and coloured like the MLA and
-   Non-MLA rows, and a legend names the other rails. **Memory** has MLA, CMA
+   **Power** opens with a bar that splits the average SoM power by rail; the
+   two SoC rails sit in one block outlined like the SoC row's mark and
+   coloured like the MLA and Non-MLA rows. Below it are the average and peak
+   of SoM power, then SoC power indented under it, then the two rails that
+   add up to SoC power indented under SoC: MLA and Non-MLA (the rest of the
+   SoC). Rails peak at different moments, so the SoC peak is the sum of the
+   two peaks, an upper bound. The other SoM rails follow at the SoC's level,
+   each coloured like its part of the bar. **Memory** has MLA, CMA
    pool, and Linux memory. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
@@ -95,17 +97,22 @@ order:
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
    **Evaluation details** explains the status and coverage and lists
-   the remaining metrics, each with its published score when `model.yaml`
-   records one.
-4. **Details.** The package with its size, checksum, and download buttons,
-   then rows for build provenance (the commit and workflow that compiled the
+   the remaining metrics, each with its published score when
+   `published_metrics` in `model.yaml` records one for the measured dataset.
+   **Published scores** lists every published entry with its dataset,
+   conditions, and source. A build with no accuracy result yet shows only the
+   published scores.
+4. **Details.** The package with its size, checksum, and download buttons.
+   A single-component package downloads as its MPK. A multi-component package
+   downloads as a ZIP of its MPKs and also offers **Download components**.
+   Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, and each component's files,
    checksum, numerical fidelity, and compile parameters.
 5. **License.** The SPDX identifier, whether redistribution is allowed, and the
    attribution.
 
-A section that has no data, such as Accuracy for a model without an accuracy
-entry, is left out. Components are measured on their own, so the latencies of a
+A section that has no data, such as Accuracy for a model with neither an
+accuracy result nor published scores, is left out. Components are measured on their own, so the latencies of a
 multi-component model do not add up to end-to-end latency; the page says so.
 
 ## Preview your model locally

@@ -9,9 +9,9 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
-from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
+from .published_metrics import load_accuracy_metrics, validate_published_metrics
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
@@ -73,6 +73,15 @@ def profile_component_for(
     except StopIteration as exc:
         raise ValidationError(f"build profile {profile_id!r} does not include component {component_id!r}") from exc
     return profile, binding
+
+
+def mpk_filename(model: dict[str, Any], profile_id: str, component_id: str) -> str:
+    """Name a compiled MPK by model and variant ID, adding the component when the variant has several."""
+    profile = build_profile_for(model, profile_id)
+    name = f"{model['id']}_{profile_id}"
+    if len(profile["components"]) > 1:
+        name = f"{name}_{component_id}"
+    return f"{name}_mpk.tar.gz"
 
 
 def profile_component_requires_calibration(model: dict[str, Any], profile_id: str, component_id: str) -> bool:
@@ -308,9 +317,14 @@ def validate_model(
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
 
-    taxonomy = load_taxonomy(find_taxonomy(directory, taxonomy_path))
+    taxonomy_file = find_taxonomy(directory, taxonomy_path)
+    taxonomy = load_taxonomy(taxonomy_file)
     try:
         validate_model_categorization(model, taxonomy)
+        if model.get("published_metrics"):
+            # The accuracy metric vocabulary sits beside the taxonomy.
+            vocabulary = load_accuracy_metrics(taxonomy_file.parent / "accuracy-metrics.yaml")
+            validate_published_metrics(model["published_metrics"], vocabulary)
     except ValidationError as exc:
         raise ValidationError(f"{directory}: {exc}") from exc
 
@@ -692,11 +706,6 @@ def _validate_devkit_accuracy(
     missing = set(entry.get("required_metrics", ())) - set(entry["metrics"])
     if missing:
         raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")
-    undeclared = set(entry.get("reference", {}).get("metrics", {})) - set(entry["metrics"])
-    if undeclared:
-        raise ValidationError(
-            f"{label}: reference metrics are not declared in metrics: {', '.join(sorted(undeclared))}"
-        )
     # The accuracy stage runs scripts/accuracy.py once per build profile.
     repeated = seen_profiles & set(entry["build_profiles"])
     if repeated:
@@ -745,7 +754,6 @@ def load_models(repository: str | Path) -> dict[str, dict[str, Any]]:
 
     for definition in sorted(model_root.glob("*/model.yaml")):
         model = load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
-        validate_artifact_metadata(model)
         model_id = str(model["id"])
         if model_id in discovered:
             raise ValidationError(f"duplicate model id {model_id!r}: {definition}")

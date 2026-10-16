@@ -114,11 +114,10 @@ calibrations:
     size_bytes: 356052889
 build_profiles:
 # The BF16 build checks that the model still compiles; it is not accuracy-qualified.
-- id: modalix_bf16
+- id: w16a16
   target: modalix
   components:
   - id: model
-    artifact_suffix: bf16_tmio
     parameters:
       precision: bf16
       input_name: pixel_values
@@ -128,11 +127,10 @@ build_profiles:
       - 224
       - 224
     shape_profile: compile_input
-- id: modalix_int8
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_mse_tmio
     parameters:
       precision: int8
       input_name: pixel_values
@@ -156,13 +154,13 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_bf16
-  - modalix_int8
+  - w16a16
+  - w8a8
   composition: default
 fidelity:
 - id: logits_fidelity
   scope: {type: package, package: default}
-  build_profiles: [modalix_bf16, modalix_int8]
+  build_profiles: [w16a16, w8a8]
   status: diagnostic
   result_component: model
   dataset:
@@ -179,7 +177,7 @@ fidelity:
 accuracy:
 - id: imagenet_accuracy
   scope: {type: package, package: default}
-  build_profiles: [modalix_int8]
+  build_profiles: [w8a8]
   engine: devkit_script
   status: provisional
   result_component: model
@@ -190,14 +188,20 @@ accuracy:
     size_bytes: 356052889
   metrics: [top1_accuracy, top5_accuracy]
   required_metrics: [top1_accuracy]
+published_metrics:
+- source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, center crop 0.95, bicubic, FP32
+  note: timm's resnet50.a1_in1k row, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.80382, top5_accuracy: 0.94598}
 benchmark:
 - id: modalix_latency
   scope:
     type: component
     component: model
   build_profiles:
-  - modalix_bf16
-  - modalix_int8
+  - w16a16
+  - w8a8
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

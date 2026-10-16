@@ -42,7 +42,7 @@ test('leaves out what the saved Core report did not measure', () => {
 test('names the model, build, and component a result measured', () => {
   const benchmark = adaptBenchmarkResult(fixture()).value;
   assert.equal(benchmark.modelId, 'resnet_50');
-  assert.equal(benchmark.buildProfileId, 'modalix_int8');
+  assert.equal(benchmark.buildProfileId, 'w8a8');
   assert.equal(benchmark.componentId, 'model');
 });
 

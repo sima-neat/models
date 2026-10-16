@@ -23,7 +23,7 @@ PERFORMANCE_EXPECTED = """\
 performance:
   run_tests: true
   expected:
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 100.0
 """
@@ -33,7 +33,7 @@ def test_needs_no_output() -> None:
 
 
 def test_throughput_meets_its_minimum(performance, build_profile) -> None:
-    assert build_profile == "modalix_int8"
+    assert build_profile == "w8a8"
     assert performance["benchmark_report"]["fps"] >= 100
 '''
 
@@ -53,7 +53,7 @@ def model_dir(tmp_path: Path) -> Path:
 
 def performance_result(tmp_path: Path, fps: float) -> Path:
     path = tmp_path / "performance-result.json"
-    result = {"model": {"build_profile_id": "modalix_int8"}, "benchmark_report": {"fps": fps}}
+    result = {"model": {"build_profile_id": "w8a8"}, "benchmark_report": {"fps": fps}}
     path.write_text(json.dumps(result), encoding="utf-8")
     return path
 
@@ -193,7 +193,7 @@ def test_a_test_with_its_own_fixture_of_a_stage_output_name_still_runs(model_dir
 
 def accuracy_result(**values: float) -> dict:
     metrics = {name: {"value": value, "unit": "ratio", "direction": "higher"} for name, value in values.items()}
-    return {"model": {"build_profile_id": "modalix_int8"}, "metrics": metrics}
+    return {"model": {"build_profile_id": "w8a8"}, "metrics": metrics}
 
 
 @pytest.mark.parametrize(
@@ -204,8 +204,8 @@ def accuracy_result(**values: float) -> dict:
         (accuracy_result(top1=0.7599, top5=0.95), ["top1 0.7599 is below 0.8 by more than 5%"]),
         (accuracy_result(top1=0.80), ["top5 was not measured"]),
         (
-            {**accuracy_result(top1=0.80, top5=0.95), "model": {"build_profile_id": "modalix_bf16"}},
-            ["tests.yaml expects no accuracy values of modalix_bf16"],
+            {**accuracy_result(top1=0.80, top5=0.95), "model": {"build_profile_id": "w16a16"}},
+            ["tests.yaml expects no accuracy values of w16a16"],
         ),
     ],
     ids=["equal", "within the allowed drop", "below the allowed drop", "missing metric", "unexpected build"],
@@ -213,7 +213,7 @@ def accuracy_result(**values: float) -> dict:
 def test_measured_shortfalls_compare_each_expected_value(tmp_path: Path, result: dict, shortfalls: list[str]) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(
-        "accuracy:\n  run_tests: true\n  expected:\n    modalix_int8:\n"
+        "accuracy:\n  run_tests: true\n  expected:\n    w8a8:\n"
         "      top1: 0.80\n      top5: 0.95\n",
         encoding="utf-8",
     )
@@ -224,7 +224,7 @@ def test_measured_shortfalls_compare_each_expected_value(tmp_path: Path, result:
 def test_measured_shortfalls_hold_a_lower_is_better_metric_under_its_allowed_rise(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(
-        "accuracy:\n  run_tests: true\n  expected:\n    modalix_int8:\n      error: 0.20\n",
+        "accuracy:\n  run_tests: true\n  expected:\n    w8a8:\n      error: 0.20\n",
         encoding="utf-8",
     )
     result = accuracy_result(error=0.2101)
@@ -237,7 +237,7 @@ def test_measured_shortfalls_take_the_performance_component(tmp_path: Path) -> N
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(PERFORMANCE_EXPECTED, encoding="utf-8")
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text(encoding="utf-8"))
-    result["model"].update(build_profile_id="modalix_int8", component_id="model")
+    result["model"].update(build_profile_id="w8a8", component_id="model")
 
     def measured(fps: float) -> dict:
         return {**result, "benchmark_report": {**result["benchmark_report"], "fps": fps}}

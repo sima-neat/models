@@ -221,11 +221,10 @@ calibrations:
     size_bytes: 48695578
     media_type: application/x-npz
 build_profiles:
-- id: modalix_int8
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_mse_tmio
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -234,11 +233,10 @@ build_profiles:
       calibration_samples: 128
       requantization: sima
     calibration: default
-- id: modalix_bf16
+- id: w16a16
   target: modalix
   components:
   - id: model
-    artifact_suffix: bf16_tmio
     parameters:
       precision: bf16
       activation_quantization: bfloat16
@@ -259,8 +257,8 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   composition: default
 fidelity: []
 accuracy:
@@ -269,8 +267,8 @@ accuracy:
     type: component
     component: model
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   status: pending_hardware_qualification
   reference: onnx_fp32_raw_heads
   dataset: coco_val2017
@@ -290,14 +288,19 @@ accuracy:
       minimum_cosine_similarity: 0.999
       maximum_normalized_root_mean_square_error: 0.05
   note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.
+published_metrics:
+- source: https://github.com/tensorflow/models/blob/ac8d0651935ecf8a5e7c73ff4aaa97ca1b3623b5/research/object_detection/g3doc/tf1_detection_zoo.md
+  dataset: {id: coco-2014, split: minival}
+  conditions: 300x300, TensorFlow Object Detection API
+  metrics: {coco_map: 0.22}
 benchmark:
 - id: modalix_latency
   scope:
     type: component
     component: model
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

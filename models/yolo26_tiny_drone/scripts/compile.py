@@ -93,7 +93,8 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str, calibration
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one compiled MPK, found {archives}")
-    archive = archives[0]
+    # The qualified snapshot fixes the compiler model name; the published MPK carries the variant ID.
+    archive = archives[0].rename(output_dir / f"yolo26_tiny_drone_{variant_id}_mpk.tar.gz")
     report = {
         "schema_version": 1,
         "model_id": "yolo26_tiny_drone",

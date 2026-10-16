@@ -265,9 +265,10 @@ model-registry assemble-package \
   --package <package-id>
 ```
 
-Confirm the bundle contains every declared component MPK, resource path, and
-`manifest.json`. Package assembly does not replace MPK validation or
-application testing.
+A package with one component and no resources is that component's MPK.
+Otherwise, confirm the ZIP holds every declared component MPK at its top level
+and each resource at its `install_path`. Package assembly does not replace MPK
+validation or application testing.
 
 Keep MPKs and compiler intermediates outside the repository or in an ignored
 directory, and never commit them. If the pinned compiler is not installed, get
@@ -336,7 +337,7 @@ Before leaving the local workflow, confirm that:
 - fetched inputs, MPKs, result JSON, and logs remain outside the repository.
 
 Summarize each stage in the pull request. A compact record such as `validate:
-pass`, `compile modalix_int8/model: pass`, `performance: pass`, and `accuracy:
+pass`, `compile w8a8/model: pass`, `performance: pass`, and `accuracy:
 not declared` is clearer than a broad claim that local testing passed.
 
 When this checklist passes, continue to [Submit for review](contributing.md).

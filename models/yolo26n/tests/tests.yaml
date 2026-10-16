@@ -5,7 +5,7 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       coco_map: 0.4025
       coco_ap50: 0.5588
       coco_ap75: 0.4357
@@ -18,7 +18,7 @@ accuracy:
       coco_ar_small: 0.3860
       coco_ar_medium: 0.6726
       coco_ar_large: 0.8028
-    modalix_int8:
+    w8a8:
       coco_map: 0.3808
       coco_ap50: 0.5378
       coco_ap75: 0.4130
@@ -34,9 +34,9 @@ accuracy:
 performance:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       model:
         throughput_fps: 315.5
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 964.5

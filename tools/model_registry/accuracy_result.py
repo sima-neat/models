@@ -122,22 +122,13 @@ def build_accuracy_result(
             "evaluated_samples": dataset.get("evaluated_samples"),
             "available_samples": dataset.get("available_samples"),
         },
-        "metrics": _with_published_references(metrics, entry),
+        "metrics": metrics,
         "execution": {
             "core_version": output.get("core_version"),
             "script_sha256": hashlib.sha256((model_dir / ACCURACY_SCRIPT).read_bytes()).hexdigest(),
             "models_commit": git_sha,
         },
         "details": output.get("details", {}),
-    }
-
-
-def _with_published_references(metrics: JsonObject, entry: JsonObject) -> JsonObject:
-    """Attach the entry's published score to each metric it names, as that metric's reference."""
-    published = entry.get("reference", {}).get("metrics", {})
-    return {
-        name: {**metric, "reference": published[name]} if name in published and isinstance(metric, dict) else metric
-        for name, metric in metrics.items()
     }
 
 

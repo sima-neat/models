@@ -36,7 +36,7 @@ def _grouped_manifest(tmp_path: Path, outputs: list[dict[str, str]]) -> dict[str
     digest, _ = sha256_file(fidelity)
     return {
         "model_id": "rf_detr_small",
-        "build_profile_id": "modalix_int8_bf16",
+        "build_profile_id": "w8a8_w16a16",
         "compile_invocation_id": "rf_detr",
         "outputs": outputs,
         "derived_graphs": [
@@ -107,7 +107,7 @@ def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) ->
         manifest,
         tmp_path,
         model_id="rf_detr_small",
-        build_profile_id="modalix_int8_bf16",
+        build_profile_id="w8a8_w16a16",
         compile_invocation_id="rf_detr",
         component_ids=["backbone", "transformer"],
     )
@@ -145,7 +145,7 @@ def test_validate_compile_outputs_rejects_incomplete_or_unsafe_manifest(
             manifest,
             tmp_path,
             model_id="rf_detr_small",
-            build_profile_id="modalix_int8_bf16",
+            build_profile_id="w8a8_w16a16",
             compile_invocation_id="rf_detr",
             component_ids=["backbone", "transformer"],
         )
@@ -161,7 +161,7 @@ def test_validate_compile_outputs_rejects_mpk_hash_mismatch(tmp_path: Path) -> N
         json.dumps(
             {
                 "model_id": "rf_detr_small",
-                "build_profile_id": "modalix_int8_bf16",
+                "build_profile_id": "w8a8_w16a16",
                 "compile_invocation_id": "rf_detr",
                 "outputs": [
                     {
@@ -180,7 +180,7 @@ def test_validate_compile_outputs_rejects_mpk_hash_mismatch(tmp_path: Path) -> N
             manifest,
             tmp_path,
             model_id="rf_detr_small",
-            build_profile_id="modalix_int8_bf16",
+            build_profile_id="w8a8_w16a16",
             compile_invocation_id="rf_detr",
             component_ids=["backbone"],
         )
@@ -199,7 +199,7 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
         json.dumps(
             {
                 "model_id": "rf_detr_small",
-                "build_profile_id": "modalix_int8_bf16",
+                "build_profile_id": "w8a8_w16a16",
                 "compile_invocation_id": "backbone",
                 "outputs": [_output("backbone", archive)],
             }
@@ -212,7 +212,7 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
             manifest,
             tmp_path,
             model_id="rf_detr_small",
-            build_profile_id="modalix_int8_bf16",
+            build_profile_id="w8a8_w16a16",
             compile_invocation_id="backbone",
             component_ids=["backbone"],
         )
@@ -240,7 +240,7 @@ def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_in
             manifest,
             tmp_path,
             model_id="rf_detr_small",
-            build_profile_id="modalix_int8_bf16",
+            build_profile_id="w8a8_w16a16",
             compile_invocation_id="rf_detr",
             component_ids=components,
         )

@@ -17,7 +17,7 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'styles', 'config',
+  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'styles', 'config',
 ];
 
 rmSync(output, {recursive: true, force: true});
@@ -37,18 +37,22 @@ browserHtml = browserHtml
   .replace('src="app.js"', `src="app.${revision}.js"`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
-// The order each multi-component model runs in, built from model.yaml by the registry tooling.
-const pipelinesUrl = './component-pipelines.json';
-const pipelinesFile = `component-pipelines.${revision}.json`;
-execFileSync(process.env.PYTHON || 'python3', [
-  '-m', 'model_registry', 'component-pipelines', '--repository', repository, '--output', join(output, pipelinesFile),
-], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'});
+// Data the registry tooling builds from model.yaml: the order each multi-component model runs in, and
+// the scores each source model's authors published. api.js fetches each by its unfingerprinted name.
 const apiModule = join(output, `api.${revision}.js`);
-const apiSource = readFileSync(apiModule, 'utf8');
-if (!apiSource.includes(`"${pipelinesUrl}"`)) {
-  throw new Error(`api.js no longer fetches ${pipelinesUrl}; update the pipelines step in assemble-portal.mjs`);
+let apiSource = readFileSync(apiModule, 'utf8');
+for (const name of ['component-pipelines', 'published-metrics']) {
+  const url = `./${name}.json`;
+  const file = `${name}.${revision}.json`;
+  execFileSync(process.env.PYTHON || 'python3', [
+    '-m', 'model_registry', name, '--repository', repository, '--output', join(output, file),
+  ], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'});
+  if (!apiSource.includes(`"${url}"`)) {
+    throw new Error(`api.js no longer fetches ${url}; update the model data step in assemble-portal.mjs`);
+  }
+  apiSource = apiSource.replace(`"${url}"`, `"./${file}"`);
 }
-writeFileSync(apiModule, apiSource.replace(`"${pipelinesUrl}"`, `"./${pipelinesFile}"`));
+writeFileSync(apiModule, apiSource);
 
 const modules = fingerprintedAssets.filter((asset) => asset !== 'styles');
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
