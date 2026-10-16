@@ -700,18 +700,3 @@ def test_category_fields_are_required() -> None:
         model.pop(field)
     with pytest.raises(ValidationError, match="'model_type' is a required property"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
-
-
-@pytest.mark.parametrize("suffix", ["backbone_w8a8", "transformer_w16a16", "model_preview"])
-def test_component_binding_accepts_artifact_suffix(suffix: str) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
-@pytest.mark.parametrize("suffix", [None, "", "../model", "Backbone", "backbone-int8", "model.tar.gz", "model\n"])
-def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    with pytest.raises(ValidationError):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)

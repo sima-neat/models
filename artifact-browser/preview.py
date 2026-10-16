@@ -32,7 +32,7 @@ from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.dependencies import resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fidelity_config import find_fidelity_config  # noqa: E402
-from model_registry.model import component_pipelines, load_models, profile_component_for  # noqa: E402
+from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
 BRANCH = "develop"
@@ -582,10 +582,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
     def _compile_run_api(self, run_id: str, rest: list[str], model: dict, build: dict, compiler: dict) -> None:
         run = _index()["runs"][run_id]
         if not rest:
-            _, binding = profile_component_for(model, build["build_profile_id"], build["component_id"])
-            suffix = binding.get("artifact_suffix", build["build_profile_id"])
             self._json({"run": run, "artifacts": [{
-                "name": f"{model['id']}_{suffix}_mpk.tar.gz",
+                "name": "mpk",
                 "artifact_type": "model-pack",
                 "sha256": build["artifact_sha256"],
                 "size_bytes": 8_000_000 + int(_fraction("mpk-size", run_id) * 300_000_000),
@@ -616,7 +614,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             # Accuracy lives on its own model_accuracy run, resolved by the build's accuracy key.
             self._not_found("accuracy_not_found")
         elif len(rest) == 2 and rest[0] == "artifacts":
-            self._download_link()
+            filename = mpk_filename(model, build["build_profile_id"], build["component_id"])
+            self._download_link(f"models/develop/{model['id']}/{build['build_profile_id']}/{build['component_id']}/{filename}")
         else:
             self._not_found("not_found")
 
@@ -642,9 +641,7 @@ def _package_file(model: dict, package: dict) -> tuple[str, str]:
     """The published filename and media type of a package: its lone MPK, or a ZIP of everything."""
     declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
     if len(declaration["components"]) == 1 and not declaration["resources"]:
-        _, binding = profile_component_for(model, package["build_profile_id"], declaration["components"][0])
-        suffix = binding.get("artifact_suffix", package["build_profile_id"])
-        return f"{model['id']}_{suffix}_mpk.tar.gz", "application/gzip"
+        return mpk_filename(model, package["build_profile_id"], declaration["components"][0]), "application/gzip"
     return f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip", "application/zip"
 
 

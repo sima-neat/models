@@ -106,7 +106,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
         raise ValueError(f"expected exactly one SSD-MobileNet V3 variant named {variant_id!r}")
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == "model")
-    variant = {**profile, "parameters": binding["parameters"], "artifact_suffix": binding["artifact_suffix"]}
+    variant = {**profile, "parameters": binding["parameters"]}
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
         raise ValueError("SSD-MobileNet V3 supports only declared Modalix INT8 and BF16 variants")
@@ -452,7 +452,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_p
             .with_requantization_mode(RequantizationMode.sima)
             .with_calibration(CalibrationMethod.from_str(calibration_method))
         )
-        model_name = f"ssd_mobilenet_v3_{variant['artifact_suffix']}"
+        model_name = f"ssd_mobilenet_v3_{variant_id}"
         quantized = loaded.quantize(
             calibration_data=calibration_data,
             quantization_config=quantization,
@@ -482,8 +482,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_p
 def validate_saved_model(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     """Reload compiler outputs in a fresh process and run held-out validation."""
 
-    variant = variant_config(variant_id)
-    precision = str(variant["parameters"]["precision"])
+    precision = str(variant_config(variant_id)["parameters"]["precision"])
 
     from afe.apis.defines import InputName
     from afe.apis.model import Model
@@ -491,7 +490,7 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str, calibr
     LOG.info("Fresh validation process: resolving calibration asset")
     _calibration, validation = validate_dataset(calibration_path)
     validation = imagenet_normalize(validation)
-    model_name = f"ssd_mobilenet_v3_{variant['artifact_suffix']}"
+    model_name = f"ssd_mobilenet_v3_{variant_id}"
     with tempfile.TemporaryDirectory(
         prefix="ssd-mobilenet-v3-validation-",
         dir=os.environ.get("RUNNER_TEMP"),

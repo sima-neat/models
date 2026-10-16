@@ -9,7 +9,6 @@ from pathlib import Path
 
 from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_mpk
-from .artifact_metadata import validate_artifact_metadata
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
@@ -374,7 +373,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
 
 def _validate(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
-    validate_artifact_metadata(model)
     result = {"model_id": model["id"], "model_dir": str(args.model_dir.resolve()), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model: {model['id']}")
     return 0

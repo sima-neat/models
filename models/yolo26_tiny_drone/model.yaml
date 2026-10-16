@@ -162,7 +162,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w8a8_qat
     parameters:
       precision: int8
       model_size: 1600

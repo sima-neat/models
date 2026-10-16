@@ -88,11 +88,6 @@ def _profile() -> dict[str, Any]:
     return next(profile for profile in model["build_profiles"] if profile["id"] == PROFILE_ID)
 
 
-def _artifact_name(component_id: str) -> str:
-    binding = next(item for item in _profile()["components"] if item["id"] == component_id)
-    return f"{MODEL_ID}_{binding['artifact_suffix']}"
-
-
 def _quantization(precision: str, calibration_bins: int) -> Any:
     if precision == "int8":
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
@@ -338,7 +333,7 @@ def _compile_backbone(
     backbone, build_dir = _quantize_component(
         graph,
         temporary_dir,
-        _artifact_name("backbone"),
+        f"{MODEL_ID}_{PROFILE_ID}_backbone",
         precision,
         calibration_bins,
         {INPUT: calibration_images},
@@ -376,7 +371,7 @@ def _compile_transformer(
         transformer, build_dir = _quantize_component(
             graph,
             temporary_dir,
-            _artifact_name("transformer"),
+            f"{MODEL_ID}_{PROFILE_ID}_transformer",
             precision,
             calibration_bins,
             {FEATURES: calibration_features, PROPOSALS: calibration_proposals},
@@ -419,7 +414,7 @@ def _run_phase(name: str, target: Callable[..., None], *args: Any) -> None:
 
 
 def _component_archive(temporary_dir: Path, component_id: str) -> Path:
-    build_dir = temporary_dir / _artifact_name(component_id)
+    build_dir = temporary_dir / f"{MODEL_ID}_{PROFILE_ID}_{component_id}"
     archives = sorted(build_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")

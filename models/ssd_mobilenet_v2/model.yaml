@@ -225,7 +225,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w8a8_mse
     parameters:
       precision: int8
       activation_quantization: asymmetric_per_tensor_8bit
@@ -238,7 +237,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w16a16
     parameters:
       precision: bf16
       activation_quantization: bfloat16

@@ -227,7 +227,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w8a8_qat
     parameters:
       precision: int8
       quantization_method: qat
@@ -241,7 +240,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w16a16
     parameters:
       precision: bf16
       quantization_method: ptq

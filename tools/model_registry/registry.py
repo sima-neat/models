@@ -27,7 +27,7 @@ from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fidelity_config import find_fidelity_config, validate_fidelity_result
-from .model import compile_invocations_for, load_and_validate_model, load_models, profile_component_for
+from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .source import source_identity
 from .stage_keys import accuracy_key, compile_key, performance_key
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
@@ -435,15 +435,11 @@ def build_catalog_snapshot(
                 raise ValidationError(
                     f"no immutable MPK checksum matches {key[0]}/{key[1]}/{key[2]}"
                 )
-            _, binding = profile_component_for(model, key[1], key[2])
-            if "artifact_suffix" in binding and len(f"{key[0]}_{binding['artifact_suffix']}_mpk.tar.gz") > 255:
-                raise ValidationError(f"artifact_suffix for {key[0]}/{key[1]}/{key[2]} exceeds the filename limit")
             invocation_builds.append(
                 {
                     "build_profile_id": key[1],
                     "compile_invocation_id": invocation["compile_invocation_id"],
                     "component_id": key[2],
-                    **({"artifact_suffix": binding["artifact_suffix"]} if "artifact_suffix" in binding else {}),
                     "compile_fingerprint": invocation["build_fingerprint"],
                     "artifact_sha256": artifact_sha256,
                     "validation_fingerprint": None,
@@ -898,7 +894,7 @@ def stage_catalog_build(
             raise ValidationError(f"downloaded MPK failed size or SHA-256 verification for {run_id}")
         component_dir = output / model_id / build_profile_id / component_id
         component_dir.mkdir(parents=True, exist_ok=True)
-        archive_name = f"{model_id}_{build_profile_id}_{component_id}_mpk.tar.gz"
+        archive_name = mpk_filename(model, build_profile_id, component_id)
         archive = component_dir / archive_name
         archive.write_bytes(payload)
         verify_mpk(component_dir)
@@ -1158,6 +1154,9 @@ def _preflight_compilations(
                 raise ValidationError(f"{result_path}: provenance {field} must be {value!r}")
 
         archive_name = _require_text(result.get("archive"), "archive")
+        expected_name = mpk_filename(model, build_profile_id, component_id)
+        if archive_name != expected_name:
+            raise ValidationError(f"{result_path}: compiled MPK must be named {expected_name}, found {archive_name}")
         archive = result_path.parent / archive_name
         if not archive.is_file() or archive.parent != result_path.parent:
             raise ValidationError(f"{result_path}: archive is missing from the packaged output")

@@ -195,8 +195,8 @@ tokens in [`naming-conventions.yaml`](../naming-conventions.yaml): one token
 per component in component order, with a repeated token written once. Both
 components above are W8A8, so the ID is `w8a8`; an INT8 backbone followed by a
 BF16 transformer is `w8a8_w16a16`. Leave the target out of the ID. If two
-profiles of one model would share an ID, append the first `artifact_suffix`
-tokens that tell them apart. The Model Browser shows variant IDs in uppercase,
+profiles of one model would share an ID, append the first vocabulary tokens
+that tell them apart. The Model Browser shows variant IDs in uppercase,
 while `sima-cli models download --variant` takes the lowercase ID.
 
 `parameters.precision` stays the compiler's value (`int8` or `bf16`); the
@@ -233,30 +233,15 @@ is not unsupported.
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
 
-A component binding may also declare `artifact_suffix` outside `parameters`.
-It uses the identifier syntax and names the component's MPK:
-`<model_id>_<artifact_suffix>_mpk.tar.gz`. `scripts/compile.py` passes
-`<model_id>_<artifact_suffix>` to the compiler as the model name, and the
-browser uses the same filename for component downloads. Include the component name in the suffix
-when useful. For example, RF-DETR uses `backbone_w8a8_mse_bcr` and `transformer_w16a16` under
-one `w8a8_w16a16` profile. The suffix is explicit and is not inferred from
-precision. The complete download basename must fit within 255 characters.
-
-The suffix is not a compile key input, so changing it reruns no stage. The
-catalog and browser downloads pick up the new name at once; the compiled MPK
-and its package take it at the next compile.
-
-Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
-from the shared vocabulary, for example `w8a8_mse` or
-`w8a8_mse_h1024_bci_l2e`. Prefix the component ID for multi-component models.
-The model ID and `_mpk.tar.gz` are added by the download path. Keep the target,
-versions, calibration sample counts, dataset identities, and seeds out of the
-suffix. Add a token to the vocabulary when a new option needs a name.
-
-This vocabulary is an author reference, with no token parser or automatic name
-generation. Write `artifact_suffix` explicitly and check its meaning against the
-recipe. It does not select compiler settings or replace existing parameters;
-`compile.py` continues to own the AFE calls.
+Each compiled MPK is named after its model and variant:
+`<model_id>_<profile_id>_mpk.tar.gz`, or
+`<model_id>_<profile_id>_<component_id>_mpk.tar.gz` when the profile has
+several components. `scripts/compile.py` passes the name without
+`_mpk.tar.gz` to the compiler as the model name, and publication rejects an
+MPK with any other name. For example, RF-DETR's `w8a8_w16a16` profile
+produces `rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz` and
+`rf_detr_nano_w8a8_w16a16_transformer_mpk.tar.gz`. The stored MPK, the
+package, and the browser and CLI downloads all use this name.
 
 ## Compositions and packages
 
@@ -307,7 +292,7 @@ Exactly one package is the default. Validation ensures each package includes
 the components required by its composition and declares only profiles that
 build all of them in one compile invocation. Trusted assembly keeps each MPK
 intact. A package with one component and no resources is that component's
-MPK, `<model_id>_<artifact_suffix>_mpk.tar.gz`. Any other package is a
+MPK, `<model_id>_<profile_id>_mpk.tar.gz`. Any other package is a
 deterministic `<model_id>_<profile_id>_<package_id>.zip` holding the MPKs at
 its top level and each resource at its `install_path`. Assembly records the
 package manifest in `package-result.json`, validated against

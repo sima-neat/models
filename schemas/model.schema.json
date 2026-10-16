@@ -254,7 +254,6 @@
       "properties": {
         "id": {"$ref": "#/$defs/id"}, "runner_class": {"enum": ["default", "expensive", "most-expensive"]},
         "shape_profile": {"$ref": "#/$defs/id"}, "calibration": {"$ref": "#/$defs/id"},
-        "artifact_suffix": {"$ref": "#/$defs/id", "not": {"pattern": "[^a-z0-9_]"}},
         "parameters": {"type": "object"}, "status": {"enum": ["supported", "unsupported"]},
         "reason": {"type": "string", "minLength": 1}
       },

@@ -144,7 +144,6 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
 
 async function downloadVariant(runId) {
   const request = ++downloadRequest;
-  const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
     title: "Download components",
@@ -154,8 +153,7 @@ async function downloadVariant(runId) {
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
-    const model = catalogModels.find((model) => model.model_id === summary.run.metadata?.model_id);
-    const downloads = await prepareDownloads(await variantDownloads(summary.run, api, model), api);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id
@@ -198,7 +196,6 @@ async function downloadPackage(runId) {
       component: "Full package",
       name: artifact.name,
       size: artifact.size_bytes,
-      downloadFilename: null,
     }], api);
     const filename = downloads[0].filename;
     const format = packageFormat(artifact, filename);

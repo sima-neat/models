@@ -138,15 +138,11 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     for (const run of group.runs) {
       const component = run.metadata?.component_id || "model";
       const exactBuild = definition.builds?.find((build) => build.run_id === run.id);
-      const catalogBuild = exactBuild
-        || definition.builds?.find((build) => (build.build_profile_id || build.variant_id) === group.profile
-          && (build.component_id || "model") === component);
       model.builds.push({
         run_id: run.id,
         run,
         build_profile_id: group.profile,
         component_id: component,
-        artifact_suffix: catalogBuild?.artifact_suffix,
         // The accuracy key names the MPKs it measured, so only the catalog build of this run carries it.
         validation_fingerprint: exactBuild?.validation_fingerprint,
         toolchain_name: run.toolchain_name,

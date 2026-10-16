@@ -222,7 +222,7 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
         assert items[0]["metadata"]["component_run_ids"] == packages[model_id]["component_run_ids"]
     # A single-component package is its MPK; a multi-component package is a ZIP.
     assert artifacts["resnet_50"][0]["media_type"] == "application/gzip"
-    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_mse_mpk.tar.gz")
+    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_mpk.tar.gz")
     assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
     assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
@@ -1496,8 +1496,8 @@ const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
              run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone', artifact_suffix: 'backbone_w8a8'},
-  {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer', artifact_suffix: 'transformer_w16a16',
+  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
+  {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer',
    validation_fingerprint: 'stale-accuracy-key'},
 ]},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
@@ -1510,9 +1510,8 @@ const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transf
 const models = branchModels([...old, ...current], packages, catalog);
 assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
 assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
-assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_w8a8', 'transformer_w16a16']);
 assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
-// A profile/component fallback supplies static metadata, never another build's accuracy key.
+// Only the catalog build of the same run carries its accuracy key.
 assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
 const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'w8a8_w16a16',
   component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];

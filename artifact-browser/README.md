@@ -266,11 +266,8 @@ and click **Download** to review the RF-DETR component dialog.
 
 Run the download and variant-build checks with `node --test tests/browser/*.test.mjs`
 and the existing UI checks with `python -m pytest tests/test_artifact_browser.py`.
-When a catalog build declares `artifact_suffix`, the dialog and download use
-`<model_id>_<artifact_suffix>_mpk.tar.gz`. The browser sends `download_filename` to
-the registry artifact endpoint; deploy registry support before this consumer.
-Existing objects, checksums, and run metadata stay unchanged. Builds without a
-suffix and history downloads retain their existing filenames.
+The dialog shows each stored MPK's own filename, `<model_id>_<profile_id>_mpk.tar.gz`
+or `<model_id>_<profile_id>_<component_id>_mpk.tar.gz`, and downloads it unchanged.
 
 ## Duration reporting
 

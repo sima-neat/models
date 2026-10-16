@@ -139,7 +139,7 @@ def _packaged_result(tmp_path: Path) -> Path:
     metadata = tmp_path / "fixture_mpk.json"
     payload.write_bytes(b"elf")
     metadata.write_text("{}\n", encoding="utf-8")
-    archive = output / "resnet_50_mpk.tar.gz"
+    archive = output / "resnet_50_w16a16_mpk.tar.gz"
     with tarfile.open(archive, "w:gz") as stream:
         stream.add(payload, arcname="payload.elf")
         stream.add(metadata, arcname="fixture_mpk.json")
@@ -533,18 +533,31 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
     assert calls == []
 
 
-def test_publish_rejects_archive_not_bound_to_output_manifest(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("rebuilt", "message"), [
+    (False, "compiled MPK must be named resnet_50_w16a16_mpk.tar.gz, found resnet_50_mpk.tar.gz"),
+    (True, "archive does not match the compile output manifest"),
+])
+def test_publish_rejects_archive_not_named_or_bound_to_output_manifest(
+    tmp_path: Path, rebuilt: bool, message: str
+) -> None:
     dist = _packaged_result(tmp_path)
     result_path = dist / "resnet_50" / "w16a16" / "model" / "compile-result.json"
     result = json.loads(result_path.read_text())
-    stale = result_path.parent / "stale.tar.gz"
-    stale.write_bytes((result_path.parent / result["archive"]).read_bytes())
-    result["archive"] = stale.name
+    if rebuilt:
+        # The result names the right file but records a checksum the compile output manifest never saw.
+        result["sha256"] = "0" * 64
+    else:
+        outputs_path = result_path.parent.parent / "compile-outputs.json"
+        outputs = json.loads(outputs_path.read_text())
+        renamed = (result_path.parent / result["archive"]).rename(result_path.parent / "resnet_50_mpk.tar.gz")
+        outputs["outputs"][0]["mpk_path"] = f"model/{renamed.name}"
+        outputs_path.write_text(json.dumps(outputs))
+        result["archive"] = renamed.name
     result_path.write_text(json.dumps(result))
     calls = []
     store = FakeStore()
 
-    with pytest.raises(ValidationError, match="archive does not match the compile output manifest"):
+    with pytest.raises(ValidationError, match=message):
         publish_compilations(
             repository=ROOT,
             dist_dir=dist,

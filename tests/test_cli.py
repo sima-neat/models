@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 from model_registry import cli
 from model_registry.cli import main
-from model_registry.documentation import BUILDING_APPLICATIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,38 +63,6 @@ def test_validate_models_checks_every_manifest(capsys) -> None:
     assert f'"model_count": {len(list((ROOT / "models").glob("*/model.yaml")))}' in output
     assert '"ssd_mobilenet_v3"' in output
     assert '"valid": true' in output
-
-
-@pytest.mark.parametrize("command", ["validate", "validate-models"])
-@pytest.mark.parametrize("filename_length", [255, 256])
-def test_validation_checks_complete_filename_length(command, filename_length, tmp_path: Path, capsys) -> None:
-    model_dir = tmp_path / "models" / "fixture_model"
-    shutil.copytree(ROOT / "tests" / "fixtures" / "fixture_model", model_dir)
-    for directory in ("schemas", "taxonomies"):
-        shutil.copytree(ROOT / directory, tmp_path / directory)
-    manifest = model_dir / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    suffix_length = filename_length - len(f"{model['id']}__mpk.tar.gz")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "a" * suffix_length
-    manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
-    if command == "validate-models":
-        overview = " ".join(f"word{index}" for index in range(50))
-        sections = [
-            ("Overview", overview), ("Inputs and outputs", "Interface."),
-            ("Building applications", BUILDING_APPLICATIONS),
-        ]
-        (model_dir / "README.md").write_text(
-            f"# {model['display_name']}\n\n"
-            f"![{model['display_name']} model hero](hero.png)\n\n"
-            + "\n\n".join(f"## {heading}\n\n{body}" for heading, body in sections)
-            + "\n",
-            encoding="utf-8",
-        )
-    args = [str(model_dir)] if command == "validate" else ["--repository", str(tmp_path)]
-
-    assert main([command, *args]) == (0 if filename_length == 255 else 2)
-    if filename_length == 256:
-        assert "filename limit" in capsys.readouterr().err
 
 
 def test_fetch_reports_file_set_root(monkeypatch, tmp_path: Path, capsys) -> None:

@@ -44,7 +44,7 @@ def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:
         raise ValueError(f"expected exactly one build profile named {variant_id!r}")
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == COMPONENT_ID)
-    return {**profile, "parameters": binding["parameters"], "artifact_suffix": binding["artifact_suffix"]}
+    return {**profile, "parameters": binding["parameters"]}
 
 
 def _fidelity_config(metadata: dict[str, Any], variant_id: str) -> dict[str, Any] | None:
@@ -82,7 +82,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
         activation_scheme = weight_scheme = bfloat16_scheme()
 
     data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
-    model_name = f"{MODEL_ID}_{variant['artifact_suffix']}"
+    model_name = f"{MODEL_ID}_{variant_id}"
     quantized = loaded.quantize(
         data,
         QuantizationParams(

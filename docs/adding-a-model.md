@@ -150,15 +150,14 @@ build_profiles:
     components:
       - id: model
         calibration: default
-        artifact_suffix: w8a8_mse
         parameters: {precision: int8}
 ```
 
 Name the profile by its variant ID: the precision token of each component from
 [`naming-conventions.yaml`](../naming-conventions.yaml), in component order,
 with a repeated token written once, such as `w8a8`, `w16a16`, or
-`w8a8_w16a16`. Name each binding's MPK with `artifact_suffix`, composed from
-the same vocabulary. See [Build profiles](metadata-schema.md#build-profiles)
+`w8a8_w16a16`. Each compiled MPK carries the model and variant ID, such as
+`yolo26n_w8a8_mpk.tar.gz`. See [Build profiles](metadata-schema.md#build-profiles)
 for the full rules.
 
 By default each supported binding is its own compile invocation, named after
@@ -191,9 +190,10 @@ runner passes `--dataset` when the binding selects a ready calibration and
 `--fidelity-dataset` when a `fidelity` entry applies. The recipe:
 
 - reads its build profile from `model.yaml`;
-- writes exactly one `<model-id>_<artifact-suffix>_mpk.tar.gz` under
+- writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component of the invocation, by
-  passing `<model-id>_<artifact-suffix>` to the compiler as the model name;
+  passing `<model-id>_<profile-id>` to the compiler as the model name; a
+  profile with several components adds `_<component-id>` to both;
 - writes `fidelity.json` beside the MPK of the fidelity entry's
   `result_component` when a `fidelity` entry applies;
 - for a grouped invocation, also writes `<output-dir>/compile-outputs.json`

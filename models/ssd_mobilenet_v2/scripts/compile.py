@@ -39,7 +39,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
         raise ValueError(f"expected exactly one SSD-MobileNet V2 variant named {variant_id!r}")
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == "model")
-    variant = {**profile, "parameters": binding["parameters"], "artifact_suffix": binding["artifact_suffix"]}
+    variant = {**profile, "parameters": binding["parameters"]}
     parameters = variant["parameters"]
     if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
         raise ValueError("SSD-MobileNet V2 supports only declared Modalix INT8 and BF16 variants")
@@ -366,7 +366,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_p
             .with_requantization_mode(RequantizationMode.sima)
             .with_calibration(CalibrationMethod.from_str("mse"))
         )
-        model_name = f"ssd_mobilenet_v2_{variant['artifact_suffix']}"
+        model_name = f"ssd_mobilenet_v2_{variant_id}"
         quantized = loaded.quantize(
             calibration_data=calibration_data,
             quantization_config=quantization,

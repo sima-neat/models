@@ -129,14 +129,12 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w16a16
     parameters:
       precision: bf16
 - id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: w8a8_mse_h2048_bcr
     calibration: coco_images
     parameters:
       precision: int8

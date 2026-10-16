@@ -118,7 +118,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w16a16
     parameters:
       precision: bf16
       input_name: pixel_values
@@ -132,7 +131,6 @@ build_profiles:
   target: modalix
   components:
   - id: model
-    artifact_suffix: w8a8_mse
     parameters:
       precision: int8
       input_name: pixel_values
