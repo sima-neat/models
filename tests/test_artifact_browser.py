@@ -1085,13 +1085,17 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert 'const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];' in script
     assert 'return [reading(sum("mean")), reading(sum("maximum"))];' in script
     assert "≤" not in script
-    assert "const legend = others.map(" in script
+    # The other SoM rails are rows at the SoC's level, and the bar above the table replaces the legend.
+    assert "...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key)).map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1])" in script
+    assert "rail-legend" not in script and "rail-legend" not in styles
+    assert 'title="Average SoM power by rail"' in script
+    assert '</h4>${lead || ""}<table>' in script
     assert ".rail-split > .rail-soc {" in styles
     assert "repeating-linear-gradient(135deg, var(--red) 0 2px" in script
     assert ".detail-card tbody tr.depth-2 th" in styles
     assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
     assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script
-    assert "power: { extra: railSplit(measurements) }" in script
+    assert "power: { lead: railSplit(measurements) }" in script
     assert 'power_rail_mla_watts: ["MLA core (0.68 V)"' in script
     assert ".rail-split" in styles
     assert ".detail-cards" in styles

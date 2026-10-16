@@ -438,13 +438,11 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .metric-row dd small { margin-left: 4px; color: var(--ink-faint); font-size: 12px; font-weight: 400; }
 .metric-caption { margin: 14px 0 0; color: var(--ink-faint); font-size: 12px; }
 /* SoM power split by rail: one segment per rail, in RAILS order, with the SoC rails in one outlined block. */
-.rail-split { display: flex; gap: 2px; height: 8px; margin-top: 12px; }
+.rail-split { display: flex; gap: 2px; height: 8px; margin: 12px 0 10px; }
 .rail-split span { min-width: 2px; }
 .rail-split > :first-child, .rail-soc > :first-child { border-radius: 999px 0 0 999px; }
 .rail-split > :last-child, .rail-soc > :last-child { border-radius: 0 999px 999px 0; }
 .rail-split > .rail-soc { display: flex; gap: 2px; margin-right: 4px; border-radius: 999px; outline: 1.5px solid var(--red); outline-offset: 2px; }
-.rail-legend { display: grid; grid-template-columns: 1fr; gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--ink-soft); font-size: 12px; }
-.rail-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .core-load { display: grid; grid-template-rows: repeat(var(--core-rows), auto); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px 20px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .core-load li { display: grid; grid-template-columns: 22px minmax(0, 1fr) 30px; align-items: center; gap: 8px; }
 .core-load li > span:last-child { color: var(--ink-soft); text-align: right; }
@@ -463,8 +461,6 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 /* A power row that is part of the row above it is indented under it. */
 .detail-card tbody tr.depth-1 th { padding-left: 14px; }
 .detail-card tbody tr.depth-2 th { padding-left: 28px; }
-.rail-legend i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
-.rail-legend b { margin-left: auto; color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .benchmark-footer { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px 32px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .benchmark-provenance { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 20px; flex: 1 1 360px; min-width: 0; margin: 0; font-size: 12px; line-height: 1.5; }
 .benchmark-provenance > div { display: contents; }

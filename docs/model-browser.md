@@ -72,13 +72,14 @@ order:
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
    and **CPU** with the core count, the load over all cores and on the
    busiest core, and a bar per core with its average and peak. On the right,
-   **Power** has the average and peak of SoM power, then SoC power indented
-   under it, then the two rails that add up to SoC power indented under SoC:
-   MLA and Non-MLA (the rest of the SoC). Rails peak at different moments, so
-   the SoC peak is the sum of the two peaks, an upper bound.
-   A bar splits the average SoM power by rail; the two SoC rails sit in one
-   block outlined like the SoC row's mark and coloured like the MLA and
-   Non-MLA rows, and a legend names the other rails. **Memory** has MLA, CMA
+   **Power** opens with a bar that splits the average SoM power by rail; the
+   two SoC rails sit in one block outlined like the SoC row's mark and
+   coloured like the MLA and Non-MLA rows. Below it are the average and peak
+   of SoM power, then SoC power indented under it, then the two rails that
+   add up to SoC power indented under SoC: MLA and Non-MLA (the rest of the
+   SoC). Rails peak at different moments, so the SoC peak is the sum of the
+   two peaks, an upper bound. The other SoM rails follow at the SoC's level,
+   each coloured like its part of the bar. **Memory** has MLA, CMA
    pool, and Linux memory. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
