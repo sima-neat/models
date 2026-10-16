@@ -1,4 +1,4 @@
-import { variantBuildRuns } from "./branch-builds.js";
+import { approvedModel, variantBuildRuns } from "./branch-builds.js";
 
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
@@ -27,14 +27,21 @@ export function cliDownloadCommand(run, catalogBranch) {
 }
 
 // Keep component discovery independent of the visible search and compiler filters.
-export async function variantDownloads(run, api) {
+export async function variantDownloads(run, api, catalogModel = null) {
+  if (catalogModel) catalogModel = approvedModel(catalogModel);
   const modelId = run.metadata?.model_id;
   const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
   const packs = (summary) => (summary.artifacts || []).filter((item) => item.artifact_type === "model-pack");
-  const runs = modelId && profile ? await variantBuildRuns(run, api) : [run];
+  const roots = catalogModel?.approved_deployments?.[profile]
+    ? catalogModel.builds.filter((build) => build.build_profile_id === profile) : [];
+  const selected = roots.some((build) => build.run_id === run.id) ? roots : [];
+  const runs = selected.length ? await Promise.all(selected.map(async (build) =>
+    (await api(`/v1/runs/${encodeURIComponent(build.run_id)}`)).run))
+    : modelId && profile ? await variantBuildRuns(run, api) : [run];
   const downloads = await Promise.all(runs.map(async (item) => {
     const summary = await api(`/v1/runs/${encodeURIComponent(item.id)}`);
-    const artifacts = packs(summary);
+    const root = selected.find((build) => build.run_id === item.id);
+    const artifacts = packs(summary).filter((artifact) => !root || artifact.name === root.artifact_name);
     const component = item.metadata?.component_id || "model";
     if (!artifacts.length) throw new Error(`No model file is available for ${component}. No downloads were started.`);
     return artifacts.map((artifact) => ({

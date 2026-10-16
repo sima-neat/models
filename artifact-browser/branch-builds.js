@@ -80,7 +80,25 @@ export async function variantBuildRuns(run, fetchPage) {
 
 // Resolves the compile runs behind catalog builds that `knownRuns` lacks, such as builds a new
 // branch inherits. The catalog names each run and its commit; the run carries its own branch.
+export function approvedModel(model) {
+  const selections = Object.entries(model.approved_deployments || {});
+  if (!selections.length) return model;
+  const profiles = new Set(selections.map(([profile]) => profile));
+  const builds = (model.builds || []).filter((build) => !profiles.has(build.build_profile_id));
+  const packages = (model.packages || []).filter((item) => !profiles.has(item.build_profile_id));
+  for (const [profile, selection] of selections) {
+    const components = selection.artifacts.filter((root) => root.component_id);
+    builds.push(...components.map((root) => ({ ...root, build_profile_id: profile })));
+    packages.push(...selection.artifacts.filter((root) => root.package_id).map((root) => ({
+      ...root, build_profile_id: profile,
+      component_run_ids: Object.fromEntries(components.map((item) => [item.component_id, item.run_id])),
+    })));
+  }
+  return { ...model, builds, packages };
+}
+
 export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repositoryPath) {
+  catalogModels = catalogModels.map(approvedModel);
   const known = new Set(knownRuns.map((run) => run.id));
   const missing = new Map(catalogModels.flatMap((model) => model.builds || [])
     .filter((build) => build.run_id && !known.has(build.run_id))
@@ -99,6 +117,7 @@ export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repo
 // Shows the catalog's build of each model and build profile, unless `compileRuns` holds a newer
 // completed build of it, which the catalog may not record yet.
 export function branchModels(compileRuns, packageRuns, catalogModels, compiler = "") {
+  catalogModels = catalogModels.map(approvedModel);
   const definitions = new Map(catalogModels.map((model) => [model.model_id, model]));
   const runs = compileRuns.filter((run) => {
     const meta = run.metadata || {};

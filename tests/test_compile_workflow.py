@@ -104,6 +104,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "initialize-catalog",
         "compile",
         "publish-catalog",
+        "publish-candidates",
         "measure",
         "report-partial-publication",
     }
@@ -277,6 +278,8 @@ def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
         "compile_matrix": "${{ steps.plan.outputs.compile_matrix }}",
         "measure_count": "${{ steps.plan.outputs.measure_count }}",
         "measure_matrix": "${{ steps.plan.outputs.measure_matrix }}",
+        "candidate_count": "${{ steps.plan.outputs.candidate_count }}",
+        "candidate_matrix": "${{ steps.plan.outputs.candidate_matrix }}",
     }
 
 
@@ -622,7 +625,7 @@ def test_build_is_published_from_a_hosted_runner() -> None:
     download = step(publish, "Download this compiler output")
 
     assert publish["needs"] == "compile"
-    assert "if" not in publish
+    assert publish["if"] == "${{ !fromJSON(inputs.entry).build_on_demand }}"
     assert publish["runs-on"] == "ubuntu-latest"
     assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
     assert upload["with"]["name"].startswith("compiler-output-")
@@ -798,29 +801,33 @@ def test_on_demand_candidates_publish_packages_without_catalog_updates() -> None
     packages = step(publish, "Publish the finalized packages")
     catalog = step(publish, "Publish this build in the catalog")
 
-    assert assemble["if"] == "inputs.publishable || fromJSON(inputs.entry).build_on_demand"
+    assert publish["if"] == "${{ !fromJSON(inputs.entry).build_on_demand }}"
+    assert assemble["if"] == "inputs.publishable"
     assert "--all" in assemble["run"]
     assert packages["if"] == (
-        "(inputs.publishable || fromJSON(inputs.entry).build_on_demand) && steps.packages.outputs.count != '0'"
+        "inputs.publishable && steps.packages.outputs.count != '0'"
     )
     assert "model-registry publish-package" in packages["run"]
-    assert catalog["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
+    assert catalog["if"] == "inputs.publishable"
     assert "--compiled-dir _compiled" in catalog["run"]
     assert '--base-branches "$BASE_BRANCHES"' in catalog["run"]
 
 
-@pytest.mark.parametrize("publishable", [False, True])
-@pytest.mark.parametrize("on_demand", [False, True])
-def test_candidate_package_and_catalog_conditions(publishable: bool, on_demand: bool) -> None:
-    publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
-    values = {"inputs.publishable": publishable, "fromJSON(inputs.entry).build_on_demand": on_demand,
-              "steps.packages.outputs.count": "1"}
+def test_candidates_join_every_invocation_and_never_promote_catalog() -> None:
+    job = load(WORKFLOW)["jobs"]["publish-candidates"]
+    assert "compile" in job["needs"]
+    assert "needs.compile.result == 'success'" in job["if"]
+    assert job["uses"] == "./.github/workflows/vulcan-model-candidate.yml"
+    workflow = load(ROOT / ".github/workflows/vulcan-model-candidate.yml")
+    steps = workflow["jobs"]["publish"]["steps"]
+    download = next(item for item in steps if item.get("uses") == "actions/download-artifact@v7")
+    assert download["with"]["pattern"].endswith("-${{ inputs.build_profile_id }}-*")
+    assert not download["with"].get("merge-multiple", False)
+    text = (ROOT / ".github/workflows/vulcan-model-candidate.yml").read_text()
+    assert "model-registry publish-candidate" in text
+    assert "publish-catalog" not in text
+    assert "--summary" in text
 
-    assert evaluate(step(publish, "Assemble the packages this build completes")["if"], values) is (
-        publishable or on_demand
-    )
-    assert evaluate(step(publish, "Publish the finalized packages")["if"], values) is (publishable or on_demand)
-    assert evaluate(step(publish, "Publish this build in the catalog")["if"], values) is (publishable and not on_demand)
 
 
 def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:

@@ -252,6 +252,27 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish.add_argument("--github-run-url", required=True)
     publish.add_argument("--json", action="store_true", dest="json_output")
 
+    candidate = subcommands.add_parser(
+        "publish-candidate", help="publish and retain a complete on-demand model/profile"
+    )
+    candidate.add_argument("--repository", type=Path, default=Path.cwd())
+    candidate.add_argument("--dist-dir", type=Path, required=True)
+    candidate.add_argument("--output-dir", type=Path, required=True)
+    candidate.add_argument("--model", required=True)
+    candidate.add_argument("--build-profile", required=True)
+    candidate.add_argument("--api-url", required=True)
+    candidate.add_argument("--aws-region", default="us-west-2")
+    candidate.add_argument("--bucket", required=True)
+    candidate.add_argument("--kms-key-id")
+    candidate.add_argument("--environment", choices=("staging",), required=True)
+    candidate.add_argument("--branch", required=True)
+    candidate.add_argument("--git-sha", required=True)
+    candidate.add_argument("--github-run-id", required=True)
+    candidate.add_argument("--github-run-attempt", required=True)
+    candidate.add_argument("--github-run-url", required=True)
+    candidate.add_argument("--summary", type=Path)
+    candidate.add_argument("--json", action="store_true", dest="json_output")
+
     publish_package = subcommands.add_parser(
         "publish-package", help="publish assembled full-model packages to the Vulcan registry"
     )
@@ -766,6 +787,32 @@ def _publish_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_candidate(args: argparse.Namespace) -> int:
+    from .candidates import publish_candidate
+
+    result = publish_candidate(
+        repository=args.repository, dist_dir=args.dist_dir, output_dir=args.output_dir,
+        model_id=args.model, build_profile_id=args.build_profile,
+        api_url=args.api_url, aws_region=args.aws_region, bucket=args.bucket, kms_key_id=args.kms_key_id,
+        environment=args.environment, branch=args.branch, git_sha=args.git_sha,
+        github_run_id=args.github_run_id, github_run_attempt=args.github_run_attempt,
+        github_run_url=args.github_run_url,
+    )
+    if args.summary:
+        with args.summary.open("a", encoding="utf-8") as stream:
+            stream.write(
+                f"Candidate ready: **{args.model}/{args.build_profile}** ({args.environment})\n\n"
+                f"- Deployment: `{result['deployment_id']}`\n"
+                f"- Manifest: `{result['manifest_digest']}`\n"
+                f"- Source: `{result['git_ref']}` at `{result['commit_sha']}`\n"
+                f"- Protection: `{json.dumps(result['protection'], sort_keys=True)}`\n"
+                f"- [Build and compile validation]({args.github_run_url})\n\n"
+                "Candidate finalized; approval, DevKit qualification, and catalog promotion are separate.\n"
+            )
+    print(json.dumps(result, sort_keys=True) if args.json_output else f"Candidate ready: {result['deployment_id']}")
+    return 0
+
+
 def _publish_benchmark(args: argparse.Namespace) -> int:
     from .benchmark_publication import publish_benchmark_result
 
@@ -980,6 +1027,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _assemble_package(args)
         if args.command == "publish":
             return _publish(args)
+        if args.command == "publish-candidate":
+            return _publish_candidate(args)
         if args.command == "publish-package":
             return _publish_package(args)
         if args.command == "publish-accuracy":

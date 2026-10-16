@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
+import shutil
+import tarfile
 from pathlib import Path
 from threading import Lock
 
 import pytest
+import yaml
 from model_registry.artifact import (
     deployment_artifact_name,
     deployment_files,
@@ -15,19 +19,21 @@ from model_registry.artifact import (
     verify_artifact,
     verify_llima,
 )
+from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.model import load_and_validate_model
-from model_registry.package import assemble_package
 from model_registry.registry import (
+    RegistryPublicationError,
+    S3ArtifactStore,
     S3Object,
     _download_registry_file,
+    canonical_sha256,
     publish_compilations,
-    publish_packages,
     stage_catalog_build,
 )
 from model_registry.source import source_identity
-from model_registry.stage_keys import compile_key
+from model_registry.stage_keys import COMPILE_TOOLING, compile_key
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_2b"
@@ -44,6 +50,8 @@ def deployment(path: Path) -> Path:
         "vm_cfg": {"image_size": [448, 448]},
     }))
     (path / "devkit/tokenizer.json").write_text("{}")
+    (path / "devkit/backup").mkdir()
+    (path / "devkit/backup/tokenizer.json").write_text("{}")
     (path / "elf_files/language.elf").write_bytes(b"\x7fELFsynthetic-language")
     (path / "elf_files/vision.elf").write_bytes(b"\x7fELFsynthetic-vision")
     (path / "npy_files/embeddings.npy").write_bytes(b"synthetic-weights")
@@ -60,16 +68,65 @@ class Registry:
         self.objects = {}
         self.uploads = 0
         self.lock = Lock()
+        self.candidate = None
+        self.bindings = {}
+        self.completed = set()
+        self.responses = {}
+        self.fail_once = None
 
     def request(self, method, path, body, key):
         self.calls.append((method, path, body))
-        if path == "/v1/runs":
+        if method != "GET" and key in self.responses:
+            previous, response = self.responses[key]
+            assert previous == (method, path, body)
+            return response
+        if path == DEPLOYMENTS and method == "POST":
+            self.candidate = {
+                **body, "deployment_id": "11111111-1111-4111-8111-111111111111", "state": "assembling",
+                "contract_digest": canonical_sha256(body["contract"]), "manifest_digest": None,
+                "upload_prefix": "models/candidates/11111111-1111-4111-8111-111111111111/",
+                "assembly_expires_at": "2099-01-01T00:00:00Z", "availability": "assembling",
+                "protection": [{"reason": "assembly", "expires_at": "2099-01-01T00:00:00Z"}],
+            }
+            response = dict(self.candidate)
+        elif path.startswith(DEPLOYMENTS) and method == "GET":
+            return dict(self.candidate)
+        elif path.startswith(DEPLOYMENTS) and "/runs/" in path:
+            run_id = path.rsplit("/", 1)[1]
+            role = body["role"]
+            assert self.candidate["contract"]["roles"][role]["run_type"] == self.runs[run_id]["run_type"]
+            assert role not in self.bindings or self.bindings[role] == run_id
+            self.bindings[role] = run_id
+            response = {"ok": True}
+        elif path.startswith(DEPLOYMENTS) and path.endswith("/finalize"):
+            assert body["contract_digest"] == self.candidate["contract_digest"]
+            assert set(self.bindings) == set(self.candidate["contract"]["roles"])
+            for role, run_id in self.bindings.items():
+                spec = self.candidate["contract"]["roles"][role]
+                assert run_id in self.completed
+                assert all(f"/v1/runs/{run_id}/artifacts/{name}" in self.artifacts for name in spec["artifacts"])
+                assert all(any(path == f"/v1/runs/{run_id}/inputs/{name}" for _, path, _ in self.calls)
+                           for name in spec["inputs"])
+            self.candidate.update(state="finalized", manifest_digest="f" * 64, availability="registered",
+                                  protection=[{"reason": "latest_successful", "expires_at": None}])
+            response = dict(self.candidate)
+        elif path == "/v1/runs":
             run_id = f"run-{len(self.runs)}"
             self.runs[run_id] = body
-            return {"run_id": run_id}
-        if "/artifacts/" in path:
-            self.artifacts[path] = {"name": path.rsplit("/", 1)[1], **body}
-        return {"ok": True}
+            response = {"run_id": run_id}
+        else:
+            if "/artifacts/" in path:
+                if body["retention_class"] == "on-demand":
+                    assert path.split("/")[3] in self.bindings.values()
+                if self.fail_once and path.endswith(self.fail_once):
+                    self.fail_once = None
+                    raise RegistryPublicationError("temporary publication failure")
+                self.artifacts[path] = {"name": path.rsplit("/", 1)[1], **body}
+            if path.endswith("/finalize"):
+                self.completed.add(path.split("/")[3])
+            response = {"ok": True}
+        self.responses[key] = ((method, path, body), response)
+        return response
 
     def ensure_native_sha256(self, path, key, sha256, *, media_type="application/gzip"):
         data = path.read_bytes()
@@ -120,25 +177,27 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     )
     assert manifest["outputs"][0]["artifact_path"] == str(component / "deployment-manifest.json")
     registry = Registry()
-    published = publish_compilations(repository=ROOT, dist_dir=compiled, **registry.args())
+    candidate = publish_candidate(
+        repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
+        model_id=MODEL, build_profile_id=PROFILE, **registry.args(),
+    )
+    assert candidate["state"] == "finalized"
+    published = json.loads((component / "registry-publication.json").read_text())
     compile_run = published["runs"][0]["run_id"]
     source_input = next(body for _, path, body in registry.calls if path.endswith("/inputs/source-component"))
     assert source_input["metadata"]["revision"] == "185ccd6cb4e420e47cc7b6c4113618b02ec4226d"
-    (component / "registry-publication.json").write_text(json.dumps(published))
-    package = assemble_package(
-        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
-        model_id=MODEL, build_profile_id=PROFILE, package_id="default",
-    )
-    package_dir = tmp_path / "packages" / MODEL / PROFILE / "packages/default"
+    package_dir = tmp_path / "candidate/packages" / MODEL / PROFILE / "packages/default"
+    package = json.loads((package_dir / "package-result.json").read_text())
+    packages = json.loads((package_dir / "registry-publication.json").read_text())
     assert package["layout"] == "directory"
     assert not list(tmp_path.rglob("*.zip"))
     for path in source.rglob("*"):
         if path.is_file():
             assert (package_dir / "deployment" / path.relative_to(source)).read_bytes() == path.read_bytes()
-    payload_uploads = registry.uploads
-    packages = publish_packages(repository=ROOT, package_dir=tmp_path / "packages", **registry.args())
-    # Only the new package manifest uploads; every compiled payload object is reused.
-    assert registry.uploads == payload_uploads + 1
+    # Shared payloads upload once; the two roots have different manifest contents.
+    payloads = {(item["sha256"], Path(item["path"]).name) for item in package["manifest"]["files"]}
+    assert registry.uploads == len(payloads) + 2
+    assert all(key.startswith(candidate["upload_prefix"]) for key in registry.objects)
     package_run = packages["packages"][0]["run_id"]
     artifact = registry.artifacts[f"/v1/runs/{package_run}/artifacts/package"]
     assert artifact["media_type"] == "application/json"
@@ -193,6 +252,127 @@ def test_native_publication_rejects_changed_payload_before_creating_runs(compile
     with pytest.raises(ValidationError, match="manifest"):
         publish_compilations(repository=ROOT, dist_dir=compiled, **registry.args())
     assert registry.calls == []
+
+
+def test_candidate_retries_resume_bound_runs_and_finalized_candidates(compiled, tmp_path):
+    registry = Registry()
+    registry.fail_once = "/artifacts/package"
+    args = dict(repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
+                model_id=MODEL, build_profile_id=PROFILE, **registry.args())
+    with pytest.raises(RegistryPublicationError, match="temporary publication failure"):
+        publish_candidate(**args)
+    assert json.loads((tmp_path / "candidate/candidate.json").read_text())["state"] == "assembling"
+    assert len(registry.runs) == 2
+    result = publish_candidate(**{**args, "github_run_attempt": "2"})
+    assert result["state"] == "finalized"
+    count = registry.uploads
+    assert publish_candidate(**args) == result
+    assert len(registry.runs) == 2
+    assert registry.uploads == count
+
+
+def test_candidate_rejects_expired_assembly_before_publication(compiled, tmp_path):
+    registry = Registry()
+
+    def request(method, path, body, key):
+        result = registry.request(method, path, body, key)
+        if method == "GET":
+            result["assembly_expires_at"] = "2000-01-01T00:00:00Z"
+        return result
+
+    with pytest.raises(ValidationError, match="assembly expired"):
+        publish_candidate(repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
+                          model_id=MODEL, build_profile_id=PROFILE, **{**registry.args(), "request": request})
+    assert not registry.runs
+
+
+def test_on_demand_publisher_rejects_unbound_publication(compiled):
+    registry = Registry()
+    with pytest.raises(ValidationError, match="publish-candidate"):
+        publish_compilations(repository=ROOT, dist_dir=compiled, **registry.args())
+    assert not registry.calls
+
+
+def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypatch):
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"weights")
+    digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+    calls = []
+
+    def head(self, key, version_id=None):
+        calls.append(version_id)
+        return {"ChecksumSHA256": checksum, "ContentLength": payload.stat().st_size,
+                "VersionId": version_id or ("original" if len(calls) == 1 else "newer")}
+
+    monkeypatch.setattr(S3ArtifactStore, "_head", head)
+    args = dict(receipt_dir=tmp_path / "uploads")
+    first = S3ArtifactStore("models", **args).ensure_native_sha256(payload, "candidate/weights", digest)
+    retry = S3ArtifactStore("models", **args).ensure_native_sha256(payload, "candidate/weights", digest)
+    assert first == retry
+    assert calls == [None, "original"]
+    receipt = json.loads(next((tmp_path / "uploads").glob("*.json")).read_text())
+    assert receipt["s3_version_id"] == "original"
+
+
+def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, monkeypatch):
+    root = tmp_path / "repository"
+    model_dir = root / "models/fixture_model"
+    shutil.copytree(ROOT / "tests/fixtures/fixture_model", model_dir)
+    for directory in ("schemas", "taxonomies"):
+        shutil.copytree(ROOT / directory, root / directory)
+    for relative in ("deps/manifest.json", *COMPILE_TOOLING):
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    path = model_dir / "model.yaml"
+    model = yaml.safe_load(path.read_text())
+    model["build-on-demand"] = True
+    model["components"].append({**model["components"][0], "id": "aux"})
+    model["build_profiles"][0]["components"].append({"id": "aux", "parameters": {}})
+    path.write_text(yaml.safe_dump(model, sort_keys=False))
+    compiler = resolve_model_compiler(root)
+    registry = Registry()
+    invocations = tmp_path / "invocations"
+    for component in ("model", "aux"):
+        output = invocations / component / "fixture_model/fixture" / component
+        output.mkdir(parents=True)
+        archive = output / "fixture_mpk.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for name, payload in (("layer.elf", b"synthetic-elf"), ("fixture_mpk.json", b"{}")):
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                stream.addfile(info, io.BytesIO(payload))
+        verify_artifact(output, write_manifest=True, provenance={
+            "model_id": "fixture_model", "build_profile_id": "fixture", "component_id": component,
+            "target": "modalix", "source_sha256": "a" * 64, "git_sha": "a" * 40,
+            "environment": "staging", "compiler_version": compiler["version"], "compiler_label": compiler["label"],
+            "build_fingerprint": compile_key(root, "fixture_model", "fixture", component, compiler["identity"]),
+        })
+        record_compile_outputs(output.parent, model_id="fixture_model", build_profile_id="fixture",
+                               compile_invocation_id=component, component_ids=[component])
+    from model_registry import stage_plan
+
+    previous = {"models": [{"id": "fixture_model", "builds": [
+        {"build_profile_id": "fixture", "component_id": "model", "run_id": "older-source",
+         "compile_fingerprint": compile_key(root, "fixture_model", "fixture", "model", compiler["identity"])},
+    ]}]}
+    monkeypatch.setattr(stage_plan, "read_catalog_sources", lambda *args: (None, [previous]))
+    plan_args = dict(repository=root, compiler_version=compiler["identity"], branch="feature/candidate",
+                     model_ids=["fixture_model"], profile_ids=["fixture"], include_on_demand=True,
+                     read=lambda url: {}, read_api_url="https://registry.example.invalid")
+    plan = stage_plan.plan_stages(**plan_args)
+    assert {item["compile_invocation_id"] for item in plan["compile"]["include"]} == {"model", "aux"}
+    with pytest.raises(ValidationError, match="complete profile"):
+        stage_plan.plan_stages(**plan_args, component_ids=["aux"])
+    result = publish_candidate(repository=root, dist_dir=invocations, output_dir=tmp_path / "candidate",
+                               model_id="fixture_model", build_profile_id="fixture", **registry.args())
+    assert result["state"] == "finalized"
+    assert set(registry.bindings) == {"compile-model", "compile-aux", "package-default"}
+    finalization = next(index for index, (method, path, _) in enumerate(registry.calls)
+                        if path.startswith(DEPLOYMENTS) and path.endswith("/finalize"))
+    assert all(index < finalization for index, (_, path, _) in enumerate(registry.calls)
+               if path.startswith("/v1/runs/") and path.endswith("/finalize"))
 
 
 @pytest.mark.parametrize("unsafe", ["../escape", "/absolute", "./alias", "elf_files//alias", "bad\\path",

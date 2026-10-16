@@ -271,6 +271,14 @@ def plan_stages(
         model_ids and profile_ids
     ):
         raise ValidationError("on-demand builds require explicit --models and --profiles")
+    if include_on_demand and component_ids:
+        for model_id, profile_id in {(item["model_id"], item["build_profile_id"])
+                                     for item in head if item.get("build_on_demand", False)}:
+            profile = next(item for item in models[model_id]["build_profiles"] if item["id"] == profile_id)
+            selected = {component for item in head if (item["model_id"], item["build_profile_id"])
+                        == (model_id, profile_id) for component in item["component_ids"]}
+            if selected != {item["id"] for item in profile["components"]}:
+                raise ValidationError("on-demand candidates require a complete profile; omit --components")
     document = None
     if read is not None:
         if not read_api_url:
@@ -325,6 +333,16 @@ def plan_stages(
             stages.append("accuracy")
         if stages:
             measure_entries.append({**entry, "benchmark_component_ids": performance, "stages": stages})
+    candidate_profiles = {(item["model_id"], item["build_profile_id"]) for item in compile_entries
+                          if item.get("build_on_demand", False)}
+    compiled_ids = {(item["model_id"], item["build_profile_id"], item["compile_invocation_id"])
+                    for item in compile_entries}
+    # A candidate cannot attach unchanged components from an older source commit.
+    for item in head:
+        if ((item["model_id"], item["build_profile_id"]) in candidate_profiles
+                and (item["model_id"], item["build_profile_id"], item["compile_invocation_id"]) not in compiled_ids):
+            compile_entries.append({**item, "stages": applicable_stages(item)})
+    measure_entries = [item for item in measure_entries if not item.get("build_on_demand", False)]
     return {
         "compile": {"include": compile_entries},
         "measure": {"include": measure_entries},

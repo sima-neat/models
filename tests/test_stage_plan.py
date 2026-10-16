@@ -634,6 +634,15 @@ def test_catalog_lists_unbuilt_on_demand_models_without_pending_builds(
     assert document["models"][0]["builds"] == []
     assert document["models"][0]["packages"] == []
     assert document.get("pending_builds", []) == []
+    requirements = document["models"][0]["build_requirements"]
+    matrix = build_matrix(load_models(stage_repository), [PLAN_MODEL], repository=stage_repository,
+                          compiler_version=COMPILER_VERSION)["include"]
+    for entry in matrix:
+        profile = requirements[entry["build_profile_id"]]
+        invocation = next(item for item in profile["invocations"] if item["id"] == entry["compile_invocation_id"])
+        assert invocation["compile_fingerprint"] == entry["build_fingerprint"]
+        assert invocation["component_ids"] == sorted(entry["component_ids"])
+        assert profile["compiler_version"] == resolve_model_compiler(stage_repository)["version"]
 
 
 @pytest.mark.parametrize("candidate_receipts", [False, True])

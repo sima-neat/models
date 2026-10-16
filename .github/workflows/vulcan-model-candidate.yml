@@ -1,0 +1,96 @@
+name: Vulcan Model Candidate
+
+on:
+  workflow_call:
+    inputs:
+      model_id:
+        required: true
+        type: string
+      build_profile_id:
+        required: true
+        type: string
+      vulcan_environment:
+        required: true
+        type: string
+      aws_region:
+        required: true
+        type: string
+      artifact_bucket:
+        required: true
+        type: string
+      artifact_kms_key_id:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish complete candidate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.vulcan_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MODEL_ID: ${{ inputs.model_id }}
+      BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+      REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+      AWS_REGION: ${{ inputs.aws_region }}
+      ARTIFACT_BUCKET: ${{ inputs.artifact_bucket }}
+      KMS_KEY_ID: ${{ inputs.artifact_kms_key_id }}
+      VULCAN_ENVIRONMENT: ${{ inputs.vulcan_environment }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+
+      - name: Download every invocation of this model/profile
+        uses: actions/download-artifact@v7
+        with:
+          pattern: compiler-output-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-*
+          path: _invocations
+
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Restore publication receipts from earlier attempts
+        if: github.run_attempt != '1'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: candidate-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-*
+          path: _candidate
+          merge-multiple: true
+
+      - name: Publish and finalize the complete candidate
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          model-registry publish-candidate --repository . --dist-dir _invocations --output-dir _candidate \
+            --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" \
+            --api-url "$REGISTRY_API_URL" --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
+            --environment "$VULCAN_ENVIRONMENT" --branch "$GITHUB_REF_NAME" --git-sha "$GITHUB_SHA" \
+            --github-run-id "$GITHUB_RUN_ID" --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain publication receipts even when publication fails
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ github.run_attempt }}
+          path: |
+            _candidate/candidate.json
+            _candidate/publication.json
+            _candidate/uploads/*.json
+          if-no-files-found: ignore
+          retention-days: 14

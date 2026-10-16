@@ -20,6 +20,26 @@ const catalog = [
   {model_id: 'yolo', display_name: 'YOLO', builds: [catalogBuild(yolo)]},
 ];
 
+test('approved native roots select original runs and packages while newer candidates stay hidden', async () => {
+  const newer = run('newer', 'resnet_50', feature, '2026-10-02T00:00:00Z');
+  const definition = {...catalog[0], builds: [], packages: [], build_on_demand: true, approved_deployments: {
+    int8: {deployment_id: 'approved', manifest_digest: 'digest', artifacts: [
+      {component_id: 'model', run_id: resnet.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
+      {package_id: 'default', run_id: 'approved-package', artifact_name: 'package', layout: 'directory', format: 'llima'},
+    ]},
+  }};
+  const inherited = await catalogBuildRuns([definition], [newer], async path => {
+    assert.equal(path, `/v1/runs/${resnet.id}`);
+    return {run: resnet};
+  }, '/v1/repositories/sima-neat/models');
+  assert.deepEqual(inherited, [resnet]);
+  const [model] = branchModels([newer, ...inherited], [], [definition]);
+  assert.deepEqual(model.builds.map(build => build.run_id), [resnet.id]);
+  assert.equal(model.builds[0].artifact_name, 'llima');
+  assert.equal(model.packages[0].run_id, 'approved-package');
+  assert.deepEqual(model.packages[0].component_run_ids, {model: resnet.id});
+});
+
 test('a branch that compiled nothing lists every catalog model with its real provenance', () => {
   const models = branchModels([resnet, yolo], [], catalog);
 

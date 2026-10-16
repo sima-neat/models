@@ -100,9 +100,7 @@ def test_publish_model_documentation_creates_finalized_versioned_runs() -> None:
     assert all(call[2]["parameters"]["hero"]["markdown_path"] == "hero.png" for call in parameter_calls)
     assert {call[2]["artifact_type"] for call in artifact_calls} == {"model-readme", "model-readme-hero"}
     assert {call[2]["media_type"] for call in artifact_calls} == {"text/markdown; charset=utf-8", "image/png"}
-    for _, _, artifact, _ in artifact_calls:
-        on_demand = models[artifact["metadata"]["model_id"]].get("build-on-demand", False)
-        assert artifact["retention_class"] == ("on-demand" if on_demand else "branch")
+    assert all(call[2]["retention_class"] == "branch" for call in artifact_calls)
 
 
 def test_publish_model_documentation_keys_bind_create_request_identity() -> None:

@@ -478,9 +478,14 @@ This flag is not part of the compile fingerprint.
 
 To build Qwen3.5-2B, dispatch **Vulcan Model Orchestrator** with
 `models=qwen3_5_2b` and `profiles=modalix_a16w4_4k`. Both selections are
-required for an on-demand build. Direct `plan-stages` calls must also pass
-`--include-on-demand`. See the [architecture contract](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#on-demand-builds)
-for candidate retention, promotion requests, and external NeatOps work.
+required for an on-demand build. Use staging; production candidate publication
+is not enabled. Direct `plan-stages` calls must also pass `--include-on-demand`.
+The workflow publishes all invocations and packages as one retained candidate.
+Its summary shows the candidate ID, immutable digest, source and protection;
+publication does not approve it or change the selected catalog build.
+Retry failed jobs within the seven-day assembly deadline; after expiry start a
+new workflow run. See the [architecture contract](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#on-demand-builds)
+for retention and the separate promotion workflow.
 
 ## LLiMa language and vision-language models
 

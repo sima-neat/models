@@ -13,6 +13,35 @@ const summary = (item) => ({run: item, artifacts: [
   {name: 'numerical-fidelity', artifact_type: 'numerical-fidelity'},
 ]});
 
+test('approved downloads use exact selected roots without rediscovering newer component runs', async () => {
+  const catalog = {model_id: 'rf_detr_small', builds: [], approved_deployments: {
+    mixed: {artifacts: [
+      {component_id: 'transformer', run_id: run.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
+      {component_id: 'backbone', run_id: backbone.id, artifact_name: 'mpk', layout: 'archive', format: 'mpk'},
+    ]},
+  }};
+  const downloads = await variantDownloads(run, async path => {
+    assert.ok(!path.includes('/repositories/'));
+    const item = path.endsWith(backbone.id) ? backbone : run;
+    return {run: item, artifacts: [
+      {name: item === backbone ? 'mpk' : 'llima', artifact_type: 'model-pack'},
+      {name: 'other-root', artifact_type: 'model-pack'},
+    ]};
+  }, catalog);
+  assert.deepEqual(downloads.map(item => item.name), ['mpk', 'llima']);
+});
+
+test('a historical download keeps its requested run when the current catalog approves a different candidate', async () => {
+  const catalog = {model_id: 'rf_detr_small', approved_deployments: {mixed: {artifacts: [
+    {component_id: 'transformer', run_id: 'current-approved', artifact_name: 'llima'},
+  ]}}};
+  const downloads = await variantDownloads(run, async path => {
+    assert.ok(!path.includes('current-approved'));
+    return path.includes('/repositories/') ? {runs: [run]} : summary(run);
+  }, catalog);
+  assert.equal(downloads[0].runId, run.id);
+});
+
 test('collects every component across pages, retaining selected run and excluding other build contexts', async () => {
   const other = {...backbone, id: 'wrong-compiler', toolchain_version: '9'};
   const anotherWorkflow = {...backbone, id: 'wrong-workflow', metadata: {...backbone.metadata, github_run_id: 'other'}};

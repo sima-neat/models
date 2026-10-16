@@ -197,6 +197,8 @@ jobs:
       compile_matrix: ${{ steps.plan.outputs.compile_matrix }}
       measure_count: ${{ steps.plan.outputs.measure_count }}
       measure_matrix: ${{ steps.plan.outputs.measure_matrix }}
+      candidate_matrix: ${{ steps.plan.outputs.candidate_matrix }}
+      candidate_count: ${{ steps.plan.outputs.candidate_count }}
     steps:
       - name: Check out the trusted revision
         uses: actions/checkout@v6
@@ -221,6 +223,7 @@ jobs:
           REQUESTED_COMPONENTS: ${{ inputs.components }}
           FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
           MANUAL_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
         run: |
           set -euo pipefail
           : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
@@ -241,10 +244,18 @@ jobs:
           # The DevKit stages run on Modalix boards only.
           measure_matrix="$(jq -c '{include: [.measure.include[] | select(.target == "modalix")]}' <<< "$plan")"
           compile_count="$(jq -r '.include | length' <<< "$compile_matrix")"
+          candidate_matrix="$(jq -c '{include: [.include[] | select(.build_on_demand) | {model_id, build_profile_id}] | unique}' <<< "$compile_matrix")"
+          candidate_count="$(jq -r '.include | length' <<< "$candidate_matrix")"
+          if [[ "$candidate_count" != "0" && "$VULCAN_ENVIRONMENT" != "staging" ]]; then
+            echo "On-demand candidate publication is currently enabled only in staging." >&2
+            exit 1
+          fi
           measure_count="$(jq -r '.include | length' <<< "$measure_matrix")"
           {
             echo "compile_matrix=$compile_matrix"
             echo "compile_count=$compile_count"
+            echo "candidate_matrix=$candidate_matrix"
+            echo "candidate_count=$candidate_count"
             echo "measure_matrix=$measure_matrix"
             echo "measure_count=$measure_count"
           } >> "$GITHUB_OUTPUT"
@@ -382,6 +393,28 @@ jobs:
       model_compiler_label: ${{ needs.select.outputs.model_compiler_label }}
       base_branches: ${{ needs.select.outputs.base_branches }}
       publishable: ${{ needs.select.outputs.publishable == 'true' }}
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+    secrets: inherit
+
+  publish-candidates:
+    name: Finalize candidate ${{ matrix.model_id }}/${{ matrix.build_profile_id }}
+    needs: [select, plan, compile, resolve-vulcan-config]
+    if: >-
+      !cancelled() && needs.plan.outputs.candidate_count != '0' &&
+      needs.compile.result == 'success'
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.candidate_matrix) }}
+    uses: ./.github/workflows/vulcan-model-candidate.yml
+    with:
+      model_id: ${{ matrix.model_id }}
+      build_profile_id: ${{ matrix.build_profile_id }}
+      vulcan_environment: ${{ needs.select.outputs.vulcan_environment }}
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}

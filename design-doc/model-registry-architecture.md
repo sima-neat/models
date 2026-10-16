@@ -81,6 +81,7 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
 | `stage_plan.py` | which builds compile and which DevKit stages run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
+| `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization and retry receipts (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
 | `core_benchmark.py` | packaging Core's measurements for publication |
@@ -133,6 +134,7 @@ push (Vulcan Model Orchestrator, every push)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
+       on-demand: wait for all invocations, then publish one complete candidate without a catalog update
   -> publish the catalog snapshot
   -> measure: start the DevKit stages that reused builds still lack
 DevKit stages (per build)
@@ -227,31 +229,51 @@ An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 `profiles`; `plan-stages --include-on-demand` also requires both selectors.
 For Qwen3.5-2B use `models=qwen3_5_2b`, `profiles=modalix_a16w4_4k`.
 
-Published candidate runs carry metadata `build_on_demand: true`. Their
-artifacts carry `retention_class: on-demand` and metadata
-`build_on_demand: true`. These markers provide the NeatOps integration
-contract: **current NeatOps branch purge does not yet honor them**. Backend
-retention support is required to protect a candidate when its branch is
-deleted; this repository does not implement that protection.
+In staging, `publish-candidate` waits for every invocation of the selected
+model/profile. It registers one versioned contract, binds each compile and
+package run before publishing its records, and declares every required file.
+New uploads use the returned candidate prefix, with shared payloads reused
+within that candidate. Every run is completed before candidate finalization.
+Ordinary catalog README and hero publication stays branch-retained and is not
+part of the candidate. DevKit qualification is separate; it is not claimed as
+frozen candidate evidence in this iteration.
 
-Promotion requests identify the exact run, model, profile, source Git SHA,
-configuration, validation evidence, and target branch. This repository records the
-original source, compile fingerprint, compiler identity, LLiMa version when
-available, and validation results. NeatOps/backend owns cross-branch
-compatibility checks, approval, rebuild decisions, and administrator promotion
-of the existing candidate to `develop` and later `main`, preserving original
-provenance. That integration is external to this repository; promotion does
-not create an automatic models build, release, or PR.
+The backend protects assembly for seven days. The newest successful candidate
+per source branch/model/profile receives `latest_successful` protection;
+older late completions receive bounded protection. Source-branch deletion does
+not remove protected candidates. The summary and `candidate.json` report the
+actual returned protection, digest and provenance. Stable keys resume the same
+GitHub run across attempts, including interrupted publication; expired assembly
+requires a new workflow run. Compiler outputs and publication receipts remain
+GitHub artifacts for recovery. When one on-demand invocation needs rebuilding,
+the complete profile is built, since older source runs cannot be rebound as new
+provenance. Ordinary automatic stage-key reuse is unchanged.
 
-Promotion retains S3 storage. A separate generic, explicitly manual,
-`main`-only `release-to-hf` workflow is follow-up
-[#293](https://github.com/sima-neat/models/issues/293); it may initially cover
-LLiMa and later other model types. After an immutable Hugging Face copy is
-verified, NeatOps owns the backend transaction that switches the active
-artifact location and cleans up S3. Promotion does not trigger that workflow,
-and pushes never upload to Hugging Face. The backend resolves approved
-cross-branch references and active public download URLs; the CLI downloads
-and verifies files.
+Vulcan limits a candidate to 32 roles, 512 required names, 512 actual S3
+dependencies and a 1 MiB frozen manifest. The producer checks the role/name
+limits before publication; the backend validates the actual frozen dependency
+set. Candidate IDs and scheduling policy do not enter compilation fingerprints.
+
+Catalog publication includes versioned `build_requirements` from the checkout's
+existing compile keys, compiler pin, and package topology, even before a build
+exists. Vulcan owns `approved_deployments`; readers resolve its original compile
+and package roots through the existing artifact APIs. The producer never
+manufactures approval or copies candidate requirements into the target.
+
+Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
+approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).
+Candidate finalization does not approve or promote a build. Approver roles and
+end-to-end producer acceptance are required before routine approval. Develop is
+the only implemented promotion target; Main/HF release remains follow-up work.
+
+Develop approval retains S3 storage. The future Develop → Main flow in
+[#315](https://github.com/sima-neat/models/issues/315) and
+[#293](https://github.com/sima-neat/models/issues/293) needs a separate release
+gate and backend. It must transfer the same approved deployment to Hugging Face,
+verify every file at an immutable revision, and only then update Main's selection
+and active download location. S3 cleanup must preserve other references,
+including Develop. Pushes never upload to Hugging Face. The backend resolves
+approved roots; the CLI downloads and verifies files.
 
 ## LLiMa builds
 
