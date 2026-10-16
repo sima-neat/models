@@ -59,14 +59,14 @@ The Vulcan approval must identify, at minimum:
 | --- | --- |
 | repository | Prevents an approval from being reused by another registry. |
 | model ID | Identifies the model requesting elevated resources. |
-| build profile ID | Limits approval to one target-wide configuration. |
-| component ID | Limits approval to the independently compiled unit with measured need. |
 | maximum runner class | Caps the class that the scaler may provision. |
 | owner | Identifies responsibility; Git history records the decision. |
 | reason and evidence | Records measurements such as peak memory, timeout, or a benchmark run. |
 
 Vulcan authors these grants in `config/model-runner-approvals.json`. Groups share
-owner, evidence, maximum class, and exact targets across a list of model IDs.
+owner, evidence, and maximum class across a list of exact model folder IDs.
+A model grant covers all current and future build profiles/components. Grants
+may be precreated before a model is registered; no build-target fields are needed.
 Staging and production consume the same catalog. Grants have no expiration or
 environment scope; removal or modification in source control changes authority
 when deployed. Compilation grants do not authorize ONNX conversion.
@@ -78,8 +78,6 @@ model_runner_approvals_schema_version: 2
 model_runner_approvals:
   - repository: sima-neat/models
     model_id: example_detector
-    build_profile_id: w16a16
-    component_id: detector
     maximum_runner_class: expensive
     approved_by: platform-team
     reason: Default runner exceeded its memory limit during compilation.
@@ -110,15 +108,14 @@ approved logical runner label
 job scheduling and scaler provisioning
 ```
 
-The admission check matches repository, model ID, build profile ID, component
-ID, and requested class against the Vulcan record. It returns only an approved logical
+The version 2 admission check matches repository, model folder ID, and requested
+class against the Vulcan record. It returns only an approved logical
 runner label.
 
 For legacy published schema version 1, an existing `variant_id` approval without the new
 fields is interpreted as that build profile for the conventional single
 component named `model`. It cannot authorize a newly introduced named
-component. Replace legacy approvals with explicitly scoped records when they
-are next reviewed.
+component. Migrate legacy approvals to model-folder grants when adopting version 2.
 
 The workflow and scaler must fail closed when:
 
@@ -155,9 +152,8 @@ approval fails before the self-hosted compile job is scheduled.
    expecting the compile job to be scheduled.
 7. Re-evaluate or remove the request when the compiler, recipe, or model changes.
 
-Changes that increase runner class should be conspicuous in review. A model,
-component, or build-profile rename invalidates the old approval unless the Vulcan policy
-explicitly migrates it.
+Changes that increase runner class should be conspicuous in review. A model-folder rename requires a catalog update. Profile and component changes
+remain covered by the same model grant.
 
 ## Build provenance
 
@@ -179,9 +175,10 @@ The admission reader accepts published approval schema version 2 (shared,
 durable grants) and legacy version 1 (including its environment and timestamp
 restrictions) so the reader can be released before Vulcan changes its policy.
 A missing version means legacy version 1. Unknown versions fail closed. Version
-2 rejects legacy environment and timestamp fields rather than ignoring them.
-Version 2 approval IDs omit the environment; identical builds in staging and
-production record the same approval ID and policy revision.
+2 rejects legacy environment, timestamp, profile, component, and variant fields
+rather than ignoring them. Version 2 approval IDs are `repository:model_id`;
+all builds under that model record the same approval ID and policy revision.
+Grouped compilation records the single shared model grant in `runner_approval_ids`.
 
 Release this reader to every active workflow revision before deploying Vulcan's
 version 2 specification. Do not roll back to an older reader while version 2 is
