@@ -175,7 +175,7 @@ def test_shared_approval_authorizes_identical_capacity_and_provenance(environmen
         now=datetime(2040, 1, 1, tzinfo=timezone.utc),
     )["include"][0]
     assert result["runner_class"] == "expensive"
-    assert result["runner_approval_id"] == "sima-neat/models:efficientdet_d3:modalix_int8_1536:model"
+    assert result["runner_approval_id"] == "sima-neat/models:efficientdet_d3:w8a8_1536:model"
     assert result["runner_approval_spec_revision"] == REVISION
 
 
@@ -212,6 +212,6 @@ def test_shared_grouped_approval_records_all_components() -> None:
         _grouped_matrix("expensive"), _shared_spec(_approval(), _approval(component_id="postprocessor")),
     )["include"][0]
     assert result["runner_approval_ids"] == [
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model",
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:postprocessor",
+        "sima-neat/models:efficientdet_d3:w8a8_1536:model",
+        "sima-neat/models:efficientdet_d3:w8a8_1536:postprocessor",
     ]
