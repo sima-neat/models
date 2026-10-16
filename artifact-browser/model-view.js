@@ -2,7 +2,7 @@
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
-import { icons, escapeHtml, branchName, shortSha, profileLabel, showToast, disclosure } from "./ui.js";
+import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
   metricDefinition, metricDisplay, formatDate, formatDuration,
   formatBytes,
@@ -11,6 +11,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
+import { packageFormat } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -475,7 +476,8 @@ function componentRow(detail, single) {
   const artifactRows = artifacts.length
     ? artifacts.map((artifact) => keyValue("SHA-256", artifact.sha256, { copy: true, mono: true })).join("")
     : keyValue("SHA-256", "No artifact metadata was registered for this run.");
-  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision].filter(Boolean).join(" · ");
+  const meta = [mpkBytes ? `MPK ${formatBytes(mpkBytes)}` : "", parameters.precision && precisionLabel(parameters.precision)]
+    .filter(Boolean).join(" · ");
   const body = `<dl class="key-grid">
       ${artifactRows}
       ${keyValue("Run ID", run.id, { copy: true, mono: true })}
@@ -766,7 +768,7 @@ function detailBuildSwitcher(variant) {
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
   const tabs = profiles.map(([profile]) => {
     const selected = profile === variant.profile;
-    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(profile)}</button>`;
+    return `<button class="detail-variant-tab" type="button" role="tab" data-detail-model-id="${escapeHtml(model.model_id)}" data-detail-profile-id="${escapeHtml(profile)}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${escapeHtml(variantLabel(profile))}</button>`;
   }).join("");
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
@@ -793,15 +795,16 @@ function sectionNavigation(sections) {
   )).join("")}</nav>`;
 }
 
-// The package is the glance view of Details: its size and checksum, and the two ways to download it.
-function packageCard(variant, fullPackage, packageArtifact, hasArtifacts) {
+// The package is the glance view of Details: its size and checksum, and the ways to download it.
+// A single-component package is that component's MPK, so only multi-component builds offer components.
+function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent) {
   const run = variant.anchor;
-  const components = hasArtifacts
+  const components = hasArtifacts && !(fullPackage && singleComponent)
     ? `<button class="action-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download components</span></button>`
     : "";
   if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
-    <div class="package-card-copy"><strong>Full package</strong><span>All components and declared runtime resources in one verified ZIP.</span></div>
+    <div class="package-card-copy"><strong>Full package</strong><span>${packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span></div>
     ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
     <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
   </div>`;
@@ -858,7 +861,7 @@ export function renderDetail(variant) {
     <header class="detail-title">
       <div class="detail-title-copy">
         <h2>${escapeHtml(displayName)}</h2>
-        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
+        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.map(precisionLabel).join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
       </div>
       <div class="detail-title-actions">
@@ -882,7 +885,7 @@ export function renderDetail(variant) {
     ${accuracyMarkup}
 
     <section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
-      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts)}
+      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent)}
       <div class="disclosure-list">
         ${disclosure("provenance", "Build provenance", `<dl class="key-grid">
           ${keyValue("Commit", run.commit_sha, { copy: true, mono: true })}

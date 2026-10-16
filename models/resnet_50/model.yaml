@@ -114,11 +114,11 @@ calibrations:
     size_bytes: 356052889
 build_profiles:
 # The BF16 build checks that the model still compiles; it is not accuracy-qualified.
-- id: modalix_bf16
+- id: w16a16
   target: modalix
   components:
   - id: model
-    artifact_suffix: bf16_tmio
+    artifact_suffix: w16a16
     parameters:
       precision: bf16
       input_name: pixel_values
@@ -128,11 +128,11 @@ build_profiles:
       - 224
       - 224
     shape_profile: compile_input
-- id: modalix_int8
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_mse_tmio
+    artifact_suffix: w8a8_mse
     parameters:
       precision: int8
       input_name: pixel_values
@@ -156,13 +156,13 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_bf16
-  - modalix_int8
+  - w16a16
+  - w8a8
   composition: default
 fidelity:
 - id: logits_fidelity
   scope: {type: package, package: default}
-  build_profiles: [modalix_bf16, modalix_int8]
+  build_profiles: [w16a16, w8a8]
   status: diagnostic
   result_component: model
   dataset:
@@ -179,7 +179,7 @@ fidelity:
 accuracy:
 - id: imagenet_accuracy
   scope: {type: package, package: default}
-  build_profiles: [modalix_int8]
+  build_profiles: [w8a8]
   engine: devkit_script
   status: provisional
   result_component: model
@@ -196,8 +196,8 @@ benchmark:
     type: component
     component: model
   build_profiles:
-  - modalix_bf16
-  - modalix_int8
+  - w16a16
+  - w8a8
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

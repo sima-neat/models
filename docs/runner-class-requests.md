@@ -19,7 +19,7 @@ component binding:
 
 ```yaml
 build_profiles:
-  - id: modalix_bf16
+  - id: w16a16
     target: modalix
     runner_class: expensive
     components:
@@ -73,7 +73,7 @@ An illustrative Vulcan record is:
 model_runner_approvals:
   - repository: sima-neat/models
     model_id: example_detector
-    build_profile_id: modalix_bf16
+    build_profile_id: w16a16
     component_id: detector
     environment: staging
     maximum_runner_class: expensive

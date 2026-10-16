@@ -43,8 +43,9 @@ bar shortens **Developer docs** to **Docs**.
 Selecting a card opens the model page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. A model with several build profiles shows
-one tab per profile; INT8 profiles come first and the page opens on the first
-tab, whatever order `model.yaml` declares. The GitHub link in the header opens
+one tab per profile, labelled with its variant ID in uppercase, such as
+**W8A8**. Profiles with a W8A8 component come first and the page opens on the
+first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
 the model's folder at the commit the README comes from. Sections appear in this
 order:
 
@@ -98,8 +99,10 @@ order:
    **Evaluation details** explains the status and coverage and lists
    the remaining metrics, each with its published score when `model.yaml`
    records one.
-4. **Details.** The package with its size, checksum, and download buttons,
-   then rows for build provenance (the commit and workflow that compiled the
+4. **Details.** The package with its size, checksum, and download buttons.
+   A single-component package downloads as its MPK. A multi-component package
+   downloads as a ZIP of its MPKs and also offers **Download components**.
+   Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, and each component's files,
    checksum, numerical fidelity, and compile parameters.
 5. **License.** The SPDX identifier, whether redistribution is allowed, and the

@@ -21,6 +21,11 @@ export async function variantDownloads(run, api, catalogModel = null) {
   return downloads.flat().sort((a, b) => a.component.localeCompare(b.component));
 }
 
+// A single-component package is published as its MPK; any other package is a ZIP.
+export function packageFormat(artifact, filename = "") {
+  return artifact?.media_type === "application/gzip" || filename.endsWith("_mpk.tar.gz") ? "MPK" : "ZIP";
+}
+
 export async function prepareDownloads(downloads, api) {
   // Resolve every link before starting any transfer, so preparation can be retried safely.
   return Promise.all(downloads.map(async (item) => {

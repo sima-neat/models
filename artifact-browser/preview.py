@@ -553,13 +553,14 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._compile_run_api(run_id, rest, *index["builds"][run_id], compiler)
         elif run_id in index["packages"] and not rest:
             model, package = index["packages"][run_id]
+            _, media_type = _package_file(model, package)
             # The same artifact shape the registry publisher records for a full package.
             self._json({"run": index["runs"][run_id], "artifacts": [{
-                "name": f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip",
+                "name": "package",
                 "artifact_type": "model-package",
                 "sha256": package["artifact_sha256"],
                 "size_bytes": package["size_bytes"],
-                "media_type": "application/zip",
+                "media_type": media_type,
                 "metadata": {
                     "model_id": model["id"],
                     "build_profile_id": package["build_profile_id"],
@@ -568,6 +569,11 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "component_run_ids": package["component_run_ids"],
                 },
             }]})
+        elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
+            model, package = index["packages"][run_id]
+            filename, _ = _package_file(model, package)
+            path = f"{model['id']}/{package['build_profile_id']}/packages/{package['package_id']}/{filename}"
+            self._download_link(f"models/develop/{path}")
         elif run_id in index["runs"] and len(rest) == 2 and rest[0] == "artifacts":
             self._download_link()
         else:
@@ -614,9 +620,10 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         else:
             self._not_found("not_found")
 
-    def _download_link(self) -> None:
+    def _download_link(self, s3_key: str | None = None) -> None:
         self._json({"artifact": {
             "download_url": "/fixtures/performance-result.json", "download_url_expires_in": 300,
+            **({"s3_key": s3_key} if s3_key else {}),
         }})
 
     def translate_path(self, path: str) -> str:
@@ -629,6 +636,16 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, message: str, *args: object) -> None:
         print(f"preview: {message % args}")
+
+
+def _package_file(model: dict, package: dict) -> tuple[str, str]:
+    """The published filename and media type of a package: its lone MPK, or a ZIP of everything."""
+    declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
+    if len(declaration["components"]) == 1 and not declaration["resources"]:
+        _, binding = profile_component_for(model, package["build_profile_id"], declaration["components"][0])
+        suffix = binding.get("artifact_suffix", package["build_profile_id"])
+        return f"{model['id']}_{suffix}_mpk.tar.gz", "application/gzip"
+    return f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip", "application/zip"
 
 
 def first_variant_run_id() -> str:

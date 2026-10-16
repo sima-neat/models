@@ -40,7 +40,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
         raise ValueError(f"expected exactly one YOLO26 tiny-drone variant named {variant_id!r}")
     profile = matches[0]
     binding = next(item for item in profile["components"] if item["id"] == "model")
-    return {**profile, "parameters": binding["parameters"]}
+    return {**profile, "parameters": binding["parameters"], "artifact_suffix": binding["artifact_suffix"]}
 
 
 def compile_variant(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
@@ -93,7 +93,8 @@ def compile_variant(source: Path, output_dir: Path, variant_id: str, calibration
     archives = sorted(output_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one compiled MPK, found {archives}")
-    archive = archives[0]
+    # The qualified snapshot fixes the compiler model name; the published MPK uses the artifact name.
+    archive = archives[0].rename(output_dir / f"yolo26_tiny_drone_{variant['artifact_suffix']}_mpk.tar.gz")
     report = {
         "schema_version": 1,
         "model_id": "yolo26_tiny_drone",

@@ -44,12 +44,12 @@ INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(OUTPUT_SHAPES[name]) * 4 for name in OUTPUTS]
 
 
-def _parameters(profile_id: str) -> dict[str, Any]:
+def _component(profile_id: str) -> dict[str, Any]:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
+    return next(item for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> Any:
@@ -118,7 +118,8 @@ def audit_mpk(archive: Path) -> None:
 
 
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)
+    component = _component(profile_id)
+    parameters = component["parameters"]
     precision = str(parameters["precision"])
     calibration_bins = int(parameters["calibration_bins"]) if precision == "int8" else None
     quantization = _quantization(precision, calibration_bins)
@@ -143,7 +144,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
         quantized = loaded.quantize(
             calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
             quantization_config=quantization,
-            model_name=f"{MODEL_ID}_{profile_id}",
+            model_name=f"{MODEL_ID}_{component['artifact_suffix']}",
             log_level=logging.INFO,
         )
         quantized.compile(

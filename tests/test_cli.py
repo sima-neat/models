@@ -134,7 +134,7 @@ def test_fetch_calibration_resolves_registered_dataset(monkeypatch, tmp_path: Pa
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
             "--build-profile",
-            "modalix_int8",
+            "w8a8",
             "--component",
             "model",
             "--json",
@@ -158,7 +158,7 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
             "--build-profile",
-            "modalix_bf16",
+            "w16a16",
             "--component",
             "model",
             "--json",
@@ -172,9 +172,9 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
 @pytest.mark.parametrize(
     ("model_id", "profile", "component"),
     [
-        ("resnet_50", "modalix_int8", "model"),
-        ("resnet_50", "modalix_bf16", "model"),
-        ("rf_detr_small", "modalix_int8_bf16", "backbone"),
+        ("resnet_50", "w8a8", "model"),
+        ("resnet_50", "w16a16", "model"),
+        ("rf_detr_small", "w8a8_w16a16", "backbone"),
     ],
 )
 def test_fetch_fidelity_dataset_resolves_declared_fidelity(
@@ -213,7 +213,7 @@ def test_fetch_fidelity_dataset_skips_model_without_fidelity(monkeypatch, capsys
             "fetch-fidelity-dataset",
             str(ROOT / "models" / "ssd_mobilenet_v1"),
             "--build-profile",
-            "modalix_bf16",
+            "w16a16",
             "--component",
             "model",
             "--json",
@@ -258,7 +258,7 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
 
 
 def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
-    profile = "modalix_int8"
+    profile = "w8a8"
     result = main(
         [
             "matrix",
@@ -279,13 +279,13 @@ def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
 def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -> None:
     components = ("backbone", "transformer")
     for component_id in components:
-        (tmp_path / "rf_detr_small" / "modalix_bf16" / component_id).mkdir(parents=True)
+        (tmp_path / "rf_detr_small" / "w16a16" / component_id).mkdir(parents=True)
     publication = {
         "count": 2,
         "runs": [
             {
                 "model_id": "rf_detr_small",
-                "build_profile_id": "modalix_bf16",
+                "build_profile_id": "w16a16",
                 "component_id": component_id,
                 "run_id": f"run-{component_id}",
             }
@@ -312,7 +312,7 @@ def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -
     assert cli._publish(args) == 0
 
     for component_id in components:
-        path = tmp_path / "rf_detr_small" / "modalix_bf16" / component_id / "registry-publication.json"
+        path = tmp_path / "rf_detr_small" / "w16a16" / component_id / "registry-publication.json"
         receipt = json.loads(path.read_text(encoding="utf-8"))
         assert receipt["count"] == 1
         assert receipt["runs"][0]["component_id"] == component_id

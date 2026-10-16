@@ -326,8 +326,8 @@ def _consumed_ids(model: dict, profile_id: str) -> list[str]:
 
 def test_compile_consumes_only_fidelity_settings_of_its_build_profile() -> None:
     resnet = load_and_validate_model(ROOT / "models" / "resnet_50", SCHEMA)
-    assert _consumed_ids(resnet, "modalix_int8") == ["logits_fidelity"]
-    assert _consumed_ids(resnet, "modalix_bf16") == ["logits_fidelity"]
+    assert _consumed_ids(resnet, "w8a8") == ["logits_fidelity"]
+    assert _consumed_ids(resnet, "w16a16") == ["logits_fidelity"]
 
     rf_detr = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
     assert _consumed_ids(rf_detr, rf_detr["build_profiles"][0]["id"]) == ["full_pipeline_fidelity"]
@@ -425,12 +425,12 @@ def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
 
     for component_id in ("backbone", "transformer"):
         assert performance_key(
-            ROOT, renamed, "modalix_int8_bf16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+            ROOT, renamed, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
         ) == performance_key(
-            ROOT, model, "modalix_int8_bf16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+            ROOT, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
         )
-    assert accuracy_key(ROOT, renamed, "modalix_int8_bf16", builds) == accuracy_key(
-        ROOT, model, "modalix_int8_bf16", builds
+    assert accuracy_key(ROOT, renamed, "w8a8_w16a16", builds) == accuracy_key(
+        ROOT, model, "w8a8_w16a16", builds
     )
 
 
@@ -448,14 +448,14 @@ def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
     def keys() -> list[str]:
         model = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
         return [
-            compile_key(repository, "rf_detr_small", "modalix_int8_bf16", "rf_detr", COMPILER_VERSION),
+            compile_key(repository, "rf_detr_small", "w8a8_w16a16", "rf_detr", COMPILER_VERSION),
             *(
                 performance_key(
-                    repository, model, "modalix_int8_bf16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+                    repository, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
                 )
                 for component_id in components
             ),
-            accuracy_key(repository, model, "modalix_int8_bf16", builds),
+            accuracy_key(repository, model, "w8a8_w16a16", builds),
         ]
 
     first = keys()

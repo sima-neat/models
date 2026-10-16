@@ -158,11 +158,11 @@ calibrations:
     size_bytes: 5990892
     media_type: application/gzip
 build_profiles:
-- id: modalix_int8_tessellation_mla
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_qat_tmio
+    artifact_suffix: w8a8_qat
     parameters:
       precision: int8
       model_size: 1600
@@ -187,7 +187,7 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_int8_tessellation_mla
+  - w8a8
   composition: default
 fidelity: []
 accuracy:
@@ -196,7 +196,7 @@ accuracy:
     type: component
     component: model
   build_profiles:
-  - modalix_int8_tessellation_mla
+  - w8a8
   status: qualified_reference
   dataset_sha256: 2747596e19c2b0f47882610de1129f28f0d434250bd2338d3e73ac69f5a3a6aa
   validation_tiny_ground_truth_count: 197828
@@ -220,7 +220,7 @@ benchmark:
     type: component
     component: model
   build_profiles:
-  - modalix_int8_tessellation_mla
+  - w8a8
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

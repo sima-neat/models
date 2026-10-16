@@ -21,7 +21,7 @@ GIT_SHA = "a" * 40
 def compiled_build(tmp_path: Path, components: tuple[str, ...] = ("backbone", "transformer")) -> tuple[Path, dict]:
     """Write an RF-DETR Small compilation with one MPK per component and its compile-outputs.json."""
     compiled = tmp_path / "compiled"
-    build = compiled / "rf_detr_small" / "modalix_int8_bf16"
+    build = compiled / "rf_detr_small" / "w8a8_w16a16"
     outputs = []
     digests = {}
     for component_id in components:
@@ -59,7 +59,7 @@ def import_accuracy(tmp_path: Path, metrics: dict[str, float], git_sha: str = GI
             "import-accuracy",
             "--repository", str(ROOT),
             "--model-id", "rf_detr_small",
-            "--build-profile-id", "modalix_int8_bf16",
+            "--build-profile-id", "w8a8_w16a16",
             "--script-output", str(script_output(tmp_path, metrics)),
             "--compiled-dir", str(compiled),
             "--git-sha", git_sha,
@@ -118,7 +118,7 @@ def test_import_accuracy_rejects_a_git_sha_that_is_not_a_full_revision(
 def test_compiled_artifacts_returns_each_scoped_component_digest(tmp_path: Path) -> None:
     compiled, digests = compiled_build(tmp_path)
 
-    artifacts = compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+    artifacts = compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
 
     assert artifacts == digests
 
@@ -127,24 +127,24 @@ def test_compiled_artifacts_rejects_a_missing_component(tmp_path: Path) -> None:
     compiled, _ = compiled_build(tmp_path, components=("backbone",))
 
     with pytest.raises(ValidationError, match="exactly one compiled transformer MPK"):
-        compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
 
 
 def test_compiled_artifacts_rejects_an_mpk_that_does_not_match_its_recorded_sha256(tmp_path: Path) -> None:
     compiled, _ = compiled_build(tmp_path)
-    archive = compiled / "rf_detr_small" / "modalix_int8_bf16" / "transformer" / "rf_detr_small_transformer_mpk.tar.gz"
+    archive = compiled / "rf_detr_small" / "w8a8_w16a16" / "transformer" / "rf_detr_small_transformer_mpk.tar.gz"
     archive.write_bytes(b"rebuilt after the manifest was written")
 
     with pytest.raises(ValidationError, match="transformer MPK SHA-256 does not match"):
-        compiled_artifacts(compiled, "rf_detr_small", "modalix_int8_bf16", ["backbone", "transformer"])
+        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
 
 
 def test_compiled_artifacts_rejects_a_missing_manifest(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="could not read compile outputs"):
-        compiled_artifacts(tmp_path, "rf_detr_small", "modalix_int8_bf16", ["backbone"])
+        compiled_artifacts(tmp_path, "rf_detr_small", "w8a8_w16a16", ["backbone"])
 
 
 def test_resolve_devkit_accuracy_reports_models_without_it(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "modalix_bf16"]) == 0
+    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "w16a16"]) == 0
 
     assert json.loads(capsys.readouterr().out)["kind"] == "none"

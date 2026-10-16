@@ -201,15 +201,30 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
     api = "/v1/repositories/sima-neat/models"
     with _preview(tmp_path) as base:
         catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        package = next(
-            package for model in catalog["catalog"]["document"]["models"] for package in model.get("packages", [])
-        )
-        artifacts = _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
+        packages = {
+            model["id"]: package
+            for model in catalog["catalog"]["document"]["models"]
+            for package in model.get("packages", [])
+        }
+        artifacts = {
+            model_id: _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
+            for model_id, package in packages.items()
+            if model_id in {"resnet_50", "rf_detr_nano"}
+        }
+        links = {
+            model_id: _get_json(f"{base}/v1/runs/{packages[model_id]['run_id']}/artifacts/package")["artifact"]
+            for model_id in artifacts
+        }
 
     # The browser's Download finds the full package by this type, as the registry publisher writes it.
-    assert [artifact["artifact_type"] for artifact in artifacts] == ["model-package"]
-    assert artifacts[0]["media_type"] == "application/zip"
-    assert artifacts[0]["metadata"]["component_run_ids"] == package["component_run_ids"]
+    for model_id, items in artifacts.items():
+        assert [(item["name"], item["artifact_type"]) for item in items] == [("package", "model-package")]
+        assert items[0]["metadata"]["component_run_ids"] == packages[model_id]["component_run_ids"]
+    # A single-component package is its MPK; a multi-component package is a ZIP.
+    assert artifacts["resnet_50"][0]["media_type"] == "application/gzip"
+    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_mse_mpk.tar.gz")
+    assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
+    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
 
 
@@ -342,19 +357,19 @@ def test_full_model_card_starts_after_the_overview_the_page_already_shows() -> N
     assert json.loads(result.stdout) == ["## Usage\n\nRun it.\n", None]
 
 
-def test_int8_variants_are_listed_first() -> None:
+def test_w8a8_variants_are_listed_first() -> None:
     script = _browser_source("api.js")
     start = script.index("export function buildProfileId(")
     end = script.index("export function profileGroups(")
     helper = script[start:script.index("\n}\n", start) + 3]
     groups = script[end:script.index("export function activeModelBuild(")]
-    builds = [{"build_profile_id": profile} for profile in ("modalix_bf16", "modalix_int8", "a_fp32", "modalix_int8_bf16")]
+    builds = [{"build_profile_id": profile} for profile in ("w16a16", "w8a8", "a_fp32", "w8a8_w16a16")]
     probe = f"console.log(JSON.stringify(profileGroups({{builds: {json.dumps(builds)}}}).map(([id]) => id)));"
     result = subprocess.run(
         ["node", "--input-type=module", "--eval", helper + groups + probe],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
-    assert json.loads(result.stdout) == ["modalix_int8", "modalix_int8_bf16", "a_fp32", "modalix_bf16"]
+    assert json.loads(result.stdout) == ["w8a8", "w8a8_w16a16", "a_fp32", "w16a16"]
 
 
 def test_catalog_view_prefers_the_current_catalog_over_cached_history() -> None:
@@ -882,7 +897,8 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     browser = _browser_source()
 
     assert "function profileLabel(run)" in script
-    assert 'run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable"' in script
+    assert "const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;" in script
+    assert 'return profile ? variantLabel(profile) : "Build identity unavailable";' in script
     assert 'components.length > 1 || components[0] !== "model" ? components.join(" · ") : ""' in script
     assert '<small>${escapeHtml(profileLabel(run))}</small>' in script
     assert '"default artifact"' not in browser
@@ -1473,32 +1489,32 @@ const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01
   id, run_type: 'model_compile', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: workflow,
   toolchain_version: version, target_platform: 'modalix', finished_at: time,
-  metadata: {model_id: model, build_profile_id: 'modalix_int8_bf16', component_id: component, github_run_id: workflow},
+  metadata: {model_id: model, build_profile_id: 'w8a8_w16a16', component_id: component, github_run_id: workflow},
 });
 const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
                  run('transformer', 'rf_detr_small', 'transformer', 'workflow-2')];
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
              run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'modalix_int8_bf16', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
-  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16',
+  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone', artifact_suffix: 'backbone_w8a8'},
+  {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer', artifact_suffix: 'transformer_w16a16',
    validation_fingerprint: 'stale-accuracy-key'},
 ]},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
 const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
-  model_id: 'rf_detr_small', build_profile_id: 'modalix_int8_bf16', component_run_ids: components,
+  model_id: 'rf_detr_small', build_profile_id: 'w8a8_w16a16', component_run_ids: components,
 }});
 const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transformer'}),
                   packageRun('wrong', {backbone: 'backbone', transformer: 'old-transformer'})];
 const models = branchModels([...old, ...current], packages, catalog);
 assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
 assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
-assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_int8', 'transformer_bf16']);
+assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_w8a8', 'transformer_w16a16']);
 assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
 // A profile/component fallback supplies static metadata, never another build's accuracy key.
 assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
-const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'modalix_int8_bf16',
+const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'w8a8_w16a16',
   component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];
 assert.deepEqual(branchModels(current, [], matched)[0].builds.map(build => build.validation_fingerprint),
                  [undefined, 'accuracy-key']);

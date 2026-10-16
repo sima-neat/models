@@ -5,7 +5,7 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       coco_keypoint_map: 0.6270
       coco_keypoint_ap50: 0.8587
       coco_keypoint_ap75: 0.6865
@@ -18,7 +18,7 @@ accuracy:
       coco_keypoint_ar_large: 0.7921
       coco_person_box_map: 0.5435
       coco_person_box_ap50: 0.7295
-    modalix_int8:
+    w8a8:
       coco_keypoint_map: 0.5920
       coco_keypoint_ap50: 0.8447
       coco_keypoint_ap75: 0.6580
@@ -34,9 +34,9 @@ accuracy:
 performance:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       model:
         throughput_fps: 187.3
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 666.3

@@ -1517,6 +1517,15 @@ def publish_compilations(
     }
 
 
+def _package_media_type(archive_name: str) -> str | None:
+    """Return the media type of a lone-MPK or ZIP package, or None for any other file."""
+    if archive_name.endswith("_mpk.tar.gz"):
+        return "application/gzip"
+    if archive_name.endswith(".zip"):
+        return "application/zip"
+    return None
+
+
 def publish_packages(
     *,
     repository: str | Path,
@@ -1571,8 +1580,9 @@ def publish_packages(
             raise ValidationError(f"{result_path}: package is not declared for {model_id}/{profile_id}/{package_id}")
         archive_name = _require_text(result.get("archive"), "package archive")
         archive = result_path.parent / archive_name
-        if archive.parent != result_path.parent or archive.suffix != ".zip" or not archive.is_file():
-            raise ValidationError(f"{result_path}: expected one local ZIP package archive")
+        media_type = _package_media_type(archive_name)
+        if archive.parent != result_path.parent or media_type is None or not archive.is_file():
+            raise ValidationError(f"{result_path}: expected one local ZIP or MPK package archive")
         artifact_sha, artifact_size = sha256_file(archive)
         if result.get("sha256") != artifact_sha or result.get("size_bytes") != artifact_size:
             raise ValidationError(f"{result_path}: package archive does not match package-result.json")
@@ -1651,12 +1661,12 @@ def publish_packages(
             archive,
             f"models/{branch_key}/{commit_tag}/{archive.relative_to(packages_root).as_posix()}",
             artifact_sha,
-            media_type="application/zip",
+            media_type=media_type,
         )
         client.request("PUT", f"/v1/runs/{run_id}/artifacts/package", {
             "artifact_type": "model-package", "s3_bucket": bucket, "s3_key": stored.key,
             "s3_version_id": stored.version_id, "sha256": stored.sha256, "size_bytes": stored.size_bytes,
-            "media_type": "application/zip", "retention_class": "branch",
+            "media_type": media_type, "retention_class": "branch",
             "metadata": {"model_id": model_id, "build_profile_id": profile_id, "package_id": package_id,
                          "manifest_sha256": manifest_sha, "component_run_ids": component_runs},
         }, f"{stable_key}-artifact")

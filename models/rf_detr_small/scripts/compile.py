@@ -62,7 +62,7 @@ from surgery import (
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_small"
 INVOCATION_ID = "rf_detr"
-PROFILE_ID = "modalix_int8_bf16"
+PROFILE_ID = "w8a8_w16a16"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 
@@ -86,6 +86,11 @@ COMPONENT_INTERFACES = {
 def _profile() -> dict[str, Any]:
     model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
     return next(profile for profile in model["build_profiles"] if profile["id"] == PROFILE_ID)
+
+
+def _artifact_name(component_id: str) -> str:
+    binding = next(item for item in _profile()["components"] if item["id"] == component_id)
+    return f"{MODEL_ID}_{binding['artifact_suffix']}"
 
 
 def _quantization(precision: str, calibration_bins: int) -> Any:
@@ -333,7 +338,7 @@ def _compile_backbone(
     backbone, build_dir = _quantize_component(
         graph,
         temporary_dir,
-        f"{MODEL_ID}_backbone_{PROFILE_ID}",
+        _artifact_name("backbone"),
         precision,
         calibration_bins,
         {INPUT: calibration_images},
@@ -371,7 +376,7 @@ def _compile_transformer(
         transformer, build_dir = _quantize_component(
             graph,
             temporary_dir,
-            f"{MODEL_ID}_transformer_{PROFILE_ID}",
+            _artifact_name("transformer"),
             precision,
             calibration_bins,
             {FEATURES: calibration_features, PROPOSALS: calibration_proposals},
@@ -414,7 +419,7 @@ def _run_phase(name: str, target: Callable[..., None], *args: Any) -> None:
 
 
 def _component_archive(temporary_dir: Path, component_id: str) -> Path:
-    build_dir = temporary_dir / f"{MODEL_ID}_{component_id}_{PROFILE_ID}"
+    build_dir = temporary_dir / _artifact_name(component_id)
     archives = sorted(build_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")

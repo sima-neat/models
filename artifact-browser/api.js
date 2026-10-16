@@ -226,8 +226,8 @@ export function profileGroups(model) {
     if (!groups.has(profile)) groups.set(profile, []);
     groups.get(profile).push(build);
   });
-  // INT8 is the default variant, so it is listed first and opens first.
-  const rank = (profile) => (profile.includes("int8") ? 0 : 1);
+  // W8A8 is the default variant, so a profile with a W8A8 component is listed first and opens first.
+  const rank = (profile) => (profile.split("_").includes("w8a8") ? 0 : 1);
   return [...groups.entries()].sort(([left], [right]) => rank(left) - rank(right) || left.localeCompare(right));
 }
 

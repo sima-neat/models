@@ -167,7 +167,7 @@ everything longer sits in one expandable row.
   **Evaluation details** explains status and coverage and lists the context
   and remaining metrics.
 - **Details** shows the package card (size, SHA-256, **Download package**,
-  **Download components**), then rows for build provenance, source models (one
+  and **Download components** for a multi-component build), then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, numerical
   fidelity, and a nested **Compile parameters** row.
 - **License** is one line with the SPDX identifier and redistribution, plus
@@ -245,6 +245,10 @@ Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
 links are being prepared. Single-file variants require confirmation with **Download 1 file**.
 Numerical-fidelity **Download JSON** remains a separate report download.
+
+**Download package** saves the published package under its registry filename:
+the MPK itself for a single-component model, or a ZIP of the component MPKs
+and declared resources otherwise. The dialog labels the file MPK or ZIP.
 
 All temporary URLs are prepared before any transfer starts. If preparation
 fails, the dialog reports the error and allows retrying. Files stream directly

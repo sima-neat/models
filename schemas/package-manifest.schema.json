@@ -29,11 +29,10 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "type", "path"],
+          "required": ["id", "type"],
           "properties": {
             "id": {"$ref": "#/$defs/id"},
-            "type": {"const": "declarative"},
-            "path": {"$ref": "#/$defs/path"}
+            "type": {"const": "declarative"}
           }
         }
       ]

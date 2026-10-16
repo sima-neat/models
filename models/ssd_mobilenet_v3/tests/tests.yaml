@@ -3,9 +3,9 @@ compile:
 performance:
   run_tests: true
   expected:
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 1536.8
-    modalix_bf16:
+    w16a16:
       model:
         throughput_fps: 1167.5

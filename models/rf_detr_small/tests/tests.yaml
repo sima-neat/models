@@ -5,7 +5,7 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    modalix_int8_bf16:
+    w8a8_w16a16:
       coco_map: 0.4646
       coco_ap50: 0.6480
       coco_ap75: 0.5006
@@ -21,7 +21,7 @@ accuracy:
 performance:
   run_tests: true
   expected:
-    modalix_int8_bf16:
+    w8a8_w16a16:
       backbone:
         throughput_fps: 143.1
       transformer:
