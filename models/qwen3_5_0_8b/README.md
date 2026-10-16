@@ -1,10 +1,10 @@
-# Qwen3.5-2B
+# Qwen3.5-0.8B
 
-![Qwen3.5-2B model hero](hero.png)
+![Qwen3.5-0.8B model hero](hero.png)
 
 ## Overview
 
-Qwen3.5-2B is a compact vision-language model from Alibaba Cloud with approximately 2 billion parameters. It combines text and image understanding to answer questions about pictures, describe visual content, and hold text-based conversations. This package is compiled for local inference on SiMa.ai Modalix and supports both text-only and image-plus-text requests. Responses are generated as text and can be streamed to the application.
+Qwen3.5-0.8B is a compact vision-language model from Alibaba Cloud with approximately 800 million parameters. It combines text and image understanding to answer questions about pictures, describe visual content, and hold text-based conversations. This package is compiled for local inference on SiMa.ai Modalix and supports both text-only and image-plus-text requests. Responses are generated as text and can be streamed to the application.
 
 *Image resolution and maximum context length can be changed when recompiling the model, with context lengths up to 8,192 tokens.*
 

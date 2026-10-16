@@ -476,8 +476,8 @@ builds keep their scheduling. Pushes validate on-demand models and publish
 their metadata, but never compile or measure them, even when inputs change.
 This flag is not part of the compile fingerprint.
 
-To build Qwen3.5-2B, dispatch **Vulcan Model Orchestrator** with
-`models=qwen3_5_2b` and `profiles=modalix_a16w4_4k`. Both selections are
+To build Qwen3.5-0.8B, dispatch **Vulcan Model Orchestrator** with
+`models=qwen3_5_0_8b` and `profiles=modalix_a16w4_4k`. Both selections are
 required for an on-demand build. Use staging; production candidate publication
 is not enabled. Direct `plan-stages` calls must also pass `--include-on-demand`.
 The workflow publishes all invocations and packages as one retained candidate.
@@ -519,7 +519,7 @@ Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
 runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
 
 ```bash
-scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
+scripts/run_llima_compilation.sh models/qwen3_5_0_8b modalix_a16w4_4k model /path/to/output
 ```
 
 The runner downloads the pinned files, invokes the recipe, and runs

@@ -89,10 +89,15 @@ export function approvedModel(model) {
   for (const [profile, selection] of selections) {
     const components = selection.artifacts.filter((root) => root.component_id);
     builds.push(...components.map((root) => ({ ...root, build_profile_id: profile })));
-    packages.push(...selection.artifacts.filter((root) => root.package_id).map((root) => ({
-      ...root, build_profile_id: profile,
-      component_run_ids: Object.fromEntries(components.map((item) => [item.component_id, item.run_id])),
-    })));
+    packages.push(...selection.artifacts.filter((root) => root.package_id).map((root) => {
+      const ids = model.build_requirements?.[profile]?.packages
+        ?.find((item) => item.id === root.package_id)?.component_ids || [];
+      return {
+        ...root, build_profile_id: profile,
+        component_run_ids: Object.fromEntries(components.filter((item) => ids.includes(item.component_id))
+          .map((item) => [item.component_id, item.run_id])),
+      };
+    }));
   }
   return { ...model, builds, packages };
 }

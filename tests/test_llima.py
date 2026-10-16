@@ -40,7 +40,7 @@ from model_registry.source import source_identity
 from model_registry.stage_keys import COMPILE_TOOLING, compile_key
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = "qwen3_5_2b"
+MODEL = "qwen3_5_0_8b"
 PROFILE = "modalix_a16w4_4k"
 
 
@@ -189,7 +189,9 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     published = json.loads((component / "registry-publication.json").read_text())
     compile_run = published["runs"][0]["run_id"]
     source_input = next(body for _, path, body in registry.calls if path.endswith("/inputs/source-component"))
-    assert source_input["metadata"]["revision"] == "185ccd6cb4e420e47cc7b6c4113618b02ec4226d"
+    assert source_input["metadata"]["revision"] == (
+        load_and_validate_model(ROOT / "models" / MODEL)["upstream"]["revision"]
+    )
     package_dir = tmp_path / "candidate/packages" / MODEL / PROFILE / "packages/default"
     package = json.loads((package_dir / "package-result.json").read_text())
     packages = json.loads((package_dir / "registry-publication.json").read_text())

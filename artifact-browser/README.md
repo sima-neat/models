@@ -259,6 +259,8 @@ Selecting a feature branch shows its successfully published on-demand builds,
 including candidates that have not been promoted. Metadata alone does not create
 a card. Develop and Main show the backend's approved selections; a feature-branch
 candidate cannot replace them. Completed candidates also remain in build history.
+Approved package membership comes from the profile's `build_requirements`. Only
+packages covering every shown component are offered as full-model downloads.
 
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.

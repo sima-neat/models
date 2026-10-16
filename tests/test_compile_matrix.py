@@ -627,7 +627,7 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
     ],
 )
 def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, native_changed, onnx_changed):
-    native_id = "qwen3_5_2b"
+    native_id = "qwen3_5_0_8b"
     native = load_and_validate_model(ROOT / "models" / native_id)
     entry = build_matrix({native_id: native}, [native_id])["include"][0]
     assert entry["runner_script"] == "scripts/run_llima_compilation.sh"

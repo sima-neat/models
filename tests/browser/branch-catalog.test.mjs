@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {branchModels, catalogBuildRuns} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
+const {approvedModel, branchModels, catalogBuildRuns} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
 
 const run = (id, model, ref, time, extra = {}) => ({
   id, repository: 'sima-neat/models', run_type: 'model_compile', status: 'completed', git_ref: ref,
@@ -22,11 +22,13 @@ const catalog = [
 
 test('approved native roots select original runs and packages while newer candidates stay hidden', async () => {
   const newer = run('newer', 'resnet_50', feature, '2026-10-02T00:00:00Z');
-  const definition = {...catalog[0], builds: [], packages: [], build_on_demand: true, approved_deployments: {
-    int8: {deployment_id: 'approved', manifest_digest: 'digest', artifacts: [
-      {component_id: 'model', run_id: resnet.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
-      {package_id: 'default', run_id: 'approved-package', artifact_name: 'package', layout: 'directory', format: 'llima'},
-    ]},
+  const definition = {...catalog[0], builds: [], packages: [], build_on_demand: true,
+    build_requirements: {int8: {packages: [{id: 'default', component_ids: ['model']}]}},
+    approved_deployments: {
+      int8: {deployment_id: 'approved', manifest_digest: 'digest', artifacts: [
+        {component_id: 'model', run_id: resnet.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
+        {package_id: 'default', run_id: 'approved-package', artifact_name: 'package', layout: 'directory', format: 'llima'},
+      ]},
   }};
   const inherited = await catalogBuildRuns([definition], [newer], async path => {
     assert.equal(path, `/v1/runs/${resnet.id}`);
@@ -38,6 +40,31 @@ test('approved native roots select original runs and packages while newer candid
   assert.equal(model.builds[0].artifact_name, 'llima');
   assert.equal(model.packages[0].run_id, 'approved-package');
   assert.deepEqual(model.packages[0].component_run_ids, {model: resnet.id});
+});
+
+test('approved subset packages cannot become full-model downloads', () => {
+  const components = ['backbone', 'head'].map(id => run(id, 'example', feature, '2026-10-01T00:00:00Z', {
+    metadata: {model_id: 'example', build_profile_id: 'int8', component_id: id},
+  }));
+  const definition = {model_id: 'example', build_on_demand: true,
+    build_requirements: {int8: {packages: [
+      {id: 'backbone-only', component_ids: ['backbone']},
+      {id: 'complete', component_ids: ['backbone', 'head']},
+    ]}},
+    approved_deployments: {int8: {artifacts: [
+      ...components.map(item => ({component_id: item.id, run_id: item.id})),
+      {package_id: 'backbone-only', run_id: 'partial-package'},
+      {package_id: 'complete', run_id: 'complete-package'},
+    ]}},
+  };
+  const projected = approvedModel(definition);
+  assert.deepEqual(projected.packages.map(item => item.component_run_ids), [
+    {backbone: 'backbone'}, {backbone: 'backbone', head: 'head'},
+  ]);
+  const [model] = branchModels(components, [], [definition], '', 'develop');
+  assert.deepEqual(model.packages.map(item => item.run_id), ['complete-package']);
+  const [unknown] = branchModels(components, [], [{...definition, build_requirements: undefined}], '', 'develop');
+  assert.deepEqual(unknown.packages, []);
 });
 
 test('a branch that compiled nothing lists every catalog model with its real provenance', () => {

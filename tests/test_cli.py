@@ -60,9 +60,9 @@ def test_verify_artifact_dispatches_to_the_generic_verifier(entrypoint, monkeypa
     monkeypatch.setattr(cli, "verify_artifact", verify)
 
     assert entrypoint([
-        "verify-artifact", str(tmp_path), "--write-manifest", "--json", "--model-id", "qwen3_5_2b",
+        "verify-artifact", str(tmp_path), "--write-manifest", "--json", "--model-id", "qwen3_5_0_8b",
     ]) == 0
-    assert calls == [(tmp_path, True, {"model_id": "qwen3_5_2b"})]
+    assert calls == [(tmp_path, True, {"model_id": "qwen3_5_0_8b"})]
     assert json.loads(capsys.readouterr().out) == result
 
 
