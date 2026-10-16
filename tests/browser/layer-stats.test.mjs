@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {analyzeLayers, selectLayers, layerTimeScale} from '../../artifact-browser/layer-stats.js';
+import {analyzeLayers, selectLayers, layerTimeScale, layerFamily} from '../../artifact-browser/layer-stats.js';
 import {adaptBenchmarkResult} from '../../artifact-browser/benchmark-adapters.js';
 
 const row = (name, time, stage = 0) => ({name, total_execution_time_us: time, stage_index: stage});
@@ -66,4 +66,24 @@ test('timing bars have a fixed, finite microsecond axis independent of the searc
   assert.equal(layerTimeScale(analyzeLayers([row('noop', 0)])), 1);
   assert.equal(layerTimeScale(analyzeLayers([row('small', 0.04)])), 0.04);
   assert.equal(layerTimeScale(analyzeLayers([row('large', Number.MAX_VALUE)])), Number.MAX_VALUE);
+});
+
+test('minimum execution time combines with search without changing totals or hiding zeros by default', () => {
+  const analysis = analyzeLayers(rows);
+  const selection = selectLayers(analysis, {query: "conv", minUs: 21});
+  assert.deepEqual(selection.layers.map(layer => layer.order), [3]);
+  assert.equal(selection.totalUs, 70);
+  assert.equal(selection.count, 5);
+  assert.equal(selectLayers(analysis, {minUs: 0}).zeroCount, 2);
+  assert.equal(selectLayers(analysis, {minUs: 31}).layers.length, 0);
+});
+
+test('duration colors infer families from compiled names and tolerate unknown names', () => {
+  assert.equal(layerFamily('MLA_0/conv2d_add_relu'), 'conv');
+  assert.equal(layerFamily('MLA_0/tuple_einsum_307'), 'matmul');
+  assert.equal(layerFamily('pool'), 'pool');
+  assert.equal(layerFamily('swish'), 'activation');
+  assert.equal(layerFamily('concat'), 'merge');
+  assert.equal(layerFamily('placeholder'), 'io');
+  assert.equal(layerFamily('reshape'), 'other');
 });

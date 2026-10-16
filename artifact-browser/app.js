@@ -633,7 +633,7 @@ elements["compare-pane"].addEventListener("change", (event) => {
   elements["compare-pane"].querySelector(`[data-pick="${picker.dataset.pick}"]`)?.focus();
 });
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
-elements["detail-pane"].addEventListener("change", updateLayerAnalysis);
+elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", (event) => {
   const variantTab = event.target.closest("[data-detail-profile-id]");
   if (variantTab) {

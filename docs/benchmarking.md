@@ -130,12 +130,15 @@ these performance scripts reruns measurement for existing builds without
 invalidating their compile keys. Historical results without layer stats stay
 readable; new measurements add the analysis view.
 
-The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer count,
-and share in the ten slowest layers. A single scrollable table pairs each layer name with its timing bar, execution
-time and share. Bars use a fixed microsecond axis that stays unchanged when
-filtering. Search by name or sort by time or compiler order; every matching
-layer is included. Percentages use all profiled layers in the component, even
-when a search hides some. Stage indices remain visible on each row. **Download CSV** includes every layer in compiler order.
+The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer
+count, and share in the ten slowest layers. **Duration** displays a ranked chart
+of measured execution times in microseconds, with colors inferred from compiled
+layer names and a fixed time axis. **Table** shows names, execution time and
+share in compiler order, without bars. Only the selected view is displayed.
+Both views share name search and a minimum-execution-time slider. Filtering
+preserves the component totals, percentage denominator and time axis; a zero
+threshold includes zero-time layers. Stage indices remain visible per layer.
+**Download CSV** includes every layer in compiler order, regardless of filters.
 
 ## Workload and measurements
 

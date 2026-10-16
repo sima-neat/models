@@ -20,13 +20,13 @@ export function analyzeLayers(rows) {
   return { layers, totalUs, stages: [...stages.values()].sort((a, b) => a.index - b.index) };
 }
 
-export function selectLayers(analysis, { query = "", order = "time" } = {}) {
+export function selectLayers(analysis, { query = "", order = "time", minUs = 0 } = {}) {
   const selected = analysis.layers;
   const totalUs = selected.reduce((sum, layer) => sum + layer.timeUs, 0);
   const ranked = [...selected].sort((a, b) => b.timeUs - a.timeUs || a.order - b.order);
   const top10Us = ranked.slice(0, 10).reduce((sum, layer) => sum + layer.timeUs, 0);
   const search = String(query).trim().toLowerCase();
-  const layers = (order === "compiler" ? selected : ranked).filter((layer) => layer.name.toLowerCase().includes(search));
+  const layers = (order === "compiler" ? selected : ranked).filter((layer) => layer.name.toLowerCase().includes(search) && layer.timeUs >= minUs);
   return {
     layers, totalUs, count: selected.length,
     zeroCount: selected.filter((layer) => layer.timeUs === 0).length,
@@ -41,4 +41,21 @@ export function layerTimeScale(analysis) {
   const step = 10 ** Math.floor(Math.log10(maximum));
   const rounded = Math.ceil(maximum / step) * step;
   return Number.isFinite(rounded) ? rounded : maximum;
+}
+
+export const LAYER_FAMILIES = {
+  conv: "Convolution", matmul: "Matmul / einsum", activation: "Activation",
+  pool: "Pooling", merge: "Add / concat", io: "Input / output", other: "Other",
+};
+
+// Display hints inferred from compiled names, not source-graph operator mappings.
+export function layerFamily(name) {
+  const text = name.toLowerCase();
+  if (text.includes("conv")) return "conv";
+  if (text.includes("matmul") || text.includes("einsum")) return "matmul";
+  if (text.includes("pool")) return "pool";
+  if (/relu|swish|sigmoid|gelu|activation/.test(text)) return "activation";
+  if (/concat|add/.test(text)) return "merge";
+  if (/placeholder|input|output/.test(text)) return "io";
+  return "other";
 }

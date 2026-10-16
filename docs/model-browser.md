@@ -68,15 +68,17 @@ order:
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
    scale, and zero point. When the report includes layer stats, **Runtime Layer Analysis**
-   opens a single scrollable table with timing bars, execution time, and share
-   for every compiled layer. Bars use a fixed microsecond axis for the component.
-   Search by name or sort by execution time or compiler
-   order; each row also identifies its stage and compiler position. The summary
-   shows profiled MLA time, the layer count (including zero-time entries), and
-   the ten slowest layers' share. Shares use all profiled layers in the component
-   and do not change when searching. These timings come from a separate profiling
-   pass; they are not a partition of headline latency. Compiled layer names may
-   differ from ONNX operators. Historical reports without stats omit this section.
+   opens an Insight-style **Duration / Table** selector. **Duration** shows
+   measured execution times in microseconds, slowest first, with a fixed time
+   axis and a legend of layer families inferred from compiled names. **Table**
+   shows names, execution time and share in compiler order, without bars. Name
+   search and a minimum-time slider apply to either view; only one is displayed.
+   Each layer also identifies its stage and compiler position. The summary shows
+   profiled MLA time, the layer count (including zero-time entries), and the ten
+   slowest layers' share. Filtering preserves the totals, time axis and percentage
+   denominator. These timings come from a separate profiling pass; they are not
+   a partition of headline latency. Compiled layer names may differ from ONNX
+   operators. Historical reports without stats omit this section.
    **Benchmark details** has three cards on the left:
    **Performance** with asynchronous and synchronous throughput in one row
    (synchronous from the mean latency), the mean latency, and the p50, p95,
