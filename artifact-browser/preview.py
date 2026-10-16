@@ -311,6 +311,15 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     memory = report["telemetry"]["mla_memory_mib"]
     memory_scale = (16.0 + _fraction("memory", *key) * 240.0) / memory["maximum"]
     memory.update({name: round(memory[name] * memory_scale, 1) for name in ("mean", "minimum", "maximum")})
+    # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
+    # Preview timings are generated, not published measurements of these model definitions.
+    report["layer_stats"] = [
+        {"name": f"MLA_{stage}/block_{index // 3}/{['conv2d', 'activation', 'reshape'][index % 3]}",
+         "stage_index": stage,
+         "total_execution_time_us": 0.0 if index % 9 == 8 else round(
+             latency * 1000 * (0.065 / (1 + index / 4)) * (0.8 + _fraction("layer", *key, str(index))), 2)}
+        for stage in (0, 2) for index in range(24)
+    ]
     # The rest of the board telemetry keeps the template's DevKit readings.
     return result
 

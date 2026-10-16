@@ -108,6 +108,7 @@ info = model.info()
 manifest["configuration"] = {
     "samples": context["num_samples"],
     "min_duration_ms": context["min_duration_ms"],
+    "include_layer_stats": context["include_layer_stats"],
     "include_plugin_latency": options.include_plugin_latency,
     "original_width": None, "original_height": None, "resize_mode": None,
 }

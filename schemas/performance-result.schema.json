@@ -102,7 +102,18 @@
             "linux_memory_used_mib": {"$ref": "#/$defs/telemetryMetric"}
           }
         },
-        "layer_stats": {"type": "array"}
+        "layer_stats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "stage_index", "total_execution_time_us"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "stage_index": {"type": "integer", "minimum": 0},
+              "total_execution_time_us": {"$ref": "#/$defs/reportNumber"}
+            }
+          }
+        }
       }
     },
     "execution_plan": {

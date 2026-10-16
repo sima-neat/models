@@ -19,7 +19,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel,
+  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel, updateLayerAnalysis,
 } from "./model-view.js";
 
 function writeCategoryFilterUrl() {
@@ -89,6 +89,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   const previousModelId = currentVariant()?.modelId;
   if (previousModelId !== catalogRun?.metadata?.model_id) {
     state.openDisclosures = new Set();
+    state.layerViews.clear();
     state.documentationRequestId += 1;
   }
   state.selectedId = runId;
@@ -631,6 +632,8 @@ elements["compare-pane"].addEventListener("change", (event) => {
   // The pickers render again with the page; keep the reader on the one they changed.
   elements["compare-pane"].querySelector(`[data-pick="${picker.dataset.pick}"]`)?.focus();
 });
+elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
+elements["detail-pane"].addEventListener("change", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", (event) => {
   const variantTab = event.target.closest("[data-detail-profile-id]");
   if (variantTab) {

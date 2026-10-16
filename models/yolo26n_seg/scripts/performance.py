@@ -17,17 +17,18 @@ options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.YoloV26Seg
 options.top_k = 100
 model = pyneat.Model(args.mpk, options)
-# 1000 samples size each pass, and each pass runs for at least 60 s, so board telemetry, read every
-# 2 s, has about 30 samples.
+# Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
+benchmark_options.include_layer_stats = True
 model.benchmark(benchmark_options).save(output / "benchmark-report.json")
 # What the report does not record: the Core release, the requested run, and the graph that ran.
 context = {
     "core_version": pyneat.__version__,
     "num_samples": benchmark_options.num_samples,
     "min_duration_ms": benchmark_options.min_duration_ms,
+    "include_layer_stats": benchmark_options.include_layer_stats,
     "execution_plan": json.loads(model.execution_plan().to_json()),
     "workload": {
         "selection": "YoloV26Seg decoder, top 100, 160x160 masks",

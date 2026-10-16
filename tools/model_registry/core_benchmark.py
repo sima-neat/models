@@ -71,6 +71,10 @@ def runner_environment() -> dict[str, Any]:
     }
 
 
+def _reject_nonfinite(value: str) -> None:
+    raise ValidationError(f"benchmark report contains non-finite JSON number: {value}")
+
+
 def import_core_benchmark(
     manifest_path: Path,
     report_path: Path,
@@ -83,7 +87,7 @@ def import_core_benchmark(
     """Publish the report BenchmarkReport.save() wrote, unchanged, with the script's context and the
     registry identity, provenance, and runner environment around it."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite)
     context = json.loads(context_path.read_text(encoding="utf-8"))
     if not isinstance(report, dict) or not isinstance(context, dict):
         raise ValidationError("benchmark report and context must be objects")
@@ -101,6 +105,11 @@ def import_core_benchmark(
     actual_core = context.get("core_version", "")
     if not isinstance(actual_core, str) or not actual_core:
         raise ValidationError("benchmark context must identify the Core version")
+    include_layer_stats = context.get("include_layer_stats", False)
+    if type(include_layer_stats) is not bool:
+        raise ValidationError("benchmark context include_layer_stats must be a boolean")
+    if include_layer_stats and not report.get("layer_stats"):
+        raise ValidationError("benchmark requested layer stats but the report contains none")
     expected = manifest["compatibility"]
     digest, _ = sha256_file(Path(manifest["model"]["path"]))
     if digest != manifest["model"]["sha256"]:
@@ -133,6 +142,7 @@ def import_core_benchmark(
         },
         "configuration": {
             **configuration,
+            "include_layer_stats": include_layer_stats,
             "workload": workload,
             "method": "core_model_benchmark",
             "script_sha256": sha256_file(Path(manifest["script"]))[0],

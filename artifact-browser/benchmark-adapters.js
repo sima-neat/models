@@ -1,3 +1,5 @@
+import { analyzeLayers } from "./layer-stats.js";
+
 function measurement(key, metric) {
   if (!metric || typeof metric !== "object") return null;
   const declaredStatus = ["measured", "unavailable", "unsupported"].includes(metric.status)
@@ -117,6 +119,7 @@ function common(result) {
     executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan),
     telemetry: telemetrySource(report),
     cpuCores: cpuCores(report),
+    layerAnalysis: analyzeLayers(report?.layer_stats),
   };
 }
 

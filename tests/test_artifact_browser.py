@@ -46,6 +46,7 @@ def test_artifact_browser_assets_exist() -> None:
         "compare-view.js",
         "model-view.js",
         "benchmark-adapters.js",
+        "layer-stats.js",
         "branch-builds.js",
         "downloads.js",
         "markdown.js",
@@ -259,7 +260,7 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "process.env.GITHUB_SHA" in assemble
     for asset in (
         "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
-        "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config",
+        "benchmark-adapters", "layer-stats", "branch-builds", "downloads", "markdown", "styles", "config",
     ):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble

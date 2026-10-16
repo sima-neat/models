@@ -327,3 +327,88 @@ def test_every_performance_script_saves_the_core_report():
         source = script.read_text()
         assert 'model.benchmark(benchmark_options).save(output / "benchmark-report.json")' in source, script
         assert "report_json" not in source, script
+
+
+def test_layer_timings_survive_import_unchanged(core_inputs, tmp_path):
+    layers = [{"name": "conv", "stage_index": 0, "total_execution_time_us": 161.95},
+              {"name": "noop", "stage_index": 0, "total_execution_time_us": 0},
+              {"name": "conv", "stage_index": 2, "total_execution_time_us": 42.5}]
+    with_report(core_inputs, layer_stats=layers, future_core_field={"unchanged": True})
+    context = json.loads(core_inputs[2].read_text())
+    core_inputs[2].write_text(json.dumps({**context, "include_layer_stats": True}))
+    result = package(core_inputs, tmp_path)
+    assert result["benchmark_report"] == json.loads(core_inputs[1].read_text())
+    assert result["configuration"]["include_layer_stats"] is True
+
+
+@pytest.mark.parametrize("layer", [
+    {"name": "", "stage_index": 0, "total_execution_time_us": 1},
+    {"name": "conv", "stage_index": -1, "total_execution_time_us": 1},
+    {"name": "conv", "stage_index": 0.5, "total_execution_time_us": 1},
+    {"name": "conv", "stage_index": 0, "total_execution_time_us": -1},
+    {"name": "conv", "stage_index": 0},
+])
+def test_rejects_malformed_layer_timings(core_inputs, tmp_path, layer):
+    with_report(core_inputs, layer_stats=[layer])
+    with pytest.raises(ValidationError):
+        package(core_inputs, tmp_path)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_rejects_nonfinite_layer_timings(core_inputs, tmp_path, value):
+    with_report(core_inputs, layer_stats=[{"name": "conv", "stage_index": 0, "total_execution_time_us": value}])
+    with pytest.raises(ValidationError, match="non-finite"):
+        package(core_inputs, tmp_path)
+
+
+@pytest.mark.parametrize("flag", [True, "true", 1])
+def test_does_not_silently_publish_a_requested_but_missing_profile(core_inputs, tmp_path, flag):
+    context = json.loads(core_inputs[2].read_text())
+    core_inputs[2].write_text(json.dumps({**context, "include_layer_stats": flag}))
+    with pytest.raises(ValidationError, match="layer stats|include_layer_stats"):
+        package(core_inputs, tmp_path)
+
+
+@pytest.mark.parametrize("script", sorted(Path(__file__).resolve().parents[1].glob("models/*/scripts/performance.py")),
+                         ids=lambda path: path.parent.parent.name)
+def test_every_model_requests_and_saves_layer_stats(script, monkeypatch, tmp_path):
+    import runpy
+    import sys
+
+    report = {"layer_stats": [{"name": "conv", "stage_index": 0, "total_execution_time_us": 12.5}],
+              "future_core_field": "preserved"}
+    requests = []
+
+    class Report:
+        def save(self, path):
+            Path(path).write_text(json.dumps(report))
+
+    class Model:
+        def __init__(self, *args):
+            pass
+
+        def benchmark(self, options):
+            requests.append(options)
+            return Report()
+
+        def execution_plan(self):
+            return SimpleNamespace(to_json=lambda: json.dumps(PLAN))
+
+        def info(self):
+            return SimpleNamespace(selection=SimpleNamespace(selected_post_kind="boxdecode"))
+
+    pyneat = SimpleNamespace(
+        __version__="test", Model=Model, ModelOptions=SimpleNamespace, BenchmarkOptions=SimpleNamespace,
+        BoxDecodeType=SimpleNamespace(YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"),
+    )
+    monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path)])
+    runpy.run_path(str(script), run_name="__main__")
+    assert len(requests) == 1
+    assert requests[0].include_layer_stats is True
+    assert requests[0].num_samples == 1000
+    assert requests[0].min_duration_ms == 60000
+    assert json.loads((tmp_path / "benchmark-report.json").read_text()) == report
+    context = json.loads((tmp_path / "benchmark-context.json").read_text())
+    assert context["include_layer_stats"] is True
+    assert context["execution_plan"] == PLAN

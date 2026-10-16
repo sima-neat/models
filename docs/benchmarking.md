@@ -65,17 +65,18 @@ output = Path(args.output)
 output.mkdir(parents=True, exist_ok=True)
 
 model = pyneat.Model(args.mpk)
-# 1000 samples size each pass, and each pass runs for at least 60 s, so board telemetry, read every
-# 2 s, has about 30 samples.
+# Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
+benchmark_options.include_layer_stats = True
 model.benchmark(benchmark_options).save(output / "benchmark-report.json")
 # What the report does not record: the Core release, the requested run, and the graph that ran.
 context = {
     "core_version": pyneat.__version__,
     "num_samples": benchmark_options.num_samples,
     "min_duration_ms": benchmark_options.min_duration_ms,
+    "include_layer_stats": benchmark_options.include_layer_stats,
     "execution_plan": json.loads(model.execution_plan().to_json()),
 }
 (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
@@ -105,6 +106,35 @@ successful benchmark. Keep archives and results outside Git.
 The script runs once for each component that a `benchmark` entry covers in the
 build profile. RF-DETR's backbone and transformer therefore produce separate
 results; their numbers are not a measured combined pipeline.
+
+## Per-layer profiling
+
+Every performance script explicitly enables `BenchmarkOptions.include_layer_stats`.
+After latency and throughput measurement, Core profiles each MLA stage using
+MLA-RT and includes the compiled layer's `name`, zero-based `stage_index`, and
+`total_execution_time_us` in `benchmark_report.layer_stats`. A stage index counts
+all executable stages, including A65 stages, so MLA indices can have gaps.
+Zero-time entries are kept in compiler order. Names describe compiled layers,
+which may fuse or split source ONNX operators.
+
+Use an idle DevKit with `mla-rt` in `PATH` and the MIP-to-kernel handoff fix
+(verified with MLA-RT `603a8c6` on eLxr B2121). Core runs profiling after its
+benchmark runners close. The profile is a separate pass with MLA-RT's default
+inputs; its summed time is not the model's end-to-end latency or a breakdown of
+throughput-pass telemetry. Ordinary inference can resume when it returns.
+
+The importer preserves the saved report unchanged, validates every layer timing,
+and fails when a requested profile is absent. Each model's performance stage
+test also requires nonempty timings with at least one nonzero layer. Changing
+these performance scripts reruns measurement for existing builds without
+invalidating their compile keys. Historical results without layer stats stay
+readable; new measurements add the analysis view.
+
+The model browser's **Layer analysis** shows the profiled MLA time, layer count,
+and share in the ten slowest layers. A bar chart shows up to 15 matching layers;
+stage selection, name search, and sorting by time or compiler order also apply
+to the full table. Percentages use all layers in the selected stages, even when
+a search hides some. **Download CSV** includes every layer in compiler order.
 
 ## Workload and measurements
 

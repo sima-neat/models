@@ -36,6 +36,7 @@ export const state = {
   selectedVariantKey: null,
   // Keys of the disclosure rows the reader opened on the current model page.
   openDisclosures: new Set(),
+  layerViews: new Map(),
   historicalCatalogModels: new Map(),
   documentationCache: new Map(),
   documentationRequestId: 0,
