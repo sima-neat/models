@@ -226,8 +226,8 @@ export function profileGroups(model) {
     if (!groups.has(profile)) groups.set(profile, []);
     groups.get(profile).push(build);
   });
-  // INT8 is the default variant, so it is listed first and opens first.
-  const rank = (profile) => (profile.includes("int8") ? 0 : 1);
+  // W8A8 is the default variant, so a profile with a W8A8 component is listed first and opens first.
+  const rank = (profile) => (profile.split("_").includes("w8a8") ? 0 : 1);
   return [...groups.entries()].sort(([left], [right]) => rank(left) - rank(right) || left.localeCompare(right));
 }
 
@@ -302,6 +302,16 @@ function loadComponentPipeline(modelId) {
   return componentPipelines.then((pipelines) => pipelines[modelId] || null);
 }
 
+// The scores each source model's authors published, generated from model.yaml when the portal is built.
+// Without it the accuracy section shows measurements alone, so a failed fetch is not an error.
+let publishedMetrics = null;
+function loadPublishedMetrics(modelId) {
+  publishedMetrics ||= fetch(new URL("./published-metrics.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return publishedMetrics.then((published) => published[modelId] || []);
+}
+
 export async function loadVariant(anchor) {
   const key = variantBuildKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
@@ -309,14 +319,15 @@ export async function loadVariant(anchor) {
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
-  const [devkit, packageSummary, pipeline] = await Promise.all([
+  const [devkit, packageSummary, pipeline, published] = await Promise.all([
     accuracyKeyForRuns(runs).then(devkitAccuracy),
     packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : null,
     loadComponentPipeline(anchor.metadata?.model_id),
+    loadPublishedMetrics(anchor.metadata?.model_id),
   ]);
   const variant = {
     key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, devkit, packageSummary,
-    requestedPackageId: packageRun?.run_id || null, pipeline,
+    requestedPackageId: packageRun?.run_id || null, pipeline, published,
   };
   state.variantCache.set(key, variant);
   return variant;

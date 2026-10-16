@@ -165,9 +165,12 @@ everything longer sits in one expandable row.
   component in one table).
 - **Accuracy** shows the status, the first four metrics, and the scope.
   **Evaluation details** explains status and coverage and lists the context
-  and remaining metrics.
+  and remaining metrics. **Published scores** lists each `published_metrics`
+  entry of `model.yaml` with its dataset, conditions, and source; a published
+  score sits beside a measured one only when both name the same dataset. A
+  build without an accuracy result shows only the published scores.
 - **Details** shows the package card (size, SHA-256, **Download package**,
-  **Download components**), then rows for build provenance, source models (one
+  and **Download components** for a multi-component build), then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, numerical
   fidelity, and a nested **Compile parameters** row.
 - **License** is one line with the SPDX identifier and redistribution, plus
@@ -232,7 +235,10 @@ for the deployed portal and fails when a module imports a file missing from its
 `fingerprintedAssets` list, so add a new module there.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
-model page; `preview.py` serves the same data from `models/`. Run
+model page, and `published-metrics.<revision>.json` from each
+`published_metrics`; `preview.py` serves the same data from `models/`.
+`accuracy-metrics.js` keeps the metric labels of
+`taxonomies/accuracy-metrics.yaml`, and a test keeps the two in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for
 `preview.py`.
 
@@ -245,6 +251,10 @@ Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
 links are being prepared. Single-file variants require confirmation with **Download 1 file**.
 Numerical-fidelity **Download JSON** remains a separate report download.
+
+**Download package** saves the published package under its registry filename:
+the MPK itself for a single-component model, or a ZIP of the component MPKs
+and declared resources otherwise. The dialog labels the file MPK or ZIP.
 
 All temporary URLs are prepared before any transfer starts. If preparation
 fails, the dialog reports the error and allows retrying. Files stream directly
@@ -262,11 +272,8 @@ and click **Download** to review the RF-DETR component dialog.
 
 Run the download and variant-build checks with `node --test tests/browser/*.test.mjs`
 and the existing UI checks with `python -m pytest tests/test_artifact_browser.py`.
-When a catalog build declares `artifact_suffix`, the dialog and download use
-`<model_id>_<artifact_suffix>_mpk.tar.gz`. The browser sends `download_filename` to
-the registry artifact endpoint; deploy registry support before this consumer.
-Existing objects, checksums, and run metadata stay unchanged. Builds without a
-suffix and history downloads retain their existing filenames.
+The dialog shows each stored MPK's own filename, `<model_id>_<profile_id>_mpk.tar.gz`
+or `<model_id>_<profile_id>_<component_id>_mpk.tar.gz`, and downloads it unchanged.
 
 ## Duration reporting
 

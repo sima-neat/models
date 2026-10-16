@@ -53,7 +53,7 @@ cannot publish.
 
 ```bash
 sima-cli models list --branch develop
-sima-cli models download --id resnet_50 --variant modalix_int8 --branch develop
+sima-cli models download --id resnet_50 --variant w8a8 --branch develop
 ```
 
 ## CI

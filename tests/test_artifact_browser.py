@@ -202,15 +202,30 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
     api = "/v1/repositories/sima-neat/models"
     with _preview(tmp_path) as base:
         catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        package = next(
-            package for model in catalog["catalog"]["document"]["models"] for package in model.get("packages", [])
-        )
-        artifacts = _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
+        packages = {
+            model["id"]: package
+            for model in catalog["catalog"]["document"]["models"]
+            for package in model.get("packages", [])
+        }
+        artifacts = {
+            model_id: _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
+            for model_id, package in packages.items()
+            if model_id in {"resnet_50", "rf_detr_nano"}
+        }
+        links = {
+            model_id: _get_json(f"{base}/v1/runs/{packages[model_id]['run_id']}/artifacts/package")["artifact"]
+            for model_id in artifacts
+        }
 
     # The browser's Download finds the full package by this type, as the registry publisher writes it.
-    assert [artifact["artifact_type"] for artifact in artifacts] == ["model-package"]
-    assert artifacts[0]["media_type"] == "application/zip"
-    assert artifacts[0]["metadata"]["component_run_ids"] == package["component_run_ids"]
+    for model_id, items in artifacts.items():
+        assert [(item["name"], item["artifact_type"]) for item in items] == [("package", "model-package")]
+        assert items[0]["metadata"]["component_run_ids"] == packages[model_id]["component_run_ids"]
+    # A single-component package is its MPK; a multi-component package is a ZIP.
+    assert artifacts["resnet_50"][0]["media_type"] == "application/gzip"
+    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_mpk.tar.gz")
+    assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
+    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
 
 
@@ -282,16 +297,33 @@ def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> 
             assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
 
 
-def test_assembled_portal_ships_the_component_pipelines_api_fetches(tmp_path: Path) -> None:
+def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> None:
     shutil.copytree(BROWSER, tmp_path / "artifact-browser")
     assert assemble_portal(tmp_path).returncode == 0
 
     portal = tmp_path / "website" / "portal-build"
     pipelines = json.loads((portal / "component-pipelines.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "transformer"]
+    published = json.loads((portal / "published-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert published["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    assert '"./component-pipelines.aaaaaaaaaaaa.json"' in api
-    assert '"./component-pipelines.json"' not in api
+    for name in ("component-pipelines", "published-metrics"):
+        assert f'"./{name}.aaaaaaaaaaaa.json"' in api
+        assert f'"./{name}.json"' not in api
+
+
+def test_browser_metric_labels_match_the_accuracy_metric_taxonomy() -> None:
+    # Validation accepts the taxonomy's metrics; the browser must label each of them, in the same order.
+    taxonomy = yaml.safe_load((ROOT / "taxonomies" / "accuracy-metrics.yaml").read_text(encoding="utf-8"))
+    labels = subprocess.run(
+        [
+            "node", "--input-type=module", "--eval",
+            "const {ACCURACY_METRIC_LABELS} = await import('./artifact-browser/accuracy-metrics.js');"
+            "console.log(JSON.stringify(Object.entries(ACCURACY_METRIC_LABELS)));",
+        ],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )  # fmt: skip
+    assert json.loads(labels.stdout) == [[name, entry["display_name"]] for name, entry in taxonomy.items()]
 
 
 def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: Path) -> None:
@@ -343,19 +375,19 @@ def test_full_model_card_starts_after_the_overview_the_page_already_shows() -> N
     assert json.loads(result.stdout) == ["## Usage\n\nRun it.\n", None]
 
 
-def test_int8_variants_are_listed_first() -> None:
+def test_w8a8_variants_are_listed_first() -> None:
     script = _browser_source("api.js")
     start = script.index("export function buildProfileId(")
     end = script.index("export function profileGroups(")
     helper = script[start:script.index("\n}\n", start) + 3]
     groups = script[end:script.index("export function activeModelBuild(")]
-    builds = [{"build_profile_id": profile} for profile in ("modalix_bf16", "modalix_int8", "a_fp32", "modalix_int8_bf16")]
+    builds = [{"build_profile_id": profile} for profile in ("w16a16", "w8a8", "a_fp32", "w8a8_w16a16")]
     probe = f"console.log(JSON.stringify(profileGroups({{builds: {json.dumps(builds)}}}).map(([id]) => id)));"
     result = subprocess.run(
         ["node", "--input-type=module", "--eval", helper + groups + probe],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
-    assert json.loads(result.stdout) == ["modalix_int8", "modalix_int8_bf16", "a_fp32", "modalix_bf16"]
+    assert json.loads(result.stdout) == ["w8a8", "w8a8_w16a16", "a_fp32", "w16a16"]
 
 
 def test_catalog_view_prefers_the_current_catalog_over_cached_history() -> None:
@@ -902,7 +934,8 @@ def test_browser_formats_v1_and_v2_build_identities_without_a_false_default() ->
     browser = _browser_source()
 
     assert "function profileLabel(run)" in script
-    assert 'run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable"' in script
+    assert "const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;" in script
+    assert 'return profile ? variantLabel(profile) : "Build identity unavailable";' in script
     assert 'components.length > 1 || components[0] !== "model" ? components.join(" · ") : ""' in script
     assert '<small>${escapeHtml(profileLabel(run))}</small>' in script
     assert '"default artifact"' not in browser
@@ -1167,7 +1200,7 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
 
 
 def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_per_metric() -> None:
-    script = _browser_source("api.js", "model-view.js")
+    script = _browser_source("api.js", "model-view.js", "accuracy-metrics.js")
 
     # One accuracy key per variant: the component build that carries it names every MPK it measured.
     assert "accuracyKeyForRuns(runs).then(devkitAccuracy)" in script
@@ -1179,7 +1212,7 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert "api(`/v1/runs/${run.id}/accuracy/latest`)" in script
     assert "api(`/v1/runs/${benchmarkRunId}/test-results`)" in script
     assert "item.summary?.schema_version === 2" in script
-    assert "Object.entries(report.metrics || {})" in script
+    assert "orderedMetricNames(Object.keys(metrics))" in script
     assert 'coco_map: "mAP 50–95"' in script
     assert 'coco_ar100: "AR@100"' in script
     assert "ACCURACY_METRIC_LABELS[name] || name" in script
@@ -1190,79 +1223,6 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert '<th scope="col">Published</th>' in script
     # Units come from the published result, so the formatted value is escaped before insertion.
     assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
-
-
-def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_returns() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    # The registry returned RF-DETR Small's published metrics in this order.
-    metrics = ["coco_ar1", "coco_map", "coco_ap50", "coco_ap75", "coco_ar10", "coco_ar100", "coco_ap_large",
-               "coco_ap_small", "coco_ar_large", "coco_ar_small", "coco_ap_medium", "coco_ar_medium"]
-    report = {"metrics": {name: {"value": 0.5} for name in ["custom_b", *metrics, "custom_a"]}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_map", "coco_ap50", "coco_ap75", "coco_ap_small", "coco_ap_medium", "coco_ap_large",
-        "coco_ar1", "coco_ar10", "coco_ar100", "coco_ar_small", "coco_ar_medium", "coco_ar_large",
-        "custom_b", "custom_a",
-    ]
-    assert "orderedAccuracyMetrics(report).slice(0, ACCURACY_SUMMARY_TILES)" in script
-    assert "orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES)" in script
-
-
-def test_pose_accuracy_metrics_lead_with_keypoint_map() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    metrics = ["coco_person_box_ap50", "coco_keypoint_ar", "coco_keypoint_ap_large", "coco_person_box_map",
-               "coco_keypoint_ar75", "coco_keypoint_map", "coco_keypoint_ar_medium", "coco_keypoint_ap75",
-               "coco_keypoint_ar_large", "coco_keypoint_ap50", "coco_keypoint_ar50", "coco_keypoint_ap_medium"]
-    report = {"metrics": {name: {"value": 0.5} for name in metrics}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_keypoint_map", "coco_keypoint_ap50", "coco_keypoint_ap75", "coco_keypoint_ap_medium",
-        "coco_keypoint_ap_large", "coco_keypoint_ar", "coco_keypoint_ar50", "coco_keypoint_ar75",
-        "coco_keypoint_ar_medium", "coco_keypoint_ar_large", "coco_person_box_map", "coco_person_box_ap50",
-    ]
-    assert 'coco_keypoint_map: "Keypoint mAP 50–95"' in script
-
-
-def test_segmentation_accuracy_metrics_lead_with_mask_map() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    metrics = ["coco_box_ap50", "coco_mask_ar100", "coco_mask_ap_large", "coco_box_map", "coco_mask_ar1",
-               "coco_mask_map", "coco_mask_ar_medium", "coco_mask_ap75", "coco_mask_ar_large", "coco_mask_ap50",
-               "coco_mask_ar10", "coco_mask_ap_medium", "coco_mask_ap_small", "coco_mask_ar_small"]
-    report = {"metrics": {name: {"value": 0.5} for name in metrics}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_mask_map", "coco_mask_ap50", "coco_mask_ap75", "coco_mask_ap_small", "coco_mask_ap_medium",
-        "coco_mask_ap_large", "coco_mask_ar1", "coco_mask_ar10", "coco_mask_ar100", "coco_mask_ar_small",
-        "coco_mask_ar_medium", "coco_mask_ar_large", "coco_box_map", "coco_box_ap50",
-    ]
-    assert 'coco_mask_map: "Mask mAP 50–95"' in script
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
@@ -1493,32 +1453,31 @@ const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01
   id, run_type: 'model_compile', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: workflow,
   toolchain_version: version, target_platform: 'modalix', finished_at: time,
-  metadata: {model_id: model, build_profile_id: 'modalix_int8_bf16', component_id: component, github_run_id: workflow},
+  metadata: {model_id: model, build_profile_id: 'w8a8_w16a16', component_id: component, github_run_id: workflow},
 });
 const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
                  run('transformer', 'rf_detr_small', 'transformer', 'workflow-2')];
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
              run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'modalix_int8_bf16', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
-  {run_id: 'stale-transformer', build_profile_id: 'modalix_int8_bf16', component_id: 'transformer', artifact_suffix: 'transformer_bf16',
+  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
+  {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer',
    validation_fingerprint: 'stale-accuracy-key'},
 ]},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
 const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
-  model_id: 'rf_detr_small', build_profile_id: 'modalix_int8_bf16', component_run_ids: components,
+  model_id: 'rf_detr_small', build_profile_id: 'w8a8_w16a16', component_run_ids: components,
 }});
 const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transformer'}),
                   packageRun('wrong', {backbone: 'backbone', transformer: 'old-transformer'})];
 const models = branchModels([...old, ...current], packages, catalog);
 assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
 assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
-assert.deepEqual(models[0].builds.map(build => build.artifact_suffix), ['backbone_int8', 'transformer_bf16']);
 assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
-// A profile/component fallback supplies static metadata, never another build's accuracy key.
+// Only the catalog build of the same run carries its accuracy key.
 assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
-const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'modalix_int8_bf16',
+const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'w8a8_w16a16',
   component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];
 assert.deepEqual(branchModels(current, [], matched)[0].builds.map(build => build.validation_fingerprint),
                  [undefined, 'accuracy-key']);
@@ -1566,7 +1525,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert positions == sorted(positions)
     assert all(render_detail.count(marker) == 1 for marker in order)
     # One accuracy panel for the variant, from whichever component carries it.
-    assert "accuracyPanel(variantAccuracy(variant), model)" in render_detail
+    assert "accuracyPanel(variantAccuracy(variant), model, variant.published || [])" in render_detail
     assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail

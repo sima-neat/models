@@ -397,11 +397,43 @@ def test_devkit_accuracy_needs_no_benchmark_entry(tmp_path: Path) -> None:
     validate_model(directory, model, SCHEMA)
 
 
-def test_devkit_accuracy_accepts_a_published_reference(tmp_path: Path) -> None:
-    directory, model = _model_with_accuracy_script(tmp_path)
-    reference = {"source": "https://example.com/card", "metrics": {"score": 0.5}}
-    model["accuracy"] = [_devkit_accuracy_entry(reference=reference)]
-    validate_model(directory, model, SCHEMA)
+def _published_metrics(**settings) -> dict:
+    return {
+        "source": "https://example.com/card",
+        "dataset": {"id": "coco-2017", "split": "val"},
+        "conditions": "640x640",
+        "metrics": {"coco_map": 0.5},
+        **settings,
+    }
+
+
+def test_published_metrics_accept_scores_of_known_metrics() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["published_metrics"] = [
+        _published_metrics(note="The card does not name the split."),
+        _published_metrics(dataset={"id": "coco-2014", "split": "minival"}),
+    ]
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        ([_published_metrics(metrics={"coco_mapp": 0.5})], "'coco_mapp' is not an accuracy metric"),
+        ([_published_metrics(metrics={"coco_map": 53.0})], "coco_map must be a ratio from 0 to 1; found 53.0"),
+        (
+            [_published_metrics(), _published_metrics(source="https://example.com/other")],
+            "coco_map on coco-2017 is already published by an earlier entry",
+        ),
+        ([_published_metrics(source="http://example.com/card")], "does not match"),
+        ([{key: value for key, value in _published_metrics().items() if key != "conditions"}], "'conditions'"),
+    ],
+)
+def test_published_metrics_are_validated(entries: list[dict], expected: str) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["published_metrics"] = entries
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -> None:
@@ -420,11 +452,8 @@ def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -
         ([_devkit_accuracy_entry(required_metrics=["missing"])], "required_metrics are not declared"),
         ([_devkit_accuracy_entry(metrics=["Score"])], "not valid under any of the given schemas"),
         (
-            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"other": 0.5}})],
-            "reference metrics are not declared in metrics: other",
-        ),
-        (
-            [_devkit_accuracy_entry(reference={"source": "http://example.com/card", "metrics": {"score": 0.5}})],
+            # Published scores moved to the top-level published_metrics.
+            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"score": 0.5}})],
             "not valid under any of the given schemas",
         ),
         (
@@ -659,10 +688,10 @@ def test_catalog_model_is_valid() -> None:
         "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     )
     profiles = {profile["id"]: profile for profile in model["build_profiles"]}
-    assert set(profiles) == {"modalix_bf16", "modalix_int8"}
-    assert profiles["modalix_bf16"]["components"][0]["parameters"]["precision"] == "bf16"
-    assert profiles["modalix_int8"]["components"][0]["parameters"]["precision"] == "int8"
-    assert profiles["modalix_int8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert set(profiles) == {"w16a16", "w8a8"}
+    assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "bf16"
+    assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "int8"
+    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
         "variant": "mini",
@@ -700,18 +729,3 @@ def test_category_fields_are_required() -> None:
         model.pop(field)
     with pytest.raises(ValidationError, match="'model_type' is a required property"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
-
-
-@pytest.mark.parametrize("suffix", ["backbone_int8", "transformer_bf16", "model_preview"])
-def test_component_binding_accepts_artifact_suffix(suffix: str) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
-@pytest.mark.parametrize("suffix", [None, "", "../model", "Backbone", "backbone-int8", "model.tar.gz", "model\n"])
-def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    with pytest.raises(ValidationError):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)

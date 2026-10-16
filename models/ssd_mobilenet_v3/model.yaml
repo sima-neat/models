@@ -223,11 +223,10 @@ calibrations:
     size_bytes: 55112720
     media_type: application/x-npz
 build_profiles:
-- id: modalix_int8
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_qat_tmio
     parameters:
       precision: int8
       quantization_method: qat
@@ -237,11 +236,10 @@ build_profiles:
       calibration_samples: 128
       requantization: sima
     calibration: default
-- id: modalix_bf16
+- id: w16a16
   target: modalix
   components:
   - id: model
-    artifact_suffix: bf16_tmio
     parameters:
       precision: bf16
       quantization_method: ptq
@@ -263,8 +261,8 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   composition: default
 fidelity: []
 accuracy:
@@ -273,8 +271,8 @@ accuracy:
     type: component
     component: model
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   status: pending_hardware_qualification
   reference: onnx_precision_source_raw_heads
   dataset: coco_val2017
@@ -306,14 +304,19 @@ accuracy:
       passed: true
   note: The QAT source is full-COCO accuracy-gated before bundling; compiled raw-head quality is independently gated, while
     decoded accuracy and performance remain pending Modalix hardware qualification.
+published_metrics:
+- source: https://github.com/pytorch/vision/blob/126fc22ce33e6c2426edcf9ed540810c178fe9ce/torchvision/models/detection/ssdlite.py
+  dataset: {id: coco-2017, split: val}
+  conditions: 320x320, torchvision COCO_V1 weights
+  metrics: {coco_map: 0.213}
 benchmark:
 - id: modalix_latency
   scope:
     type: component
     component: model
   build_profiles:
-  - modalix_int8
-  - modalix_bf16
+  - w8a8
+  - w16a16
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

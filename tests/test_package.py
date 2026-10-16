@@ -9,19 +9,19 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import yaml
 from model_registry import package as package_module
 from model_registry.errors import ValidationError
 from model_registry.package import assemble_available_packages, assemble_package
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
+MPK_NAME = "resnet_50_w16a16_mpk.tar.gz"
 
 
 def _compiled_component(tmp_path: Path) -> Path:
-    output = tmp_path / "compiled" / "resnet_50" / "modalix_bf16" / "model"
+    output = tmp_path / "compiled" / "resnet_50" / "w16a16" / "model"
     output.mkdir(parents=True)
-    archive = output / "resnet_50_mpk.tar.gz"
+    archive = output / MPK_NAME
     with tarfile.open(archive, "w:gz") as stream:
         payload = b"compiled model"
         info = tarfile.TarInfo("model.elf")
@@ -33,7 +33,7 @@ def _compiled_component(tmp_path: Path) -> Path:
         "size_bytes": archive.stat().st_size,
         "provenance": {
             "model_id": "resnet_50",
-            "build_profile_id": "modalix_bf16",
+            "build_profile_id": "w16a16",
             "component_id": "model",
             "target": "modalix",
             "source_sha256": SOURCE_SHA,
@@ -93,33 +93,24 @@ def _model_with_resource(
     return model, resource_license
 
 
-def test_assembles_deterministic_retrieval_bundle_with_intact_component_mpk(tmp_path: Path) -> None:
+def test_single_component_package_is_the_compiled_mpk(tmp_path: Path) -> None:
     compiled = _compiled_component(tmp_path)
-    first = assemble_package(
+    result = assemble_package(
         repository=ROOT,
         compiled_dir=compiled,
-        output_dir=tmp_path / "packages-a",
+        output_dir=tmp_path / "packages",
         model_id="resnet_50",
-        build_profile_id="modalix_bf16",
+        build_profile_id="w16a16",
         package_id="default",
     )
-    second = assemble_package(
-        repository=ROOT,
-        compiled_dir=compiled,
-        output_dir=tmp_path / "packages-b",
-        model_id="resnet_50",
-        build_profile_id="modalix_bf16",
-        package_id="default",
-    )
-    assert first["sha256"] == second["sha256"]
-    bundle = tmp_path / "packages-a" / "resnet_50" / "modalix_bf16" / "packages" / "default" / first["archive"]
-    with zipfile.ZipFile(bundle) as stream:
-        assert stream.namelist() == [
-            "resnet_50/manifest.json",
-            "resnet_50/components/model/resnet_50_mpk.tar.gz",
-        ]
-        manifest = json.loads(stream.read("resnet_50/manifest.json"))
+    package_dir = tmp_path / "packages" / "resnet_50" / "w16a16" / "packages" / "default"
+    compiled_mpk = compiled / "resnet_50" / "w16a16" / "model" / MPK_NAME
+    assert result["archive"] == MPK_NAME
+    assert sorted(path.name for path in package_dir.iterdir()) == ["package-result.json", MPK_NAME]
+    assert (package_dir / MPK_NAME).read_bytes() == compiled_mpk.read_bytes()
+    manifest = result["manifest"]
     assert manifest["components"][0]["id"] == "model"
+    assert manifest["components"][0]["path"] == MPK_NAME
     assert manifest["composition"] == {
         "id": "default",
         "type": "single",
@@ -127,11 +118,9 @@ def test_assembles_deterministic_retrieval_bundle_with_intact_component_mpk(tmp_
         "entrypoint": "default",
     }
     assert manifest["files"] == [{
-        "path": "components/model/resnet_50_mpk.tar.gz",
-        "sha256": hashlib.sha256(
-            (compiled / "resnet_50/modalix_bf16/model/resnet_50_mpk.tar.gz").read_bytes()
-        ).hexdigest(),
-        "size_bytes": (compiled / "resnet_50/modalix_bf16/model/resnet_50_mpk.tar.gz").stat().st_size,
+        "path": MPK_NAME,
+        "sha256": hashlib.sha256(compiled_mpk.read_bytes()).hexdigest(),
+        "size_bytes": compiled_mpk.stat().st_size,
     }]
 
 
@@ -143,24 +132,33 @@ def test_assemble_available_packages_skips_incomplete_builds(tmp_path: Path) -> 
         output_dir=tmp_path / "packages",
     )
     assert [(item["model_id"], item["build_profile_id"]) for item in results] == [
-        ("resnet_50", "modalix_bf16")
+        ("resnet_50", "w16a16")
     ]
 
 
-def test_package_manifest_preserves_resource_specific_license(
+def test_package_with_resources_is_a_flat_deterministic_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, resource_license = _model_with_resource(monkeypatch, tmp_path, "resources/runtime.json")
-    result = assemble_package(
-        repository=ROOT,
-        compiled_dir=_compiled_component(tmp_path),
-        output_dir=tmp_path / "packages",
-        model_id="resnet_50",
-        build_profile_id="modalix_bf16",
-        package_id="default",
-    )
+    compiled = _compiled_component(tmp_path)
+    results = [
+        assemble_package(
+            repository=ROOT,
+            compiled_dir=compiled,
+            output_dir=tmp_path / output,
+            model_id="resnet_50",
+            build_profile_id="w16a16",
+            package_id="default",
+        )
+        for output in ("packages-a", "packages-b")
+    ]
 
-    assert result["manifest"]["resources"][0]["license"] == resource_license
+    assert results[0]["sha256"] == results[1]["sha256"]
+    assert results[0]["archive"] == "resnet_50_w16a16_default.zip"
+    bundle = tmp_path / "packages-a" / "resnet_50" / "w16a16" / "packages" / "default" / results[0]["archive"]
+    with zipfile.ZipFile(bundle) as stream:
+        assert stream.namelist() == [MPK_NAME, "resources/runtime.json"]
+    assert results[0]["manifest"]["resources"][0]["license"] == resource_license
 
 
 def _declarative_composition() -> dict:
@@ -174,7 +172,7 @@ def _declarative_composition() -> dict:
     }
 
 
-def test_package_ships_inline_declarative_composition_as_a_document(
+def test_package_records_declarative_composition_without_shipping_a_document(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = copy.deepcopy(
@@ -188,42 +186,26 @@ def test_package_ships_inline_declarative_composition_as_a_document(
         compiled_dir=_compiled_component(tmp_path),
         output_dir=tmp_path / "packages",
         model_id="resnet_50",
-        build_profile_id="modalix_bf16",
+        build_profile_id="w16a16",
         package_id="default",
     )
 
-    bundle = tmp_path / "packages" / "resnet_50" / "modalix_bf16" / "packages" / "default" / result["archive"]
-    with zipfile.ZipFile(bundle) as stream:
-        payload = stream.read("resnet_50/composition/composition.yaml")
-    expected = {key: value for key, value in _declarative_composition().items() if key not in {"id", "type"}}
-    assert yaml.safe_load(payload) == expected
-    assert result["manifest"]["composition"] == {
-        "id": "default",
-        "type": "declarative",
-        "path": "composition/composition.yaml",
-    }
-    assert {
-        "path": "composition/composition.yaml",
-        "sha256": hashlib.sha256(payload).hexdigest(),
-        "size_bytes": len(payload),
-    } in result["manifest"]["files"]
+    assert result["archive"] == MPK_NAME
+    assert result["manifest"]["composition"] == {"id": "default", "type": "declarative"}
+    assert [item["path"] for item in result["manifest"]["files"]] == [MPK_NAME]
 
 
-def test_package_rejects_resource_path_that_collides_with_declarative_composition(
+def test_package_rejects_resource_path_that_collides_with_a_component_mpk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model, _ = _model_with_resource(monkeypatch, tmp_path, "composition/composition.yaml")
-    model["compositions"] = [_declarative_composition()]
+    _model_with_resource(monkeypatch, tmp_path, MPK_NAME)
 
-    with pytest.raises(
-        ValidationError,
-        match="package path is declared more than once: composition/composition.yaml",
-    ):
+    with pytest.raises(ValidationError, match=f"package path is declared more than once: {MPK_NAME}"):
         assemble_package(
             repository=ROOT,
             compiled_dir=_compiled_component(tmp_path),
             output_dir=tmp_path / "packages",
             model_id="resnet_50",
-            build_profile_id="modalix_bf16",
+            build_profile_id="w16a16",
             package_id="default",
         )

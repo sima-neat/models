@@ -9,7 +9,7 @@ from ModelSDK compilation:
 2. The Model Compiler imports the immutable source bundle and compiles one
    build per precision.
 
-The `modalix_bf16` build uses the FP32 source in the bundle, and `modalix_int8`
+The `w16a16` build uses the FP32 source in the bundle, and `w8a8`
 uses the QDQ source. PTQ-only SmoothQuant, bias correction, channel
 equalization, and negligible-weight surgery must not be applied to the QAT
 source.

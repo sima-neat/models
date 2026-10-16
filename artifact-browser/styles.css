@@ -381,6 +381,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .accuracy-metric strong { color: var(--ink); font: 600 23px/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
 .accuracy-metric small { color: var(--ink-soft); font-size: 12px; }
 .accuracy-section .benchmark-measurements table { min-width: 0; }
+.published-scores:first-child, .accuracy-scope + .published-scores { margin-top: 0; }
 
 /* One expand control everywhere: a full-width row between thin lines, its name on the left and a chevron
    on the right that turns down when open. */

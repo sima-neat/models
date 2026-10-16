@@ -18,6 +18,7 @@ from model_registry.registry import (
     SigV4RegistryClient,
     _compile_timing,
     _component_source_media_type,
+    _package_media_type,
     build_catalog_snapshot,
     canonical_sha256,
     publish_catalog,
@@ -132,13 +133,13 @@ def test_publish_model_documentation_keys_bind_create_request_identity() -> None
 
 def _packaged_result(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
-    output = dist / "resnet_50" / "modalix_bf16" / "model"
+    output = dist / "resnet_50" / "w16a16" / "model"
     output.mkdir(parents=True)
     payload = tmp_path / "payload.elf"
     metadata = tmp_path / "fixture_mpk.json"
     payload.write_bytes(b"elf")
     metadata.write_text("{}\n", encoding="utf-8")
-    archive = output / "resnet_50_mpk.tar.gz"
+    archive = output / "resnet_50_w16a16_mpk.tar.gz"
     with tarfile.open(archive, "w:gz") as stream:
         stream.add(payload, arcname="payload.elf")
         stream.add(metadata, arcname="fixture_mpk.json")
@@ -151,7 +152,7 @@ def _packaged_result(tmp_path: Path) -> Path:
         "status": "success",
         "provenance": {
             "model_id": "resnet_50",
-            "build_profile_id": "modalix_bf16",
+            "build_profile_id": "w16a16",
             "component_id": "model",
             "target": "modalix",
             "compiler_version": COMPILER_VERSION,
@@ -159,7 +160,7 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": compile_key(ROOT, "resnet_50", "modalix_bf16", "model", COMPILER_IDENTITY),
+            "build_fingerprint": compile_key(ROOT, "resnet_50", "w16a16", "model", COMPILER_IDENTITY),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -167,7 +168,7 @@ def _packaged_result(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "model_id": "resnet_50",
-                "build_profile_id": "modalix_bf16",
+                "build_profile_id": "w16a16",
                 "compile_invocation_id": "model",
                 "outputs": [
                     {
@@ -187,13 +188,13 @@ def _packaged_result(tmp_path: Path) -> Path:
 
 def _add_fidelity_result(dist: Path) -> Path:
     config = yaml.safe_load((ROOT / "models" / "resnet_50" / "model.yaml").read_text(encoding="utf-8"))["fidelity"][0]
-    path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
+    path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "model_id": "resnet_50",
-                "build_profile_id": "modalix_bf16",
+                "build_profile_id": "w16a16",
                 "component_id": "model",
                 "scope": "component",
                 "status": config["status"],
@@ -220,20 +221,20 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
-def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path: Path) -> None:
+def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
     compiled = _packaged_result(tmp_path)
-    component_dir = compiled / "resnet_50/modalix_bf16/model"
+    component_dir = compiled / "resnet_50/w16a16/model"
     (component_dir / "registry-publication.json").write_text(
         json.dumps({"runs": [{
             "run_id": "component-run", "model_id": "resnet_50",
-            "build_profile_id": "modalix_bf16", "component_id": "model",
+            "build_profile_id": "w16a16", "component_id": "model",
         }]}),
         encoding="utf-8",
     )
     packages = tmp_path / "packages"
     assembled = assemble_package(
         repository=ROOT, compiled_dir=compiled, output_dir=packages,
-        model_id="resnet_50", build_profile_id="modalix_bf16", package_id="default",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
     )
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -258,8 +259,21 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path
     ]
     assert calls[0][2]["run_type"] == "model_package"
     assert calls[3][2]["artifact_type"] == "model-package"
-    assert store.objects[0][0].suffix == ".zip"
-    assert store.objects[0][3] == "application/zip"
+    assert store.objects[0][0].name == assembled["archive"]
+    assert store.objects[0][3] == "application/gzip"
+    assert calls[3][2]["media_type"] == "application/gzip"
+
+
+@pytest.mark.parametrize(
+    ("archive", "expected"),
+    [
+        ("resnet_50_w16a16_mpk.tar.gz", "application/gzip"),
+        ("rf_detr_nano_w8a8_w16a16_default.zip", "application/zip"),
+        ("resnet_50_w16a16.tar.gz", None),
+    ],
+)
+def test_package_media_type_accepts_only_mpk_and_zip_packages(archive: str, expected: str | None) -> None:
+    assert _package_media_type(archive) == expected
 
 
 @pytest.mark.parametrize(
@@ -292,7 +306,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         "finished_at": "2026-08-13T01:29:52+00:00",
     }
     if with_timing:
-        (dist / "resnet_50/modalix_bf16/compile-timing.json").write_text(json.dumps(timing))
+        (dist / "resnet_50/w16a16/compile-timing.json").write_text(json.dumps(timing))
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -336,7 +350,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         assert create["metadata"].pop("compile_timing") == timing
     assert create["metadata"] == {
         "model_id": "resnet_50",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "component_id": "model",
         "artifact_kind": "mpk",
         "github_run_id": "1234",
@@ -368,14 +382,14 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     assert artifact["s3_key"].startswith("models/feature%2Fmodels/aaaaaaaaaaaa/")
     assert store.objects[0][1] == artifact["s3_key"]
 
-    receipt_path = dist / "resnet_50" / "modalix_bf16" / "model" / "registry-publication.json"
+    receipt_path = dist / "resnet_50" / "w16a16" / "model" / "registry-publication.json"
     receipt_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     selected = build_matrix(
         models,
         ["resnet_50"],
-        ["modalix_bf16"],
+        ["w16a16"],
         repository=ROOT,
         compiler_version=compiler_version,
     )
@@ -388,10 +402,10 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
-    package_dir = tmp_path / "packages" / "resnet_50/modalix_bf16/packages/default"
+    package_dir = tmp_path / "packages" / "resnet_50/w16a16/packages/default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
-        "model_id": "resnet_50", "build_profile_id": "modalix_bf16", "package_id": "default",
+        "model_id": "resnet_50", "build_profile_id": "w16a16", "package_id": "default",
         "run_id": "package-run", "artifact_sha256": "b" * 64, "size_bytes": 123,
         "manifest_sha256": "c" * 64, "package_fingerprint": "c" * 64,
         "component_run_ids": {"model": result["runs"][0]["run_id"]},
@@ -402,7 +416,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["packages"] == [{
-        "package_id": "default", "build_profile_id": "modalix_bf16", "run_id": "package-run",
+        "package_id": "default", "build_profile_id": "w16a16", "run_id": "package-run",
         "artifact_sha256": "b" * 64, "size_bytes": 123, "package_fingerprint": "c" * 64,
         "component_run_ids": {"model": result["runs"][0]["run_id"]},
     }]
@@ -410,7 +424,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
 
 def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
-    fidelity_path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
+    fidelity_path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -463,7 +477,7 @@ def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
 
 def test_publish_preflights_all_evidence_before_external_writes(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
-    fidelity_path = dist / "resnet_50" / "modalix_bf16" / "model" / "fidelity.json"
+    fidelity_path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
     fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
     fidelity["unexpected"] = True
     fidelity_path.write_text(json.dumps(fidelity), encoding="utf-8")
@@ -519,18 +533,31 @@ def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> No
     assert calls == []
 
 
-def test_publish_rejects_archive_not_bound_to_output_manifest(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("rebuilt", "message"), [
+    (False, "compiled MPK must be named resnet_50_w16a16_mpk.tar.gz, found resnet_50_mpk.tar.gz"),
+    (True, "archive does not match the compile output manifest"),
+])
+def test_publish_rejects_archive_not_named_or_bound_to_output_manifest(
+    tmp_path: Path, rebuilt: bool, message: str
+) -> None:
     dist = _packaged_result(tmp_path)
-    result_path = dist / "resnet_50" / "modalix_bf16" / "model" / "compile-result.json"
+    result_path = dist / "resnet_50" / "w16a16" / "model" / "compile-result.json"
     result = json.loads(result_path.read_text())
-    stale = result_path.parent / "stale.tar.gz"
-    stale.write_bytes((result_path.parent / result["archive"]).read_bytes())
-    result["archive"] = stale.name
+    if rebuilt:
+        # The result names the right file but records a checksum the compile output manifest never saw.
+        result["sha256"] = "0" * 64
+    else:
+        outputs_path = result_path.parent.parent / "compile-outputs.json"
+        outputs = json.loads(outputs_path.read_text())
+        renamed = (result_path.parent / result["archive"]).rename(result_path.parent / "resnet_50_mpk.tar.gz")
+        outputs["outputs"][0]["mpk_path"] = f"model/{renamed.name}"
+        outputs_path.write_text(json.dumps(outputs))
+        result["archive"] = renamed.name
     result_path.write_text(json.dumps(result))
     calls = []
     store = FakeStore()
 
-    with pytest.raises(ValidationError, match="archive does not match the compile output manifest"):
+    with pytest.raises(ValidationError, match=message):
         publish_compilations(
             repository=ROOT,
             dist_dir=dist,
@@ -653,30 +680,30 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
             ROOT, model, profile_id, "model", compile_run_id=build["run_id"], artifact_sha256="e" * 64,
         )
     # Only the profile with DevKit accuracy records an accuracy key, on its result component.
-    assert builds["modalix_bf16"]["validation_fingerprint"] is None
-    assert builds["modalix_int8"]["validation_fingerprint"] == accuracy_key(
-        ROOT, model, "modalix_int8", {"model": builds["modalix_int8"]},
+    assert builds["w16a16"]["validation_fingerprint"] is None
+    assert builds["w8a8"]["validation_fingerprint"] == accuracy_key(
+        ROOT, model, "w8a8", {"model": builds["w8a8"]},
     )
-    assert builds["modalix_int8"]["validation_fingerprint"] != builds["modalix_int8"]["benchmark_fingerprint"]
+    assert builds["w8a8"]["validation_fingerprint"] != builds["w8a8"]["benchmark_fingerprint"]
 
     # A new compile run of identical inputs still needs its own board measurements.
     rebuilt = snapshot("00000000-0000-4000-9000")
     for profile_id in builds:
         assert rebuilt[profile_id]["compile_fingerprint"] == builds[profile_id]["compile_fingerprint"]
         assert rebuilt[profile_id]["benchmark_fingerprint"] != builds[profile_id]["benchmark_fingerprint"]
-    assert rebuilt["modalix_int8"]["validation_fingerprint"] != builds["modalix_int8"]["validation_fingerprint"]
+    assert rebuilt["w8a8"]["validation_fingerprint"] != builds["w8a8"]["validation_fingerprint"]
 
 
 def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
     models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     invocation = build_matrix(
-        models, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+        models, ["resnet_50"], ["w16a16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]
     changed = dict(invocation, build_fingerprint="f" * 64)
     monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [changed]})
     prior_build = {
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "compile_invocation_id": invocation["compile_invocation_id"],
         "component_id": "model",
         "compile_fingerprint": "e" * 64,
@@ -698,7 +725,7 @@ def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(
     assert resnet["builds"] == [prior_build]
     assert snapshot["pending_builds"] == [{
         "model_id": "resnet_50",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "compile_invocation_id": invocation["compile_invocation_id"],
         "component_ids": ["model"],
         "compile_fingerprint": "f" * 64,
@@ -711,13 +738,13 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
     models = load_models(ROOT)
     compiler_version = resolve_model_compiler(ROOT)["version"]
     invocation = build_matrix(
-        models, ["resnet_50"], ["modalix_bf16"], repository=ROOT, compiler_version=compiler_version,
+        models, ["resnet_50"], ["w16a16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]
     monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [invocation]})
     old_run_id = "00000000-0000-4000-8000-000000000001"
     new_run_id = "00000000-0000-4000-8000-000000000002"
     prior_build = {
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "compile_invocation_id": invocation["compile_invocation_id"],
         "component_id": "model",
         "compile_fingerprint": invocation["build_fingerprint"],
@@ -728,7 +755,7 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
     }
     prior_package = {
         "package_id": "default",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "run_id": "00000000-0000-4000-8000-000000000003",
         "artifact_sha256": "b" * 64,
         "size_bytes": 100,
@@ -754,11 +781,11 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
     assert initial["pending_builds"] == []
 
     compiled_dir = tmp_path / "compiled"
-    component_dir = compiled_dir / "resnet_50" / "modalix_bf16" / "model"
+    component_dir = compiled_dir / "resnet_50" / "w16a16" / "model"
     component_dir.mkdir(parents=True)
     component_dir.joinpath("registry-publication.json").write_text(json.dumps({"runs": [{
         "model_id": "resnet_50",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "component_id": "model",
         "run_id": new_run_id,
         "artifact_sha256": "d" * 64,
@@ -776,11 +803,11 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
     assert resnet["builds"][0]["run_id"] == new_run_id
     assert resnet["packages"] == []
 
-    package_dir = tmp_path / "packages" / "resnet_50" / "modalix_bf16" / "packages" / "default"
+    package_dir = tmp_path / "packages" / "resnet_50" / "w16a16" / "packages" / "default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
         "model_id": "resnet_50",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "package_id": "default",
         "run_id": "00000000-0000-4000-8000-000000000004",
         "artifact_sha256": "e" * 64,
@@ -980,7 +1007,7 @@ def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none
 
 def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
     dist = _packaged_result(tmp_path)
-    source_archive = next(dist.glob("resnet_50/modalix_bf16/model/*_mpk.tar.gz"))
+    source_archive = next(dist.glob("resnet_50/w16a16/model/*_mpk.tar.gz"))
     payload = source_archive.read_bytes()
     run_id = "00000000-0000-4000-8000-000000000001"
     catalog = {
@@ -988,7 +1015,7 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
         "models": [{
             "id": "resnet_50",
             "builds": [{
-                "build_profile_id": "modalix_bf16",
+                "build_profile_id": "w16a16",
                 "compile_invocation_id": "model",
                 "component_id": "model",
                 "run_id": run_id,
@@ -1017,21 +1044,21 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
         branch="develop",
         catalog_revision="a" * 40,
         model_id="resnet_50",
-        build_profile_id="modalix_bf16",
+        build_profile_id="w16a16",
         compile_invocation_id="model",
         read_request=read,
         download_request=lambda url: payload,
     )
 
     assert result["count"] == 1
-    profile = tmp_path / "staged" / "resnet_50" / "modalix_bf16"
+    profile = tmp_path / "staged" / "resnet_50" / "w16a16"
     assert (profile / "registry-staged.json").is_file()
     assert (profile / "model" / "registry-publication.json").is_file()
     # Restored builds carry the manifest a fresh compile writes, so later stages read both alike.
     staged = next((profile / "model").glob("*_mpk.tar.gz"))
     assert json.loads((profile / "compile-outputs.json").read_text(encoding="utf-8")) == {
         "model_id": "resnet_50",
-        "build_profile_id": "modalix_bf16",
+        "build_profile_id": "w16a16",
         "compile_invocation_id": "model",
         "outputs": [{
             "component_id": "model",
