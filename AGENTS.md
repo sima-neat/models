@@ -48,6 +48,11 @@ Do not enumerate generated layers as components or nest model archives in packag
 Only declared performance and accuracy stages run; leave their lists empty until
 implemented. See [LLiMa model definitions](docs/adding-a-model.md#llima-language-and-vision-language-models).
 
+Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
+`language_group_size` in its component parameters. Image dimensions are optional
+overrides for configurable VLMs; omit them for LLMs and fixed-resolution VLMs.
+Recipes forward the runner's compiler options rather than duplicating these values.
+
 Any expensive model may set top-level `build-on-demand: true` (default `false`).
 Pushes still validate it and publish catalog metadata, but never compile or
 measure it. A manual **Vulcan Model Orchestrator** dispatch must select its

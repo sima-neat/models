@@ -4,7 +4,10 @@ import base64
 import hashlib
 import io
 import json
+import os
 import shutil
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from threading import Lock
@@ -22,12 +25,13 @@ from model_registry.artifact import (
 from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.model import load_and_validate_model
+from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import (
     RegistryPublicationError,
     S3ArtifactStore,
     S3Object,
     _download_registry_file,
+    _preflight_compilations,
     canonical_sha256,
     publish_compilations,
     stage_catalog_build,
@@ -254,6 +258,22 @@ def test_native_publication_rejects_changed_payload_before_creating_runs(compile
     assert registry.calls == []
 
 
+def test_native_publication_rejects_wrong_compiled_settings_before_creating_runs(compiled):
+    component = compiled / MODEL / PROFILE / "model"
+    path = component / "deployment/devkit/vlm_config.json"
+    config = json.loads(path.read_text())
+    config["pipeline_cfg"]["max_num_tokens"] = 8192
+    path.write_text(json.dumps(config))
+    provenance = json.loads((component / "compile-result.json").read_text())["provenance"]
+    verify_artifact(component, write_manifest=True, provenance=provenance)
+    record_compile_outputs(component.parent, model_id=MODEL, build_profile_id=PROFILE,
+                           compile_invocation_id="model", component_ids=["model"])
+    registry = Registry()
+    with pytest.raises(ValidationError, match="compiled max_num_tokens does not match model.yaml"):
+        publish_compilations(repository=ROOT, dist_dir=compiled, **registry.args())
+    assert registry.calls == []
+
+
 def test_candidate_retries_resume_bound_runs_and_finalized_candidates(compiled, tmp_path):
     registry = Registry()
     registry.fail_once = "/artifacts/package"
@@ -313,6 +333,86 @@ def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypa
     assert calls == [None, "original"]
     receipt = json.loads(next((tmp_path / "uploads").glob("*.json")).read_text())
     assert receipt["s3_version_id"] == "original"
+
+
+@pytest.mark.parametrize("image_input", [True, False])
+def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
+    root = tmp_path / "repository"
+    for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{MODEL}"):
+        shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns("__pycache__"))
+    model_dir = root / "models" / MODEL
+    path = model_dir / "model.yaml"
+    model = yaml.safe_load(path.read_text())
+    parameters = model["build_profiles"][0]["components"][0]["parameters"]
+    parameters.update(max_num_tokens=8192, language_group_size=64)
+    if image_input:
+        parameters.update(input_height=512, input_width=640)
+    else:
+        parameters.pop("input_height")
+        parameters.pop("input_width")
+    path.write_text(yaml.safe_dump(model, sort_keys=False))
+    source = deployment(tmp_path / "deployment")
+    config_path = source / "devkit/vlm_config.json"
+    config = json.loads(config_path.read_text())
+    config["pipeline_cfg"].update(max_num_tokens=8192, language_group_size=64)
+    config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
+    config_path.write_text(json.dumps(config))
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text("{}")
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    programs = {
+        "registry-python": '''import json, os, sys
+if sys.argv[1:4] == ["-m", "model_registry", "fetch"]:
+    print(json.dumps({"path": os.environ["CHECKPOINT_CONFIG"]}))
+else:
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+''',
+        "llima-compile": '''import json, os, sys
+from pathlib import Path
+Path(os.environ["COMPILE_ARGUMENTS"]).write_text(json.dumps(sys.argv[1:]))
+Path(sys.argv[sys.argv.index("-o") + 1]).mkdir()
+''',
+        "llima-deploy": '''import os, shutil, sys
+shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
+''',
+    }
+    for name, code in programs.items():
+        executable = tools / name
+        executable.write_text(f"#!{sys.executable}\n{code}")
+        executable.chmod(0o755)
+    captured = tmp_path / "arguments.json"
+    subprocess.run([
+        "bash", str(root / "scripts/run_llima_compilation.sh"), str(model_dir), PROFILE, "model",
+        str(tmp_path / "output"),
+    ], check=True, capture_output=True, text=True, env={
+        **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "PYTHONPATH": str(root / "tools"),
+        "MODEL_COMPILER_PYTHON": str(tools / "registry-python"), "CHECKPOINT_CONFIG": str(checkpoint / "config.json"),
+        "DEPLOYMENT_SOURCE": str(source), "COMPILE_ARGUMENTS": str(captured),
+    })
+    arguments = json.loads(captured.read_text())
+    assert arguments[arguments.index("--max_num_tokens") + 1] == "8192"
+    assert arguments[arguments.index("--language_group_size") + 1] == "64"
+    assert ("--input_height" in arguments) is image_input
+    assert ("--input_width" in arguments) is image_input
+    if image_input:
+        assert arguments[arguments.index("--input_height") + 1] == "512"
+        assert arguments[arguments.index("--input_width") + 1] == "640"
+    output = tmp_path / "output"
+    compiler = resolve_model_compiler(root)
+    verify_artifact(output / MODEL / PROFILE / "model", write_manifest=True, provenance={
+        "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
+        "source_sha256": source_identity(model["components"][0]["source"]),
+        "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
+        "compiler_label": compiler["label"],
+        "build_fingerprint": compile_key(root, MODEL, PROFILE, "model", compiler["identity"]),
+    })
+    prepared = _preflight_compilations(root, output, load_models(root), environment="staging", git_sha="a" * 40)
+    assert prepared[0]["compiled_parameters"] == {
+        "max_num_tokens": 8192, "language_group_size": 64,
+        "input_height": 512 if image_input else 448, "input_width": 640 if image_input else 448,
+    }
 
 
 def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, monkeypatch):

@@ -358,25 +358,30 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | Unexpected MPK count | Start from an empty output directory. An invocation writes exactly one MPK per component. |
 
 
-## Compile a LLiMa model
+## Compile an LLM or VLM with LLiMa
 
 For a Hugging Face language or vision-language model, use the LLiMa runner:
 
 ```bash
-scripts/run_llima_compilation.sh models/qwen3_5_2b modalix_a16w4_4k model /path/to/output
-model-registry verify-artifact /path/to/output/qwen3_5_2b/modalix_a16w4_4k/model --write-manifest
+scripts/run_llima_compilation.sh models/<model-id> <profile-id> <invocation-id> /path/to/output
+model-registry verify-artifact /path/to/output/<model-id>/<profile-id>/<component-id> --write-manifest
 ```
 
 Activate the matching LLiMa and pinned Model Compiler tools first. The recipe
 only calls `llima-compile`; the runner verifies the pinned checkpoint download,
 calls that recipe, and runs `llima-deploy`. It writes
-`qwen3_5_2b/modalix_a16w4_4k/model/deployment/` with `devkit/`, `elf_files/`,
+`<model-id>/<profile-id>/<component-id>/deployment/` with `devkit/`, `elf_files/`,
 and any `npy_files/`. Verification writes `deployment-manifest.json` beside
-the folder. `compile-outputs.json` points to `model/deployment-manifest.json`
+the folder. `compile-outputs.json` points to `<component-id>/deployment-manifest.json`
 and hashes that index; it does not point to an archive.
 
-The Qwen3.5-2B profile uses twelve jobs, 4096 tokens, 448×448 input,
-and group size 128. See [on-demand builds](adding-a-model.md#on-demand-builds)
+A profile is a named compilation configuration in `model.yaml`. Its component
+parameters explicitly set `max_num_tokens: 4096` and `language_group_size`.
+Add `input_height` and `input_width` only for VLMs needing a resolution override;
+omit them for LLMs and fixed-resolution VLMs. The runner forwards declared
+settings to the recipe. Additional compiled configurations use separate profiles.
+
+See [on-demand builds](adding-a-model.md#on-demand-builds)
 for manual build and publication instructions.
 See [LLiMa model definitions](adding-a-model.md#llima-language-and-vision-language-models)
 for the source and package contracts.

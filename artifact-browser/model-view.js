@@ -828,7 +828,8 @@ export function renderDetail(variant) {
     .filter(Boolean), (precision) => precision);
   // A reused build keeps the categories it was compiled with; the catalog has the current ones.
   const categories = catalogModel?.categories || run.model_categories || {};
-  const parameters = details[0]?.provenance.parameters?.parameters?.compile_parameters || {};
+  const compilation = details[0]?.provenance.parameters?.parameters || {};
+  const parameters = { ...compilation.compile_parameters, ...compilation.compiled_parameters };
   const hasImageResolution = [parameters.input_height, parameters.input_width].every((value) => Number.isInteger(value) && value > 0);
   const compiledLimits = ["llm", "vlm"].includes(categories.model_type) ? [
     Number.isInteger(parameters.max_num_tokens) && parameters.max_num_tokens > 0

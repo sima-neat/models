@@ -1336,6 +1336,22 @@ def _preflight_compilations(
         if artifact_sha != actual_sha or int(result.get("size_bytes", -1)) != actual_size:
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
+        compiled_parameters = {}
+        if native:
+            config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
+            compiled_parameters = {name: config["pipeline_cfg"][name]
+                                   for name in ("max_num_tokens", "language_group_size")
+                                   if name in config["pipeline_cfg"]}
+            image_size = (config.get("vm_cfg") or {}).get("image_size")
+            if type(image_size) is int and image_size > 0:
+                image_size = [image_size, image_size]
+            if (isinstance(image_size, list) and len(image_size) == 2
+                    and all(type(value) is int and value > 0 for value in image_size)):
+                compiled_parameters.update(input_height=image_size[0], input_width=image_size[1])
+            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+                if name in binding["parameters"] and compiled_parameters.get(name) != binding["parameters"][name]:
+                    raise ValidationError(f"{result_path}: compiled {name} does not match model.yaml")
+
         compiler_version = _require_text(provenance.get("compiler_version"), "compiler_version")
         compiler_label = _require_text(provenance.get("compiler_label"), "compiler_label")
         if compiler_version != compiler_dependency["version"]:
@@ -1394,6 +1410,7 @@ def _preflight_compilations(
                 "profile": profile,
                 "component": component,
                 "binding": binding,
+                "compiled_parameters": compiled_parameters,
                 "archive": archive,
                 "files": files,
                 "artifact_sha": artifact_sha,
@@ -1484,6 +1501,7 @@ def publish_compilations(
             "build_fingerprint": build_fingerprint,
             "recipe": component["recipe"],
             "compile_parameters": binding.get("parameters", {}),
+            **({"compiled_parameters": compilation["compiled_parameters"]} if native else {}),
             "shape_profile": binding.get("shape_profile"),
             "calibration": binding.get("calibration"),
             **({"llima_version": compilation["llima_version"]} if compilation["llima_version"] else {}),

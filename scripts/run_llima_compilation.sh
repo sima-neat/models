@@ -42,7 +42,23 @@ mkdir -p "$(dirname "$PROFILE_OUTPUT_DIR")"
 work="$(mktemp -d "$(dirname "$PROFILE_OUTPUT_DIR")/.llima-XXXXXXXX")"
 trap 'rm -rf "$work"' EXIT
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-BUILD_PROFILE_ID="$BUILD_PROFILE_ID" bash "$MODEL_DIR/scripts/compile.sh" "$checkpoint" "$work/compiled"
+BUILD_PROFILE_ID="$BUILD_PROFILE_ID" "$PYTHON" - \
+  "$MODEL_DIR" "$BUILD_PROFILE_ID" "$component_id" "$checkpoint" "$work/compiled" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+from model_registry.model import load_and_validate_model
+
+model_dir, profile_id, component_id, checkpoint, output = sys.argv[1:]
+model = load_and_validate_model(model_dir)
+profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
+parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
+arguments = []
+for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+    if name in parameters:
+        arguments.extend([f"--{name}", str(parameters[name])])
+subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), checkpoint, output, *arguments], check=True)
+PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
 llima-deploy "$work/compiled" "$PROFILE_OUTPUT_DIR/$component_id/deployment"
 "$PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component_id" --write-manifest

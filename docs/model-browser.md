@@ -48,8 +48,10 @@ one tab per profile, labelled with its variant ID in uppercase, such as
 first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
 the model's folder at the commit the README comes from. LLM and VLM pages show
 the selected build's maximum context length (input plus output tokens) and image
-input resolution directly below the variant selector, when recorded in the
-compile parameters. Sections appear in this order:
+input resolution directly below the variant selector. Native deployments supply
+their verified settings, including fixed image resolutions without compiler
+overrides; older builds fall back to recorded compile parameters. Sections appear
+in this order:
 
 1. **Overview.** The hero and the `## Overview` section of the README, including
    any model-specific note about changing context length or image resolution

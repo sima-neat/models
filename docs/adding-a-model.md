@@ -495,14 +495,24 @@ Declare a complete language model as one component, with `interface.format: hugg
 each file retains its revision, byte size and SHA-256. The existing verified downloader
 assembles the checkpoint directory. Do not list LLiMa's generated layers as components.
 
-The executable recipe takes two positional paths:
+A build profile names one compiled configuration. Start with one profile per
+model and set `max_num_tokens: 4096` explicitly in its component `parameters`,
+alongside `language_group_size`. Add `input_height` and `input_width` only for
+VLMs needing a resolution override. Omit both for text-only LLMs and VLMs whose
+native resolution is fixed. Declare a VLM's actual resolution in its image
+interface even when no override is needed.
+
+The shared runner forwards these parameters as compiler options after the
+checkpoint and output arguments; `compile.sh` must pass them to `llima-compile`.
+Keep these values in `model.yaml` rather than duplicating them in the recipe.
+
+The executable recipe takes two positional paths followed by compiler options:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 llima-compile "$1" -o "$2" \
-  --max_num_tokens 4096 --language_group_size 128 \
-  --input_height 448 --input_width 448 --jobs 12 --log_level INFO
+  "${@:3}" --jobs 12 --log_level INFO
 ```
 
 Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
