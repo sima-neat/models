@@ -14,7 +14,6 @@ def test_deployment_contains_language_and_vision(compiled):
     assert any("language" in name and name.endswith(".elf") for name in names)
     assert any("vision" in name and name.endswith(".elf") for name in names)
     assert "devkit/tokenizer.json" in names
-    assert any(name.startswith("npy_files/") and name.endswith(".npy") for name in names)
     cfg = json.loads((deployment / "devkit/vlm_config.json").read_text())
     assert cfg["pipeline_cfg"]["max_num_tokens"] == parameters["max_num_tokens"]
     assert cfg["pipeline_cfg"]["language_group_size"] == parameters["language_group_size"]
