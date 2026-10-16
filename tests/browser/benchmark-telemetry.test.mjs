@@ -6,7 +6,7 @@ const {adaptBenchmarkResult} = await import(new URL('../../artifact-browser/benc
 const fixture = () => JSON.parse(readFileSync(
   new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url), 'utf8'));
 
-test('names the Sentinel source and window of a schema-5 result', () => {
+test('names the Sentinel source and window of a saved Core report', () => {
   const benchmark = adaptBenchmarkResult(fixture()).value;
   assert.equal(benchmark.telemetry.status, 'ok');
   assert.equal(benchmark.telemetry.samples, 15);
@@ -24,10 +24,19 @@ test('keeps the rail breakdown on peak SoM power', () => {
   assert.equal(measurements.peak_die_temperature_c.unit, '°C');
 });
 
-test('reports no telemetry source when the Core report has no telemetry', () => {
-  const result = fixture();
-  delete result.core_report.telemetry;
+test('reports no telemetry source when an older Core report has no telemetry', () => {
+  const result = {...fixture(), schema_version: 5, metrics: {}, core_report: {}};
   assert.equal(adaptBenchmarkResult(result).value.telemetry, null);
+});
+
+test('leaves out what the saved Core report did not measure', () => {
+  const result = fixture();
+  result.benchmark_report.latency_p99_ms = 0;
+  result.benchmark_report.telemetry.cpu_usage_pct.samples = 0;
+  const {measurements} = adaptBenchmarkResult(result).value;
+  assert.equal(measurements.latency_p99_ms, undefined);
+  assert.equal(measurements.avg_cpu_usage_pct, undefined);
+  assert.equal(measurements.throughput_fps.value, result.benchmark_report.fps);
 });
 
 test('names the model, build, and component a result measured', () => {
@@ -38,6 +47,6 @@ test('names the model, build, and component a result measured', () => {
 });
 
 test('reads every published format and no unknown one', () => {
-  const kinds = [1, 2, 3, 4, 5, 6].map((version) => adaptBenchmarkResult({...fixture(), schema_version: version}).kind);
-  assert.deepEqual(kinds, ['supported', 'supported', 'supported', 'supported', 'supported', 'unsupported']);
+  const kinds = [1, 2, 3, 4, 5, 6, 7].map((version) => adaptBenchmarkResult({...fixture(), schema_version: version}).kind);
+  assert.deepEqual(kinds, ['supported', 'supported', 'supported', 'supported', 'supported', 'supported', 'unsupported']);
 });

@@ -300,32 +300,27 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
         "id": model["id"], "build_profile_id": key[1], "component_id": key[2], "sha256": build["artifact_sha256"],
     })
     result["compatibility"]["actual_platform_version"] = compiler["version"]
+    report = result["benchmark_report"]
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
-    power = result["metrics"]["avg_power_watts"]["value"]
-    samples = result["configuration"]["samples"]
+    scale = latency / report["latency_ms"]
     # Pipelining makes asynchronous throughput exceed one input per mean latency; keep the template's ratio.
-    pipelining = result["metrics"]["throughput_fps"]["value"] * result["metrics"]["latency_avg_ms"]["value"] / 1000.0
-    throughput = round(pipelining * 1000.0 / latency, 1)
-    values = {
-        "latency_avg_ms": latency,
-        "throughput_fps": throughput,
-        "energy_joules": round(power * samples / throughput, 2),
-        "energy_per_inference_joules": round(power / throughput, 5),
-        "mla_memory_peak_mib": round(16.0 + _fraction("memory", *key) * 240.0, 1),
-    }
-    memory = result["metrics"]["mla_memory_peak_mib"]
-    values["mla_memory_avg_mib"] = round(
-        values["mla_memory_peak_mib"] * result["metrics"]["mla_memory_avg_mib"]["value"] / memory["value"], 1,
-    )
+    report["fps"] = round(report["fps"] / scale, 1)
+    for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+        report[field] = round(report[field] * scale, 3)
+    report["energy_joules"] = round(report["avg_power_watts"] * result["configuration"]["samples"] / report["fps"], 2)
+    memory = report["telemetry"]["mla_memory_mib"]
+    memory_scale = (16.0 + _fraction("memory", *key) * 240.0) / memory["maximum"]
+    memory.update({name: round(memory[name] * memory_scale, 1) for name in ("mean", "minimum", "maximum")})
+    # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
+    # Preview timings are generated, not published measurements of these model definitions.
+    report["layer_stats"] = [
+        {"name": f"MLA_{stage}/block_{index // 3}/{['conv2d', 'activation', 'reshape'][index % 3]}",
+         "stage_index": stage,
+         "total_execution_time_us": 0.0 if index % 9 == 8 else round(
+             latency * 1000 * (0.065 / (1 + index / 4)) * (0.8 + _fraction("layer", *key, str(index))), 2)}
+        for stage in (0, 2) for index in range(24)
+    ]
     # The rest of the board telemetry keeps the template's DevKit readings.
-    for name, value in values.items():
-        metric = result["metrics"][name]
-        scale = value / metric["value"]
-        metric.update({
-            "value": value,
-            "minimum": metric["minimum"] and round(metric["minimum"] * scale, 5),
-            "maximum": metric["maximum"] and round(metric["maximum"] * scale, 5),
-        })
     return result
 
 

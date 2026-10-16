@@ -81,7 +81,8 @@ this table. Modules marked CI only are removed from the author package by
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
-| `core_benchmark.py` | packaging Core's measurements for publication |
+| `benchmark_metrics.py` | reading registry metrics from the saved Core report |
+| `core_benchmark.py` | packaging the saved Core report for publication |
 | `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
 | `published_metrics.py` | the accuracy metric vocabulary, validating each model's `published_metrics`, and the published scores the portal ships |
 | `fidelity_config.py` | finding a build's fidelity entry and checking its result |

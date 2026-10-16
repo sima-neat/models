@@ -58,6 +58,7 @@ PERFORMANCE_TOOLING = (
     *BOARD_STAGE_TOOLING,
     "scripts/run_model_performance.sh",
     "tools/model_registry/core_benchmark.py",
+    "tools/model_registry/benchmark_metrics.py",
     "tools/model_registry/benchmark_manifest.py",
     PERFORMANCE_RESULT_SCHEMA,
 )

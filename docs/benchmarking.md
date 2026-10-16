@@ -41,11 +41,11 @@ The runner user therefore needs passwordless `sudo` for both writes.
 
 ## The performance script
 
-`scripts/performance.py` takes `--mpk <archive>` and `--output <report>`:
+`scripts/performance.py` takes `--mpk <archive>` and `--output <directory>`:
 
 ```bash
 ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
-  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/core-benchmark.json
+  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/benchmark
 ```
 
 Every model's script follows the same pattern:
@@ -53,46 +53,40 @@ Every model's script follows the same pattern:
 ```python
 import argparse
 import json
+from pathlib import Path
 
 import pyneat
 
-
-def report_json(value):
-    """Return a Core report object as JSON values, so new report fields need no script change."""
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, list):
-        return [report_json(item) for item in value]
-    return {
-        name: report_json(getattr(value, name))
-        for name in dir(value)
-        if not name.startswith("_") and not callable(getattr(value, name))
-    }
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--mpk", required=True)
-parser.add_argument("--output", required=True)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--mpk", required=True, help="compiled model archive")
+parser.add_argument("--output", required=True, help="directory for benchmark-report.json and benchmark-context.json")
 args = parser.parse_args()
+output = Path(args.output)
+output.mkdir(parents=True, exist_ok=True)
 
 model = pyneat.Model(args.mpk)
+# Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
 benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
-report = model.benchmark(benchmark_options)
-with open(args.output, "w", encoding="utf-8") as output:
-    json.dump({
-        "core_version": pyneat.__version__,
-        **report_json(report),
-        "samples": benchmark_options.num_samples,
-        "execution_plan": json.loads(model.execution_plan().to_json()),
-    }, output, allow_nan=False)
+benchmark_options.include_layer_stats = True
+model.benchmark(benchmark_options).save(output / "benchmark-report.json")
+# What the report does not record: the Core release, the requested run, and the graph that ran.
+context = {
+    "core_version": pyneat.__version__,
+    "num_samples": benchmark_options.num_samples,
+    "min_duration_ms": benchmark_options.min_duration_ms,
+    "include_layer_stats": benchmark_options.include_layer_stats,
+    "execution_plan": json.loads(model.execution_plan().to_json()),
+}
+(output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
 ```
 
-`report_json` writes every field of Core's `BenchmarkReport`, including its
-`telemetry`, so a field Core adds later reaches the registry without editing
-each script. Keep the function in the script: the script runs under the DevKit's
-PyNeat interpreter, which cannot import the registry tooling.
+`BenchmarkReport.save()` writes `benchmark-report.json`, the whole Core report
+including its `telemetry` and `layer_stats`, so a field Core adds later reaches
+the registry without a script change. `benchmark-context.json` records what the
+report does not: the Core version, the requested sample count and minimum
+duration, and the execution plan the model browser draws.
 
 Scripts measure 1000 samples rather than Core's default of 100. The samples
 size the latency pass and the energy the registry divides per inference, so the
@@ -112,6 +106,39 @@ successful benchmark. Keep archives and results outside Git.
 The script runs once for each component that a `benchmark` entry covers in the
 build profile. RF-DETR's backbone and transformer therefore produce separate
 results; their numbers are not a measured combined pipeline.
+
+## Per-layer profiling
+
+Every performance script explicitly enables `BenchmarkOptions.include_layer_stats`.
+After latency and throughput measurement, Core profiles each MLA stage using
+MLA-RT and includes the compiled layer's `name`, zero-based `stage_index`, and
+`total_execution_time_us` in `benchmark_report.layer_stats`. A stage index counts
+all executable stages, including A65 stages, so MLA indices can have gaps.
+Zero-time entries are kept in compiler order. Names describe compiled layers,
+which may fuse or split source ONNX operators.
+
+Use an idle DevKit with `mla-rt` in `PATH` and the MIP-to-kernel handoff fix
+(verified with MLA-RT `603a8c6` on eLxr B2121). Core runs profiling after its
+benchmark runners close. The profile is a separate pass with MLA-RT's default
+inputs; its summed time is not the model's end-to-end latency or a breakdown of
+throughput-pass telemetry. Ordinary inference can resume when it returns.
+
+The importer preserves the saved report unchanged, validates every layer timing,
+and fails when a requested profile is absent. Each model's performance stage
+test also requires nonempty timings with at least one nonzero layer. Changing
+these performance scripts reruns measurement for existing builds without
+invalidating their compile keys. Historical results without layer stats stay
+readable; new measurements add the analysis view.
+
+The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer
+count, and share in the ten slowest layers. **Duration** displays a ranked chart
+of measured execution times in microseconds, with colors inferred from compiled
+layer names and a fixed time axis. **Table** shows names, execution time and
+share in compiler order, without bars. Only the selected view is displayed.
+Both views share name search and a minimum-execution-time slider. Filtering
+preserves the component totals, percentage denominator and time axis; a zero
+threshold includes zero-time layers. Stage indices remain visible per layer.
+**Download CSV** includes every layer in compiler order, regardless of filters.
 
 ## Workload and measurements
 
@@ -153,23 +180,22 @@ the throughput pass:
 The CMA reading covers the whole pool, which EV74 and other drivers share and
 Linux lends to other memory, so it is not the model's memory alone. The
 individual temperature sensors and CPU cores are not registry metrics; they
-stay in the result's `core_report`, where the browser reads the per-core
+stay in the result's `benchmark_report`, where the browser reads the per-core
 load.
 
-A reading with no samples is unavailable. Its reason says whether Sentinel did
-not run (`sentinel_telemetry_unavailable`), ran without that reading
-(`not_measured_by_sentinel`), or the Core report does not include it
-(`not_reported_by_core_benchmark`), as in a Core release from before that
-reading. Latency percentiles missing from an older report have the same reason.
-Add a reading by adding a row to `TELEMETRY_METRICS` in
-`tools/model_registry/core_benchmark.py`, its measurement name in
-`benchmark_publication.py`, and its label in the browser's `metrics.js`. It
+The registry and the model browser read every metric from the saved report
+with the same table: `REPORT_METRICS` and `TELEMETRY_METRICS` in
+`tools/model_registry/benchmark_metrics.py`, mirrored in the browser's
+`benchmark-adapters.js`. Core writes 0 for a headline value it did not measure
+and 0 samples for a reading Sentinel did not provide; those metrics are not
+published and the browser shows them as unavailable. Add a reading by adding a
+row to both tables, with its Vulcan measurement name, and its label in the
+browser's `metrics.js`. It
 appears under **Other measurements** until `DETAIL_CARDS` in
 `model-view.js` gives it a row in one of the Benchmark details cards.
 
 Initialization timings and MLA memory before and after the run are not exported
-by this Core API. Results mark those metrics unavailable rather than estimating
-them or copying them from old results. Adding them belongs in Core before
+by this Core API, so results do not carry them. Adding them belongs in Core before
 Models consumes them.
 
 ## CI and registry publication
@@ -184,12 +210,14 @@ clocks, then handles each component:
 
 1. `make-benchmark-manifest` writes `performance-test.json` with the
    compilation's identity.
-2. `performance.py` writes `core-benchmark.json` and `benchmark.log`.
+2. `performance.py` writes `benchmark-report.json`, `benchmark-context.json`,
+   and `benchmark.log`.
 3. The workload is recorded in the manifest.
-4. `import-core-benchmark` checks the report and writes
+4. `import-core-benchmark` stores the saved report unchanged as
+   `benchmark_report` and the plan as `execution_plan` in
    `performance-result.json`, following
    [`performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result.schema.json)
-   (`schema_version` 5). It records the compilation identity, the script
+   (`schema_version` 6). It records the compilation identity, the script
    digest, the source revision, the actual Core and platform versions, and
    the MLA and CPU clocks. It never runs or times a model.
 
@@ -206,7 +234,7 @@ performance stage key and carries a `performance-result` artifact, the
 benchmark log, a `performance/model-synthetic` test result whose status is the
 test outcome, and the measurements. A failed test still publishes the result
 and completes its run, then fails the workflow run. The model browser reads
-performance results with `schema_version` 1 through 5, shows measured values
+performance results with `schema_version` 1 through 6, shows measured values
 with their units, and marks absent metrics unavailable. Its Speed card shows the
 MLA and CPU clocks when the result records them. A failed measurement keeps its
 workflow evidence and is not published as a successful measurement. Performance

@@ -1,3 +1,5 @@
+import { analyzeLayers } from "./layer-stats.js";
+
 function measurement(key, metric) {
   if (!metric || typeof metric !== "object") return null;
   const declaredStatus = ["measured", "unavailable", "unsupported"].includes(metric.status)
@@ -24,13 +26,80 @@ function finite(value) {
   return Number.isFinite(value) ? value : null;
 }
 
+// Formats 1-5 stored each metric already converted. Format 6 stores the report Core saved, so its
+// metrics are read here, under the names and from the fields tools/model_registry/benchmark_metrics.py uses.
+const REPORT_METRICS = {
+  latency_avg_ms: ["latency_ms", "ms"],
+  latency_p50_ms: ["latency_p50_ms", "ms"],
+  latency_p95_ms: ["latency_p95_ms", "ms"],
+  latency_p99_ms: ["latency_p99_ms", "ms"],
+  throughput_fps: ["fps", "inferences/s"],
+  avg_power_watts: ["avg_power_watts", "W"],
+  energy_joules: ["energy_joules", "J"],
+};
+// Each Sentinel reading: its telemetry field, the statistic, and the field whose entries break it down.
+// A list field reports its busiest entry, one per CPU core or board sensor.
+const TELEMETRY_METRICS = {
+  peak_power_watts: ["power_som_watts", "maximum", "power_rails_watts"],
+  avg_mla_power_watts: ["power_mla_watts", "mean"],
+  peak_mla_power_watts: ["power_mla_watts", "maximum"],
+  avg_die_temperature_c: ["die_temperature_max_c", "mean"],
+  peak_die_temperature_c: ["die_temperature_max_c", "maximum"],
+  avg_board_temperature_c: ["board_temperatures_c", "mean"],
+  peak_board_temperature_c: ["board_temperatures_c", "maximum"],
+  avg_cpu_usage_pct: ["cpu_usage_pct", "mean"],
+  peak_cpu_usage_pct: ["cpu_usage_pct", "maximum"],
+  avg_cpu_core_usage_pct: ["cpu_cores_usage_pct", "mean"],
+  peak_cpu_core_usage_pct: ["cpu_cores_usage_pct", "maximum"],
+  mla_memory_avg_mib: ["mla_memory_mib", "mean"],
+  mla_memory_peak_mib: ["mla_memory_mib", "maximum"],
+  avg_cma_memory_mib: ["cma_memory_mib", "mean"],
+  peak_cma_memory_mib: ["cma_memory_mib", "maximum"],
+  avg_linux_memory_mib: ["linux_memory_used_mib", "mean"],
+  peak_linux_memory_mib: ["linux_memory_used_mib", "maximum"],
+};
+
+function measured(value, unit, aggregation, sampleCount) {
+  return { status: "measured", value, unit, aggregation, sample_count: sampleCount };
+}
+
+// The metrics a saved Core report measured. Core reports 0 for a headline value it did not measure, and
+// 0 samples for a reading Sentinel did not provide; those stay out, as in the registry.
+export function reportMetrics(result) {
+  const report = result.benchmark_report || {};
+  const metrics = {};
+  for (const [key, [field, unit]] of Object.entries(REPORT_METRICS)) {
+    if (report[field] > 0) metrics[key] = measured(report[field], unit, "raw", 1);
+  }
+  const inferences = (result.configuration?.samples ?? 0) * (result.configuration?.workload?.batch_size ?? 0);
+  if (metrics.energy_joules && inferences > 0) {
+    metrics.energy_per_inference_joules = measured(report.energy_joules / inferences, "J/inference", "raw", 1);
+  }
+  const telemetry = report.telemetry || {};
+  for (const [key, [field, statistic, breakdown]] of Object.entries(TELEMETRY_METRICS)) {
+    const entries = [telemetry[field]].flat().filter((entry) => entry?.samples > 0 && Number.isFinite(entry[statistic]));
+    if (!entries.length) continue;
+    const selected = entries.reduce((busiest, entry) => (entry[statistic] > busiest[statistic] ? entry : busiest));
+    const unit = selected.unit === "C" ? "°C" : selected.unit;
+    metrics[key] = {
+      ...measured(selected[statistic], unit, statistic === "mean" ? "mean" : "max", selected.samples),
+      minimum: selected.minimum,
+      maximum: selected.maximum,
+    };
+    if (breakdown) metrics[key].details = { breakdown: (telemetry[breakdown] || []).filter((entry) => entry?.samples > 0) };
+  }
+  return metrics;
+}
+
 function common(result) {
-  const measurements = Object.fromEntries(Object.entries(result.metrics || {})
+  const report = result.schema_version >= 6 ? result.benchmark_report : result.core_report;
+  const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};
+  const measurements = Object.fromEntries(Object.entries(stored)
     .map(([key, metric]) => [key, measurement(key, metric)])
     .filter(([, metric]) => metric));
   return {
     schemaVersion: result.schema_version,
-    workload: result.schema_version === 5
+    workload: result.schema_version >= 5
       ? `${result.configuration?.workload?.selection === "mpk_default" ? "Core default MPK" : result.configuration?.workload?.selection || "Unknown workload"} · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
       : "Historical benchmark configuration",
     status: result.status,
@@ -47,9 +116,10 @@ function common(result) {
     componentId: result.model?.component_id,
     cpuCount: result.environment?.cpu_count,
     batchSize: result.configuration?.workload?.batch_size,
-    executionGraph: executionGraph(result.core_report?.execution_plan),
-    telemetry: telemetrySource(result.core_report),
-    cpuCores: cpuCores(result.core_report),
+    executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan),
+    telemetry: telemetrySource(report),
+    cpuCores: cpuCores(report),
+    layerAnalysis: analyzeLayers(report?.layer_stats),
   };
 }
 
@@ -105,8 +175,8 @@ function adaptResult(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-// Every published format stays readable; formats 1-5 share one reader.
-export const benchmarkAdapters = new Map([[1, adaptResult], [2, adaptResult], [3, adaptResult], [4, adaptResult], [5, adaptResult]]);
+// Every published format stays readable; formats 1-6 share one reader.
+export const benchmarkAdapters = new Map([1, 2, 3, 4, 5, 6].map((version) => [version, adaptResult]));
 
 export function adaptBenchmarkResult(result) {
   if (!result || typeof result !== "object") return { kind: "missing" };

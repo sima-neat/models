@@ -1,5 +1,6 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
+import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
@@ -363,6 +364,10 @@ function benchmarkCsv(benchmark, readings) {
     if (Number.isFinite(core.maximum)) add("CPU cores", `Core ${index}, peak`, core.maximum.toFixed(1), "%");
   });
   Object.keys(benchmark.measurements).filter((key) => !placed.has(key)).sort().forEach((key) => metric("Other", key));
+  benchmark.layerAnalysis?.layers.forEach((layer) => add(
+    "MLA layers", layer.name, layer.timeUs, "µs", `stage:${layer.stage}/layer:${layer.order}`,
+    "Separate profiling pass; compiler order",
+  ));
   const cell = (value) => (/[",\r\n]/.test(String(value)) ? `"${String(value).replaceAll('"', '""')}"` : String(value));
   return rows.map((row) => row.map(cell).join(",")).join("\r\n");
 }
@@ -409,6 +414,73 @@ function executionGraphSection(graph, runId) {
     ${graph.tensors.length ? `<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>` : ""}</section>`;
 }
 
+const layerTime = (value) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+function layerAnalysisResults(analysis, view) {
+  const table = view.mode === "table";
+  const { layers, totalUs, count } = selectLayers(analysis, {
+    ...view, order: table ? "compiler" : "time",
+  });
+  const scaleUs = layerTimeScale(analysis);
+  const label = (layer) => `<th scope="row" class="layer-name" title="${escapeHtml(layer.name)}">${escapeHtml(layer.name.replace(/^MLA_\d+\//, ""))}<small>Stage ${layer.stage} · #${layer.order}</small></th>`;
+  const rows = layers.map((layer) => `<tr class="layer-family-${layerFamily(layer.name)}">
+    ${label(layer)}
+    ${table
+      ? `<td class="layer-timing-number">${layerTime(layer.timeUs)}</td><td class="layer-share">${(totalUs > 0 ? layer.timeUs / totalUs * 100 : 0).toFixed(2)}%</td>`
+      : `<td><div class="layer-timing-value"><span class="layer-bar-track" aria-hidden="true" title="${layerTime(layer.timeUs)} µs"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span><span>${layerTime(layer.timeUs)} <small>µs</small></span></div></td>`}
+  </tr>`).join("");
+  const axis = `<span class="layer-axis" aria-label="Scale: 0 to ${layerTime(scaleUs)} microseconds"><span>0</span><span>${layerTime(scaleUs / 2)}</span><span>${layerTime(scaleUs)}</span></span>`;
+  const families = new Set(layers.map((layer) => layerFamily(layer.name)));
+  const legend = Object.entries(LAYER_FAMILIES).filter(([id]) => families.has(id))
+    .map(([id, title]) => `<span class="layer-family-${id}"><i aria-hidden="true"></i>${title}</span>`).join("");
+  return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${table ? "compiler order" : "slowest first"}</p>
+    ${layers.length ? `${table ? "" : `<div class="layer-legend" aria-label="Layer families inferred from compiled names"><span>Family (from name)</span>${legend}</div>`}
+    <div class="layer-table-scroll" tabindex="0" role="region" aria-label="${table ? "Compiled layer timings" : "Layer execution time chart"}"><table class="layer-table ${table ? "layer-numeric-table" : "layer-duration-table"}">
+      <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time <span class="layer-time-unit">(µs)</span>${table ? "" : axis}</th>${table ? '<th scope="col">Share (%)</th>' : ""}</tr></thead>
+      <tbody>${rows}</tbody></table></div>` : '<p class="muted-message">No layers match these filters.</p>'}`;
+}
+
+function layerAnalysisBody(analysis, view) {
+  const { count, zeroCount, top10Share } = selectLayers(analysis);
+  const scaleUs = layerTimeScale(analysis);
+  return `<div class="layer-summary">
+    <div><strong>${layerTime(analysis.totalUs)} <small>µs</small></strong><span>Profiled MLA time</span></div>
+    <div><strong>${count.toLocaleString()}</strong><span>Compiled layers · ${zeroCount} zero-time</span></div>
+    <div><strong>${top10Share.toFixed(1)}<small>%</small></strong><span>Time in 10 slowest layers</span></div>
+  </div>
+  <p class="layer-explanation">Measured execution times from a separate MLA profiling pass. Shares use the component’s profiled time, not end-to-end latency. Compiled layer names may differ from ONNX operators.</p>
+  <div class="layer-controls">
+    <label class="layer-search">Layer name<input type="search" data-layer-filter="query" value="${escapeHtml(view.query)}" placeholder="Search compiled layers" autocomplete="off"></label>
+    <label class="layer-threshold"><span>Minimum time: <output data-layer-threshold-value>${layerTime(view.minUs)} µs</output></span><input type="range" data-layer-filter="minUs" min="0" max="${scaleUs}" step="any" value="${view.minUs}"></label>
+    <div class="layer-view-toggle" role="group" aria-label="Layer statistics view">${["duration", "table"].map((mode) => `<button type="button" data-layer-filter="mode" value="${mode}" aria-pressed="${view.mode === mode}">${mode === "duration" ? "Duration" : "Table"}</button>`).join("")}</div>
+  </div>
+  <div data-layer-results>${layerAnalysisResults(analysis, view)}</div>`;
+}
+
+function layerAnalysisSection(analysis, runId) {
+  if (!analysis) return "";
+  const view = state.layerViews.get(runId)?.view || { query: "", minUs: 0, mode: "duration" };
+  state.layerViews.set(runId, { analysis, view });
+  return disclosure(`layers:${runId}`, "Runtime Layer Analysis",
+    `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view)}</div>`,
+    `${analysis.layers.length.toLocaleString()} layers · ${layerTime(analysis.totalUs)} µs MLA`);
+}
+
+export function updateLayerAnalysis(event) {
+  const control = event.target.closest("[data-layer-filter]");
+  if (!control) return;
+  const field = control.dataset.layerFilter;
+  if (event.type !== (field === "mode" ? "click" : "input")) return;
+  const panel = control.closest("[data-layer-analysis]");
+  const { analysis, view } = state.layerViews.get(panel.dataset.layerAnalysis);
+  view[field] = field === "minUs" ? Number(control.value) : control.value;
+  panel.querySelector("[data-layer-results]").innerHTML = layerAnalysisResults(analysis, view);
+  panel.querySelector("[data-layer-threshold-value]").textContent = `${layerTime(view.minUs)} µs`;
+  panel.querySelectorAll('[data-layer-filter="mode"]').forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.value === view.mode));
+  });
+}
+
 function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
@@ -422,6 +494,7 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}${measurementSource(benchmarkRun, modelId)}</p>
     ${executionGraphSection(benchmark.executionGraph, runId)}
+    ${layerAnalysisSection(benchmark.layerAnalysis, runId)}
     ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}`;
 }
 

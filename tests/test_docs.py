@@ -158,7 +158,7 @@ def test_local_guide_covers_the_complete_local_qualification_loop() -> None:
         "model-registry verify-mpk",
         "Benchmark locally on a Modalix DevKit",
         "python models/resnet_50/scripts/performance.py",
-        "core-benchmark.json",
+        "benchmark-report.json",
         "Finish the local review",
     ):
         assert expected in text

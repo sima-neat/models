@@ -67,7 +67,19 @@ order:
    output, each tagged with the processor it runs on; the step on the MLA is
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
-   scale, and zero point. **Benchmark details** has three cards on the left:
+   scale, and zero point. When the report includes layer stats, **Runtime Layer Analysis**
+   opens an Insight-style **Duration / Table** selector. **Duration** shows
+   measured execution times in microseconds, slowest first, with a fixed time
+   axis and a legend of layer families inferred from compiled names. **Table**
+   shows names, execution time and share in compiler order, without bars. Name
+   search and a minimum-time slider apply to either view; only one is displayed.
+   Each layer also identifies its stage and compiler position. The summary shows
+   profiled MLA time, the layer count (including zero-time entries), and the ten
+   slowest layers' share. Filtering preserves the totals, time axis and percentage
+   denominator. These timings come from a separate profiling pass; they are not
+   a partition of headline latency. Compiled layer names may differ from ONNX
+   operators. Historical reports without stats omit this section.
+   **Benchmark details** has three cards on the left:
    **Performance** with asynchronous and synchronous throughput in one row
    (synchronous from the mean latency), the mean latency, and the p50, p95,
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
@@ -87,8 +99,8 @@ order:
    Sentinel version and the samples behind the board readings, or why they
    are missing) and the runtime. Beside it, **Raw result** opens the result
    JSON and **Download CSV** saves one table of the component's context,
-   every metric, every SoM rail, and every CPU core. A metric the browser does
-   not place in the tiles or the cards appears under **Other measurements**,
+   every metric, every SoM rail, every CPU core, and all compiled layer timings.
+   A metric the browser does not place in the tiles or the cards appears under **Other measurements**,
    so a new metric shows up without a browser change. A
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,

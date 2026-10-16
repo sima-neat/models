@@ -15,6 +15,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
+from .benchmark_metrics import registry_metrics
 from .errors import ValidationError
 
 # How far a measured value may fall below the value tests.yaml expects and still pass, relative to that value.
@@ -80,9 +81,10 @@ def measured_shortfalls(model_dir: str | Path, stage: str, result: dict[str, Any
         expected = expected.get(key, {})
     if not expected:
         return [f"{TESTS_FILE} expects no {stage} values of {'/'.join(build)}"]
+    measured_metrics = registry_metrics(result) if stage == "performance" else result["metrics"]
     shortfalls = []
     for name, value in expected.items():
-        metric = result["metrics"].get(name) or {}
+        metric = measured_metrics.get(name) or {}
         measured = metric.get("value")
         if measured is None:
             shortfalls.append(f"{name} was not measured")

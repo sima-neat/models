@@ -17,7 +17,8 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles', 'config',
+  'benchmark-adapters', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
+  'config',
 ];
 const stylesheets = ['brand', 'styles'];
 

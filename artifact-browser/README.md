@@ -68,7 +68,7 @@ The preview's benchmark results start from
 `artifact-browser/fixtures/performance-result.json`, a ResNet-50 result
 that `import-core-benchmark` produced from a DevKit Core benchmark, so its
 board telemetry and power rails are real readings; the preview varies only
-speed, energy, and MLA memory per build. Edit it to exercise other metric
+speed, energy, and MLA memory per build, and generates illustrative layer timings. Edit it to exercise other metric
 values or availability states. Keep one fixture per benchmark adapter, not
 per schema version: a new format that needs its own adapter adds its own
 fixture and tests, and the existing fixture keeps covering the older formats.
@@ -290,3 +290,7 @@ The publisher accepts optional `compile-timing.json` alongside `compile-outputs.
 validates its timezone-aware start/end timestamps before any registry writes,
 and publishes it as additive run metadata. Existing outputs remain publishable.
 No registry API or database schema changes are required.
+
+The preview's layer timings are illustrative generated data, including zero-time
+entries and multiple MLA stages to exercise the analysis controls. Production
+pages use only the compiled layer timings in each published Core report.

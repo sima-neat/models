@@ -120,7 +120,11 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
       group.time = Math.max(group.time, runTime(run));
     }
   }
+  // A renamed or removed profile keeps its completed runs; show only the profiles the catalog declares.
+  const declaredProfiles = new Map([...definitions].map(([modelId, model]) => [modelId,
+    new Set([...(model.builds || []), ...(model.pending_builds || [])].map((build) => build.build_profile_id))]));
   for (const group of variantBuilds(runs)) {
+    if (declaredProfiles.get(group.modelId)?.has(group.profile) === false) continue;
     const key = variantKey(group.modelId, group.profile);
     const previous = latest.get(key);
     // A build holding every run the catalog names is the catalog's build, with all its components.
