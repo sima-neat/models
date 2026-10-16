@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 
 const {adaptBenchmarkResult, executionGraph} = await import(new URL('../../artifact-browser/benchmark-adapters.js', import.meta.url));
@@ -45,8 +46,11 @@ test('lists each connection once above its tensors and skips a connection that r
 });
 
 test('reads the plan the performance script recorded and shows nothing for another plan schema', () => {
-  const result = {schema_version: 5, metrics: {}, core_report: {execution_plan: plan}};
-  assert.deepEqual(adaptBenchmarkResult(result).value.executionGraph, executionGraph(plan));
+  const saved = JSON.parse(readFileSync(
+    new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url), 'utf8'));
+  assert.deepEqual(adaptBenchmarkResult({...saved, execution_plan: plan}).value.executionGraph, executionGraph(plan));
+  const older = {schema_version: 5, metrics: {}, core_report: {execution_plan: plan}};
+  assert.deepEqual(adaptBenchmarkResult(older).value.executionGraph, executionGraph(plan));
   assert.equal(adaptBenchmarkResult({schema_version: 5, metrics: {}, core_report: {}}).value.executionGraph, null);
   assert.equal(executionGraph({...plan, schema_version: 2}), null);
 });

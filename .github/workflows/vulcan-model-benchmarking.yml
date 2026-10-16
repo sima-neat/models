@@ -440,7 +440,8 @@ jobs:
           name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: |
             _benchmark/*/performance-result.json
-            _benchmark/*/core-benchmark.json
+            _benchmark/*/benchmark-report.json
+            _benchmark/*/benchmark-context.json
             _benchmark/*/performance-test.json
             _benchmark/*/benchmark.log
             _benchmark/*/test-status.txt

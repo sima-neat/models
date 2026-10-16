@@ -87,12 +87,12 @@ for component in "${components[@]}"; do
     "$output/performance-test.json")"
 
   PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-    --mpk "$archive" --output "$output/core-benchmark.json" 2>&1 | tee "$output/benchmark.log"
+    --mpk "$archive" --output "$output" 2>&1 | tee "$output/benchmark.log"
 
-  # Record the workload Core benchmarked, separately from the measured report fields. A script that
-  # configures the model reports its selection and postprocessing; otherwise the MPK default applies.
-  # The script reports its sample count, which energy per inference divides by.
-  "$PYNEAT_PYTHON" - "$output/performance-test.json" "$output/core-benchmark.json" <<'PY'
+  # Record the workload Core benchmarked beside its saved report. A script that configures the model
+  # reports its selection and postprocessing in its context; otherwise the MPK default applies. The
+  # context's sample count is what energy per inference divides by.
+  "$PYNEAT_PYTHON" - "$output/performance-test.json" "$output/benchmark-context.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -101,12 +101,13 @@ import pyneat
 
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text())
-report = json.loads(Path(sys.argv[2]).read_text())
+context = json.loads(Path(sys.argv[2]).read_text())
 model = pyneat.Model(manifest["model"]["path"])
 options = pyneat.BenchmarkOptions()
 info = model.info()
 manifest["configuration"] = {
-    "samples": report.get("samples", options.num_samples),
+    "samples": context["num_samples"],
+    "min_duration_ms": context["min_duration_ms"],
     "include_plugin_latency": options.include_plugin_latency,
     "original_width": None, "original_height": None, "resize_mode": None,
 }
@@ -116,14 +117,15 @@ manifest["workload"] = {
     "inputs": [{"shape": spec.shape, "dtype": spec.dtypes[0].name} for spec in model.input_specs()],
     "preprocess": info.selection.preprocess_graph,
     "postprocess": info.selection.selected_post_kind,
-    **report.get("workload", {}),
+    **context.get("workload", {}),
 }
 path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
 
   "$REGISTRY_PYTHON" -m model_registry import-core-benchmark \
     --manifest "$output/performance-test.json" \
-    --report "$output/core-benchmark.json" \
+    --report "$output/benchmark-report.json" \
+    --context "$output/benchmark-context.json" \
     --schema "$REPOSITORY/schemas/performance-result.schema.json" \
     --output "$output/performance-result.json"
 done

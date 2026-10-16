@@ -406,7 +406,7 @@ def test_execution_graph_opens_its_tensors_from_details_beside_its_heading() -> 
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
     design = (BROWSER / "DESIGN.md").read_text(encoding="utf-8")
 
-    assert "executionGraph: executionGraph(result.core_report?.execution_plan)" in adapters
+    assert "executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan)" in adapters
     assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
     # Details sits in the heading row and controls the tensor table, which starts closed.
     assert '<div class="execution-head"><h5>Execution graph</h5>${details}</div>' in script
@@ -1053,9 +1053,9 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    every_format = ", ".join(f"[{version}, adaptResult]" for version in range(1, 6))
-    assert f"new Map([{every_format}])" in adapters
-    assert "Object.entries(result.metrics || {})" in adapters
+    assert "new Map([1, 2, 3, 4, 5, 6].map((version) => [version, adaptResult]))" in adapters
+    # Schema 6 stores Core's saved report; the browser reads the metrics from it as the registry does.
+    assert "const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};" in adapters
     assert "/benchmarks/latest" in script
     # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
     assert "KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key]))" in script
@@ -1067,7 +1067,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert '["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"]' in script
     assert "(benchmark.batchSize * 1000) / latency.value" in script
     assert "batchSize: result.configuration?.workload?.batch_size" in adapters
-    assert "cpuCores: cpuCores(result.core_report)" in adapters
+    assert "cpuCores: cpuCores(report)" in adapters
     assert "report?.telemetry?.cpu_cores_usage_pct" in adapters
     assert "coreLoad(benchmark.cpuCores)" in script
     assert '<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p>' in script

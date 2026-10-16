@@ -1,4 +1,4 @@
-"""Package Core's measurements for registry publication; never execute a model."""
+"""Package Core's saved benchmark report for registry publication; never execute a model."""
 
 from __future__ import annotations
 
@@ -17,53 +17,6 @@ from .errors import ValidationError
 from .fetch import sha256_file
 from .registry import canonical_sha256
 from .stage_keys import PERFORMANCE_FINGERPRINT_VERSION
-
-CORE_UNITS = {
-    "latency_avg_ms": "ms",
-    "throughput_fps": "inferences/s",
-    "avg_power_watts": "W",
-    "energy_joules": "J",
-}
-# Percentiles of the latency pass; Core releases before they were reported leave them unavailable.
-LATENCY_PERCENTILES = {
-    "latency_p50_ms": "ms",
-    "latency_p95_ms": "ms",
-    "latency_p99_ms": "ms",
-}
-UNAVAILABLE_UNITS = {
-    **LATENCY_PERCENTILES,
-    "model_load_ms": "ms",
-    "time_to_first_inference_ms": "ms",
-    "mla_memory_baseline_mib": "MiB",
-    "mla_memory_peak_delta_mib": "MiB",
-    "mla_memory_final_mib": "MiB",
-}
-# Board telemetry Core's benchmark reads from Sentinel over the throughput window: each registry
-# metric names its report telemetry field, the statistic, the unit Sentinel reports, and the field
-# whose entries break it down. A list field (one entry per CPU core) reports its busiest entry for
-# that statistic, so the average and the peak of the busiest core can come from different cores.
-TELEMETRY_METRICS = {
-    "peak_power_watts": ("power_som_watts", "maximum", "W", "power_rails_watts"),
-    "avg_mla_power_watts": ("power_mla_watts", "mean", "W", None),
-    "peak_mla_power_watts": ("power_mla_watts", "maximum", "W", None),
-    "avg_die_temperature_c": ("die_temperature_max_c", "mean", "C", None),
-    "peak_die_temperature_c": ("die_temperature_max_c", "maximum", "C", None),
-    "avg_board_temperature_c": ("board_temperatures_c", "mean", "C", None),
-    "peak_board_temperature_c": ("board_temperatures_c", "maximum", "C", None),
-    "avg_cpu_usage_pct": ("cpu_usage_pct", "mean", "%", None),
-    "peak_cpu_usage_pct": ("cpu_usage_pct", "maximum", "%", None),
-    "avg_cpu_core_usage_pct": ("cpu_cores_usage_pct", "mean", "%", None),
-    "peak_cpu_core_usage_pct": ("cpu_cores_usage_pct", "maximum", "%", None),
-    "mla_memory_avg_mib": ("mla_memory_mib", "mean", "MiB", None),
-    "mla_memory_peak_mib": ("mla_memory_mib", "maximum", "MiB", None),
-    "avg_cma_memory_mib": ("cma_memory_mib", "mean", "MiB", None),
-    "peak_cma_memory_mib": ("cma_memory_mib", "maximum", "MiB", None),
-    "avg_linux_memory_mib": ("linux_memory_used_mib", "mean", "MiB", None),
-    "peak_linux_memory_mib": ("linux_memory_used_mib", "maximum", "MiB", None),
-}
-AGGREGATIONS = {"mean": "mean", "maximum": "max"}
-# Sentinel writes Celsius as "C"; the registry spells the unit out.
-REGISTRY_UNITS = {"C": "°C"}
 
 # run_model_performance.sh sets the MLA and CPU clocks before measuring; the result records the clocks it ran at.
 MLA_FREQUENCY = Path("/sys/class/devfreq/5000000.mla/cur_freq")
@@ -118,100 +71,22 @@ def runner_environment() -> dict[str, Any]:
     }
 
 
-def _metric(value: dict[str, Any], unit: str) -> dict[str, Any]:
-    measured = value.get("status") == "measured"
-    number = value.get("value")
-    if value.get("unit") != unit or value.get("status") not in {"measured", "unavailable"}:
-        raise ValidationError("invalid Core metric status or unit")
-    if measured and (
-        isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or number <= 0
-    ):
-        raise ValidationError("Core measured metrics must be finite positive numbers")
-    if not measured and (number is not None or not value.get("reason")):
-        raise ValidationError("unavailable Core metrics require a reason and null value")
-    return {
-        "status": value["status"],
-        "reason": value.get("reason"),
-        "unit": unit,
-        "aggregation": "raw",
-        "value": number,
-        "minimum": None,
-        "maximum": None,
-        "standard_deviation": None,
-        "sample_count": 1 if measured else 0,
-    }
-
-
-def _telemetry_entry(value: Any, field: str, unit: str) -> dict[str, Any] | None:
-    """Return one Core telemetry summary when it measured anything, after checking its shape."""
-    if not isinstance(value, dict):
-        raise ValidationError(f"benchmark telemetry {field} must be an object")
-    samples = value.get("samples")
-    if type(samples) is not int or samples < 0:
-        raise ValidationError(f"benchmark telemetry {field} requires a sample count")
-    if not samples:
-        return None
-    if value.get("unit") != unit:
-        raise ValidationError(f"benchmark telemetry {field} must be in {unit!r}, not {value.get('unit')!r}")
-    for statistic in ("mean", "minimum", "maximum"):
-        number = value.get(statistic)
-        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number):
-            raise ValidationError(f"benchmark telemetry {field} requires a finite {statistic}")
-    return value
-
-
-def telemetry_metrics(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Map the report's Sentinel telemetry to registry metrics; a metric without samples is unavailable."""
-    telemetry = report.get("telemetry")
-    if telemetry is None:
-        reason = "not_reported_by_core_benchmark"
-        telemetry = {}
-    elif not isinstance(telemetry, dict):
-        raise ValidationError("benchmark telemetry must be an object")
-    else:
-        reason = "not_measured_by_sentinel" if telemetry.get("status") == "ok" else "sentinel_telemetry_unavailable"
-    metrics = {}
-    for name, (field, statistic, unit, breakdown) in TELEMETRY_METRICS.items():
-        value = telemetry.get(field)
-        entries = value if isinstance(value, list) else [] if value is None else [value]
-        measured = [entry for entry in (_telemetry_entry(item, field, unit) for item in entries) if entry]
-        selected = max(measured, key=lambda entry: entry[statistic], default=None)
-        # A Core release from before a reading was added reports Sentinel telemetry without its field.
-        missing = reason == "not_measured_by_sentinel" and field not in telemetry
-        metric = {
-            "status": "measured" if selected else "unavailable",
-            "reason": None if selected else "not_reported_by_core_benchmark" if missing else reason,
-            "unit": REGISTRY_UNITS.get(unit, unit),
-            "aggregation": AGGREGATIONS[statistic],
-            "value": selected[statistic] if selected else None,
-            "minimum": selected["minimum"] if selected else None,
-            "maximum": selected["maximum"] if selected else None,
-            "standard_deviation": None,
-            "sample_count": selected["samples"] if selected else 0,
-        }
-        parts = telemetry.get(breakdown) if breakdown else None
-        if selected and isinstance(parts, list):
-            metric["details"] = {"breakdown": [
-                {key: entry[key] for key in ("key", "label", "unit", "samples", "mean", "maximum")}
-                for entry in (_telemetry_entry(item, breakdown, unit) for item in parts)
-                if entry
-            ]}
-        metrics[name] = metric
-    return metrics
-
-
 def import_core_benchmark(
     manifest_path: Path,
     report_path: Path,
+    context_path: Path,
     output_path: Path,
     *,
     schema_path: Path,
     environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Publish the report BenchmarkReport.save() wrote, unchanged, with the script's context and the
+    registry identity, provenance, and runner environment around it."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if not isinstance(report, dict):
-        raise ValidationError("benchmark report must be an object")
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not isinstance(context, dict):
+        raise ValidationError("benchmark report and context must be objects")
     configuration = manifest.get("configuration", {})
     workload = manifest.get("workload", {})
     if (
@@ -223,9 +98,9 @@ def import_core_benchmark(
         or workload["batch_size"] <= 0
     ):
         raise ValidationError("benchmark manifest is missing configuration or inspected workload")
-    actual_core = report.get("core_version", "")
+    actual_core = context.get("core_version", "")
     if not isinstance(actual_core, str) or not actual_core:
-        raise ValidationError("benchmark report must identify the Core version")
+        raise ValidationError("benchmark context must identify the Core version")
     expected = manifest["compatibility"]
     digest, _ = sha256_file(Path(manifest["model"]["path"]))
     if digest != manifest["model"]["sha256"]:
@@ -238,49 +113,12 @@ def import_core_benchmark(
         raise ValidationError("benchmark environment does not match the required platform")
     environment["core_version"] = actual_core
     environment["fingerprint"] = canonical_sha256(environment)
-    metrics = {}
-    fields = {"latency_avg_ms": "latency_ms", "throughput_fps": "fps"}
-    for name, unit in {**CORE_UNITS, **LATENCY_PERCENTILES}.items():
-        field = fields.get(name, name)
-        if name in LATENCY_PERCENTILES and field not in report:
-            continue
+    for field in ("latency_ms", "fps"):
         value = report.get(field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-            raise ValidationError(f"benchmark report requires a finite number for {field}")
-        if value < 0:
-            raise ValidationError(f"benchmark report requires a nonnegative number for {field}")
-        measured = value > 0
-        metrics[name] = _metric({
-            "status": "measured" if measured else "unavailable",
-            "value": value if measured else None,
-            "unit": unit,
-            "reason": None if measured else "not_measured_by_core_benchmark",
-        }, unit)
-    for name in ("latency_avg_ms", "throughput_fps"):
-        if metrics[name]["status"] != "measured":
-            raise ValidationError(f"benchmark did not measure {name}")
-    energy = metrics["energy_joules"]
-    metrics["energy_per_inference_joules"] = _metric(
-        {
-            "status": energy["status"],
-            "value": (
-                energy["value"] / (configuration["samples"] * workload["batch_size"])
-                if energy["status"] == "measured" else None
-            ),
-            "unit": "J/inference",
-            "reason": energy["reason"],
-        },
-        "J/inference",
-    )
-    metrics.update(telemetry_metrics(report))
-    for name, unit in UNAVAILABLE_UNITS.items():
-        if name not in metrics:
-            metrics[name] = _metric(
-                {"status": "unavailable", "value": None, "unit": unit, "reason": "not_reported_by_core_benchmark"},
-                unit,
-            )
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValidationError(f"benchmark did not measure {field}")
     result = {
-        "schema_version": 5,
+        "schema_version": 6,
         "status": "passed",
         "benchmark_type": "model.synthetic",
         "tool": {"name": "pyneat.Model.benchmark", "version": actual_core},
@@ -300,10 +138,8 @@ def import_core_benchmark(
             "script_sha256": sha256_file(Path(manifest["script"]))[0],
         },
         "environment": environment,
-        "power_measurement": {"source": "Core benchmark report"},
-        "metrics": metrics,
-        "trials": [],
-        "core_report": report,
+        "benchmark_report": report,
+        "execution_plan": context.get("execution_plan"),
         "orchestration": {
             "provider": "github-actions-devkit-runner" if os.environ.get("GITHUB_ACTIONS") else "manual",
             "session_id": os.environ.get("GITHUB_RUN_ID"),

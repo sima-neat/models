@@ -34,7 +34,7 @@ def test_needs_no_output() -> None:
 
 def test_throughput_meets_its_minimum(performance, build_profile) -> None:
     assert build_profile == "modalix_int8"
-    assert performance["metrics"]["throughput_fps"]["value"] >= 100
+    assert performance["benchmark_report"]["fps"] >= 100
 '''
 
 
@@ -53,7 +53,7 @@ def model_dir(tmp_path: Path) -> Path:
 
 def performance_result(tmp_path: Path, fps: float) -> Path:
     path = tmp_path / "performance-result.json"
-    result = {"model": {"build_profile_id": "modalix_int8"}, "metrics": {"throughput_fps": {"value": fps}}}
+    result = {"model": {"build_profile_id": "modalix_int8"}, "benchmark_report": {"fps": fps}}
     path.write_text(json.dumps(result), encoding="utf-8")
     return path
 
@@ -236,9 +236,13 @@ def test_measured_shortfalls_hold_a_lower_is_better_metric_under_its_allowed_ris
 def test_measured_shortfalls_take_the_performance_component(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(PERFORMANCE_EXPECTED, encoding="utf-8")
-    result = {"model": {"build_profile_id": "modalix_int8", "component_id": "model"}}
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text(encoding="utf-8"))
+    result["model"].update(build_profile_id="modalix_int8", component_id="model")
 
-    assert measured_shortfalls(tmp_path, "performance", {**result, "metrics": {"throughput_fps": {"value": 90}}}) == []
-    assert measured_shortfalls(tmp_path, "performance", {**result, "metrics": {"throughput_fps": {"value": 89}}}) == [
+    def measured(fps: float) -> dict:
+        return {**result, "benchmark_report": {**result["benchmark_report"], "fps": fps}}
+
+    assert measured_shortfalls(tmp_path, "performance", measured(90)) == []
+    assert measured_shortfalls(tmp_path, "performance", measured(89)) == [
         "throughput_fps 89 is below 100 by more than 10%"
     ]

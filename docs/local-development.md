@@ -286,13 +286,14 @@ to the DevKit and run:
 
 ```bash
 ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
-  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/core-benchmark.json \
+  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/benchmark \
   2>&1 | tee /workspace/benchmark.log
 ```
 
 The same command with `python models/resnet_50/scripts/performance.py` works
 inside an activated PyNeat environment. Confirm a successful exit and check the
-report's `core_version`, `latency_ms`, `fps`, and power fields.
+saved `benchmark/benchmark-report.json` for `latency_ms`, `fps`, and the power
+fields, and `benchmark/benchmark-context.json` for `core_version`.
 Keep the report and log outside Git. Run each component of a multi-component
 model separately.
 

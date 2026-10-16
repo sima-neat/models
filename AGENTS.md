@@ -58,7 +58,7 @@ component for `throughput_fps`. Each measure test asserts
 `measured_shortfalls(model_dir, "<stage>", result) == []`; it fails when a
 value falls more than `ACCURACY_ALLOWED_DROP` (5%) or
 `PERFORMANCE_ALLOWED_DROP` (10%) in `model_tests.py` below its expected
-value. A performance test also asserts that `core_report.execution_plan` is a
+value. A performance test also asserts that `execution_plan` is a
 `sima.neat.execution_plan` version 1 plan with nodes and edges, the plan the
 model browser draws. These limits are shared by every model. When a reviewed
 change moves a published value, update `expected` to the new published result.
@@ -97,8 +97,8 @@ in the same commit.
 | what a stage depends on: a `model.yaml` field its key reads, or a shared file it runs | the key function or the `PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `stage_keys.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
 | the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
-| a new model's `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script): it writes the whole Core `BenchmarkReport` through its own `report_json`, so board telemetry and later Core fields reach the registry |
-| a Core benchmark reading the registry should publish | a row in `TELEMETRY_METRICS` in `core_benchmark.py`, its measurement name in `benchmark_publication.py`, its label in the browser's `metrics.js`, its row in `DETAIL_CARDS` in `model-view.js` when a Benchmark details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
+| a new model's `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script): it saves the whole Core `BenchmarkReport` with `BenchmarkReport.save()`, so board telemetry and later Core fields reach the registry unchanged |
+| a Core benchmark reading the registry should publish | a row with its Vulcan measurement name in `REPORT_METRICS` or `TELEMETRY_METRICS` in `benchmark_metrics.py` and the same table in the browser's `benchmark-adapters.js`, its label in the browser's `metrics.js`, its row in `DETAIL_CARDS` in `model-view.js` when a Benchmark details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
 | a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`; when none fits, add the entry there and follow [Model categorization taxonomy](docs/model-taxonomy.md) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
@@ -170,7 +170,7 @@ Conventions the code relies on:
   declared in `model.yaml`. Board stage scripts run without registry
   credentials.
 - Schemas under `schemas/` reject unknown fields. Published results keep their
-  `schema_version` (performance 5, accuracy 2, numerical fidelity 1) because
+  `schema_version` (performance 6, accuracy 2, numerical fidelity 1) because
   the artifact browser and `sima-cli` choose a renderer by it. Registry
   documents that only this repository's tooling reads (`model.yaml`, compile
   outputs, package manifests) carry no version; change their readers and

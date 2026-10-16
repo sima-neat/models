@@ -19,6 +19,7 @@ from .accuracy_result import (
     publish_accuracy_result,
 )
 from .benchmark_manifest import load_component_performance_config
+from .benchmark_metrics import measurement_name, registry_metrics
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
@@ -38,26 +39,6 @@ from .stage_keys import (
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 
-REGISTRY_AGGREGATION_ALIASES = {
-    "first": "raw",
-    "last": "raw",
-    "maximum": "max",
-    "minimum": "min",
-    "single": "raw",
-}
-REGISTRY_AGGREGATIONS = {
-    "raw",
-    "min",
-    "max",
-    "mean",
-    "median",
-    "p50",
-    "p90",
-    "p95",
-    "p99",
-    "sum",
-}
-CORE_THROUGHPUT_DEFINITION = ("model.inference_rate", "inferences/s")
 PERFORMANCE_RESULT_FILE = "performance-result.json"
 
 
@@ -143,9 +124,9 @@ def validate_benchmark_set(
             raise ValidationError(f"{path}: benchmark models_commit does not match the source revision")
         _require_compile_run_id(result, None)
         config = load_component_performance_config(root, model_id, component_id, build_profile_id)
+        measured = registry_metrics(result)
         for metric_name in config.get("required_metrics", ()):
-            metric = result["metrics"].get(metric_name)
-            if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
+            if metric_name not in measured:
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
     return {"count": len(validated), "results": validated}
@@ -179,74 +160,25 @@ def _require_git_sha(value: str) -> str:
 
 def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
     build_profile_id, component_id = _build_identity(result)
-    definitions = {
-        "latency_avg_ms": ("model.latency.avg", "lower"),
-        "latency_p50_ms": ("model.latency.p50", "lower"),
-        "latency_p95_ms": ("model.latency.p95", "lower"),
-        "latency_p99_ms": ("model.latency.p99", "lower"),
-        "throughput_fps": ("model.throughput", "higher"),
-        "avg_power_watts": ("board.power.avg", "lower"),
-        "energy_joules": ("board.energy", "lower"),
-        "energy_per_inference_joules": ("model.energy_per_inference", "lower"),
-        "model_load_ms": ("model.initialization.load", "lower"),
-        "time_to_first_inference_ms": ("model.initialization.time_to_first_inference", "lower"),
-        "mla_memory_peak_delta_mib": ("model.mla_memory.peak_delta", "lower"),
-        "peak_power_watts": ("board.power.peak", "lower"),
-        "avg_mla_power_watts": ("board.mla_power.avg", "lower"),
-        "peak_mla_power_watts": ("board.mla_power.peak", "lower"),
-        "avg_die_temperature_c": ("board.die_temperature.avg", "lower"),
-        "peak_die_temperature_c": ("board.die_temperature.peak", "lower"),
-        "avg_board_temperature_c": ("board.som_temperature.avg", "lower"),
-        "peak_board_temperature_c": ("board.som_temperature.peak", "lower"),
-        "avg_cpu_usage_pct": ("board.cpu_usage.avg", "lower"),
-        "peak_cpu_usage_pct": ("board.cpu_usage.peak", "lower"),
-        "avg_cpu_core_usage_pct": ("board.cpu_core_usage.avg", "lower"),
-        "peak_cpu_core_usage_pct": ("board.cpu_core_usage.peak", "lower"),
-        "mla_memory_avg_mib": ("model.mla_memory.avg", "lower"),
-        "mla_memory_peak_mib": ("model.mla_memory.peak", "lower"),
-        "avg_cma_memory_mib": ("board.cma_memory.avg", "lower"),
-        "peak_cma_memory_mib": ("board.cma_memory.peak", "lower"),
-        "avg_linux_memory_mib": ("board.linux_memory.avg", "lower"),
-        "peak_linux_memory_mib": ("board.linux_memory.peak", "lower"),
-    }
     dimensions = {
         "model_id": result["model"]["id"],
         "build_profile_id": build_profile_id,
         "component_id": component_id,
         "benchmark_type": result["benchmark_type"],
     }
-    values = []
-    for field, (name, direction) in definitions.items():
-        metric = result["metrics"].get(field)
-        if not isinstance(metric, dict) or metric.get("status") != "measured" or metric.get("value") is None:
-            continue
-        if field == "throughput_fps":
-            name, expected_unit = CORE_THROUGHPUT_DEFINITION
-            if metric["unit"] != expected_unit:
-                raise ValidationError(f"benchmark result requires {field} unit {expected_unit!r}")
-        result_aggregation = metric["aggregation"]
-        aggregation = REGISTRY_AGGREGATION_ALIASES.get(result_aggregation, result_aggregation)
-        if aggregation not in REGISTRY_AGGREGATIONS:
-            raise ValidationError(
-                f"benchmark metric {field} uses aggregation {result_aggregation!r}, "
-                "which cannot be represented by the Vulcan registry"
-            )
-        metric_dimensions = dict(dimensions)
-        if aggregation != result_aggregation:
-            metric_dimensions["result_aggregation"] = result_aggregation
-        values.append(
-            {
-                "measurement_key": f"{fingerprint}-{field}",
-                "name": name,
-                "unit": metric["unit"],
-                "value": metric["value"],
-                "direction": direction,
-                "sample_count": metric["sample_count"],
-                "aggregation": aggregation,
-                "dimensions": metric_dimensions,
-            }
-        )
-    return values
+    return [
+        {
+            "measurement_key": f"{fingerprint}-{field}",
+            "name": measurement_name(field),
+            "unit": metric["unit"],
+            "value": metric["value"],
+            "direction": metric["direction"],
+            "sample_count": metric["sample_count"],
+            "aggregation": metric["aggregation"],
+            "dimensions": dict(dimensions),
+        }
+        for field, metric in registry_metrics(result).items()
+    ]
 
 
 def publish_benchmark_result(
