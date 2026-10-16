@@ -375,12 +375,8 @@ and any `npy_files/`. Verification writes `deployment-manifest.json` beside
 the folder. `compile-outputs.json` points to `model/deployment-manifest.json`
 and hashes that index; it does not point to an archive.
 
-Qwen3.5-2B sets `build-on-demand: true`. Pushes validate and publish its
-metadata but never compile or measure it. For CI, manually dispatch
-**Vulcan Model Orchestrator** with `models=qwen3_5_2b` and
-`profiles=modalix_a16w4_4k`. The profile uses the expensive runner with twelve
-jobs, 4096 tokens, 448×448 input, and group size 128. A direct planner call requires
-`--include-on-demand --models qwen3_5_2b --profiles modalix_a16w4_4k`.
-No benchmark or accuracy stage runs unless declared.
+The Qwen3.5-2B profile uses twelve jobs, 4096 tokens, 448×448 input,
+and group size 128. See [on-demand builds](adding-a-model.md#on-demand-builds)
+for manual build and publication instructions.
 See [LLiMa model definitions](adding-a-model.md#llima-language-and-vision-language-models)
 for the source and package contracts.
