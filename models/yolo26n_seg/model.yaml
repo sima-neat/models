@@ -130,18 +130,16 @@ calibrations:
     sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
     size_bytes: 187510866
 build_profiles:
-- id: modalix_bf16
+- id: w16a16
   target: modalix
   components:
   - id: model
-    artifact_suffix: bf16
     parameters:
       precision: bf16
-- id: modalix_int8
+- id: w8a8
   target: modalix
   components:
   - id: model
-    artifact_suffix: int8_mse_h1024_bcr
     calibration: coco_images
     parameters:
       precision: int8
@@ -157,14 +155,14 @@ packages:
   default: true
   components: [model]
   resources: []
-  build_profiles: [modalix_bf16, modalix_int8]
+  build_profiles: [w16a16, w8a8]
   composition: default
   maturity: experimental
 fidelity: []
 accuracy:
 - id: coco_accuracy
   scope: {type: package, package: default}
-  build_profiles: [modalix_bf16, modalix_int8]
+  build_profiles: [w16a16, w8a8]
   engine: devkit_script
   status: ready
   result_component: model
@@ -189,7 +187,7 @@ published_metrics:
 benchmark:
 - id: modalix_latency
   scope: {type: component, component: model}
-  build_profiles: [modalix_bf16, modalix_int8]
+  build_profiles: [w16a16, w8a8]
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

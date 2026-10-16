@@ -23,7 +23,7 @@ source model on a fixed sample of a registered dataset:
 fidelity:
   - id: logits_fidelity
     scope: {type: package, package: default}
-    build_profiles: [modalix_bf16, modalix_int8]
+    build_profiles: [w16a16, w8a8]
     status: diagnostic
     result_component: model
     dataset: {id: imagenet-2012, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
@@ -72,7 +72,7 @@ PyNeat. Declare it as an `accuracy` entry with `engine: devkit_script`:
 accuracy:
   - id: coco_accuracy
     scope: {type: package, package: default}
-    build_profiles: [modalix_int8_bf16]
+    build_profiles: [w8a8_w16a16]
     engine: devkit_script
     status: ready
     result_component: transformer

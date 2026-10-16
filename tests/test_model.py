@@ -688,10 +688,10 @@ def test_catalog_model_is_valid() -> None:
         "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     )
     profiles = {profile["id"]: profile for profile in model["build_profiles"]}
-    assert set(profiles) == {"modalix_bf16", "modalix_int8"}
-    assert profiles["modalix_bf16"]["components"][0]["parameters"]["precision"] == "bf16"
-    assert profiles["modalix_int8"]["components"][0]["parameters"]["precision"] == "int8"
-    assert profiles["modalix_int8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert set(profiles) == {"w16a16", "w8a8"}
+    assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "bf16"
+    assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "int8"
+    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
         "variant": "mini",
@@ -729,18 +729,3 @@ def test_category_fields_are_required() -> None:
         model.pop(field)
     with pytest.raises(ValidationError, match="'model_type' is a required property"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
-
-
-@pytest.mark.parametrize("suffix", ["backbone_int8", "transformer_bf16", "model_preview"])
-def test_component_binding_accepts_artifact_suffix(suffix: str) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
-
-
-@pytest.mark.parametrize("suffix", [None, "", "../model", "Backbone", "backbone-int8", "model.tar.gz", "model\n"])
-def test_component_binding_rejects_invalid_artifact_suffix(suffix) -> None:
-    model = load_model(FIXTURES / "fixture_model")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = suffix
-    with pytest.raises(ValidationError):
-        validate_model(FIXTURES / "fixture_model", model, SCHEMA)

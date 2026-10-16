@@ -208,14 +208,14 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
-    assert compile_module._parameters("modalix_bf16") == {"precision": "bf16"}
-    assert compile_module._parameters("modalix_int8") == {
+    assert compile_module._parameters("w16a16") == {"precision": "bf16"}
+    assert compile_module._parameters("w8a8") == {
         "precision": "int8",
         "calibration_bins": 1024,
         "calibration_samples": 50,
     }
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("modalix_fp32")
+        compile_module._parameters("w32a32")
 
 
 @pytest.fixture
@@ -240,10 +240,7 @@ def test_model_declares_the_cut_interface_and_both_builds(
     assert [item["name"] for item in entrypoint["outputs"]] == surgery.OUTPUTS
     assert component["surgery"]["entrypoint"] == "scripts/surgery.py:prepare_model"
     assert component["recipe"] == "scripts/compile.py"
-    assert {profile["id"]: profile["components"][0]["artifact_suffix"] for profile in model["build_profiles"]} == {
-        "modalix_bf16": "bf16",
-        "modalix_int8": "int8_mse_h1024_bcr",
-    }
+    assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",

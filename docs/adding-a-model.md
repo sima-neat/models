@@ -140,18 +140,25 @@ development](datasets.md).
 ## 6. Define build profiles and compile invocations
 
 A build profile is one product-wide target configuration, such as
-`modalix_int8`. Bind every participating component and put its compiler
+`w8a8`. Bind every participating component and put its compiler
 parameters on the binding:
 
 ```yaml
 build_profiles:
-  - id: modalix_int8
+  - id: w8a8
     target: modalix
     components:
       - id: model
         calibration: default
         parameters: {precision: int8}
 ```
+
+Name the profile by its variant ID: the precision token of each component from
+[`naming-conventions.yaml`](../naming-conventions.yaml), in component order,
+with a repeated token written once, such as `w8a8`, `w16a16`, or
+`w8a8_w16a16`. Each compiled MPK carries the model and variant ID, such as
+`yolo26n_w8a8_mpk.tar.gz`. See [Build profiles](metadata-schema.md#build-profiles)
+for the full rules.
 
 By default each supported binding is its own compile invocation, named after
 its component. Components that share preparation or intermediate data compile
@@ -183,8 +190,10 @@ runner passes `--dataset` when the binding selects a ready calibration and
 `--fidelity-dataset` when a `fidelity` entry applies. The recipe:
 
 - reads its build profile from `model.yaml`;
-- writes exactly one `*_mpk.tar.gz` under `<output-dir>/<component-id>/` for
-  each component of the invocation;
+- writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
+  `<output-dir>/<component-id>/` for each component of the invocation, by
+  passing `<model-id>_<profile-id>` to the compiler as the model name; a
+  profile with several components adds `_<component-id>` to both;
 - writes `fidelity.json` beside the MPK of the fidelity entry's
   `result_component` when a `fidelity` entry applies;
 - for a grouped invocation, also writes `<output-dir>/compile-outputs.json`
@@ -340,16 +349,16 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    modalix_int8:
+    w8a8:
       top1_accuracy: 0.7764
       top5_accuracy: 0.9356
 performance:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       model:
         throughput_fps: 578.6
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 1491.4
 ```

@@ -179,7 +179,7 @@ bindings say how each component is built under that profile:
 
 ```yaml
 build_profiles:
-  - id: modalix_int8
+  - id: w8a8
     target: modalix
     components:
       - id: encoder
@@ -189,6 +189,18 @@ build_profiles:
       - id: decoder
         parameters: {precision: int8}
 ```
+
+The profile ID is the variant ID users select. Compose it from the precision
+tokens in [`naming-conventions.yaml`](../naming-conventions.yaml): one token
+per component in component order, with a repeated token written once. Both
+components above are W8A8, so the ID is `w8a8`; an INT8 backbone followed by a
+BF16 transformer is `w8a8_w16a16`. Leave the target out of the ID. If two
+profiles of one model would share an ID, append the first vocabulary tokens
+that tell them apart. The Model Browser shows variant IDs in uppercase,
+while `sima-cli models download --variant` takes the lowercase ID.
+
+`parameters.precision` stays the compiler's value (`int8` or `bf16`); the
+variant ID only names the result.
 
 This avoids a Cartesian product of unrelated component configurations. Each
 supported binding is its own compile invocation, named after its component,
@@ -221,29 +233,15 @@ is not unsupported.
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
 
-A component binding may also declare `artifact_suffix` outside `parameters`.
-It uses the identifier syntax and controls the browser download filename:
-`<model_id>_<artifact_suffix>_mpk.tar.gz`. Include the component name in the suffix
-when useful. For example, RF-DETR uses `backbone_int8_mse_bcr` and `transformer_bf16` under
-one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
-precision. The complete download basename must fit within 255 characters.
-Omitting or removing the suffix preserves the original download filename.
-
-Suffix changes update catalog metadata while retaining existing compiled
-artifacts. The suffix is not a compile key input, so changing it reruns no
-stage and renames no stored object or MPK content.
-
-Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
-from the shared vocabulary, for example `int8_mse_tmio` or
-`int8_mse_h1024_bci_l2e`. Prefix the component ID for multi-component models.
-The model ID and `_mpk.tar.gz` are added by the download path. Keep the target,
-versions, calibration sample counts, dataset identities, and seeds out of the
-suffix. Add a token to the vocabulary when a new option needs a name.
-
-This vocabulary is an author reference, with no token parser or automatic name
-generation. Write `artifact_suffix` explicitly and check its meaning against the
-recipe. It does not select compiler settings or replace existing parameters;
-`compile.py` continues to own the AFE calls.
+Each compiled MPK is named after its model and variant:
+`<model_id>_<profile_id>_mpk.tar.gz`, or
+`<model_id>_<profile_id>_<component_id>_mpk.tar.gz` when the profile has
+several components. `scripts/compile.py` passes the name without
+`_mpk.tar.gz` to the compiler as the model name, and publication rejects an
+MPK with any other name. For example, RF-DETR's `w8a8_w16a16` profile
+produces `rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz` and
+`rf_detr_nano_w8a8_w16a16_transformer_mpk.tar.gz`. The stored MPK, the
+package, and the browser and CLI downloads all use this name.
 
 ## Compositions and packages
 
@@ -259,8 +257,7 @@ compositions:
 ```
 
 A multi-component product uses `type: declarative` and declares its graph
-inline. Packaging writes the graph into the package as
-`composition/composition.yaml`, validated against
+inline. Validation checks the graph against
 [`composition.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/composition.schema.json):
 
 ```yaml
@@ -287,17 +284,20 @@ packages:
     default: true
     components: [encoder, decoder]
     resources: [tokenizer]
-    build_profiles: [modalix_int8]
+    build_profiles: [w8a8]
     composition: pipeline
 ```
 
 Exactly one package is the default. Validation ensures each package includes
 the components required by its composition and declares only profiles that
-build all of them in one compile invocation. Trusted assembly preserves each MPK intact inside one
-deterministic bundle with a manifest, the selected resources, and the
-declarative composition document when one is used.
-The embedded manifest is validated against
-[`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json).
+build all of them in one compile invocation. Trusted assembly keeps each MPK
+intact. A package with one component and no resources is that component's
+MPK, `<model_id>_<profile_id>_mpk.tar.gz`. Any other package is a
+deterministic `<model_id>_<profile_id>_<package_id>.zip` holding the MPKs at
+its top level and each resource at its `install_path`. Assembly records the
+package manifest in `package-result.json`, validated against
+[`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
+the manifest is not shipped inside the package.
 
 A multi-component model can add `pipeline` so the model browser shows the
 order its components run in. List each component once, in run order, and
@@ -376,7 +376,7 @@ covered component:
 benchmark:
   - id: encoder_latency
     scope: {type: component, component: encoder}
-    build_profiles: [modalix_int8]
+    build_profiles: [w8a8]
     status: provisional
     metrics: [latency_avg_ms, throughput_fps]
 ```

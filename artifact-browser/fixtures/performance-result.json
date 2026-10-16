@@ -10,11 +10,11 @@
   "identity": {
     "algorithm": "sha256",
     "canonicalization_version": 5,
-    "fingerprint": "e7670604cef5cf1abe65baf66d249668d1f8315609b706e6050401ae0ebf402d"
+    "fingerprint": "1f09faf7ad8c11d355ede07a6862c1180bc6768bb743a8936f9b0124aee25a90"
   },
   "model": {
     "id": "resnet_50",
-    "build_profile_id": "modalix_int8",
+    "build_profile_id": "w8a8",
     "component_id": "model",
     "path": "resnet_50_mpk.tar.gz",
     "sha256": "44b79e3515f335392e66506948266ec18c7db1bae089dee36d53b25a62a1bd30",

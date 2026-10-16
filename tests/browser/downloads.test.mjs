@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {variantDownloads, prepareDownloads, startDownloads} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
+const {variantDownloads, prepareDownloads, startDownloads, packageFormat} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
@@ -98,60 +98,8 @@ test('shows the actual archive filename instead of the logical artifact name', a
 });
 
 
-test('catalog suffixes name both component downloads and survive URL refresh', async () => {
-  const catalog = {model_id: 'rf_detr_small', builds: [
-    {run_id: backbone.id, build_profile_id: 'mixed', component_id: 'backbone', artifact_suffix: 'backbone_int8'},
-    {run_id: run.id, build_profile_id: 'mixed', component_id: 'transformer', artifact_suffix: 'transformer_bf16'},
-  ]};
-  const requests = [];
-  const api = async path => {
-    if (path.includes('/repositories/')) return {runs: [run, backbone]};
-    if (!path.includes('/artifacts/')) return summary(run); // Run metadata has no suffix.
-    requests.push(path);
-    return {artifact: {s3_key: 'old/original_mpk.tar.gz', download_url: 'https://example.com/existing'}};
-  };
-  const items = await variantDownloads(run, api, catalog);
-  const ready = await prepareDownloads(items, api);
-  assert.deepEqual(ready.map(item => item.filename), [
-    'rf_detr_small_backbone_int8_mpk.tar.gz', 'rf_detr_small_transformer_bf16_mpk.tar.gz',
-  ]);
-  const refreshed = await prepareDownloads(ready, api);
-  assert.deepEqual(refreshed, ready);
-  assert.equal(requests.length, 4);
-  requests.forEach((path, index) => {
-    const url = new URL(path, 'https://registry.invalid');
-    assert.equal(url.searchParams.get('download_filename'), ready[index % 2].filename);
-    assert.ok(url.pathname.includes(ready[index % 2].runId));
-  });
-});
-
-test('names use the current catalog context without mutating retained runs', async () => {
-  const api = async path => path.includes('/repositories/') ? {runs: [run]} : summary(run);
-  const catalog = suffix => ({model_id: 'rf_detr_small', builds: [{
-    run_id: run.id, build_profile_id: 'mixed', component_id: 'transformer', artifact_suffix: suffix,
-  }]});
-  const first = await variantDownloads(run, api, catalog('transformer_bf16'));
-  const second = await variantDownloads(run, api, catalog('transformer_preview'));
-  assert.equal(first[0].downloadFilename, 'rf_detr_small_transformer_bf16_mpk.tar.gz');
-  assert.equal(second[0].downloadFilename, 'rf_detr_small_transformer_preview_mpk.tar.gz');
-  assert.equal(run.metadata.artifact_suffix, undefined);
-  const removed = await variantDownloads(run, api, catalog(undefined));
-  const history = await variantDownloads(run, api);
-  for (const items of [removed, history]) {
-    await prepareDownloads(items, async path => {
-      assert.ok(!path.includes('download_filename'));
-      return {artifact: {download_url: 'https://example.com/original_mpk.tar.gz'}};
-    });
-  }
-});
-
-test('catalog suffixes never attach to another run, model, component, or profile', async () => {
-  const api = async path => path.includes('/repositories/') ? {runs: [run]} : summary(run);
-  const build = {run_id: run.id, component_id: 'transformer', build_profile_id: 'mixed', artifact_suffix: 'wrong'};
-  for (const override of [{run_id: 'other'}, {component_id: 'backbone'}, {build_profile_id: 'other'}]) {
-    const [item] = await variantDownloads(run, api, {model_id: 'rf_detr_small', builds: [{...build, ...override}]});
-    assert.equal(item.downloadFilename, null);
-  }
-  const [item] = await variantDownloads(run, api, {model_id: 'other', builds: [build]});
-  assert.equal(item.downloadFilename, null);
+test('a single-component package is an MPK and any other package is a ZIP', () => {
+  assert.equal(packageFormat({media_type: 'application/gzip'}), 'MPK');
+  assert.equal(packageFormat({}, 'yolo26n_w8a8_mpk.tar.gz'), 'MPK');
+  assert.equal(packageFormat({media_type: 'application/zip'}, 'rf_detr_nano_w8a8_w16a16_default.zip'), 'ZIP');
 });

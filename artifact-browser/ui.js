@@ -40,7 +40,20 @@ export function shortSha(sha = "") {
 
 // Grouping treats a run without a build profile as its own "default" variant; never show that as a profile.
 export function profileLabel(run) {
-  return run.metadata?.build_profile_id || run.metadata?.variant_id || "Build identity unavailable";
+  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  return profile ? variantLabel(profile) : "Build identity unavailable";
+}
+
+// Variant IDs are lowercase identifiers such as w8a8_w16a16; readers see them in uppercase.
+export function variantLabel(profile) {
+  return String(profile).toUpperCase();
+}
+
+// Compile parameters keep the compiler's precision names; readers see the weight/activation widths.
+const PRECISION_LABELS = { int8: "W8A8", bf16: "W16A16" };
+
+export function precisionLabel(precision) {
+  return PRECISION_LABELS[precision] || String(precision).toUpperCase();
 }
 
 // Every expandable area is the same full-width row: its name on the left and a chevron on the right

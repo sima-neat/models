@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 from model_registry import cli
 from model_registry.cli import main
-from model_registry.documentation import BUILDING_APPLICATIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,38 +65,6 @@ def test_validate_models_checks_every_manifest(capsys) -> None:
     assert '"valid": true' in output
 
 
-@pytest.mark.parametrize("command", ["validate", "validate-models"])
-@pytest.mark.parametrize("filename_length", [255, 256])
-def test_validation_checks_complete_filename_length(command, filename_length, tmp_path: Path, capsys) -> None:
-    model_dir = tmp_path / "models" / "fixture_model"
-    shutil.copytree(ROOT / "tests" / "fixtures" / "fixture_model", model_dir)
-    for directory in ("schemas", "taxonomies"):
-        shutil.copytree(ROOT / directory, tmp_path / directory)
-    manifest = model_dir / "model.yaml"
-    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    suffix_length = filename_length - len(f"{model['id']}__mpk.tar.gz")
-    model["build_profiles"][0]["components"][0]["artifact_suffix"] = "a" * suffix_length
-    manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
-    if command == "validate-models":
-        overview = " ".join(f"word{index}" for index in range(50))
-        sections = [
-            ("Overview", overview), ("Inputs and outputs", "Interface."),
-            ("Building applications", BUILDING_APPLICATIONS),
-        ]
-        (model_dir / "README.md").write_text(
-            f"# {model['display_name']}\n\n"
-            f"![{model['display_name']} model hero](hero.png)\n\n"
-            + "\n\n".join(f"## {heading}\n\n{body}" for heading, body in sections)
-            + "\n",
-            encoding="utf-8",
-        )
-    args = [str(model_dir)] if command == "validate" else ["--repository", str(tmp_path)]
-
-    assert main([command, *args]) == (0 if filename_length == 255 else 2)
-    if filename_length == 256:
-        assert "filename limit" in capsys.readouterr().err
-
-
 def test_fetch_reports_file_set_root(monkeypatch, tmp_path: Path, capsys) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -134,7 +99,7 @@ def test_fetch_calibration_resolves_registered_dataset(monkeypatch, tmp_path: Pa
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
             "--build-profile",
-            "modalix_int8",
+            "w8a8",
             "--component",
             "model",
             "--json",
@@ -158,7 +123,7 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
             "fetch-calibration",
             str(ROOT / "models" / "resnet_50"),
             "--build-profile",
-            "modalix_bf16",
+            "w16a16",
             "--component",
             "model",
             "--json",
@@ -172,9 +137,9 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
 @pytest.mark.parametrize(
     ("model_id", "profile", "component"),
     [
-        ("resnet_50", "modalix_int8", "model"),
-        ("resnet_50", "modalix_bf16", "model"),
-        ("rf_detr_small", "modalix_int8_bf16", "backbone"),
+        ("resnet_50", "w8a8", "model"),
+        ("resnet_50", "w16a16", "model"),
+        ("rf_detr_small", "w8a8_w16a16", "backbone"),
     ],
 )
 def test_fetch_fidelity_dataset_resolves_declared_fidelity(
@@ -213,7 +178,7 @@ def test_fetch_fidelity_dataset_skips_model_without_fidelity(monkeypatch, capsys
             "fetch-fidelity-dataset",
             str(ROOT / "models" / "ssd_mobilenet_v1"),
             "--build-profile",
-            "modalix_bf16",
+            "w16a16",
             "--component",
             "model",
             "--json",
@@ -268,7 +233,7 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
 
 
 def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
-    profile = "modalix_int8"
+    profile = "w8a8"
     result = main(
         [
             "matrix",
@@ -289,13 +254,13 @@ def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
 def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -> None:
     components = ("backbone", "transformer")
     for component_id in components:
-        (tmp_path / "rf_detr_small" / "modalix_bf16" / component_id).mkdir(parents=True)
+        (tmp_path / "rf_detr_small" / "w16a16" / component_id).mkdir(parents=True)
     publication = {
         "count": 2,
         "runs": [
             {
                 "model_id": "rf_detr_small",
-                "build_profile_id": "modalix_bf16",
+                "build_profile_id": "w16a16",
                 "component_id": component_id,
                 "run_id": f"run-{component_id}",
             }
@@ -322,7 +287,7 @@ def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -
     assert cli._publish(args) == 0
 
     for component_id in components:
-        path = tmp_path / "rf_detr_small" / "modalix_bf16" / component_id / "registry-publication.json"
+        path = tmp_path / "rf_detr_small" / "w16a16" / component_id / "registry-publication.json"
         receipt = json.loads(path.read_text(encoding="utf-8"))
         assert receipt["count"] == 1
         assert receipt["runs"][0]["component_id"] == component_id

@@ -203,8 +203,8 @@ def test_merge_requires_every_component_key_of_a_profile() -> None:
     assert [build["run_id"] for build in merged["models"][0]["builds"]] == ["develop", "develop"]
 
 
-# Stage planning runs against a copy of resnet_50: modalix_bf16 declares only performance,
-# modalix_int8 declares performance and DevKit accuracy over the default package.
+# Stage planning runs against a copy of resnet_50: w16a16 declares only performance,
+# w8a8 declares performance and DevKit accuracy over the default package.
 PLAN_MODEL = "resnet_50"
 BRANCH = "feat/stages"
 READ_API = "https://reader.example.invalid"
@@ -325,8 +325,8 @@ def _edit(repository: Path, relative: str) -> None:
 def test_stage_repository_declares_both_stage_shapes(stage_repository: Path) -> None:
     entries = build_matrix(load_models(stage_repository), [PLAN_MODEL])["include"]
     assert [(entry["build_profile_id"], applicable_stages(entry)) for entry in entries] == [
-        ("modalix_bf16", ["performance"]),
-        ("modalix_int8", ["performance", "accuracy"]),
+        ("w16a16", ["performance"]),
+        ("w8a8", ["performance", "accuracy"]),
     ]
 
 
@@ -340,7 +340,7 @@ def test_only_compile_inputs_change_the_compile_key(
     def keys() -> list[str]:
         return [
             compile_key(stage_repository, PLAN_MODEL, profile, "model", COMPILER_VERSION)
-            for profile in ("modalix_bf16", "modalix_int8")
+            for profile in ("w16a16", "w8a8")
         ]
 
     before = keys()
@@ -372,12 +372,12 @@ def test_resolve_requests_carry_each_stage_fingerprint_version(stage_repository:
         ("model_benchmark", "2"),
     ]
     builds = {build["build_profile_id"]: build for build in document["models"][0]["builds"]}
-    assert builds["modalix_bf16"]["validation_fingerprint"] is None
+    assert builds["w16a16"]["validation_fingerprint"] is None
     assert all(
         any(f"fingerprint={build['benchmark_fingerprint']}&" in url for url in registry.urls)
         for build in builds.values()
     )
-    assert any(f"fingerprint={builds['modalix_int8']['validation_fingerprint']}&" in url for url in registry.urls)
+    assert any(f"fingerprint={builds['w8a8']['validation_fingerprint']}&" in url for url in registry.urls)
 
 
 def test_compile_key_change_compiles_with_every_applicable_stage(stage_repository: Path) -> None:
@@ -388,8 +388,8 @@ def test_compile_key_change_compiles_with_every_applicable_stage(stage_repositor
     plan = _plan(stage_repository, registry)
 
     assert _selected(plan, "compile") == [
-        ("modalix_bf16", ["performance"], ["model"]),
-        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+        ("w16a16", ["performance"], ["model"]),
+        ("w8a8", ["performance", "accuracy"], ["model"]),
     ]
     assert plan["measure"]["include"] == []
     assert all(len(entry["build_fingerprint"]) == 64 for entry in plan["compile"]["include"])
@@ -406,8 +406,8 @@ def test_performance_script_change_measures_performance_only(stage_repository: P
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "measure") == [
-        ("modalix_bf16", ["performance"], ["model"]),
-        ("modalix_int8", ["performance"], ["model"]),
+        ("w16a16", ["performance"], ["model"]),
+        ("w8a8", ["performance"], ["model"]),
     ]
 
 
@@ -419,7 +419,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
 
 
 @pytest.mark.parametrize(
@@ -433,7 +433,7 @@ def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository:
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
 
 
 def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:
@@ -443,7 +443,7 @@ def test_shared_compile_runner_change_compiles_every_build(stage_repository: Pat
 
     plan = _plan(stage_repository, registry)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
 
 
 @pytest.mark.parametrize("relative", BOARD_STAGE_TOOLING)
@@ -456,8 +456,8 @@ def test_board_stage_tooling_change_measures_both_stages(stage_repository: Path,
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "measure") == [
-        ("modalix_bf16", ["performance"], ["model"]),
-        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+        ("w16a16", ["performance"], ["model"]),
+        ("w8a8", ["performance", "accuracy"], ["model"]),
     ]
 
 
@@ -465,12 +465,12 @@ def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path
     document = _published_catalog(stage_repository)
     runs = _published_runs(document)
     model = document["models"][0]
-    int8 = next(build for build in model["builds"] if build["build_profile_id"] == "modalix_int8")
+    int8 = next(build for build in model["builds"] if build["build_profile_id"] == "w8a8")
     # A cancelled run leaves its invocation in pending_builds rather than builds.
     model["builds"].remove(int8)
     document["pending_builds"] = [{
         "model_id": PLAN_MODEL,
-        "build_profile_id": "modalix_int8",
+        "build_profile_id": "w8a8",
         "compile_invocation_id": "model",
         "component_ids": ["model"],
         "compile_fingerprint": int8["compile_fingerprint"],
@@ -479,7 +479,7 @@ def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path
 
     plan = _plan(stage_repository, registry)
 
-    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
     assert plan["measure"]["include"] == []
 
 
@@ -489,7 +489,7 @@ def test_force_rebuild_compiles_published_invocations(stage_repository: Path) ->
 
     plan = _plan(stage_repository, registry, force_rebuild_all=True)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
     assert plan["measure"]["include"] == []
 
 
@@ -502,7 +502,7 @@ def test_branch_without_catalog_plans_against_base_branch_catalog(stage_reposito
 
     assert plan["catalog_found"] is True
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("modalix_int8", ["accuracy"], [])]
+    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
     assert _catalog_reads(registry) == [BRANCH, "develop"]
     assert all(url.startswith(f"{READ_API}/v1/repositories/sima-neat/models/") for url in registry.urls)
 
@@ -511,7 +511,7 @@ def test_feature_branch_reuses_its_own_and_base_builds(stage_repository: Path) -
     document = _published_catalog(stage_repository)
     # The branch compiled bf16, then merged a develop that recompiled int8.
     registry = FakeRegistry(
-        {BRANCH: _stale(document, "modalix_int8"), "develop": _stale(document, "modalix_bf16")},
+        {BRANCH: _stale(document, "w8a8"), "develop": _stale(document, "w16a16")},
         _published_runs(document),
     )
 
@@ -525,24 +525,24 @@ def test_feature_branch_reuses_its_own_and_base_builds(stage_repository: Path) -
 def test_long_lived_branch_reuses_only_its_own_catalog(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry(
-        {"develop": _stale(document, "modalix_int8"), "release-1.0": document}, _published_runs(document)
+        {"develop": _stale(document, "w8a8"), "release-1.0": document}, _published_runs(document)
     )
 
     plan = _plan(stage_repository, registry, branch="develop", base_branches=["release-1.0"])
 
-    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
     assert _catalog_reads(registry) == ["develop"]
 
 
 def test_long_lived_branch_first_push_inherits_from_the_closest_base(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry(
-        {"develop": _stale(document, "modalix_int8"), "integration/vision": document}, _published_runs(document)
+        {"develop": _stale(document, "w8a8"), "integration/vision": document}, _published_runs(document)
     )
 
     plan = _plan(stage_repository, registry, branch="release-1.0", base_branches=["develop", "integration/vision"])
 
-    assert _selected(plan, "compile") == [("modalix_int8", ["performance", "accuracy"], ["model"])]
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
     assert _catalog_reads(registry) == ["release-1.0", "develop"]
 
 
@@ -553,7 +553,7 @@ def test_no_catalog_compiles_everything(stage_repository: Path, base_branches: l
     plan = _plan(stage_repository, registry, base_branches=base_branches)
 
     assert plan["catalog_found"] is False
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
     assert plan["measure"]["include"] == []
 
 
@@ -562,8 +562,8 @@ def test_offline_plan_compiles_everything(stage_repository: Path) -> None:
 
     assert plan["catalog_found"] is False
     assert _selected(plan, "compile") == [
-        ("modalix_bf16", ["performance"], ["model"]),
-        ("modalix_int8", ["performance", "accuracy"], ["model"]),
+        ("w16a16", ["performance"], ["model"]),
+        ("w8a8", ["performance", "accuracy"], ["model"]),
     ]
 
 

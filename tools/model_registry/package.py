@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import shutil
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import yaml
 from jsonschema import Draft202012Validator
 
 from .errors import ValidationError
 from .fetch import Fetcher, sha256_file
-from .model import composition_document, load_and_validate_model
+from .model import load_and_validate_model
 from .source import source_identity
 
 
@@ -33,10 +32,6 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
     info.external_attr = 0o100644 << 16
     info.compress_type = zipfile.ZIP_STORED
     return info
-
-
-def _add_bytes(archive: zipfile.ZipFile, name: str, payload: bytes) -> None:
-    archive.writestr(_zip_info(name), payload)
 
 
 def _add_file(archive: zipfile.ZipFile, name: str, path: Path) -> None:
@@ -109,7 +104,7 @@ def assemble_package(
         digest, size = sha256_file(component_archive)
         if digest != result.get("sha256") or size != result.get("size_bytes"):
             raise ValidationError(f"{result_dir}: component archive does not match compile-result.json")
-        package_path = f"components/{component_id}/{archive_name}"
+        package_path = archive_name
         component_files.append((package_path, component_archive))
         publication_path = result_dir / "registry-publication.json"
         compile_run_id = None
@@ -131,23 +126,19 @@ def assemble_package(
         )
 
     composition = compositions[package["composition"]]
-    composition_files: list[tuple[str, bytes]] = []
     if composition["type"] == "single":
         packaged_composition = composition
     else:
-        composition_path = "composition/composition.yaml"
-        composition_bytes = yaml.safe_dump(composition_document(composition), sort_keys=False).encode()
-        composition_files.append((composition_path, composition_bytes))
-        packaged_composition = {
-            "id": composition["id"],
-            "type": composition["type"],
-            "path": composition_path,
-        }
+        packaged_composition = {"id": composition["id"], "type": composition["type"]}
 
     fetcher = Fetcher(resource_cache_dir)
     resource_entries: list[dict[str, Any]] = []
     resource_files: list[tuple[str, Path]] = []
-    occupied_paths = {name for name, _ in (*component_files, *composition_files)} | {"manifest.json"}
+    occupied_paths: set[str] = set()
+    for package_path, _ in component_files:
+        if package_path in occupied_paths:
+            raise ValidationError(f"package path is declared more than once: {package_path}")
+        occupied_paths.add(package_path)
     for resource_id in sorted(package["resources"]):
         resource = resources[resource_id]
         source = resource["source"]
@@ -181,19 +172,11 @@ def assemble_package(
             resource_entry["license"] = resource["license"]
         resource_entries.append(resource_entry)
 
-    installed_files = sorted(
-        [
-            *(
-                {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
-                for name, path in (*component_files, *resource_files)
-            ),
-            *(
-                {"path": name, "sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
-                for name, payload in composition_files
-            ),
-        ],
-        key=lambda item: item["path"],
-    )
+    packaged_files = sorted((*component_files, *resource_files))
+    installed_files = [
+        {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
+        for name, path in packaged_files
+    ]
     manifest = {
         "model_id": model_id,
         "display_name": model["display_name"],
@@ -216,20 +199,22 @@ def assemble_package(
         first = errors[0]
         location = ".".join(str(part) for part in first.absolute_path) or "manifest"
         raise ValidationError(f"package manifest {location}: {first.message}")
-    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
     package_dir = output_root / model_id / build_profile_id / "packages" / package_id
     package_dir.mkdir(parents=True, exist_ok=True)
-    bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
+    # A lone MPK is the package itself; anything more ships as a flat ZIP of the installed files.
+    if len(packaged_files) == 1:
+        bundle_name = packaged_files[0][0]
+    else:
+        bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
     bundle_path = package_dir / bundle_name
     temporary = package_dir / f".{bundle_name}.partial"
-    prefix = f"{model_id}/"
     try:
-        with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
-            _add_bytes(archive, f"{prefix}manifest.json", manifest_bytes)
-            for name, path in sorted((*component_files, *resource_files)):
-                _add_file(archive, f"{prefix}{name}", path)
-            for name, payload in composition_files:
-                _add_bytes(archive, f"{prefix}{name}", payload)
+        if len(packaged_files) == 1:
+            shutil.copyfile(packaged_files[0][1], temporary)
+        else:
+            with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
+                for name, path in packaged_files:
+                    _add_file(archive, name, path)
         temporary.replace(bundle_path)
     finally:
         temporary.unlink(missing_ok=True)

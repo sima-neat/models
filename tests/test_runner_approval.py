@@ -20,7 +20,7 @@ def _matrix(runner_class: str = "default") -> dict:
                 "recipe": "compile.py",
                 "requested_runner_class": runner_class,
                 "target": "modalix",
-                "build_profile_id": "modalix_int8_1536",
+                "build_profile_id": "w8a8_1536",
             }
         ]
     }
@@ -39,7 +39,7 @@ def _approval(maximum: str = "expensive", **overrides: str) -> dict:
         "repository": "sima-neat/models",
         "model_id": "efficientdet_d3",
         "component_id": "model",
-        "build_profile_id": "modalix_int8_1536",
+        "build_profile_id": "w8a8_1536",
         "environment": "staging",
         "maximum_runner_class": maximum,
         "approved_by": "platform-team",
@@ -81,7 +81,7 @@ def test_matching_approval_authorizes_only_the_requested_class() -> None:
     entry = _authorize(_matrix("expensive"), _spec(_approval("most-expensive")))["include"][0]
     assert entry["runner_class"] == "expensive"
     assert entry["runner_approval_id"] == (
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging"
+        "sima-neat/models:efficientdet_d3:w8a8_1536:model:staging"
     )
 
 
@@ -100,11 +100,11 @@ def test_grouped_elevated_runner_requires_and_records_every_component_approval()
     )["include"][0]
 
     assert entry["runner_approval_id"] == (
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging"
+        "sima-neat/models:efficientdet_d3:w8a8_1536:model:staging"
     )
     assert entry["runner_approval_ids"] == [
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:model:staging",
-        "sima-neat/models:efficientdet_d3:modalix_int8_1536:postprocessor:staging",
+        "sima-neat/models:efficientdet_d3:w8a8_1536:model:staging",
+        "sima-neat/models:efficientdet_d3:w8a8_1536:postprocessor:staging",
     ]
 
 

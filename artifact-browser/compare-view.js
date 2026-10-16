@@ -1,7 +1,7 @@
 // The Compare page: up to three variant builds of the branch catalog side by side.
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
-import { escapeHtml } from "./ui.js";
+import { escapeHtml, variantLabel } from "./ui.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
 import { anchorBuild, compilerFilteredBuilds, loadRunDetail, loadVariant, profileGroups } from "./api.js";
 import { compareModels } from "./catalog-view.js";
@@ -44,7 +44,7 @@ function catalogVariants() {
 function picker(index, options) {
   const pick = state.comparePicks[index];
   const choices = options.map((option) => (
-    `<option value="${escapeHtml(option.key)}"${option.key === pick ? " selected" : ""}>${escapeHtml(`${option.model.display_name || option.model.model_id} · ${option.profile}`)}</option>`
+    `<option value="${escapeHtml(option.key)}"${option.key === pick ? " selected" : ""}>${escapeHtml(`${option.model.display_name || option.model.model_id} · ${variantLabel(option.profile)}`)}</option>`
   )).join("");
   return `<label><span>Build ${index + 1}</span><select data-pick="${index}"><option value="">Choose a build</option>${choices}</select></label>`;
 }
@@ -108,7 +108,7 @@ function comparisonTable(columns) {
     return row(label, columns.map((column) => performanceCell(column, key, best)));
   }).join("");
   return `<div class="compare-table-wrap"><table class="compare-table">
-    <thead><tr><td></td>${columns.map(({ option, failed }) => `<th scope="col">${escapeHtml(option.model.display_name || option.model.model_id)}<small>${escapeHtml(failed ? "Could not load this build" : option.profile)}</small></th>`).join("")}</tr></thead>
+    <thead><tr><td></td>${columns.map(({ option, failed }) => `<th scope="col">${escapeHtml(option.model.display_name || option.model.model_id)}<small>${escapeHtml(failed ? "Could not load this build" : variantLabel(option.profile))}</small></th>`).join("")}</tr></thead>
     <tbody>
       ${group("Model")}
       ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}

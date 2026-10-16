@@ -17,7 +17,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
     model["benchmark"] = model["benchmark"][:1]
     monkeypatch.setattr(benchmark_manifest, "load_and_validate_model", lambda *args: model)
-    output_root = tmp_path / "rf_detr_small" / "modalix_int8_bf16"
+    output_root = tmp_path / "rf_detr_small" / "w8a8_w16a16"
     outputs = []
     for component in ("backbone", "transformer"):
         directory = output_root / component
@@ -35,7 +35,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     fidelity.write_text("{}")
     manifest = {
         "model_id": "rf_detr_small",
-        "build_profile_id": "modalix_int8_bf16",
+        "build_profile_id": "w8a8_w16a16",
         "compile_invocation_id": "rf_detr",
         "outputs": outputs,
         "derived_graphs": [
@@ -48,7 +48,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
         },
     }
     (output_root / "compile-outputs.json").write_text(json.dumps(manifest))
-    args = (ROOT, tmp_path, "rf_detr_small", "modalix_int8_bf16", "rf_detr")
+    args = (ROOT, tmp_path, "rf_detr_small", "w8a8_w16a16", "rf_detr")
 
     validate_benchmark_components(*args, ["backbone"])
     # An accuracy-only dispatch measures no component's performance.
@@ -64,11 +64,11 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
 @pytest.mark.parametrize(
     ("model_id", "build_profile_id", "component_id"),
     [
-        ("resnet_50", "modalix_bf16", "model"),
-        ("ssd_mobilenet_v1", "modalix_int8", "model"),
-        ("yolo26_tiny_drone", "modalix_int8_tessellation_mla", "model"),
-        ("rf_detr_small", "modalix_int8_bf16", "backbone"),
-        ("rf_detr_small", "modalix_int8_bf16", "transformer"),
+        ("resnet_50", "w16a16", "model"),
+        ("ssd_mobilenet_v1", "w8a8", "model"),
+        ("yolo26_tiny_drone", "w8a8", "model"),
+        ("rf_detr_small", "w8a8_w16a16", "backbone"),
+        ("rf_detr_small", "w8a8_w16a16", "transformer"),
     ],
 )
 def test_generates_direct_devkit_manifest_for_compiled_model(

@@ -9,7 +9,6 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
-from .artifact_metadata import validate_artifact_metadata
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
 from .published_metrics import load_accuracy_metrics, validate_published_metrics
@@ -74,6 +73,15 @@ def profile_component_for(
     except StopIteration as exc:
         raise ValidationError(f"build profile {profile_id!r} does not include component {component_id!r}") from exc
     return profile, binding
+
+
+def mpk_filename(model: dict[str, Any], profile_id: str, component_id: str) -> str:
+    """Name a compiled MPK by model and variant ID, adding the component when the variant has several."""
+    profile = build_profile_for(model, profile_id)
+    name = f"{model['id']}_{profile_id}"
+    if len(profile["components"]) > 1:
+        name = f"{name}_{component_id}"
+    return f"{name}_mpk.tar.gz"
 
 
 def profile_component_requires_calibration(model: dict[str, Any], profile_id: str, component_id: str) -> bool:
@@ -746,7 +754,6 @@ def load_models(repository: str | Path) -> dict[str, dict[str, Any]]:
 
     for definition in sorted(model_root.glob("*/model.yaml")):
         model = load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
-        validate_artifact_metadata(model)
         model_id = str(model["id"])
         if model_id in discovered:
             raise ValidationError(f"duplicate model id {model_id!r}: {definition}")

@@ -3,15 +3,15 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    modalix_int8:
+    w8a8:
       top1_accuracy: 0.7764
       top5_accuracy: 0.9356
 performance:
   run_tests: true
   expected:
-    modalix_bf16:
+    w16a16:
       model:
         throughput_fps: 578.6
-    modalix_int8:
+    w8a8:
       model:
         throughput_fps: 1491.4

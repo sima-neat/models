@@ -112,7 +112,7 @@ def test_compile_recipe_requires_the_verified_calibration_dataset(
     source.touch()
     monkeypatch.setattr(sys, "argv", [
         "compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"),
-        "--build-profile", "modalix_int8", "--compile-invocation", "model",
+        "--build-profile", "w8a8", "--compile-invocation", "model",
     ])
     with pytest.raises(SystemExit) as stopped:
         recipe.main()
@@ -198,7 +198,7 @@ def test_mpk_audit_proves_default_variants(
 ) -> None:
     compile_module = load_script("compile")
     tessellation_mla = True
-    variant = f"modalix_{precision}"
+    variant = {"int8": "w8a8", "bf16": "w16a16"}[precision]
     archive = write_mpk(tmp_path / f"{variant}_mpk.tar.gz", compile_module, precision, tessellation_mla)
     report = compile_module.audit_mpk(archive, variant)
     assert report["output_transport_tensor_count"] == 12

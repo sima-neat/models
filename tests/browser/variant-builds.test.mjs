@@ -10,7 +10,7 @@ const backbone = {
 const transformer = {...backbone, id: 'transformer-run', metadata: {...backbone.metadata, component_id: 'transformer'}};
 const resnet = {
   ...backbone, id: 'resnet-run',
-  metadata: {model_id: 'resnet_50', build_profile_id: 'modalix_int8', component_id: 'model', github_run_id: 'workflow'},
+  metadata: {model_id: 'resnet_50', build_profile_id: 'w8a8', component_id: 'model', github_run_id: 'workflow'},
 };
 
 test('workflow identity falls back from GitHub run to CI URL, compile invocation and run id', () => {
@@ -24,7 +24,7 @@ test('groups the components of one build and keeps single-component builds separ
   const groups = variantBuilds([transformer, resnet, backbone]);
   assert.deepEqual(groups.map(({modelId, profile, runs}) => ({modelId, profile, runs: runs.map(run => run.id)})), [
     {modelId: 'rf_detr_small', profile: 'mixed', runs: ['backbone-run', 'transformer-run']},
-    {modelId: 'resnet_50', profile: 'modalix_int8', runs: ['resnet-run']},
+    {modelId: 'resnet_50', profile: 'w8a8', runs: ['resnet-run']},
   ]);
   assert.equal(groups[0].key, variantBuildKey(backbone));
 });

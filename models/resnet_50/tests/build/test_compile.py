@@ -141,11 +141,11 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
     recipe = load_script("compile")
     metadata = recipe._metadata()
 
-    assert recipe._variant(metadata, "modalix_bf16")["parameters"]["precision"] == "bf16"
-    assert recipe._variant(metadata, "modalix_int8")["parameters"]["calibration_samples"] == 500
-    assert recipe._fidelity_config(metadata, "modalix_int8")["id"] == "logits_fidelity"
-    with pytest.raises(ValueError, match="exactly one build profile named 'modalix_fp32'"):
-        recipe._variant(metadata, "modalix_fp32")
+    assert recipe._variant(metadata, "w16a16")["parameters"]["precision"] == "bf16"
+    assert recipe._variant(metadata, "w8a8")["parameters"]["calibration_samples"] == 500
+    assert recipe._fidelity_config(metadata, "w8a8")["id"] == "logits_fidelity"
+    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
+        recipe._variant(metadata, "w32a32")
 
 
 def test_compile_rejects_an_undeclared_precision_before_compiling(
@@ -159,7 +159,7 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
 
     with pytest.raises(ValueError, match="only the declared Modalix BF16 and INT8 variants"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "modalix_bf16", None)
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
     assert not (tmp_path / "model").exists()
 
 
@@ -184,7 +184,7 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"), "--build-profile", "modalix_bf16"]
+        ["compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"), "--build-profile", "w16a16"]
         + arguments,
     )
 

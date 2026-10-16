@@ -20,7 +20,7 @@ def core_inputs(tmp_path):
     manifest = {
         "model": {
             "id": "resnet_50",
-            "build_profile_id": "modalix_int8",
+            "build_profile_id": "w8a8",
             "component_id": "model",
             "path": str(archive),
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
