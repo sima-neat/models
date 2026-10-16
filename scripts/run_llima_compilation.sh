@@ -47,17 +47,22 @@ BUILD_PROFILE_ID="$BUILD_PROFILE_ID" "$PYTHON" - \
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from model_registry.model import load_and_validate_model
 
 model_dir, profile_id, component_id, checkpoint, output = sys.argv[1:]
 model = load_and_validate_model(model_dir)
+# LLiMa derives artifact names from the checkpoint directory's basename.
+named_checkpoint = Path(output).parent / "source" / Path(urlsplit(model["upstream"]["repository"]).path).name
+named_checkpoint.parent.mkdir()
+named_checkpoint.symlink_to(Path(checkpoint).resolve(), target_is_directory=True)
 profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
 parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
 arguments = []
 for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
     if name in parameters:
         arguments.extend([f"--{name}", str(parameters[name])])
-subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), checkpoint, output, *arguments], check=True)
+subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), str(named_checkpoint), output, *arguments], check=True)
 PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
 llima-deploy "$work/compiled" "$PROFILE_OUTPUT_DIR/$component_id/deployment"

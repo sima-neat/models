@@ -650,3 +650,18 @@ def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, native_changed
     after = keys()
     assert (before[0] != after[0]) == native_changed
     assert (before[1] != after[1]) == onnx_changed
+
+
+@pytest.mark.parametrize(("model_id", "profile_id", "changed"), [
+    ("qwen3_5_0_8b", "w4a16", True), ("resnet_50", "w16a16", False),
+])
+def test_checkpoint_repository_name_changes_only_llima_compile_key(tmp_path, model_id, profile_id, changed):
+    for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{model_id}"):
+        shutil.copytree(ROOT / folder, tmp_path / folder, ignore=shutil.ignore_patterns("__pycache__"))
+    manifest = tmp_path / "models" / model_id / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    before = compile_key(tmp_path, model_id, profile_id, "model", "compiler")
+    model["upstream"]["repository"] += "-renamed"
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False))
+
+    assert (compile_key(tmp_path, model_id, profile_id, "model", "compiler") != before) == changed

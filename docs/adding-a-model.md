@@ -270,7 +270,7 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 
 | Stage | Key inputs |
 | --- | --- |
-| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and backend tooling: `scripts/run_model_compilation.sh` for ONNX; `scripts/run_llima_compilation.sh`, `tools/model_registry/artifact.py`, and `tools/model_registry/cli.py` for LLiMa |
+| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and backend tooling: `scripts/run_model_compilation.sh` for ONNX; `scripts/run_llima_compilation.sh`, `tools/model_registry/artifact.py`, and `tools/model_registry/cli.py` plus the `upstream.repository` basename for LLiMa |
 | performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
@@ -286,6 +286,7 @@ recompiled build is always remeasured.
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
 | a compile input of a model | that model's affected builds, then their DevKit stages |
+| the `upstream.repository` basename of an LLiMa model | that model's builds, then their declared DevKit stages |
 | the Model Compiler pin | every build, then every DevKit stage |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their DevKit stages |
 | `scripts/run_llima_compilation.sh`, `artifact.py`, or `cli.py` | LLiMa builds, then their declared DevKit stages |
@@ -527,7 +528,9 @@ runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
 scripts/run_llima_compilation.sh models/qwen3_5_0_8b w4a16 model /path/to/output
 ```
 
-The runner downloads the pinned files, invokes the recipe, and runs
+The runner downloads the pinned files and passes the recipe a temporary symlink
+named after `upstream.repository`, preserving the verified cache and giving
+generated files the checkpoint's name. It then runs
 `llima-deploy` into `<output-root>/<model>/<profile>/<component>/deployment/`.
 This folder contains `devkit/`, `elf_files/`, and any `npy_files/`. Run
 `model-registry verify-artifact <component-output> --write-manifest` to check

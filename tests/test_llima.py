@@ -359,8 +359,8 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
     config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=64)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
     config_path.write_text(json.dumps(config))
-    checkpoint = tmp_path / "checkpoint"
-    checkpoint.mkdir()
+    checkpoint = tmp_path / "source-sets/9f" / ("9f" + "a" * 62)
+    checkpoint.mkdir(parents=True)
     (checkpoint / "config.json").write_text("{}")
     tools = tmp_path / "bin"
     tools.mkdir()
@@ -373,6 +373,10 @@ else:
 ''',
         "llima-compile": '''import json, os, sys
 from pathlib import Path
+checkpoint = Path(sys.argv[1])
+assert checkpoint.is_symlink()
+assert checkpoint.name == "Qwen3.5-0.8B-Autoround-Safetensors"
+assert checkpoint.resolve() == Path(os.environ["CHECKPOINT_CONFIG"]).parent
 Path(os.environ["COMPILE_ARGUMENTS"]).write_text(json.dumps(sys.argv[1:]))
 Path(sys.argv[sys.argv.index("-o") + 1]).mkdir()
 ''',
@@ -394,6 +398,8 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         "DEPLOYMENT_SOURCE": str(source), "COMPILE_ARGUMENTS": str(captured),
     })
     arguments = json.loads(captured.read_text())
+    assert not Path(arguments[0]).exists()
+    assert (checkpoint / "config.json").read_text() == "{}"
     assert arguments[arguments.index("--max_num_tokens") + 1] == "8192"
     assert arguments[arguments.index("--language_group_size") + 1] == "64"
     assert ("--input_height" in arguments) is image_input

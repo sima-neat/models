@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .accuracy_result import ACCURACY_RESULT_SCHEMA
@@ -231,8 +232,10 @@ def compile_key(
         "fidelity": _compile_consumed_fidelity(model, profile_id),
         "compiler_version": compiler,
     }
-    digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
     native = any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"])
+    if native:
+        identity["checkpoint_name"] = Path(urlsplit(model["upstream"]["repository"]).path).name
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
     _hash_files(digest, root, _compile_input_files(root, model_id, native=native))
     return digest.hexdigest()
 
