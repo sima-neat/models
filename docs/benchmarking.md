@@ -130,7 +130,7 @@ these performance scripts reruns measurement for existing builds without
 invalidating their compile keys. Historical results without layer stats stay
 readable; new measurements add the analysis view.
 
-The model browser's **Layer analysis** shows the profiled MLA time, layer count,
+The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer count,
 and share in the ten slowest layers. A single scrollable table pairs each layer name with its timing bar, execution
 time and share. Bars use a fixed microsecond axis that stays unchanged when
 filtering. Search by name or sort by time or compiler order; every matching

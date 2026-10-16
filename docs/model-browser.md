@@ -67,7 +67,7 @@ order:
    output, each tagged with the processor it runs on; the step on the MLA is
    the **Compiled Model**. **Details**, at the right of its heading, opens a
    table of the tensors passed between steps with their data type, shape,
-   scale, and zero point. When the report includes layer stats, **Layer analysis**
+   scale, and zero point. When the report includes layer stats, **Runtime Layer Analysis**
    opens a single scrollable table with timing bars, execution time, and share
    for every compiled layer. Bars use a fixed microsecond axis for the component.
    Search by name or sort by execution time or compiler

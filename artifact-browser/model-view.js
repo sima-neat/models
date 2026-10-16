@@ -444,7 +444,7 @@ function layerAnalysisSection(analysis, runId) {
   if (!analysis) return "";
   const view = state.layerViews.get(runId)?.view || { query: "", order: "time" };
   state.layerViews.set(runId, { analysis, view });
-  return disclosure(`layers:${runId}`, "Layer analysis",
+  return disclosure(`layers:${runId}`, "Runtime Layer Analysis",
     `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view)}</div>`,
     `${analysis.layers.length.toLocaleString()} layers · ${layerTime(analysis.totalUs)} µs MLA`);
 }
