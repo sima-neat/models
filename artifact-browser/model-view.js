@@ -923,18 +923,3 @@ export function renderDetail(variant) {
 export function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {
   return `<div class="error-state">${closable ? `<nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">Back to models</button></nav>` : ""}<span>!</span><p class="kicker">Connection error</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><button type="button" data-action="retry">Try again</button></div>`;
 }
-
-// An on-demand catalog entry can describe a model before any deployment has been approved.
-export function renderUnbuiltModel(model) {
-  showView("model");
-  state.selectedId = null;
-  state.selectedVariantKey = null;
-  const documentation = model.documentation ? { ...model.documentation, run_id: null } : null;
-  elements["detail-pane"].innerHTML = `<div class="detail-content">
-    <nav class="crumbs" aria-label="Breadcrumb"><button class="close-detail" type="button">Models</button><span aria-hidden="true">/</span><span aria-current="page">${escapeHtml(model.display_name || model.model_id)}</span></nav>
-    <header class="detail-title"><div class="detail-title-copy"><h2>${escapeHtml(model.display_name || model.model_id)}</h2>${model.description ? `<p class="lede">${escapeHtml(model.description)}</p>` : ""}</div></header>
-    <p class="section-lede">Built on demand. No approved deployment is available yet.</p>
-    ${overviewSection({ ...model, documentation })}
-    ${model.license ? `<section class="details-section"><h3>License</h3><p>${escapeHtml(typeof model.license === "string" ? model.license : model.license.spdx)}</p></section>` : ""}
-  </div>`;
-}

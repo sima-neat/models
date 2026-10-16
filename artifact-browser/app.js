@@ -19,7 +19,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, renderUnbuiltModel, errorPanel,
+  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel,
 } from "./model-view.js";
 
 function writeCategoryFilterUrl() {
@@ -556,7 +556,8 @@ elements["branch-filter"].addEventListener("change", async () => {
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterDisclosure();
   if (branchSnapshotMode() && catalogMode()) {
-    state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+    state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
+      elements["compiler-filter"].value, elements["branch-filter"].value);
     state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
     renderRuns();
     writeCachedCatalog();
@@ -625,11 +626,6 @@ elements["clear-filters"].addEventListener("click", async () => {
 elements["result-list"].addEventListener("click", (event) => {
   const run = event.target.closest("[data-run-id]");
   if (run) selectRun(run.dataset.runId);
-  const unbuilt = event.target.closest("[data-model-unbuilt]");
-  if (unbuilt) {
-    const model = state.models.find((item) => item.model_id === unbuilt.dataset.modelUnbuilt);
-    if (model) renderUnbuiltModel(model);
-  }
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
   if (event.target.closest('[data-action="retry"]')) initialize();
 });

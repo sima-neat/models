@@ -151,8 +151,7 @@ shows its repository, pinned commit revision, and optional subdirectory. The
 repository link opens that exact deployment revision. This deployment location
 is separate from the original source checkpoint linked in the page header.
 
-Models built on demand can appear before they have an approved deployment.
-Their card says **Built on demand** and opens the model's description and
-Overview; download actions appear once a deployment is available. Completed
-candidate runs remain in **Build history** until the registry approves them;
-they do not replace the catalog's approved build.
+Select a feature branch to browse its successfully published on-demand builds
+before promotion. Publishing metadata alone does not create a card. Develop and
+Main continue to show the registry's approved deployments. Feature-branch
+candidates do not replace those selections and also appear in **Build history**.

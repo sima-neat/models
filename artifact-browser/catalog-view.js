@@ -107,7 +107,8 @@ export function applyCatalog(payload, { append = false, cache = true } = {}) {
       state.compileRuns = payload.compileRuns;
       state.packageRuns = payload.packageRuns || [];
       state.catalogDefinitions = payload.catalogDefinitions || [];
-      state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value);
+      state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
+        elements["compiler-filter"].value, state.preferredBranch ?? elements["branch-filter"].value);
     } else {
       state.models = append ? [...state.models, ...models] : models;
     }
@@ -224,7 +225,7 @@ function filteredModels() {
       && (!current.architecture_id || model.architecture_id === current.architecture_id)
       && (!current.architecture_paradigm || model.architecture_paradigm === current.architecture_paradigm)
       && (!current.input_modality || (model.input_modalities || []).includes(current.input_modality));
-    return matches && (builds.length || (model.build_on_demand && !model.builds?.length && !current.compiler)) ? [{ ...model, builds }] : [];
+    return matches && builds.length ? [{ ...model, builds }] : [];
   });
 }
 
@@ -318,11 +319,11 @@ function modelCardImage(model) {
 function renderModelCard(model) {
   const profiles = profileGroups(model);
   const active = activeModelBuild(model);
-  const run = active.build ? runFromCatalogBuild(model, active.build) : null;
+  const run = runFromCatalogBuild(model, active.build);
   const displayName = model.display_name || model.model_id;
   const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
-  const variants = run ? `${profiles.length} variant${profiles.length === 1 ? "" : "s"}` : "Built on demand";
-  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" ${run ? `data-run-id="${escapeHtml(run.id)}"` : `data-model-unbuilt="${escapeHtml(model.model_id)}"`}>
+  const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
+  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
     ${modelCardImage(model)}
     <span class="model-card-body">
       <strong>${escapeHtml(displayName)}</strong>

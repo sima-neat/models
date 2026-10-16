@@ -1391,7 +1391,8 @@ def test_model_catalog_uses_clean_model_navigation_and_detail_build_switching() 
     assert "function compilerFilteredBuilds(model)" in script
     assert "compilerFilteredBuilds(model).filter" in script
     assert "build.toolchain_version === compiler" in script
-    assert 'branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions, elements["compiler-filter"].value)' in script
+    assert 'branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,' in script
+    assert 'elements["compiler-filter"].value, elements["branch-filter"].value)' in script
     assert "...state.compileRuns.map((run) => run.toolchain_version)" in script
     assert "branchName(anchor.git_ref) !== linkedBranch && !listed" in script
     assert "payload.models.flatMap" not in browser

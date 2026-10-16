@@ -90,11 +90,34 @@ test('completed candidates never replace an on-demand catalog approved build or 
   assert.equal(models[0].packages[0].run_id, 'resnet-package');
 });
 
-test('an unbuilt on-demand definition remains metadata with no synthetic usable run', () => {
+test('a selected feature branch shows its successful on-demand build without promotion', () => {
   const definition = {model_id: 'qwen', display_name: 'Qwen', build_on_demand: true, builds: [], packages: []};
   const candidate = run('candidate', 'qwen', feature, '2026-10-02T00:00:00Z');
-  assert.deepEqual(branchModels([candidate], [], [definition]), [definition]);
-  assert.deepEqual(branchModels([candidate], [], [definition], '3.0.0'), []);
+  const branch = 'feat/ui';
+  assert.deepEqual(branchModels([], [], [definition], '', branch), []);
+  assert.deepEqual(branchModels([{...candidate, status: 'failed'}], [], [definition], '', branch), []);
+  assert.deepEqual(branchModels([candidate], [], [definition]), []);
+  for (const other of ['develop', 'main', 'feat/other']) {
+    assert.deepEqual(branchModels([candidate], [], [definition], '', other), []);
+  }
+  const [model] = branchModels([candidate], [], [definition], '', branch);
+  assert.equal(model.builds[0].run_id, candidate.id);
+  assert.deepEqual(definition.builds, []);
+  assert.deepEqual(branchModels([candidate], [], [definition], '2.1.3', branch), []);
+  assert.equal(branchModels([candidate], [], [definition], '3.0.0', branch)[0].builds[0].run_id, candidate.id);
+});
+
+test('feature branch candidates replace inherited builds and keep their matching package', () => {
+  const candidate = run('candidate', 'resnet_50', feature, '2026-10-02T00:00:00Z');
+  const definition = {...catalog[0], build_on_demand: true};
+  const packageRun = {id: 'candidate-package', git_ref: feature, status: 'completed', run_type: 'model_package',
+    metadata: {model_id: 'resnet_50', build_profile_id: 'int8', component_run_ids: {model: candidate.id}}};
+  const [model] = branchModels([candidate, resnet], [packageRun], [definition], '', 'feat/ui');
+  assert.equal(model.builds[0].run_id, candidate.id);
+  assert.deepEqual(model.packages.map(item => item.run_id), [packageRun.id]);
+  const [developModel] = branchModels([candidate, resnet], [packageRun], [definition], '', 'develop');
+  assert.equal(developModel.builds[0].run_id, resnet.id);
+  assert.deepEqual(developModel.packages.map(item => item.run_id), ['resnet-package']);
 });
 
 test('catalog deployment metadata survives branch selection', () => {

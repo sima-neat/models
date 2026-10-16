@@ -48,6 +48,24 @@ def test_repository_cli_retains_ci_only_commands() -> None:
     assert {"package", "fetch-previous"}.isdisjoint(subcommands.choices)
 
 
+@pytest.mark.parametrize("entrypoint", [main, cli.author_main])
+def test_verify_artifact_dispatches_to_the_generic_verifier(entrypoint, monkeypatch, tmp_path, capsys) -> None:
+    calls = []
+    result = {"manifest": "deployment-manifest.json"}
+
+    def verify(output_dir, *, write_manifest, provenance):
+        calls.append((output_dir, write_manifest, provenance))
+        return result
+
+    monkeypatch.setattr(cli, "verify_artifact", verify)
+
+    assert entrypoint([
+        "verify-artifact", str(tmp_path), "--write-manifest", "--json", "--model-id", "qwen3_5_2b",
+    ]) == 0
+    assert calls == [(tmp_path, True, {"model_id": "qwen3_5_2b"})]
+    assert json.loads(capsys.readouterr().out) == result
+
+
 def test_validate_json_output(capsys) -> None:
     result = main(["validate", str(ROOT / "models" / "resnet_50"), "--json"])
     assert result == 0

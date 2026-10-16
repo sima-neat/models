@@ -255,10 +255,10 @@ revision and folder. This location describes the compiled deployment and is
 independent of the source checkpoint links. Storage selection and approval
 remain backend responsibilities.
 
-An on-demand catalog entry without an approved build is listed as **Built on
-demand** and opens its metadata without download actions. Newer completed
-candidate runs remain in history; only the backend's catalog can replace an
-approved on-demand build.
+Selecting a feature branch shows its successfully published on-demand builds,
+including candidates that have not been promoted. Metadata alone does not create
+a card. Develop and Main show the backend's approved selections; a feature-branch
+candidate cannot replace them. Completed candidates also remain in build history.
 
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
