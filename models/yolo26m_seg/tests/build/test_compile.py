@@ -252,4 +252,4 @@ def test_model_declares_the_cut_interface_and_both_builds(
     declared = model["accuracy"][0]
     assert declared["metrics"] == [name for metrics in accuracy_script.METRICS.values() for name in metrics]
     assert declared["required_metrics"] == ["coco_mask_map"]
-    assert declared["reference"]["metrics"] == {"coco_mask_map": 0.441, "coco_box_map": 0.525}
+    assert model["published_metrics"][0]["metrics"] == {"coco_mask_map": 0.441, "coco_box_map": 0.525}
