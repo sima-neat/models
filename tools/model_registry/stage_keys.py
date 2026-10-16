@@ -167,7 +167,7 @@ def _binding_compile_projection(
     return {
         **{
             key: binding[key]
-            for key in ("id", "parameters", "shape_profile", "artifact_suffix")
+            for key in ("id", "parameters", "shape_profile")
             if key in binding
         },
         **(
