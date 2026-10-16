@@ -50,7 +50,7 @@ def deployment(path: Path) -> Path:
     (path / "npy_files").mkdir()
     (path / "devkit/vlm_config.json").write_text(json.dumps({
         "lm_cfg": {},
-        "pipeline_cfg": {"max_num_tokens": 4096, "language_group_size": 128},
+        "pipeline_cfg": {"max_num_tokens": 4096, "input_token_group_size": 128},
         "vm_cfg": {"image_size": [448, 448]},
     }))
     (path / "devkit/tokenizer.json").write_text("{}")
@@ -356,7 +356,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
     source = deployment(tmp_path / "deployment")
     config_path = source / "devkit/vlm_config.json"
     config = json.loads(config_path.read_text())
-    config["pipeline_cfg"].update(max_num_tokens=8192, language_group_size=64)
+    config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=64)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
     config_path.write_text(json.dumps(config))
     checkpoint = tmp_path / "checkpoint"

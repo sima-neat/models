@@ -211,3 +211,17 @@ test('an approved deployment command targets the selected catalog branch and kee
     'sima-cli models download --id rf_detr_small --variant mixed --branch develop');
   assert.equal(source.git_ref, 'refs/heads/feature/native-candidate');
 });
+
+test('staging download commands keep the selected branch and use the staging registry', () => {
+  assert.equal(cliDownloadCommand(run, 'feature/llima-models', true),
+    'sima-cli models download --id rf_detr_small --variant mixed --branch feature/llima-models --stg');
+  assert.equal(cliDownloadCommand(run, 'main'),
+    'sima-cli models download --id rf_detr_small --variant mixed --branch main');
+});
+
+test('download commands shell-quote branch names containing metacharacters', () => {
+  for (const branch of ['feat/test;echo-pwned', 'feat/`echo-pwned`', 'feat/$(echo-pwned)']) {
+    assert.ok(cliDownloadCommand(run, branch).endsWith(`--branch '${branch}'`));
+  }
+  assert.ok(cliDownloadCommand(run, "feat/it's-safe").endsWith("--branch 'feat/it'\\''s-safe'"));
+});

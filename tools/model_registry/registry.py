@@ -1341,9 +1341,12 @@ def _preflight_compilations(
         compiled_parameters = {}
         if native:
             config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
-            compiled_parameters = {name: config["pipeline_cfg"][name]
-                                   for name in ("max_num_tokens", "language_group_size")
-                                   if name in config["pipeline_cfg"]}
+            compiled_parameters = {
+                name: config["pipeline_cfg"][field]
+                for name, field in (("max_num_tokens", "max_num_tokens"),
+                                    ("language_group_size", "input_token_group_size"))
+                if field in config["pipeline_cfg"]
+            }
             image_size = (config.get("vm_cfg") or {}).get("image_size")
             if type(image_size) is int and image_size > 0:
                 image_size = [image_size, image_size]

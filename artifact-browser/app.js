@@ -148,7 +148,7 @@ function folderDownloadInstructions(run, downloads) {
   const current = state.models.some((model) => model.model_id === run.metadata?.model_id
     && (model.builds?.some((build) => build.run_id === run.id)
       || model.packages?.some((item) => item.run_id === run.id)));
-  const command = current ? cliDownloadCommand(run, elements["branch-filter"].value) : null;
+  const command = current ? cliDownloadCommand(run, elements["branch-filter"].value, config.environment?.toLowerCase() === "staging") : null;
   elements["download-description"].textContent = "Download this deployment as a folder with its original paths. The CLI verifies each file against the deployment manifest.";
   elements["download-list"].hidden = true;
   elements["download-package-info"].hidden = false;

@@ -20,10 +20,11 @@ export function huggingFaceLocation(artifact = {}) {
   return { ...location, url: `https://huggingface.co/${location.repo_id}/tree/${location.revision}${parts.length ? `/${parts.map(encodeURIComponent).join("/")}` : ""}` };
 }
 
-export function cliDownloadCommand(run, catalogBranch) {
+export function cliDownloadCommand(run, catalogBranch, staging = false) {
   const metadata = run.metadata || {};
   const branch = catalogBranch ?? (run.git_ref || "").replace(/^refs\/heads\//, "");
-  return `sima-cli models download --id ${metadata.model_id} --variant ${metadata.build_profile_id || metadata.variant_id} --branch ${branch}`;
+  const quote = (value) => /^[A-Za-z0-9_./-]+$/.test(value) ? value : `'${String(value).replaceAll("'", "'\\''")}'`;
+  return `sima-cli models download --id ${quote(metadata.model_id)} --variant ${quote(metadata.build_profile_id || metadata.variant_id)} --branch ${quote(branch)}${staging ? " --stg" : ""}`;
 }
 
 // Keep component discovery independent of the visible search and compiler filters.

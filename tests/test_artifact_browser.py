@@ -1014,7 +1014,7 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert '<button class="download-action" type="button" data-download="package"' in script
     assert '<button class="download-action" type="button" data-download-variant=' in script
     assert '<span>Copy CLI command</span>' in script
-    assert "sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch" in script
+    assert 'data-copy="${escapeHtml(cliDownloadCommand(variant))}"' in script
     # The CLI fetches the catalog build, so an older build from history offers no command.
     assert '${catalogModelOfVariant(variant) ? `<button class="cli-action"' in script
     # Details lead with the package card: size, checksum, and both downloads as icon buttons.

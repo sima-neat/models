@@ -593,11 +593,11 @@ def test_on_demand_models_never_compile_or_measure_automatically(
 def test_manual_model_only_selection_keeps_ordinary_builds(stage_repository: Path) -> None:
     plan = _plan(stage_repository, None, model_ids=[PLAN_MODEL], include_on_demand=True)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["modalix_bf16", "modalix_int8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
     assert all("build_on_demand" not in entry for entry in plan["compile"]["include"])
 
 
-@pytest.mark.parametrize("scope", [{}, {"model_ids": [PLAN_MODEL]}, {"profile_ids": ["modalix_bf16"]}])
+@pytest.mark.parametrize("scope", [{}, {"model_ids": [PLAN_MODEL]}, {"profile_ids": ["w16a16"]}])
 def test_manual_on_demand_build_requires_explicit_model_and_profile(stage_repository: Path, scope: dict) -> None:
     _mark_on_demand(stage_repository)
 
@@ -610,13 +610,13 @@ def test_manual_on_demand_build_selects_only_requested_model_and_profile(stage_r
     shutil.copytree(FIXTURE, stage_repository / "models" / "fixture_model")
 
     plan = _plan(
-        stage_repository, None, model_ids=[PLAN_MODEL], profile_ids=["modalix_bf16"], include_on_demand=True,
+        stage_repository, None, model_ids=[PLAN_MODEL], profile_ids=["w16a16"], include_on_demand=True,
     )
 
     assert len(plan["compile"]["include"]) == 1
     entry = plan["compile"]["include"][0]
     assert (entry["model_id"], entry["build_profile_id"], entry["build_on_demand"]) == (
-        PLAN_MODEL, "modalix_bf16", True,
+        PLAN_MODEL, "w16a16", True,
     )
 
 
@@ -653,7 +653,7 @@ def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_change
     approved = previous["models"][0]
     approved["builds"][0]["compiler_identity"] = "approved-compiler"
     approved["packages"] = [{
-        "package_id": "default", "build_profile_id": "modalix_bf16", "run_id": "approved-package",
+        "package_id": "default", "build_profile_id": "w16a16", "run_id": "approved-package",
         "artifact_sha256": "c" * 64, "size_bytes": 20, "package_fingerprint": "d" * 64,
         "component_run_ids": {"model": approved["builds"][0]["run_id"]},
         "layout": "deployment_files", "storage_backend": "huggingface",
@@ -662,7 +662,7 @@ def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_change
     _mark_on_demand(stage_repository)
     _edit(stage_repository, "scripts/compile.py")
     invocation = build_matrix(
-        load_models(stage_repository), [PLAN_MODEL], ["modalix_bf16"],
+        load_models(stage_repository), [PLAN_MODEL], ["w16a16"],
         repository=stage_repository, compiler_version=COMPILER_VERSION,
     )["include"][0]
     assert approved["builds"][0]["compile_fingerprint"] != invocation["build_fingerprint"]
@@ -670,14 +670,14 @@ def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_change
     selected_matrix.write_text(json.dumps({"include": [invocation]}), encoding="utf-8")
     compiled_dir, package_dir = tmp_path / "compiled", tmp_path / "packages"
     if candidate_receipts:
-        component = compiled_dir / PLAN_MODEL / "modalix_bf16" / "model"
+        component = compiled_dir / PLAN_MODEL / "w16a16" / "model"
         component.mkdir(parents=True)
         (component / "registry-publication.json").write_text(json.dumps({"runs": [{
-            "model_id": PLAN_MODEL, "build_profile_id": "modalix_bf16", "component_id": "model",
+            "model_id": PLAN_MODEL, "build_profile_id": "w16a16", "component_id": "model",
             "run_id": "candidate-compile", "artifact_sha256": "e" * 64,
             "compile_fingerprint": invocation["build_fingerprint"],
         }]}), encoding="utf-8")
-        package = package_dir / PLAN_MODEL / "modalix_bf16" / "packages" / "default"
+        package = package_dir / PLAN_MODEL / "w16a16" / "packages" / "default"
         package.mkdir(parents=True)
         (package / "registry-publication.json").write_text(json.dumps({"packages": [{
             **approved["packages"][0], "model_id": PLAN_MODEL, "run_id": "candidate-package",

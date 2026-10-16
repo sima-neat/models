@@ -2,8 +2,8 @@
 import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
-import { artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
-import { state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
+import { artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand as downloadCommand } from "./downloads.js";
+import { config, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
   metricDefinition, metricDisplay, formatDate, formatDuration,
@@ -784,7 +784,7 @@ function targetName(run) {
 
 function cliDownloadCommand(variant) {
   const branch = catalogMode() ? elements["branch-filter"].value : "";
-  return `sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch ${branch || branchName(variant.anchor.git_ref)}`;
+  return downloadCommand(variant.anchor, branch || undefined, config.environment?.toLowerCase() === "staging");
 }
 
 function sectionNavigation(sections) {

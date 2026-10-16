@@ -145,6 +145,7 @@ from CI after merge.
 LLiMa deployments are folders. **Download folder** shows the same
 `sima-cli models download` command as **Copy CLI command**; the CLI retrieves
 the manifest's files, preserves their paths, and verifies their checksums.
+Commands target the selected branch and include `--stg` on the staging registry.
 The displayed size covers all deployment files, and **Manifest SHA-256**
 identifies the index. The JSON index itself is not a model archive. Existing
 vision archives and previously published LLiMa ZIPs keep their direct downloads.
