@@ -234,6 +234,16 @@ def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> No
     ]
 
 
+def test_published_metrics_writes_each_models_published_scores(tmp_path: Path) -> None:
+    output = tmp_path / "published-metrics.json"
+    assert main(["published-metrics", "--repository", str(ROOT), "--output", str(output)]) == 0
+
+    published = json.loads(output.read_text(encoding="utf-8"))
+    assert "yolo26_tiny_drone" not in published
+    assert published["resnet_50"][0]["dataset"] == {"id": "imagenet-2012", "split": "val"}
+    assert published["resnet_50"][0]["metrics"] == {"top1_accuracy": 0.80382, "top5_accuracy": 0.94598}
+
+
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     result = main(["matrix", "--repository", str(ROOT), "--models", "does_not_exist"])
     assert result == 2

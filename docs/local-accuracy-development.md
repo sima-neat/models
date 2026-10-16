@@ -79,14 +79,11 @@ accuracy:
     dataset: {id: coco-2017, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
     metrics: [coco_map, coco_ap50, coco_ap75]
     required_metrics: [coco_map]
-    reference:
-      source: https://github.com/roboflow/rf-detr/blob/<commit>/README.md
-      metrics: {coco_map: 0.530, coco_ap50: 0.721}
 ```
 
-The optional `reference` records the source model's published scores, copied
-by hand from a pinned page, so each measurement can be compared with them. Give
-each value in the unit `accuracy.py` reports.
+Record the source model's published scores in the top-level
+[`published_metrics`](metadata-schema.md#published-metrics), not in the
+accuracy entry, so the model page shows them before the first DevKit run.
 
 The rules:
 
@@ -96,8 +93,6 @@ The rules:
   build profile, so the accuracy stage runs on the MPKs of one build.
 - `status` is `ready` or `provisional`.
 - `required_metrics` must be listed in `metrics`.
-- `reference.metrics` must be listed in `metrics`, and `reference.source` is an
-  HTTPS URL.
 
 Optional `scripts/requirements-accuracy.txt` pins extra wheels. They install
 into a separate folder beside PyNeat's environment, never into it.
@@ -172,8 +167,7 @@ ResNet-50's `calibration.py`, needs that file beside it.
 [`accuracy-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/accuracy-result.schema.json).
 It wraps the script output with the model, build profile, entry, the SHA-256 of
 each MPK, the dataset identity, the SHA-256 of `accuracy.py`, and the source
-revision. Each metric named in the entry's `reference` carries that published
-score as its `reference`.
+revision.
 
 On the DevKit, `scripts/run_model_tests.sh` runs the model's
 `tests/measure/test_accuracy.py` on the result, which compares each metric

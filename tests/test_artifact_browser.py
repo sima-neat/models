@@ -296,16 +296,33 @@ def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> 
             assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
 
 
-def test_assembled_portal_ships_the_component_pipelines_api_fetches(tmp_path: Path) -> None:
+def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> None:
     shutil.copytree(BROWSER, tmp_path / "artifact-browser")
     assert assemble_portal(tmp_path).returncode == 0
 
     portal = tmp_path / "website" / "portal-build"
     pipelines = json.loads((portal / "component-pipelines.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "transformer"]
+    published = json.loads((portal / "published-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert published["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    assert '"./component-pipelines.aaaaaaaaaaaa.json"' in api
-    assert '"./component-pipelines.json"' not in api
+    for name in ("component-pipelines", "published-metrics"):
+        assert f'"./{name}.aaaaaaaaaaaa.json"' in api
+        assert f'"./{name}.json"' not in api
+
+
+def test_browser_metric_labels_match_the_accuracy_metric_taxonomy() -> None:
+    # Validation accepts the taxonomy's metrics; the browser must label each of them, in the same order.
+    taxonomy = yaml.safe_load((ROOT / "taxonomies" / "accuracy-metrics.yaml").read_text(encoding="utf-8"))
+    labels = subprocess.run(
+        [
+            "node", "--input-type=module", "--eval",
+            "const {ACCURACY_METRIC_LABELS} = await import('./artifact-browser/accuracy-metrics.js');"
+            "console.log(JSON.stringify(Object.entries(ACCURACY_METRIC_LABELS)));",
+        ],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )  # fmt: skip
+    assert json.loads(labels.stdout) == [[name, entry["display_name"]] for name, entry in taxonomy.items()]
 
 
 def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: Path) -> None:
@@ -1164,7 +1181,7 @@ def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> No
 
 
 def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_per_metric() -> None:
-    script = _browser_source("api.js", "model-view.js")
+    script = _browser_source("api.js", "model-view.js", "accuracy-metrics.js")
 
     # One accuracy key per variant: the component build that carries it names every MPK it measured.
     assert "accuracyKeyForRuns(runs).then(devkitAccuracy)" in script
@@ -1176,7 +1193,7 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert "api(`/v1/runs/${run.id}/accuracy/latest`)" in script
     assert "api(`/v1/runs/${benchmarkRunId}/test-results`)" in script
     assert "item.summary?.schema_version === 2" in script
-    assert "Object.entries(report.metrics || {})" in script
+    assert "orderedMetricNames(Object.keys(metrics))" in script
     assert 'coco_map: "mAP 50–95"' in script
     assert 'coco_ar100: "AR@100"' in script
     assert "ACCURACY_METRIC_LABELS[name] || name" in script
@@ -1187,79 +1204,6 @@ def test_devkit_accuracy_is_resolved_from_the_catalog_accuracy_key_and_rendered_
     assert '<th scope="col">Published</th>' in script
     # Units come from the published result, so the formatted value is escaped before insertion.
     assert "<strong>${escapeHtml(accuracyMetricValue(metric))}</strong>" in script
-
-
-def test_accuracy_metrics_follow_the_label_order_whatever_order_the_registry_returns() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    # The registry returned RF-DETR Small's published metrics in this order.
-    metrics = ["coco_ar1", "coco_map", "coco_ap50", "coco_ap75", "coco_ar10", "coco_ar100", "coco_ap_large",
-               "coco_ap_small", "coco_ar_large", "coco_ar_small", "coco_ap_medium", "coco_ar_medium"]
-    report = {"metrics": {name: {"value": 0.5} for name in ["custom_b", *metrics, "custom_a"]}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_map", "coco_ap50", "coco_ap75", "coco_ap_small", "coco_ap_medium", "coco_ap_large",
-        "coco_ar1", "coco_ar10", "coco_ar100", "coco_ar_small", "coco_ar_medium", "coco_ar_large",
-        "custom_b", "custom_a",
-    ]
-    assert "orderedAccuracyMetrics(report).slice(0, ACCURACY_SUMMARY_TILES)" in script
-    assert "orderedAccuracyMetrics(report).slice(ACCURACY_SUMMARY_TILES)" in script
-
-
-def test_pose_accuracy_metrics_lead_with_keypoint_map() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    metrics = ["coco_person_box_ap50", "coco_keypoint_ar", "coco_keypoint_ap_large", "coco_person_box_map",
-               "coco_keypoint_ar75", "coco_keypoint_map", "coco_keypoint_ar_medium", "coco_keypoint_ap75",
-               "coco_keypoint_ar_large", "coco_keypoint_ap50", "coco_keypoint_ar50", "coco_keypoint_ap_medium"]
-    report = {"metrics": {name: {"value": 0.5} for name in metrics}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_keypoint_map", "coco_keypoint_ap50", "coco_keypoint_ap75", "coco_keypoint_ap_medium",
-        "coco_keypoint_ap_large", "coco_keypoint_ar", "coco_keypoint_ar50", "coco_keypoint_ar75",
-        "coco_keypoint_ar_medium", "coco_keypoint_ar_large", "coco_person_box_map", "coco_person_box_ap50",
-    ]
-    assert 'coco_keypoint_map: "Keypoint mAP 50–95"' in script
-
-
-def test_segmentation_accuracy_metrics_lead_with_mask_map() -> None:
-    script = _browser_source("model-view.js")
-    start = script.index("const ACCURACY_METRIC_LABELS = {")
-    end = script.index("function accuracyPanel(")
-    metrics = ["coco_box_ap50", "coco_mask_ar100", "coco_mask_ap_large", "coco_box_map", "coco_mask_ar1",
-               "coco_mask_map", "coco_mask_ar_medium", "coco_mask_ap75", "coco_mask_ar_large", "coco_mask_ap50",
-               "coco_mask_ar10", "coco_mask_ap_medium", "coco_mask_ap_small", "coco_mask_ar_small"]
-    report = {"metrics": {name: {"value": 0.5} for name in metrics}}
-    order = f"console.log(JSON.stringify(orderedAccuracyMetrics({json.dumps(report)}).map(([name]) => name)));"
-    result = subprocess.run(
-        ["node", "--input-type=module", "--eval", script[start:end] + order],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(result.stdout) == [
-        "coco_mask_map", "coco_mask_ap50", "coco_mask_ap75", "coco_mask_ap_small", "coco_mask_ap_medium",
-        "coco_mask_ap_large", "coco_mask_ar1", "coco_mask_ar10", "coco_mask_ar100", "coco_mask_ar_small",
-        "coco_mask_ar_medium", "coco_mask_ar_large", "coco_box_map", "coco_box_ap50",
-    ]
-    assert 'coco_mask_map: "Mask mAP 50–95"' in script
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
@@ -1563,7 +1507,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert positions == sorted(positions)
     assert all(render_detail.count(marker) == 1 for marker in order)
     # One accuracy panel for the variant, from whichever component carries it.
-    assert "accuracyPanel(variantAccuracy(variant), model)" in render_detail
+    assert "accuracyPanel(variantAccuracy(variant), model, variant.published || [])" in render_detail
     assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail

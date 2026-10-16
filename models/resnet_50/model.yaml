@@ -188,6 +188,12 @@ accuracy:
     size_bytes: 356052889
   metrics: [top1_accuracy, top5_accuracy]
   required_metrics: [top1_accuracy]
+published_metrics:
+- source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, center crop 0.95, bicubic, FP32
+  note: timm's resnet50.a1_in1k row, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.80382, top5_accuracy: 0.94598}
 benchmark:
 - id: modalix_latency
   scope:

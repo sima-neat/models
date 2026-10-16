@@ -17,6 +17,7 @@ from .fetch import Fetcher, resolve_dataset
 from .fidelity_config import find_fidelity_config
 from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
 from .model_tests import TEST_OUTCOMES
+from .published_metrics import published_metrics_by_model
 from .runner_approval import authorize_runner_matrix
 from .stage_plan import plan_stages, resolve_base_branches
 
@@ -101,6 +102,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     pipelines.add_argument("--repository", type=Path, default=Path.cwd())
     pipelines.add_argument("--output", type=Path, required=True)
+
+    published = subcommands.add_parser(
+        "published-metrics", help="write the scores each source model's authors published, for the model browser"
+    )
+    published.add_argument("--repository", type=Path, default=Path.cwd())
+    published.add_argument("--output", type=Path, required=True)
 
     stages = subcommands.add_parser(
         "plan-stages", help="select changed compile invocations and the board stages reused builds still need"
@@ -587,6 +594,12 @@ def _component_pipelines(args: argparse.Namespace) -> int:
     return 0
 
 
+def _published_metrics(args: argparse.Namespace) -> int:
+    published = published_metrics_by_model(load_models(args.repository))
+    args.output.write_text(json.dumps(published, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    return 0
+
+
 def _plan_stages(args: argparse.Namespace) -> int:
     from .registry import _public_registry_json
 
@@ -999,6 +1012,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _matrix(args)
         if args.command == "component-pipelines":
             return _component_pipelines(args)
+        if args.command == "published-metrics":
+            return _published_metrics(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "authorize-runner-matrix":

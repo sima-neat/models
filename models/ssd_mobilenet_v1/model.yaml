@@ -286,6 +286,12 @@ accuracy:
       minimum_cosine_similarity: 0.999
       maximum_normalized_root_mean_square_error: 0.05
   note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.
+published_metrics:
+- source: https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12/blob/019281f3fcb151a90e491f3b2f0273f9f31bd6be/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 300x300, FP32 ONNX
+  note: The card does not name the COCO split; val2017 is inferred from Intel Neural Compressor's default evaluation set.
+  metrics: {coco_map: 0.2303}
 benchmark:
 - id: modalix_latency
   scope:

@@ -397,11 +397,43 @@ def test_devkit_accuracy_needs_no_benchmark_entry(tmp_path: Path) -> None:
     validate_model(directory, model, SCHEMA)
 
 
-def test_devkit_accuracy_accepts_a_published_reference(tmp_path: Path) -> None:
-    directory, model = _model_with_accuracy_script(tmp_path)
-    reference = {"source": "https://example.com/card", "metrics": {"score": 0.5}}
-    model["accuracy"] = [_devkit_accuracy_entry(reference=reference)]
-    validate_model(directory, model, SCHEMA)
+def _published_metrics(**settings) -> dict:
+    return {
+        "source": "https://example.com/card",
+        "dataset": {"id": "coco-2017", "split": "val"},
+        "conditions": "640x640",
+        "metrics": {"coco_map": 0.5},
+        **settings,
+    }
+
+
+def test_published_metrics_accept_scores_of_known_metrics() -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["published_metrics"] = [
+        _published_metrics(note="The card does not name the split."),
+        _published_metrics(dataset={"id": "coco-2014", "split": "minival"}),
+    ]
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        ([_published_metrics(metrics={"coco_mapp": 0.5})], "'coco_mapp' is not an accuracy metric"),
+        ([_published_metrics(metrics={"coco_map": 53.0})], "coco_map must be a ratio from 0 to 1; found 53.0"),
+        (
+            [_published_metrics(), _published_metrics(source="https://example.com/other")],
+            "coco_map on coco-2017 is already published by an earlier entry",
+        ),
+        ([_published_metrics(source="http://example.com/card")], "does not match"),
+        ([{key: value for key, value in _published_metrics().items() if key != "conditions"}], "'conditions'"),
+    ],
+)
+def test_published_metrics_are_validated(entries: list[dict], expected: str) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["published_metrics"] = entries
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
 def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -> None:
@@ -420,11 +452,8 @@ def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -
         ([_devkit_accuracy_entry(required_metrics=["missing"])], "required_metrics are not declared"),
         ([_devkit_accuracy_entry(metrics=["Score"])], "not valid under any of the given schemas"),
         (
-            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"other": 0.5}})],
-            "reference metrics are not declared in metrics: other",
-        ),
-        (
-            [_devkit_accuracy_entry(reference={"source": "http://example.com/card", "metrics": {"score": 0.5}})],
+            # Published scores moved to the top-level published_metrics.
+            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"score": 0.5}})],
             "not valid under any of the given schemas",
         ),
         (

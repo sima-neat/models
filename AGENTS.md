@@ -181,7 +181,8 @@ in the same commit.
 
 1. Declare the change in `model.yaml` and the model's `scripts/` and
    `tests/`, following [adding a model](docs/adding-a-model.md) and the
-   [metadata schema](docs/metadata-schema.md).
+   [metadata schema](docs/metadata-schema.md). Record the source model's
+   published scores in `published_metrics`.
 2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
 3. Compile each changed build in the pinned Model Compiler with
    the backend's runner (`run_model_compilation.sh` or `run_llima_compilation.sh`)
@@ -232,8 +233,11 @@ change.
   such an interpreter.
 - Add a new module to `fingerprintedAssets` in
   `website/scripts/assemble-portal.mjs`. Assembly also writes
-  `component-pipelines.<revision>.json` from each `model.yaml` `pipeline`, so
-  `build:portal` needs the same Python as `preview.py`.
+  `component-pipelines.<revision>.json` and `published-metrics.<revision>.json`
+  from each `model.yaml`, so `build:portal` needs the same Python as
+  `preview.py`.
+- A new accuracy metric goes into both `taxonomies/accuracy-metrics.yaml` and
+  `artifact-browser/accuracy-metrics.js`.
 - Before a push, run `python -m pytest tests/test_artifact_browser.py`,
   `node --test tests/browser/*.test.mjs`, and `npm run typecheck`,
   `npm run build:portal`, and `npm run smoke:portal` with `--prefix website`,

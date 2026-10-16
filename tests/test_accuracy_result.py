@@ -85,13 +85,12 @@ def test_import_accuracy_records_the_entry_dataset_and_compiled_mpks(tmp_path: P
     assert names == ["model.accuracy.coco_ap50", "model.accuracy.coco_map"]
 
 
-def test_import_accuracy_attaches_the_published_score_as_each_metrics_reference(tmp_path: Path) -> None:
-    assert import_accuracy(tmp_path, {"coco_map": 0.4694, "coco_ap50": 0.6537, "coco_ap75": 0.5017}) == 0
+def test_import_accuracy_leaves_published_scores_to_model_yaml(tmp_path: Path) -> None:
+    # The browser reads published scores from model.yaml, so correcting one needs no new result.
+    assert import_accuracy(tmp_path, {"coco_map": 0.4694, "coco_ap50": 0.6537}) == 0
 
     metrics = load_accuracy_result(tmp_path / "accuracy-result.json", ROOT / ACCURACY_RESULT_SCHEMA)["metrics"]
-    assert metrics["coco_map"] == {"value": 0.4694, "unit": "ratio", "direction": "higher", "reference": 0.530}
-    assert metrics["coco_ap50"]["reference"] == 0.721
-    assert "reference" not in metrics["coco_ap75"]
+    assert metrics["coco_map"] == {"value": 0.4694, "unit": "ratio", "direction": "higher"}
 
 
 @pytest.mark.parametrize(

@@ -288,6 +288,11 @@ accuracy:
       minimum_cosine_similarity: 0.999
       maximum_normalized_root_mean_square_error: 0.05
   note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.
+published_metrics:
+- source: https://github.com/tensorflow/models/blob/ac8d0651935ecf8a5e7c73ff4aaa97ca1b3623b5/research/object_detection/g3doc/tf1_detection_zoo.md
+  dataset: {id: coco-2014, split: minival}
+  conditions: 300x300, TensorFlow Object Detection API
+  metrics: {coco_map: 0.22}
 benchmark:
 - id: modalix_latency
   scope:
