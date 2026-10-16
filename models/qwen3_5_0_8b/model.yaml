@@ -119,7 +119,7 @@ components:
 resources: []
 calibrations: []
 build_profiles:
-- id: modalix_a16w4_4k
+- id: w4a16
   target: modalix
   components:
   - id: model
@@ -141,7 +141,7 @@ packages:
   - model
   resources: []
   build_profiles:
-  - modalix_a16w4_4k
+  - w4a16
   composition: default
 fidelity: []
 accuracy: []

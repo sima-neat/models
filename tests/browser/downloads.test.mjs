@@ -134,19 +134,18 @@ test('a single-component package is an MPK and any other package is a ZIP', () =
 });
 
 
-test('LLiMa suffix downloads retain the native ZIP format', async () => {
+test('previously published LLiMa ZIPs keep their stored filename', async () => {
   const native = {...run, id: 'llima-run', metadata: {...run.metadata, model_id: 'qwen3_5_0_8b',
-    component_id: 'model', artifact_kind: 'llima'}};
-  const catalog = {model_id: 'qwen3_5_0_8b', builds: [{run_id: native.id, build_profile_id: 'mixed',
-    component_id: 'model', artifact_suffix: 'a16w4'}]};
+    build_profile_id: 'w4a16', component_id: 'model', artifact_kind: 'llima'}};
+  const filename = 'qwen3_5_0_8b_w4a16_llima.zip';
   const items = await variantDownloads(native, async path => path.includes('/repositories/')
-    ? {runs: [native]} : {artifacts: [{name: 'llima', artifact_type: 'model-pack', size_bytes: 4096}]}, catalog);
-  assert.equal(items[0].downloadFilename, 'qwen3_5_0_8b_a16w4_llima.zip');
+    ? {runs: [native]} : {artifacts: [{name: 'llima', artifact_type: 'model-pack', size_bytes: 4096}]});
+  assert.equal(items[0].delivery, 'archive');
   const ready = await prepareDownloads(items, async path => {
-    assert.ok(path.includes('/artifacts/llima'));
-    return {artifact: {download_url: 'https://example.com/model.zip'}};
+    assert.equal(path, '/v1/runs/llima-run/artifacts/llima');
+    return {artifact: {download_url: `https://example.com/${filename}`}};
   });
-  assert.equal(ready[0].filename, items[0].downloadFilename);
+  assert.equal(ready[0].filename, filename);
 });
 
 
@@ -158,12 +157,12 @@ const folder = {
 test('native folder uses aggregate deployment size and never requests an archive name', async () => {
   const native = {...run, id: 'llima-run', metadata: {...run.metadata, component_id: 'model', artifact_kind: 'llima'}};
   const catalog = {model_id: 'rf_detr_small', builds: [{run_id: native.id, component_id: 'model',
-    build_profile_id: 'mixed', artifact_suffix: 'native'}]};
+    build_profile_id: 'mixed'}]};
   const items = await variantDownloads(native, async path => path.includes('/repositories/')
     ? {runs: [native]} : {artifacts: [folder, {name: 'file-layer', artifact_type: 'model-file'}]}, catalog);
   assert.equal(items.length, 1);
   assert.equal(items[0].size, 4_000_000_000);
-  assert.equal(items[0].downloadFilename, null);
+  assert.equal(items[0].delivery, 'directory');
   const ready = await prepareDownloads(items, async path => {
     assert.ok(!path.includes('download_filename'));
     return {artifact: {download_url: 'https://example.com/deployment-index.json'}};

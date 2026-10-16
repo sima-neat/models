@@ -41,7 +41,7 @@ from model_registry.stage_keys import COMPILE_TOOLING, compile_key
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_0_8b"
-PROFILE = "modalix_a16w4_4k"
+PROFILE = "w4a16"
 
 
 def deployment(path: Path) -> Path:
@@ -439,7 +439,7 @@ def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, mo
     for component in ("model", "aux"):
         output = invocations / component / "fixture_model/fixture" / component
         output.mkdir(parents=True)
-        archive = output / "fixture_mpk.tar.gz"
+        archive = output / f"fixture_model_fixture_{component}_mpk.tar.gz"
         with tarfile.open(archive, "w:gz") as stream:
             for name, payload in (("layer.elf", b"synthetic-elf"), ("fixture_mpk.json", b"{}")):
                 info = tarfile.TarInfo(name)

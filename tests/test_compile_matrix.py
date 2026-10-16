@@ -641,7 +641,7 @@ def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, native_changed
     def keys():
         return [
             compile_key(repository, name, profile, "model", "compiler")
-            for name, profile in ((native_id, "modalix_a16w4_4k"), ("resnet_50", "modalix_bf16"))
+            for name, profile in ((native_id, "w4a16"), ("resnet_50", "w16a16"))
         ]
 
     before = keys()

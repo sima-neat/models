@@ -64,7 +64,7 @@ export async function prepareDownloads(downloads, api) {
     if (!payload.artifact) throw new Error(`No download URL for ${item.component}. No downloads were started.`);
     const artifact = { ...item.artifact, ...payload.artifact, metadata: { ...item.artifact?.metadata, ...payload.artifact.metadata } };
     const delivery = artifactDelivery(artifact);
-    if (delivery !== "archive") return { ...item, delivery, artifact, size: deploymentSize(artifact), url: null, downloadFilename: null };
+    if (delivery !== "archive") return { ...item, delivery, artifact, size: deploymentSize(artifact), url: null };
     if (!artifact.download_url) throw new Error(`No download URL for ${item.component}. No downloads were started.`);
     // The logical registry name (e.g. "mpk") is not the archive filename.
     const filename = artifact.s3_key

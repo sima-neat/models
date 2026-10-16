@@ -666,7 +666,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
 
 def _package_file(model: dict, package: dict) -> tuple[str, str]:
-    """The published filename and media type of a package: its lone MPK, or a ZIP of everything."""
+    """The published path and media type of a native folder index, lone MPK, or ZIP."""
+    if model["model_type"] in {"llm", "vlm"}:
+        return "deployment/manifest.json", "application/json"
     declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
     if len(declaration["components"]) == 1 and not declaration["resources"]:
         return mpk_filename(model, package["build_profile_id"], declaration["components"][0]), "application/gzip"

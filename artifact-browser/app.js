@@ -168,6 +168,7 @@ function folderDownloadInstructions(run, downloads) {
 
 async function downloadVariant(runId) {
   const request = ++downloadRequest;
+  const catalogModels = elements["history-filter"].checked ? [] : state.models;
   const dialog = elements["download-dialog"];
   resetDownloadDialog({
     title: "Download components",
@@ -177,7 +178,8 @@ async function downloadVariant(runId) {
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
-    const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
+    const model = catalogModels.find((model) => model.model_id === summary.run.metadata?.model_id);
+    const downloads = await prepareDownloads(await variantDownloads(summary.run, api, model), api);
     if (request !== downloadRequest || !dialog.open) return;
     if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
       folderDownloadInstructions(summary.run, downloads);
@@ -215,7 +217,6 @@ async function downloadPackage(runId) {
     if (!run || !artifact) throw new Error("No complete package is available for this build.");
     const metadata = run.metadata || {};
     const packageId = metadata.package_id || artifact.metadata?.package_id || "default";
-    const modelId = metadata.model_id || "model";
     const profile = metadata.build_profile_id ? variantLabel(metadata.build_profile_id) : "This build";
     const components = Object.keys(metadata.component_run_ids || artifact.metadata?.component_run_ids || {});
     // The registry serves the package under its published filename: the MPK itself, or a ZIP.

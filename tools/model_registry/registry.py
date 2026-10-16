@@ -1316,7 +1316,9 @@ def _preflight_compilations(
         if not native:
             expected_name = mpk_filename(model, build_profile_id, component_id)
             if archive_name != expected_name:
-                raise ValidationError(f"{result_path}: compiled MPK must be named {expected_name}, found {archive_name}")
+                raise ValidationError(
+                    f"{result_path}: compiled MPK must be named {expected_name}, found {archive_name}"
+                )
         archive = result_path.parent / archive_name
         if not archive.is_file() or archive.parent != result_path.parent:
             raise ValidationError(f"{result_path}: archive is missing from the packaged output")

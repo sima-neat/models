@@ -227,7 +227,7 @@ compile or measure it. Existing automatic models keep their scheduling.
 The flag changes scheduling and catalog metadata only, never compile keys.
 An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 `profiles`; `plan-stages --include-on-demand` also requires both selectors.
-For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=modalix_a16w4_4k`.
+For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
 In staging, `publish-candidate` waits for every invocation of the selected
 model/profile. It registers one versioned contract, binds each compile and

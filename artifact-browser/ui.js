@@ -50,7 +50,7 @@ export function variantLabel(profile) {
 }
 
 // Compile parameters keep the compiler's precision names; readers see the weight/activation widths.
-const PRECISION_LABELS = { int8: "W8A8", bf16: "W16A16" };
+const PRECISION_LABELS = { int8: "W8A8", bf16: "W16A16", a16w4: "W4A16" };
 
 export function precisionLabel(precision) {
   return PRECISION_LABELS[precision] || String(precision).toUpperCase();
