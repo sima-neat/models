@@ -3,11 +3,13 @@ import { deploymentCatalog, branchModels, variantBuilds } from "./branch-builds.
 import {
   DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
-import { icons, escapeHtml, branchName, shortSha, profileLabel } from "./ui.js";
-import { formatDate } from "./metrics.js";
+import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
+import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
+import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { accuracyHeadline } from "./model-view.js";
 import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog, buildProfileId, componentId,
-  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl,
+  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, loadVariant, mapWithConcurrency,
 } from "./api.js";
 
 // A filter lists only the values the loaded builds use, labeled from the taxonomy.
@@ -316,6 +318,92 @@ function modelCardImage(model) {
     : `<span class="model-card-image model-card-image-empty" aria-hidden="true"><img src="favicon.svg" alt="" /></span>`;
 }
 
+let tableRequestId = 0;
+
+function catalogMetric(measurements, key) {
+  const reading = metricDisplay(measurements[key], metricDefinition(key, measurements[key]));
+  return reading ? `${reading.value.toFixed(1)} ${reading.unit}` : null;
+}
+
+function tablePerformance(variant) {
+  return variant.details.map((detail) => {
+    const component = variant.details.length > 1 ? detail.summary.run.metadata?.component_id : "";
+    if (detail.benchmark?.result?.benchmark_report?.workloads) {
+      return `<span class="catalog-reading">See model page for workload results</span>`;
+    }
+    const adapted = detail.benchmark && adaptBenchmarkResult(detail.benchmark.result);
+    const measurements = adapted?.kind === "supported" ? adapted.value.measurements : {};
+    const rate = catalogMetric(measurements, "throughput_fps");
+    const latency = catalogMetric(measurements, "latency_avg_ms");
+    return `<span class="catalog-reading">${component ? `<small>${escapeHtml(component)}</small>` : ""}
+      <span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
+  }).join("");
+}
+
+function renderCatalogTable(models) {
+  const renderRow = (model) => {
+    const active = activeModelBuild(model);
+    const profiles = profileGroups(model);
+    const name = model.display_name || model.model_id;
+    const precision = profiles.length > 1
+      ? `<select data-catalog-profile="${escapeHtml(model.model_id)}" aria-label="Precision for ${escapeHtml(name)}">${profiles.map(([id]) =>
+        `<option value="${escapeHtml(id)}"${id === active.profile ? " selected" : ""}>${escapeHtml(variantLabel(id))}</option>`).join("")}</select>`
+      : `<span class="catalog-precision">${escapeHtml(variantLabel(active.profile))}</span>`;
+    return `<tr data-catalog-entry="${escapeHtml(model.model_id)}">
+      <th scope="row"><button class="catalog-model-link" type="button" data-run-id="${escapeHtml(active.build.run_id)}">${escapeHtml(name)}${icons.arrow}</button></th>
+      <td>${precision}</td>
+      <td data-table-accuracy><span class="catalog-pending">Loading…</span></td>
+      <td data-table-performance><span class="catalog-pending">Loading…</span></td></tr>`;
+  };
+  const groups = new Map();
+  const selectedTask = categoryFilters().task;
+  for (const model of models) {
+    const tasks = selectedTask ? [selectedTask] : model.tasks?.length ? model.tasks : [""];
+    for (const task of new Set(tasks)) {
+      if (!groups.has(task)) groups.set(task, []);
+      groups.get(task).push(model);
+    }
+  }
+  const taskLabel = (task) => taxonomyLabel("tasks", task) || "Other models";
+  elements["result-list"].innerHTML = [...groups]
+    .sort(([left], [right]) => taskLabel(left).localeCompare(taskLabel(right)))
+    .map(([task, entries]) => {
+      const headingId = `catalog-task-${task || "other"}`;
+      return `<section class="catalog-task-group" aria-labelledby="${escapeHtml(headingId)}">
+        <h3 id="${escapeHtml(headingId)}">${escapeHtml(taskLabel(task))}</h3>
+        <div class="catalog-table-scroll" role="region" aria-label="${escapeHtml(taskLabel(task))} model table" tabindex="0">
+          <table class="catalog-table" aria-labelledby="${escapeHtml(headingId)}">
+            <thead><tr><th scope="col">Model</th><th scope="col">Precision</th><th scope="col">Accuracy</th><th scope="col">Performance</th></tr></thead>
+            <tbody>${entries.map(renderRow).join("")}</tbody></table></div></section>`;
+    }).join("");
+  const requestId = tableRequestId;
+  // Load details only in table view, with bounded concurrency and the model page's existing cache.
+  mapWithConcurrency(models, 3, async (model) => {
+    if (requestId !== tableRequestId) return;
+    const active = activeModelBuild(model);
+    const rows = elements["result-list"].querySelectorAll(`[data-catalog-entry="${CSS.escape(model.model_id)}"]`);
+    try {
+      const variant = await loadVariant(runFromCatalogBuild(model, active.build));
+      if (requestId !== tableRequestId) return;
+      const accuracy = accuracyHeadline(variant);
+      const accuracyHtml = accuracy
+        ? `<span class="catalog-reading"><span>${escapeHtml(accuracy.value)}</span><small>${escapeHtml(accuracy.label)}</small></span>`
+        : `<span class="catalog-unavailable">Not measured</span>`;
+      const performanceHtml = tablePerformance(variant);
+      rows.forEach((row) => {
+        row.querySelector("[data-table-accuracy]").innerHTML = accuracyHtml;
+        row.querySelector("[data-table-performance]").innerHTML = performanceHtml;
+      });
+    } catch {
+      if (requestId !== tableRequestId) return;
+      rows.forEach((row) => {
+        row.querySelector("[data-table-accuracy]").textContent = "Unavailable";
+        row.querySelector("[data-table-performance]").textContent = "Unavailable";
+      });
+    }
+  });
+}
+
 function renderModelCard(model) {
   const profiles = profileGroups(model);
   const active = activeModelBuild(model);
@@ -343,16 +431,23 @@ function renderModels() {
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }
-  elements["result-list"].innerHTML = [...models].sort(compareModels).map(renderModelCard).join("");
+  const sorted = [...models].sort(compareModels);
+  if (state.catalogLayout === "table") renderCatalogTable(sorted);
+  else elements["result-list"].innerHTML = sorted.map(renderModelCard).join("");
 }
 
 export function renderRuns() {
+  tableRequestId += 1;
   const modelsMode = catalogMode();
   const runTitle = elements["history-filter"].checked ? "Build history" : "Latest builds";
   elements["result-title"].textContent = modelsMode ? "Models" : runTitle;
   elements["load-more"].textContent = modelsMode ? "Load more models" : "Load more builds";
   elements["result-list"].setAttribute("aria-busy", "false");
-  elements["result-list"].dataset.layout = modelsMode ? "cards" : "rows";
+  elements["result-list"].dataset.layout = modelsMode ? state.catalogLayout : "rows";
+  elements["catalog-layout-toggle"].hidden = !modelsMode;
+  elements["catalog-layout-toggle"].querySelectorAll("[data-catalog-layout]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.catalogLayout === state.catalogLayout));
+  });
   elements["load-more"].hidden = !state.hasMore;
   if (modelsMode) renderModels();
   else renderHistory();

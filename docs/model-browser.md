@@ -7,7 +7,17 @@ you can check how your model will appear before you submit it.
 
 ## The catalog
 
-The catalog is a grid of cards, one per model. A card shows four things, all
+The catalog opens as a grid of cards, one per model. **Cards** and **Table**
+switch between the two views and remember the choice. The table shows the model,
+selected precision, measured accuracy and component performance. Changing
+the precision updates its measurements; opening the model shows the full results.
+Both views share search and filters. The table groups models by task, with the
+same model-family ordering inside each group. Models with multiple tasks appear
+in every applicable group; selecting a task filter shows only that group. The
+model count counts unique models, and precision changes apply to every copy of
+the model. Build history keeps its existing list.
+
+A card shows four things, all
 taken from the model directory:
 
 | Card element | Source |
@@ -27,12 +37,13 @@ labels. Task and model family filters sit beside the cards. Architecture, type,
 input, branch, and compiler filters are under **More filters**. A filter lists
 only the values the loaded builds use and is hidden when fewer than two remain.
 
-To compare builds, choose **Compare** in the top bar. The page has three
-pickers, one per build; opening it from a model page fills the first picker
-with that build. The table shows each build's task, component count, Modalix
-performance, and headline accuracy. A model with several components lists each
-component on its own line, and the best value is marked in bold only against
-the same component of another build, or between single-component builds.
+**Compare** in the top bar explores all model variants for one task. The
+chart shows all measured precisions together. Hover over a point to see the model,
+variant, throughput and accuracy. Accuracy is the vertical axis and throughput
+in inferences/s is the horizontal axis. Accuracy is grouped by dataset and metric.
+Multi-component models are excluded for now. Select up to three points or use the compact
+**Add model** selector to show detailed measurements, including power and memory. The link
+preserves the task and selected variants. LLM/VLM comparison shows **TBD**.
 
 **Buy**, at the right of the top bar, opens the DevKit store at
 [devkit.sima.ai](https://devkit.sima.ai/) in a new tab. On a phone, the top

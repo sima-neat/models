@@ -1255,7 +1255,7 @@ def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
     assert ".fidelity-summary" not in styles
 
 
-def test_compare_is_a_page_of_three_pickers_over_one_table() -> None:
+def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = _browser_source("state.js", "compare-view.js", "app.js")
     browser = _browser_source()
@@ -1267,7 +1267,13 @@ def test_compare_is_a_page_of_three_pickers_over_one_table() -> None:
         assert removed not in html + browser + styles
     assert "export const MAX_COMPARED_BUILDS = 3;" in script
     assert 'comparePicks: ["", "", ""]' in script
-    assert '<select data-pick="${index}"><option value="">Choose a build</option>' in script
+    assert 'selectControl("Task", "task"' in script
+    assert 'const options = taskOptions;' in script
+    assert 'class="compare-tooltip"' in script
+    assert 'class="compare-chart"' in script
+    assert 'data-compare-toggle=' in script
+    assert 'LLM / VLM comparisons' in script
+    assert 'class="compare-tbd">TBD' in script
     # The picks live in the link, so a comparison can be shared and survives reload and Back.
     assert 'params.getAll("build")' in script
     assert 'url.searchParams.set("view", "compare");' in script

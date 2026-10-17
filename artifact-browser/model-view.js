@@ -605,7 +605,15 @@ export function accuracyHeadline(variant) {
   const [name, metric] = report ? orderedAccuracyMetrics(report)[0] || [] : [];
   if (!name) return null;
   const published = publishedScores(variant.published, report.dataset?.id, report.metrics)[name];
-  return { label: accuracyMetricLabel(name), value: accuracyMetricValue(metric), published: publishedAccuracyValue(published) };
+  return {
+    label: accuracyMetricLabel(name), value: accuracyMetricValue(metric), published: publishedAccuracyValue(published),
+    numericValue: Number.isFinite(metric.value) ? metric.value * (metric.unit === "ratio" ? 100 : 1) : null,
+    unit: metric.unit === "ratio" ? "%" : metric.unit,
+    dataset: report.dataset,
+    comparisonKey: report.dataset?.id ? JSON.stringify([
+      report.dataset.id, report.dataset.variant, report.dataset.split, report.dataset.sha256, name, metric.unit,
+    ]) : null,
+  };
 }
 
 function accuracyPanel(result, modelId, published = []) {

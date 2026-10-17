@@ -17,7 +17,7 @@ import {
   populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount,
   setFilterDrawer, updateFilterDisclosure, applyCatalog, loadBranches, renderRuns,
 } from "./catalog-view.js";
-import { renderComparison, picksFromUrl, writePicksToUrl, pickKey } from "./compare-view.js";
+import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
   detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel, updateLayerAnalysis,
 } from "./model-view.js";
@@ -63,7 +63,7 @@ function setTheme(theme) {
 // The page a link opens: a model page (`run`, or `model` and `variant`), the Compare page (`view` and
 // `build`), or the catalog when none is set.
 function deletePageParams(url) {
-  ["run", "model", "variant", "view", "build"].forEach((name) => url.searchParams.delete(name));
+  ["run", "model", "variant", "view", "build", "compare_task", "compare_precision"].forEach((name) => url.searchParams.delete(name));
 }
 
 function writeVariantUrl(run) {
@@ -399,6 +399,9 @@ async function initialize() {
   const compareLink = link.get("view") === "compare";
   // Other pages keep the picks, so returning to Compare finds them.
   if (compareLink) state.comparePicks = picksFromUrl(link);
+  if (compareLink) {
+    state.compareTask = link.get("compare_task") || "";
+  }
   const linkedVariant = link.get("model") && link.get("variant")
     ? { modelId: link.get("model"), profile: link.get("variant") } : null;
   state.categorySelection = Object.fromEntries(
@@ -517,6 +520,13 @@ function latestVariantRun({ modelId, profile }) {
 }
 
 elements["theme-toggle"].addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+elements["catalog-layout-toggle"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-catalog-layout]");
+  if (!button) return;
+  state.catalogLayout = button.dataset.catalogLayout;
+  try { localStorage.setItem("sima-neat-catalog-layout", state.catalogLayout); } catch { /* The view still works without storage. */ }
+  renderRuns();
+});
 elements["filter-toggle"].addEventListener("click", () => {
   setFilterDrawer(elements["filter-toggle"].getAttribute("aria-expanded") !== "true");
 });
@@ -638,6 +648,16 @@ elements["result-list"].addEventListener("click", (event) => {
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
   if (event.target.closest('[data-action="retry"]')) initialize();
 });
+elements["result-list"].addEventListener("change", (event) => {
+  const picker = event.target.closest("[data-catalog-profile]");
+  if (!picker) return;
+  const modelId = picker.dataset.catalogProfile;
+  const selector = `[data-catalog-profile="${CSS.escape(modelId)}"]`;
+  const pickerIndex = [...elements["result-list"].querySelectorAll(selector)].indexOf(picker);
+  state.activeProfileByModel.set(modelId, picker.value);
+  renderRuns();
+  elements["result-list"].querySelectorAll(selector)[pickerIndex]?.focus({preventScroll: true});
+});
 function returnToCatalog() {
   state.selectedId = null;
   state.selectedVariantKey = null;
@@ -659,6 +679,9 @@ elements["nav-compare"].addEventListener("click", (event) => {
   const viewed = variant?.modelId && variant.profile ? pickKey(variant.modelId, variant.profile) : "";
   const empty = state.comparePicks.indexOf("");
   if (viewed && !state.comparePicks.includes(viewed) && empty >= 0) state.comparePicks[empty] = viewed;
+  if (viewed) {
+    state.compareTask = state.models.find(model => model.model_id === variant.modelId)?.tasks?.[0] || "";
+  }
   const url = new URL(location.href);
   deletePageParams(url);
   url.searchParams.set("view", "compare");
@@ -667,16 +690,60 @@ elements["nav-compare"].addEventListener("click", (event) => {
   renderComparison();
 });
 elements["compare-pane"].addEventListener("change", (event) => {
-  const picker = event.target.closest("[data-pick]");
-  if (!picker) return;
-  state.comparePicks[Number(picker.dataset.pick)] = picker.value;
+  const add = event.target.closest("[data-compare-add]");
+  const control = event.target.closest("[data-compare-control]");
+  if (!add && !control) return;
+  const key = control?.dataset.compareControl;
+  if (add) {
+    if (!add.value) return;
+    toggleComparison(add.value);
+  } else {
+    const fields = {task: "compareTask", axis: "compareAxis"};
+    state[fields[key]] = control.value;
+    if (key === "task") renderComparison();
+    else updateComparisonChart();
+  }
   const url = new URL(location.href);
   writePicksToUrl(url);
   history.replaceState({}, "", url);
-  renderComparison();
-  // The pickers render again with the page; keep the reader on the one they changed.
-  elements["compare-pane"].querySelector(`[data-pick="${picker.dataset.pick}"]`)?.focus();
+  const next = elements["compare-pane"].querySelector(add ? "[data-compare-add]" : `[data-compare-control="${key}"]`);
+  (next?.disabled ? elements["compare-pane"].querySelector(".compare-legend button:last-child") : next)?.focus({preventScroll: true});
 });
+elements["compare-pane"].addEventListener("click", (event) => {
+  const open = event.target.closest("[data-compare-open]");
+  if (open) selectRun(open.dataset.compareOpen);
+  const point = event.target.closest("[data-compare-toggle]");
+  if (!point) return;
+  const key = point.dataset.compareToggle;
+  const chart = point.classList.contains("compare-point");
+  toggleComparison(key);
+  const url = new URL(location.href);
+  writePicksToUrl(url);
+  history.replaceState({}, "", url);
+  elements["compare-pane"].querySelector(chart ? `.compare-point[data-compare-toggle="${CSS.escape(key)}"]` : "[data-compare-add]")?.focus({preventScroll: true});
+});
+elements["compare-pane"].addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideComparisonTooltip();
+  if ((event.key === "Enter" || event.key === " ") && event.target.matches(".compare-point")) {
+    event.preventDefault();
+    event.target.dispatchEvent(new MouseEvent("click", {bubbles: true}));
+  }
+});
+elements["compare-pane"].addEventListener("pointerover", (event) => {
+  const point = event.target.closest(".compare-point");
+  if (point && !point.contains(event.relatedTarget)) showComparisonTooltip(point);
+});
+elements["compare-pane"].addEventListener("pointerout", (event) => {
+  const point = event.target.closest(".compare-point");
+  if (point && !point.contains(event.relatedTarget)) hideComparisonTooltip();
+});
+elements["compare-pane"].addEventListener("focusin", (event) => {
+  const point = event.target.closest(".compare-point");
+  if (point) showComparisonTooltip(point);
+});
+elements["compare-pane"].addEventListener("focusout", hideComparisonTooltip);
+window.addEventListener("scroll", hideComparisonTooltip, true);
+window.addEventListener("resize", hideComparisonTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", (event) => {
@@ -760,6 +827,7 @@ document.addEventListener("keydown", (event) => {
 
 // The page restores the catalog position itself; browser restoration would reset it after Back.
 history.scrollRestoration = "manual";
+try { state.catalogLayout = localStorage.getItem("sima-neat-catalog-layout") === "table" ? "table" : "cards"; } catch { /* Use cards when storage is unavailable. */ }
 initialize();
 window.addEventListener("popstate", () => {
   // Rehydrate branch and selection from the URL, never from the last local choice.

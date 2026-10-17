@@ -21,13 +21,23 @@ dark themes remain supported. Search is the dominant action; advanced facets
 stay collapsed until requested. Avoid crowded toolbars, repeated status
 indicators, and decorative effects that compete with model information.
 
-The catalog is a grid of model cards because people recognize a model by what
-it does before they know its name. Each card carries one thing per role: the
+The catalog opens as a grid of model cards because people recognize a model by what
+it does before they know its name. A Cards/Table switch also offers a compact
+table for scanning model names, tasks, precisions, accuracy, and performance.
+Both views use the same filters; the table groups models by task and keeps the
+model-family ordering within each group. Multi-task models appear in each applicable
+group, while the total counts unique models. It names the selected precision and
+keeps component measurements separate. Each card carries one thing per role: the
 model's hero illustration, its name, a one-line description, and its tasks. A
 card states what the model is, not how a build measured; numbers, precision,
 and build state belong on the model page, where they have context. Card
 borders and fills mark the cards as the objects to choose; the model page
 itself uses sections and rules instead of nested cards.
+
+Compare starts with a task, then shows measured single-component vision variants
+in one scatter plot: accuracy vertically, throughput horizontally. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
+compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
+variants with missing measurements. LLM/VLM comparisons remain TBD.
 
 The model page reads at a glance first and expands on request. Each section
 shows its key facts directly; longer detail sits behind one kind of control: a

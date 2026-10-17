@@ -182,20 +182,18 @@ end-to-end latency.
 
 ## Compare page
 
-**Compare** in the top bar opens a page with three build pickers over one
-table. Each picker lists the variants of the selected branch's catalog and
-resolves to the build the model page would show. Opening Compare from a model
-page fills the first empty picker with that variant. The link records the picks
-as `view=compare&build=<model id>.<build profile>`, one `build` per picker, so
-a shared link reopens the same comparison.
+**Compare** explores the selected branch's model variants by task. All
+precisions appear together; measured variants appear in a scatter
+plot of accuracy against throughput in inferences/s. Accuracy plots keep dataset
+and metric identities separate. Multi-component models are excluded for now. Hovering or focusing a point
+shows the model name, variant, throughput and accuracy.
 
-The table shows task, component count, throughput, latency, SoM power,
-energy per inference, and the headline accuracy metric with its published
-score. A multi-component build lists one line per component and never adds
-them up. Bold marks the best value among single-component builds, or among the
-same component of different builds; a row with one value has no mark. Builds
-from build history and metrics outside these rows are not comparable here;
-their model pages show them.
+Select up to three points or use **Add model** to inspect exact measurements
+in a table. It includes throughput, latency, power, energy, peak MLA memory and
+accuracy. Best performance values are highlighted only within matching components.
+Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
+Links preserve the task and selected builds with `compare_task` and repeated
+`build` parameters. Build history is not compared.
 
 ## How the page is built
 
