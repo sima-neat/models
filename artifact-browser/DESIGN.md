@@ -34,6 +34,12 @@ and build state belong on the model page, where they have context. Card
 borders and fills mark the cards as the objects to choose; the model page
 itself uses sections and rules instead of nested cards.
 
+Task accents come from the shared SiMa palette in both themes: blue for
+classification, green for detection, purple for segmentation, orange for pose,
+teal for depth and lime for generative tasks. Labels, model titles and table
+headings use the same task color. Pastel text is toned darker on light surfaces;
+markers retain the original brand color. Cards and tables keep neutral surfaces.
+
 Compare starts with a task, then shows measured single-component vision variants
 in one scatter plot: accuracy vertically, throughput horizontally. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including

@@ -603,7 +603,7 @@ def test_developer_docs_use_the_catalog_visual_system() -> None:
     docs_styles = DOCS_STYLES.read_text(encoding="utf-8")
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
 
-    for color in ("#f7f8f9", "#f1f3f5", "#ffffff", "#20262c", "#5f6972", "#dfe3e6"):
+    for color in ("#f5f5f7", "#f1f3f5", "#ffffff", "#0b1220", "#5f6972", "#dfe3e6"):
         assert color in browser_styles
         assert color in docs_styles
     assert "font-size: clamp(2rem, 3vw, 2.65rem)" in docs_styles

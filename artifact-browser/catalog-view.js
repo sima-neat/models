@@ -369,7 +369,7 @@ function renderCatalogTable(models) {
     .sort(([left], [right]) => taskLabel(left).localeCompare(taskLabel(right)))
     .map(([task, entries]) => {
       const headingId = `catalog-task-${task || "other"}`;
-      return `<section class="catalog-task-group" aria-labelledby="${escapeHtml(headingId)}">
+      return `<section class="catalog-task-group" data-task="${escapeHtml(task)}" aria-labelledby="${escapeHtml(headingId)}">
         <h3 id="${escapeHtml(headingId)}">${escapeHtml(taskLabel(task))}</h3>
         <div class="catalog-table-scroll" role="region" aria-label="${escapeHtml(taskLabel(task))} model table" tabindex="0">
           <table class="catalog-table" aria-labelledby="${escapeHtml(headingId)}">
@@ -409,9 +409,9 @@ function renderModelCard(model) {
   const active = activeModelBuild(model);
   const run = runFromCatalogBuild(model, active.build);
   const displayName = model.display_name || model.model_id;
-  const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
+  const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag" data-task="${escapeHtml(id)}">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
   const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
-  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
+  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-task="${escapeHtml(categoryFilters().task || model.tasks?.[0] || "")}" data-run-id="${escapeHtml(run.id)}">
     ${modelCardImage(model)}
     <span class="model-card-body">
       <strong>${escapeHtml(displayName)}</strong>

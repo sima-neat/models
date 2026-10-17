@@ -2,10 +2,10 @@
 @import '../../../artifact-browser/brand.css';
 
 :root {
-  --portal-canvas: #f7f8f9;
+  --portal-canvas: #f5f5f7;
   --portal-surface: #f1f3f5;
   --portal-raised: #ffffff;
-  --portal-ink: #20262c;
+  --portal-ink: #0b1220;
   --portal-ink-soft: #5f6972;
   --portal-ink-faint: #646d76;
   --portal-line: #dfe3e6;
