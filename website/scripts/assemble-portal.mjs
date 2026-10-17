@@ -17,7 +17,7 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'styles', 'config',
+  'benchmark-adapters', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'styles', 'config',
 ];
 
 rmSync(output, {recursive: true, force: true});

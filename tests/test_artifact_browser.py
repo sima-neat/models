@@ -46,6 +46,7 @@ def test_artifact_browser_assets_exist() -> None:
         "compare-view.js",
         "model-view.js",
         "benchmark-adapters.js",
+        "layer-stats.js",
         "branch-builds.js",
         "downloads.js",
         "markdown.js",
@@ -259,7 +260,7 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "process.env.GITHUB_SHA" in assemble
     for asset in (
         "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
-        "benchmark-adapters", "branch-builds", "downloads", "markdown", "styles", "config",
+        "benchmark-adapters", "layer-stats", "branch-builds", "downloads", "markdown", "styles", "config",
     ):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
@@ -438,7 +439,7 @@ def test_execution_graph_opens_its_tensors_from_details_beside_its_heading() -> 
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
     design = (BROWSER / "DESIGN.md").read_text(encoding="utf-8")
 
-    assert "executionGraph: executionGraph(result.core_report?.execution_plan)" in adapters
+    assert "executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan)" in adapters
     assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
     # Details sits in the heading row and controls the tensor table, which starts closed.
     assert '<div class="execution-head"><h5>Execution graph</h5>${details}</div>' in script
@@ -1087,9 +1088,9 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
     assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
-    every_format = ", ".join(f"[{version}, adaptResult]" for version in range(1, 6))
-    assert f"new Map([{every_format}])" in adapters
-    assert "Object.entries(result.metrics || {})" in adapters
+    assert "new Map([1, 2, 3, 4, 5, 6].map((version) => [version, adaptResult]))" in adapters
+    # Schema 6 stores Core's saved report; the browser reads the metrics from it as the registry does.
+    assert "const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};" in adapters
     assert "/benchmarks/latest" in script
     # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
     assert "KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key]))" in script
@@ -1101,7 +1102,7 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert '["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"]' in script
     assert "(benchmark.batchSize * 1000) / latency.value" in script
     assert "batchSize: result.configuration?.workload?.batch_size" in adapters
-    assert "cpuCores: cpuCores(result.core_report)" in adapters
+    assert "cpuCores: cpuCores(report)" in adapters
     assert "report?.telemetry?.cpu_cores_usage_pct" in adapters
     assert "coreLoad(benchmark.cpuCores)" in script
     assert '<p class="metric-caption core-legend"><span><b></b>Average</span><span><i></i>Peak</span></p>' in script
@@ -1446,7 +1447,7 @@ const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
   {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer',
    validation_fingerprint: 'stale-accuracy-key'},
 ]},
-                 {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited'}]}];
+                 {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
 const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
   model_id: 'rf_detr_small', build_profile_id: 'w8a8_w16a16', component_run_ids: components,

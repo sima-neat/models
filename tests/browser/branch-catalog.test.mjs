@@ -90,6 +90,23 @@ test('an older build compiled on the branch does not replace the catalog build',
   assert.equal(branchModels([stale, resnet, yolo], [], catalog)[0].builds[0].run_id, 'resnet-develop');
 });
 
+test('a profile the catalog no longer declares shows no variant, even with a newer run', () => {
+  const renamed = run('resnet-renamed', 'resnet_50', develop, '2026-10-02T00:00:00Z',
+    {metadata: {...resnet.metadata, build_profile_id: 'modalix_int8'}});
+  const [model] = branchModels([renamed, resnet, yolo], [], catalog);
+
+  assert.deepEqual([...new Set(model.builds.map((build) => build.build_profile_id))], ['int8']);
+});
+
+test('a profile still pending in the catalog shows its completed run', () => {
+  const pending = run('resnet-pending', 'resnet_50', develop, '2026-10-02T00:00:00Z',
+    {metadata: {...resnet.metadata, build_profile_id: 'bf16'}});
+  const declared = [{...catalog[0], pending_builds: [{model_id: 'resnet_50', build_profile_id: 'bf16'}]}, catalog[1]];
+  const [model] = branchModels([pending, resnet, yolo], [], declared);
+
+  assert.deepEqual(model.builds.map((build) => build.build_profile_id).sort(), ['bf16', 'int8']);
+});
+
 test('catalog runs are resolved by commit, then by id for runs the list omits', async () => {
   const superseded = run('superseded', 'yolo', develop, '2026-09-01T00:00:00Z');
   const models = [...catalog, {model_id: 'old', builds: [catalogBuild(superseded)]}];

@@ -386,7 +386,7 @@ def test_performance_meets_its_expected_values(performance: dict[str, Any], mode
 
 
 def test_performance_records_the_execution_plan_the_browser_draws(performance: dict[str, Any]) -> None:
-    plan = performance["core_report"]["execution_plan"]
+    plan = performance["execution_plan"]
     assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
     assert plan["nodes"] and plan["edges"]
 ```

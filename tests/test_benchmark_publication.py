@@ -49,32 +49,26 @@ class FakeStore:
         return S3Object(key, "version-1", sha256, path.stat().st_size)
 
 
-def single_metric(value: float, unit: str) -> dict:
-    return {
-        "status": "measured",
-        "reason": None,
-        "unit": unit,
-        "aggregation": "single",
-        "value": value,
-        "minimum": value,
-        "maximum": value,
-        "standard_deviation": 0.0,
-        "sample_count": 1,
-    }
+def without_telemetry(report: dict) -> None:
+    """Leave the report as save() writes it when Sentinel did not answer: every reading without samples."""
+    telemetry = report["telemetry"]
+    for name, value in telemetry.items():
+        if isinstance(value, dict):
+            value.update(samples=0, mean=0.0, minimum=0.0, maximum=0.0)
+        elif isinstance(value, list):
+            telemetry[name] = []
+    telemetry.update(status="sentinel_unreachable", samples=0)
 
 
 def valid_result(tmp_path: Path) -> Path:
-    """A Core benchmark result, built from the browser's fixture."""
+    """A Core benchmark result that measured latency and throughput only, built from the browser's fixture."""
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     result["tool"] = {"name": "pyneat.Model.benchmark", "version": "3.0.0"}
     result["model"]["build_profile_id"] = "w16a16"
-    result["core_report"] = {
-        "core_version": "3.0.0",
-        "latency_ms": 3.6,
-        "fps": 460.0,
-        "avg_power_watts": 8.5,
-        "energy_joules": 1.0,
-    }
+    report = result["benchmark_report"]
+    report.update(latency_ms=3.6, latency_p50_ms=0.0, latency_p95_ms=0.0, latency_p99_ms=0.0, fps=460.0,
+                  avg_power_watts=0.0, energy_joules=0.0, peak_power_watts=0.0)
+    without_telemetry(report)
     # Core benchmark results carry a SHA-256 environment fingerprint at version 2, the performance stage's version.
     result["environment"].update(
         fingerprint=ENVIRONMENT_FINGERPRINT,
@@ -85,25 +79,6 @@ def valid_result(tmp_path: Path) -> Path:
         cpu_governor="performance",
     )
     result["provenance"]["compile_run_id"] = COMPILE_RUN_ID
-    for metric in result["metrics"].values():
-        metric.update(
-            status="unavailable",
-            reason="test_fixture",
-            value=None,
-            minimum=None,
-            maximum=None,
-            standard_deviation=None,
-            sample_count=0,
-        )
-    result["metrics"].update(
-        {
-            "latency_avg_ms": single_metric(3.6, "ms"),
-            "throughput_fps": single_metric(460.0, "inferences/s"),
-            "model_load_ms": single_metric(125.0, "ms"),
-            "time_to_first_inference_ms": single_metric(340.0, "ms"),
-            "mla_memory_peak_delta_mib": {**single_metric(128.0, "MiB"), "aggregation": "maximum"},
-        }
-    )
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     path = tmp_path / "performance-result.json"
     path.write_text(json.dumps(result), encoding="utf-8")
@@ -122,8 +97,7 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
     )
     result["provenance"]["models_commit"] = "a" * 40
     if include_power:
-        result["metrics"]["avg_power_watts"] = single_metric(8.5, "W")
-        result["metrics"]["energy_per_inference_joules"] = single_metric(0.03, "J")
+        result["benchmark_report"].update(avg_power_watts=8.5, energy_joules=30.0)
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     destination = tmp_path.parent / component_id / "performance-result.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -177,14 +151,14 @@ def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> Non
         )
 
 
-@pytest.mark.parametrize("version", [2, 3, 4])
+@pytest.mark.parametrize("version", [2, 3, 4, 5])
 def test_rejects_results_older_than_the_core_benchmark(tmp_path: Path, version: int) -> None:
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
     result["schema_version"] = version
     path = tmp_path / "performance-result.json"
     path.write_text(json.dumps(result), encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="^benchmark result schema_version: 5 was expected"):
+    with pytest.raises(ValidationError, match="^benchmark result schema_version: 6 was expected"):
         load_benchmark_result(path)
 
 
@@ -281,21 +255,12 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000003"
     measurements = calls[5][2]
     assert measurements is not None
-    assert {item["name"] for item in measurements["measurements"]} == {
-        "model.latency.avg",
-        "model.inference_rate",
-        "model.initialization.load",
-        "model.initialization.time_to_first_inference",
-        "model.mla_memory.peak_delta",
-    }
-    mla_memory = next(item for item in measurements["measurements"] if item["name"] == "model.mla_memory.peak_delta")
-    assert mla_memory["unit"] == "MiB"
-    assert mla_memory["aggregation"] == "max"
-    assert mla_memory["dimensions"]["result_aggregation"] == "maximum"
-    assert mla_memory["direction"] == "lower"
-    model_load = next(item for item in measurements["measurements"] if item["name"] == "model.initialization.load")
-    assert model_load["aggregation"] == "raw"
-    assert model_load["dimensions"]["result_aggregation"] == "single"
+    assert {item["name"] for item in measurements["measurements"]} == {"model.latency.avg", "model.inference_rate"}
+    latency = next(item for item in measurements["measurements"] if item["name"] == "model.latency.avg")
+    assert latency["unit"] == "ms"
+    assert latency["aggregation"] == "raw"
+    assert latency["direction"] == "lower"
+    assert "result_aggregation" not in latency["dimensions"]
     assert calls[-1][2] == {"status": "completed"}
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -395,29 +360,6 @@ def test_publishes_core_throughput_as_logical_inference_rate(tmp_path: Path) -> 
     assert throughput["unit"] == "inferences/s"
 
 
-def test_rejects_throughput_unit_that_is_not_the_inference_rate(tmp_path: Path) -> None:
-    path = valid_result(tmp_path)
-    result = json.loads(path.read_text(encoding="utf-8"))
-    result["metrics"]["throughput_fps"]["unit"] = "fps"
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    path.write_text(json.dumps(result), encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="requires throughput_fps unit 'inferences/s'"):
-        publish_benchmark_result(
-            result_path=path,
-            api_url="https://registry.example.invalid",
-            aws_region="us-west-2",
-            bucket="artifacts",
-            environment="staging",
-            branch="feature/benchmark",
-            git_sha="a" * 40,
-            repository=ROOT,
-            test_status=TEST_STATUS,
-            request=lambda *_: {},
-            artifact_store=FakeStore(),
-        )
-
-
 def test_publishes_log_beside_result(tmp_path: Path) -> None:
     path = valid_result(tmp_path)
     log = tmp_path / "benchmark.log"
@@ -511,34 +453,6 @@ def test_rejects_tampered_benchmark_identity(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="identity fingerprint"):
         load_benchmark_result(path)
-
-
-def test_rejects_metric_aggregation_the_registry_cannot_represent(tmp_path: Path) -> None:
-    path = valid_result(tmp_path)
-    result = json.loads(path.read_text(encoding="utf-8"))
-    result["metrics"]["latency_avg_ms"]["aggregation"] = "harmonic_mean"
-    path.write_text(json.dumps(result), encoding="utf-8")
-    calls = []
-
-    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
-        calls.append((method, endpoint, body, key))
-        return {"run_id": BENCHMARK_RUN_ID}
-
-    with pytest.raises(ValidationError, match="cannot be represented by the Vulcan registry"):
-        publish_benchmark_result(
-            result_path=path,
-            api_url="https://registry.example.invalid",
-            aws_region="us-west-2",
-            bucket="artifacts",
-            environment="staging",
-            branch="feature/benchmark",
-            git_sha="a" * 40,
-            repository=ROOT,
-            test_status=TEST_STATUS,
-            request=request,
-            artifact_store=FakeStore(),
-        )
-    assert calls == []
 
 
 def rf_detr_compilation(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -784,13 +698,9 @@ def test_board_telemetry_metrics_are_published_as_measurements():
 
 def test_latency_percentiles_and_busiest_core_are_published():
     result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text())
-    measured = {"status": "measured", "reason": None, "aggregation": "raw", "minimum": None, "maximum": None,
-                "standard_deviation": None, "sample_count": 1}
-    result["metrics"]["latency_p99_ms"] = {**measured, "unit": "ms", "value": 3.1}
-    result["metrics"]["avg_cpu_core_usage_pct"] = {**measured, "unit": "%", "value": 61.0, "aggregation": "mean"}
-    result["metrics"]["peak_cpu_core_usage_pct"] = {**measured, "unit": "%", "value": 98.5, "aggregation": "max"}
     measurements = {item["name"]: item for item in _measurements(result, "f" * 64)}
 
-    assert measurements["model.latency.p99"]["value"] == 3.1
-    assert measurements["board.cpu_core_usage.avg"]["value"] == 61.0
-    assert measurements["board.cpu_core_usage.peak"]["value"] == 98.5
+    assert measurements["model.latency.p99"]["value"] == result["benchmark_report"]["latency_p99_ms"]
+    cores = result["benchmark_report"]["telemetry"]["cpu_cores_usage_pct"]
+    assert measurements["board.cpu_core_usage.avg"]["value"] == max(core["mean"] for core in cores)
+    assert measurements["board.cpu_core_usage.peak"]["value"] == max(core["maximum"] for core in cores)

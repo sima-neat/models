@@ -148,10 +148,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
     core_report = subcommands.add_parser(
-        "import-core-benchmark", help="attach registry provenance to a Core benchmark report"
+        "import-core-benchmark", help="attach registry provenance to a saved Core benchmark report"
     )
     core_report.add_argument("--manifest", type=Path, required=True)
-    core_report.add_argument("--report", type=Path, required=True)
+    core_report.add_argument("--report", type=Path, required=True, help="BenchmarkReport.save() JSON")
+    core_report.add_argument("--context", type=Path, required=True, help="the performance script's context")
     core_report.add_argument("--output", type=Path, required=True)
     core_report.add_argument("--schema", type=Path, required=True)
 
@@ -1035,7 +1036,9 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
         if args.command == "import-core-benchmark":
             from .core_benchmark import import_core_benchmark
 
-            result = import_core_benchmark(args.manifest, args.report, args.output, schema_path=args.schema)
+            result = import_core_benchmark(
+                args.manifest, args.report, args.context, args.output, schema_path=args.schema
+            )
             print(json.dumps(result, sort_keys=True))
             return 0
         if args.command == "resolve-devkit-accuracy":
