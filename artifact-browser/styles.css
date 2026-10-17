@@ -147,7 +147,6 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .catalog-table tbody tr:hover { background: var(--surface); }
 .catalog-model-link { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 5px 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; line-height: 1.45; text-align: left; cursor: pointer; }
 .catalog-model-link:hover { text-decoration: underline; text-underline-offset: 4px; }
-.catalog-task-group .catalog-model-link { color: var(--task-text); }
 .catalog-model-link svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: 0; }
 .catalog-model-link:hover svg, .catalog-model-link:focus-visible svg { opacity: 1; }
 .catalog-table select { max-width: 150px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface-raised); font: 12px var(--font-mono); cursor: pointer; }
@@ -166,7 +165,7 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .model-card-image-empty { display: grid; place-items: center; }
 .model-card-image-empty img { width: 40px; height: 40px; object-fit: contain; opacity: .35; }
 .model-card-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 16px 18px 18px; }
-.model-card-body strong { color: var(--task-text); font-size: 1.125rem; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; }
+.model-card-body strong { font-size: 1.125rem; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; }
 .model-card-description { color: var(--ink-soft); font-size: 0.875rem; line-height: 1.5; }
 .model-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: auto; padding-top: 6px; }
 .model-card-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--task-text); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }

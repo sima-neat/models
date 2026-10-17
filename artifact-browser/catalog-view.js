@@ -411,7 +411,7 @@ function renderModelCard(model) {
   const displayName = model.display_name || model.model_id;
   const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag" data-task="${escapeHtml(id)}">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
   const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
-  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-task="${escapeHtml(categoryFilters().task || model.tasks?.[0] || "")}" data-run-id="${escapeHtml(run.id)}">
+  return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
     ${modelCardImage(model)}
     <span class="model-card-body">
       <strong>${escapeHtml(displayName)}</strong>

@@ -16,8 +16,8 @@ same model-family ordering inside each group. Models with multiple tasks appear
 in every applicable group; selecting a task filter shows only that group. The
 model count counts unique models, and precision changes apply to every copy of
 the model. Build history keeps its existing list.
-Task labels, model titles and table task headings share a SiMa palette accent
-in light and dark mode. Pastel accents use a darker text tone on light surfaces.
+Task labels and table task headings share a SiMa palette accent in light and
+dark mode; model names stay neutral. Pastel accents use a darker text tone on light surfaces.
 
 A card shows four things, all
 taken from the model directory:

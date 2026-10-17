@@ -36,8 +36,9 @@ itself uses sections and rules instead of nested cards.
 
 Task accents come from the shared SiMa palette in both themes: blue for
 classification, green for detection, purple for segmentation, orange for pose,
-teal for depth and lime for generative tasks. Labels, model titles and table
-headings use the same task color. Pastel text is toned darker on light surfaces;
+teal for depth and lime for generative tasks. Labels and table task headings use
+the same task color; model names stay dark in light mode and light in dark mode.
+Pastel text is toned darker on light surfaces;
 markers retain the original brand color. Cards and tables keep neutral surfaces.
 
 Compare starts with a task, then shows measured single-component vision variants
