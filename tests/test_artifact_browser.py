@@ -303,7 +303,7 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
 
     portal = tmp_path / "website" / "portal-build"
     pipelines = json.loads((portal / "component-pipelines.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
-    assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "transformer"]
+    assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "decoder"]
     published = json.loads((portal / "published-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert published["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
@@ -1278,8 +1278,8 @@ def test_compare_bolds_a_value_only_against_the_same_component() -> None:
         ]}
 
     columns = [
-        build(backbone=31.6, transformer=22.7),
-        build(backbone=17.9, transformer=39.7),
+        build(backbone=31.6, decoder=22.7),
+        build(backbone=17.9, decoder=39.7),
         build(model=12.9),
         build(model=8.4),
         build(encoder=5.0, decoder=None),
@@ -1290,7 +1290,7 @@ def test_compare_bolds_a_value_only_against_the_same_component() -> None:
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
     # Lower latency wins within each component; an encoder no other build has gets no mark.
-    assert json.loads(result.stdout) == {"backbone": 17.9, "transformer": 22.7, "model": 8.4}
+    assert json.loads(result.stdout) == {"backbone": 17.9, "decoder": 22.7, "model": 8.4}
 
 
 def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
@@ -1437,12 +1437,12 @@ const run = (id, model, component, workflow, version = '3.0', time = '2026-10-01
   metadata: {model_id: model, build_profile_id: 'w8a8_w16a16', component_id: component, github_run_id: workflow},
 });
 const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
-                 run('transformer', 'rf_detr_small', 'transformer', 'workflow-2')];
+                 run('decoder', 'rf_detr_small', 'decoder', 'workflow-2')];
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
-             run('old-transformer', 'rf_detr_small', 'transformer', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
+             run('old-decoder', 'rf_detr_small', 'decoder', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
   {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
-  {run_id: 'stale-transformer', build_profile_id: 'w8a8_w16a16', component_id: 'transformer',
+  {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder',
    validation_fingerprint: 'stale-accuracy-key'},
 ]},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
@@ -1450,25 +1450,25 @@ const packageRun = (id, components) => ({id, run_type: 'model_package', status: 
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
   model_id: 'rf_detr_small', build_profile_id: 'w8a8_w16a16', component_run_ids: components,
 }});
-const packages = [packageRun('good', {backbone: 'backbone', transformer: 'transformer'}),
-                  packageRun('wrong', {backbone: 'backbone', transformer: 'old-transformer'})];
+const packages = [packageRun('good', {backbone: 'backbone', decoder: 'decoder'}),
+                  packageRun('wrong', {backbone: 'backbone', decoder: 'old-decoder'})];
 const models = branchModels([...old, ...current], packages, catalog);
 assert.deepEqual(models.map(model => model.model_id), ['rf_detr_small']);
-assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'transformer']);
+assert.deepEqual(models[0].builds.map(build => build.run_id), ['backbone', 'decoder']);
 assert.equal(models[0].builds[0].run.git_ref, 'refs/heads/perf/rfdetr-attention-layout');
 // Only the catalog build of the same run carries its accuracy key.
 assert.deepEqual(models[0].builds.map(build => build.validation_fingerprint), [undefined, undefined]);
-const matched = [{...catalog[0], builds: [{run_id: 'transformer', build_profile_id: 'w8a8_w16a16',
-  component_id: 'transformer', validation_fingerprint: 'accuracy-key'}]}];
+const matched = [{...catalog[0], builds: [{run_id: 'decoder', build_profile_id: 'w8a8_w16a16',
+  component_id: 'decoder', validation_fingerprint: 'accuracy-key'}]}];
 assert.deepEqual(branchModels(current, [], matched)[0].builds.map(build => build.validation_fingerprint),
                  [undefined, 'accuracy-key']);
 assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
 assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
-                 ['old-backbone', 'old-transformer']);
+                 ['old-backbone', 'old-decoder']);
 const sameCompilerOld = [run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
-                         run('same-old-transformer', 'rf_detr_small', 'transformer', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
+                         run('same-old-decoder', 'rf_detr_small', 'decoder', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
 assert.deepEqual(branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
-                 ['backbone', 'transformer']);
+                 ['backbone', 'decoder']);
 assert.deepEqual(branchModels([], packages, catalog), []);
 assert.deepEqual(branchModels([{...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_benchmark'}], [], catalog), []);
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']

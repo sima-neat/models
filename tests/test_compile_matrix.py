@@ -420,10 +420,10 @@ def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
     renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description."}
     builds = {
         component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
-        for component_id in ("backbone", "transformer")
+        for component_id in ("backbone", "decoder")
     }
 
-    for component_id in ("backbone", "transformer"):
+    for component_id in ("backbone", "decoder"):
         assert performance_key(
             ROOT, renamed, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
         ) == performance_key(
@@ -440,7 +440,7 @@ def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
     for relative in ("schemas", "taxonomies", "deps", "scripts", "tools", ".github/workflows", "models/rf_detr_small"):
         shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
     model_dir = repository / "models" / "rf_detr_small"
-    components = ("backbone", "transformer")
+    components = ("backbone", "decoder")
     builds = {
         component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64} for component_id in components
     }

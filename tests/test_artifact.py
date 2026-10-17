@@ -30,7 +30,7 @@ def _output(component: str, archive: Path, path: str | None = None) -> dict[str,
 
 
 def _grouped_manifest(tmp_path: Path, outputs: list[dict[str, str]]) -> dict[str, object]:
-    fidelity = tmp_path / "transformer" / "fidelity.json"
+    fidelity = tmp_path / "decoder" / "fidelity.json"
     fidelity.parent.mkdir(exist_ok=True)
     fidelity.write_text("{}\n", encoding="utf-8")
     digest, _ = sha256_file(fidelity)
@@ -41,11 +41,11 @@ def _grouped_manifest(tmp_path: Path, outputs: list[dict[str, str]]) -> dict[str
         "outputs": outputs,
         "derived_graphs": [
             {"component_id": component, "sha256": "a" * 64}
-            for component in ("backbone", "transformer")
+            for component in ("backbone", "decoder")
         ],
         "correctness": {
-            "component_id": "transformer",
-            "path": "transformer/fidelity.json",
+            "component_id": "decoder",
+            "path": "decoder/fidelity.json",
             "sha256": digest,
         },
     }
@@ -85,7 +85,7 @@ def test_verify_mpk_requires_exactly_one_archive(tmp_path: Path) -> None:
 
 
 def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) -> None:
-    for component in ("backbone", "transformer"):
+    for component in ("backbone", "decoder"):
         directory = tmp_path / component
         directory.mkdir()
         _archive(directory / f"{component}_mpk.tar.gz", [f"{component}/model.elf", f"{component}/model_mpk.json"])
@@ -96,7 +96,7 @@ def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) ->
                 tmp_path,
                 [
                     _output("backbone", tmp_path / "backbone" / "backbone_mpk.tar.gz"),
-                    _output("transformer", tmp_path / "transformer" / "transformer_mpk.tar.gz"),
+                    _output("decoder", tmp_path / "decoder" / "decoder_mpk.tar.gz"),
                 ],
             )
         ),
@@ -109,10 +109,10 @@ def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) ->
         model_id="rf_detr_small",
         build_profile_id="w8a8_w16a16",
         compile_invocation_id="rf_detr",
-        component_ids=["backbone", "transformer"],
+        component_ids=["backbone", "decoder"],
     )
 
-    assert [item["component_id"] for item in result["outputs"]] == ["backbone", "transformer"]
+    assert [item["component_id"] for item in result["outputs"]] == ["backbone", "decoder"]
     assert all(Path(item["mpk_path"]).is_file() for item in result["outputs"])
 
 
@@ -147,7 +147,7 @@ def test_validate_compile_outputs_rejects_incomplete_or_unsafe_manifest(
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
             compile_invocation_id="rf_detr",
-            component_ids=["backbone", "transformer"],
+            component_ids=["backbone", "decoder"],
         )
 
 
@@ -222,7 +222,7 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
 def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_invocations(
     tmp_path: Path, grouped: bool
 ) -> None:
-    components = ["backbone", "transformer"] if grouped else ["backbone"]
+    components = ["backbone", "decoder"] if grouped else ["backbone"]
     for component in components:
         directory = tmp_path / component
         directory.mkdir()

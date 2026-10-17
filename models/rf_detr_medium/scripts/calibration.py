@@ -1,4 +1,4 @@
-"""Select and preprocess RF-DETR images, and select the transformer's top proposals."""
+"""Select and preprocess RF-DETR images, and select the decoder's top proposals."""
 
 from __future__ import annotations
 

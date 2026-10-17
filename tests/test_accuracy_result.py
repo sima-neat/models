@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GIT_SHA = "a" * 40
 
 
-def compiled_build(tmp_path: Path, components: tuple[str, ...] = ("backbone", "transformer")) -> tuple[Path, dict]:
+def compiled_build(tmp_path: Path, components: tuple[str, ...] = ("backbone", "decoder")) -> tuple[Path, dict]:
     """Write an RF-DETR Small compilation with one MPK per component and its compile-outputs.json."""
     compiled = tmp_path / "compiled"
     build = compiled / "rf_detr_small" / "w8a8_w16a16"
@@ -73,7 +73,7 @@ def test_import_accuracy_records_the_entry_dataset_and_compiled_mpks(tmp_path: P
 
     report = load_accuracy_result(tmp_path / "accuracy-result.json", ROOT / ACCURACY_RESULT_SCHEMA)
     _, digests = compiled_build(tmp_path / "expected")
-    assert report["model"]["component_id"] == "transformer"
+    assert report["model"]["component_id"] == "decoder"
     assert report["model"]["package_id"] == "default"
     assert report["model"]["artifacts"] == digests
     assert report["validation"] == {"id": "coco_accuracy", "engine": "devkit_script", "status": "ready"}
@@ -117,7 +117,7 @@ def test_import_accuracy_rejects_a_git_sha_that_is_not_a_full_revision(
 def test_compiled_artifacts_returns_each_scoped_component_digest(tmp_path: Path) -> None:
     compiled, digests = compiled_build(tmp_path)
 
-    artifacts = compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
+    artifacts = compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"])
 
     assert artifacts == digests
 
@@ -125,17 +125,17 @@ def test_compiled_artifacts_returns_each_scoped_component_digest(tmp_path: Path)
 def test_compiled_artifacts_rejects_a_missing_component(tmp_path: Path) -> None:
     compiled, _ = compiled_build(tmp_path, components=("backbone",))
 
-    with pytest.raises(ValidationError, match="exactly one compiled transformer MPK"):
-        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
+    with pytest.raises(ValidationError, match="exactly one compiled decoder MPK"):
+        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"])
 
 
 def test_compiled_artifacts_rejects_an_mpk_that_does_not_match_its_recorded_sha256(tmp_path: Path) -> None:
     compiled, _ = compiled_build(tmp_path)
-    archive = compiled / "rf_detr_small" / "w8a8_w16a16" / "transformer" / "rf_detr_small_transformer_mpk.tar.gz"
+    archive = compiled / "rf_detr_small" / "w8a8_w16a16" / "decoder" / "rf_detr_small_decoder_mpk.tar.gz"
     archive.write_bytes(b"rebuilt after the manifest was written")
 
-    with pytest.raises(ValidationError, match="transformer MPK SHA-256 does not match"):
-        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "transformer"])
+    with pytest.raises(ValidationError, match="decoder MPK SHA-256 does not match"):
+        compiled_artifacts(compiled, "rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"])
 
 
 def test_compiled_artifacts_rejects_a_missing_manifest(tmp_path: Path) -> None:

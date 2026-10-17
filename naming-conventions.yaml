@@ -12,7 +12,7 @@ variant:
   examples:
     w8a8: One component with INT8 weights and activations
     w16a16: One component with BF16 weights and activations
-    w8a8_w16a16: A W8A8 backbone followed by a W16A16 transformer
+    w8a8_w16a16: A W8A8 backbone followed by a W16A16 decoder
 
 mpk:
   rules:

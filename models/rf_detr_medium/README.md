@@ -6,7 +6,7 @@
 
 RF-DETR Medium is the Medium size of Roboflow's RF-DETR transformer object
 detector, trained on COCO. It runs as two components: a backbone that proposes
-candidate boxes, and a transformer that turns the best 300 candidates into 300
+candidate boxes, and a decoder that turns the best 300 candidates into 300
 detections. Your application selects those candidates on the CPU between the two
 components. RF-DETR predicts each object once, so the application does not need
 to remove overlapping boxes.
@@ -24,10 +24,10 @@ turned off.
 `proposal_scores`, and `proposal_boxes`, with 1,296 proposals. Take the 300
 highest scores, breaking ties by the lower proposal index, and gather their
 boxes in that order. Pass the gathered boxes as `proposals`, with
-`backbone_features`, to the transformer. Keep this order, because the
-transformer treats each of the 300 positions differently.
+`backbone_features`, to the decoder. Keep this order, because the
+decoder treats each of the 300 positions differently.
 
-**Outputs.** The transformer returns `dets`, 300 boxes as normalized (cx, cy, w,
+**Outputs.** The decoder returns `dets`, 300 boxes as normalized (cx, cy, w,
 h), and `labels`, 91 class logits for each box.
 
 1. Apply a sigmoid to `labels` and rank all 300 × 91 box-class pairs by score.

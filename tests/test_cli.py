@@ -212,7 +212,7 @@ def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> No
     assert pipelines["rf_detr_nano"] == [
         {"component": "backbone"},
         {"cpu": "Top 300 proposals"},
-        {"component": "transformer"},
+        {"component": "decoder"},
     ]
 
 
@@ -252,7 +252,7 @@ def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
 
 
 def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -> None:
-    components = ("backbone", "transformer")
+    components = ("backbone", "decoder")
     for component_id in components:
         (tmp_path / "rf_detr_small" / "w16a16" / component_id).mkdir(parents=True)
     publication = {

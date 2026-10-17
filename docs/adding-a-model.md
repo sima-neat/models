@@ -167,7 +167,7 @@ together in one declared invocation:
 ```yaml
     compile_invocations:
       - id: detector
-        components: [backbone, transformer]
+        components: [backbone, decoder]
 ```
 
 Grouped components must share one source, one effective runner class, and at

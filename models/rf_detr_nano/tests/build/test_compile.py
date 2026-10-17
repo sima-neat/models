@@ -249,9 +249,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert "requests" not in source
     assert "urllib" not in source
     assert 'get_context("spawn")' in source
-    assert source.index('"RF-DETR backbone compilation"') < source.index(
-        '"RF-DETR transformer compilation and fidelity"'
-    )
+    assert source.index('"RF-DETR backbone compilation"') < source.index('"RF-DETR decoder compilation and fidelity"')
 
 
 def _metadata() -> dict:
@@ -265,10 +263,10 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 
     assert parameters == {
         "backbone": {"precision": "w8a16", "per_token": True},
-        "transformer": {"precision": "w16a16"},
+        "decoder": {"precision": "w16a16"},
     }
     assert compile_module._pipeline_description(parameters) == (
-        "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 transformer (JAX execute)"
+        "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 decoder (JAX execute)"
     )
     with pytest.raises(ValueError, match="no build profile 'w32a32'"):
         compile_module._component_parameters(_metadata(), "w32a32")
@@ -284,7 +282,7 @@ def test_only_w8a8_components_select_calibration_images(
         Image.new("RGB", (2, 2), color=(index, index, index)).save(tmp_path / f"{index}.jpg")
     calibrated = {
         "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 3},
-        "transformer": {"precision": "w16a16"},
+        "decoder": {"precision": "w16a16"},
     }
     uncalibrated = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
     selection = {"seed": 42, "offset": 3, "samples": 3}
@@ -363,10 +361,10 @@ def test_backbone_features_convert_to_the_onnx_boundary_layout(load_script: Call
         compile_module._features_to_nchw(nchw[:, :1])
 
 
-def test_surgery_simplifies_only_the_transformer_partition() -> None:
+def test_surgery_simplifies_only_the_decoder_partition() -> None:
     source = (SCRIPTS_DIR / "surgery.py").read_text(encoding="utf-8")
 
-    assert "transformer, valid = simplify(" in source
+    assert "decoder, valid = simplify(" in source
     assert "full, valid = simplify(" not in source
 
 
@@ -376,7 +374,7 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     correctness = model["fidelity"][0]
     benchmarks = model["benchmark"]
 
-    assert invocation["components"] == ["backbone", "transformer"]
+    assert invocation["components"] == ["backbone", "decoder"]
     assert "python_packages" not in invocation
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
@@ -385,7 +383,7 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 1024
     assert correctness["scope"] == {"type": "package", "package": "default"}
-    assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "transformer"]
+    assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "decoder"]
     assert all(entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks)
 
 

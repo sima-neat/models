@@ -34,7 +34,7 @@ ACCURACY_ARTIFACT_ID = "00000000-0000-4000-8000-000000000007"
 TEST_STATUS = "passed"
 RF_DETR_COMPILE_RUN_IDS = {
     "backbone": "00000000-0000-4000-8000-000000000011",
-    "transformer": "00000000-0000-4000-8000-000000000012",
+    "decoder": "00000000-0000-4000-8000-000000000012",
 }
 
 
@@ -107,7 +107,7 @@ def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = T
 
 def rf_detr_result_set(tmp_path: Path) -> Path:
     results = tmp_path / "results"
-    for component_id in ("backbone", "transformer"):
+    for component_id in ("backbone", "decoder"):
         component_tmp = tmp_path / f"tmp-{component_id}"
         component_tmp.mkdir()
         generated = rf_detr_result(component_tmp, component_id)
@@ -123,7 +123,7 @@ def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: P
         result_root=rf_detr_result_set(tmp_path),
         model_id="rf_detr_small",
         build_profile_id="w8a8_w16a16",
-        component_ids=["backbone", "transformer"],
+        component_ids=["backbone", "decoder"],
         git_sha="a" * 40,
     )
 
@@ -494,7 +494,7 @@ def rf_detr_accuracy(tmp_path: Path, artifacts: dict[str, str]) -> Path:
         "model": {
             "id": "rf_detr_small",
             "build_profile_id": "w8a8_w16a16",
-            "component_id": "transformer",
+            "component_id": "decoder",
             "package_id": "default",
             "artifacts": artifacts,
         },
@@ -562,7 +562,7 @@ def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_ru
     assert [endpoint for _, endpoint, _, _ in calls] == [
         "/v1/runs",
         f"{run}/inputs/compiled-model-backbone",
-        f"{run}/inputs/compiled-model-transformer",
+        f"{run}/inputs/compiled-model-decoder",
         f"{run}/parameters",
         f"{run}/artifacts/accuracy-result",
         f"{run}/test-results/accuracy/coco_accuracy",
@@ -573,14 +573,14 @@ def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_ru
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
     builds = {
         component_id: {"run_id": RF_DETR_COMPILE_RUN_IDS[component_id], "artifact_sha256": digests[component_id]}
-        for component_id in ("backbone", "transformer")
+        for component_id in ("backbone", "decoder")
     }
     expected_key = accuracy_key(ROOT, model, "w8a8_w16a16", builds)
 
     create = calls[0][2]
     assert create is not None
     assert create["run_type"] == "model_accuracy"
-    assert create["parent_run_id"] == RF_DETR_COMPILE_RUN_IDS["transformer"]
+    assert create["parent_run_id"] == RF_DETR_COMPILE_RUN_IDS["decoder"]
     assert create["run_fingerprint"] == expected_key
     assert re.fullmatch(r"[0-9a-f]{64}", create["run_fingerprint"])
     assert create["metadata"]["accuracy_key"] == expected_key
@@ -592,7 +592,7 @@ def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_ru
     )
     assert re.fullmatch(r"[0-9a-f]{64}", environment["fingerprint"])
 
-    for component_id, (_, _, body, _) in zip(("backbone", "transformer"), calls[1:3]):
+    for component_id, (_, _, body, _) in zip(("backbone", "decoder"), calls[1:3]):
         assert body is not None
         assert body["input_type"] == "model-pack"
         assert body["source_reference"] == f"vulcan://runs/{RF_DETR_COMPILE_RUN_IDS[component_id]}/artifacts/mpk"
@@ -613,7 +613,7 @@ def test_publishes_accuracy_as_its_own_run_under_the_result_component_compile_ru
     assert test_result["report_artifact_id"] == ACCURACY_ARTIFACT_ID
     assert calls[-1][2] == {"status": "completed"}
     assert published["accuracy_run_id"] == ACCURACY_RUN_ID
-    assert published["compile_run_id"] == RF_DETR_COMPILE_RUN_IDS["transformer"]
+    assert published["compile_run_id"] == RF_DETR_COMPILE_RUN_IDS["decoder"]
     assert published["accuracy_key"] == expected_key
     assert published["evaluated_samples"] == 5000
     assert store.objects[0][3] == "application/json"
@@ -655,14 +655,14 @@ def test_publishes_accuracy_log_before_finalizing(tmp_path: Path) -> None:
 
 def test_rejects_accuracy_measured_with_other_mpks(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="did not measure the compiled MPKs"):
-        publish_rf_detr_accuracy(tmp_path, artifacts={"backbone": "d" * 64, "transformer": "d" * 64})
+        publish_rf_detr_accuracy(tmp_path, artifacts={"backbone": "d" * 64, "decoder": "d" * 64})
 
 
 def test_rejects_accuracy_without_the_result_component_compile_run(tmp_path: Path) -> None:
     compiled, digests = rf_detr_compilation(tmp_path)
-    (compiled / "rf_detr_small" / "w8a8_w16a16" / "transformer" / "registry-publication.json").unlink()
+    (compiled / "rf_detr_small" / "w8a8_w16a16" / "decoder" / "registry-publication.json").unlink()
 
-    with pytest.raises(ValidationError, match="needs the registered transformer compile run"):
+    with pytest.raises(ValidationError, match="needs the registered decoder compile run"):
         publish_accuracy_run(
             repository=ROOT,
             test_status=TEST_STATUS,

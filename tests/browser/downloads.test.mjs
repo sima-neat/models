@@ -3,9 +3,9 @@ import {test} from 'node:test';
 
 const {variantDownloads, prepareDownloads, startDownloads, packageFormat, modelDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
-  id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
+  id: 'decoder-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
-  metadata: {model_id: 'rf_detr_small', build_profile_id: 'mixed', component_id: 'transformer', github_run_id: 'workflow'},
+  metadata: {model_id: 'rf_detr_small', build_profile_id: 'mixed', component_id: 'decoder', github_run_id: 'workflow'},
 };
 const backbone = {...run, id: 'backbone-run', metadata: {...run.metadata, component_id: 'backbone'}};
 const summary = (item) => ({run: item, artifacts: [
@@ -23,12 +23,12 @@ test('collects every component across pages, retaining selected run and excludin
     if (path.includes('/repositories/')) return path.includes('cursor=next')
       ? {runs: [backbone, other, anotherWorkflow, old], has_more: false}
       : {runs: [run], has_more: true, next_cursor: 'next'};
-    assert.ok(['/v1/runs/backbone-run', '/v1/runs/transformer-run'].includes(path));
+    assert.ok(['/v1/runs/backbone-run', '/v1/runs/decoder-run'].includes(path));
     return summary(run);
   });
   assert.deepEqual(result.map(({runId, component, name}) => ({runId, component, name})), [
     {runId: 'backbone-run', component: 'backbone', name: 'mpk'},
-    {runId: 'transformer-run', component: 'transformer', name: 'mpk'},
+    {runId: 'decoder-run', component: 'decoder', name: 'mpk'},
   ]);
   assert.equal(requested.filter(path => path.includes('/repositories/')).length, 2);
 });
@@ -51,7 +51,7 @@ test('requests all URLs concurrently and does not finish until every URL is read
   const releases = [];
   const pending = prepareDownloads([
     {runId: 'one', name: 'model pack', component: 'backbone'},
-    {runId: 'two', name: 'mpk', component: 'transformer'},
+    {runId: 'two', name: 'mpk', component: 'decoder'},
   ], path => {
     requests.push(path);
     return new Promise(resolve => releases.push(resolve));
@@ -74,7 +74,7 @@ test('a failed URL prevents starting the batch', async () => {
 
 test('each file gets an independent download context without navigating the page', () => {
   const frames = [];
-  startDownloads([{component: 'backbone', url: '/one'}, {component: 'transformer', url: '/two'}], {
+  startDownloads([{component: 'backbone', url: '/one'}, {component: 'decoder', url: '/two'}], {
     createElement: tag => { assert.equal(tag, 'iframe'); return {}; },
     body: {append: frame => frames.push(frame)},
   });

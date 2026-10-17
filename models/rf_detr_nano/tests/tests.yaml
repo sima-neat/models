@@ -37,10 +37,10 @@ performance:
     w8a8_w16a16:
       backbone:
         throughput_fps: 296.2
-      transformer:
+      decoder:
         throughput_fps: 952.5
     w8a16_w16a16:
       backbone:
         throughput_fps: 165.4
-      transformer:
+      decoder:
         throughput_fps: 955.8

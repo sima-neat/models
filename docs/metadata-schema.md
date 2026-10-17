@@ -194,7 +194,7 @@ The profile ID is the variant ID users select. Compose it from the precision
 tokens in [`naming-conventions.yaml`](../naming-conventions.yaml): one token
 per component in component order, with a repeated token written once. Both
 components above are W8A8, so the ID is `w8a8`; an INT8 backbone followed by a
-BF16 transformer is `w8a8_w16a16`. Leave the target out of the ID. If two
+BF16 decoder is `w8a8_w16a16`. Leave the target out of the ID. If two
 profiles of one model would share an ID, append the first vocabulary tokens
 that tell them apart. The Model Browser shows variant IDs in uppercase,
 while `sima-cli models download --variant` takes the lowercase ID.
@@ -209,7 +209,7 @@ unless the profile declares `compile_invocations`:
 ```yaml
 compile_invocations:
   - id: detector
-    components: [backbone, transformer]
+    components: [backbone, decoder]
 ```
 
 An invocation has only an `id` and its `components`. Every supported binding
@@ -240,7 +240,7 @@ several components. `scripts/compile.py` passes the name without
 `_mpk.tar.gz` to the compiler as the model name, and publication rejects an
 MPK with any other name. For example, RF-DETR's `w8a8_w16a16` profile
 produces `rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz` and
-`rf_detr_nano_w8a8_w16a16_transformer_mpk.tar.gz`. The stored MPK, the
+`rf_detr_nano_w8a8_w16a16_decoder_mpk.tar.gz`. The stored MPK, the
 package, and the browser and CLI downloads all use this name.
 
 ## Compositions and packages

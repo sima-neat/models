@@ -19,7 +19,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     monkeypatch.setattr(benchmark_manifest, "load_and_validate_model", lambda *args: model)
     output_root = tmp_path / "rf_detr_small" / "w8a8_w16a16"
     outputs = []
-    for component in ("backbone", "transformer"):
+    for component in ("backbone", "decoder"):
         directory = output_root / component
         directory.mkdir(parents=True)
         archive = directory / f"{component}_mpk.tar.gz"
@@ -31,7 +31,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
                 "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             }
         )
-    fidelity = output_root / "transformer" / "fidelity.json"
+    fidelity = output_root / "decoder" / "fidelity.json"
     fidelity.write_text("{}")
     manifest = {
         "model_id": "rf_detr_small",
@@ -39,11 +39,11 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
         "compile_invocation_id": "rf_detr",
         "outputs": outputs,
         "derived_graphs": [
-            {"component_id": component, "sha256": "a" * 64} for component in ("backbone", "transformer")
+            {"component_id": component, "sha256": "a" * 64} for component in ("backbone", "decoder")
         ],
         "correctness": {
-            "component_id": "transformer",
-            "path": "transformer/fidelity.json",
+            "component_id": "decoder",
+            "path": "decoder/fidelity.json",
             "sha256": hashlib.sha256(fidelity.read_bytes()).hexdigest(),
         },
     }
@@ -53,10 +53,10 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     validate_benchmark_components(*args, ["backbone"])
     # An accuracy-only dispatch measures no component's performance.
     validate_benchmark_components(*args, [])
-    for components in (["transformer"], ["backbone", "transformer"], ["backbone", "backbone"]):
+    for components in (["decoder"], ["backbone", "decoder"], ["backbone", "backbone"]):
         with pytest.raises(ValidationError, match="declared benchmark entries"):
             validate_benchmark_components(*args, components)
-    (output_root / "transformer" / "transformer_mpk.tar.gz").unlink()
+    (output_root / "decoder" / "decoder_mpk.tar.gz").unlink()
     with pytest.raises(ValidationError, match="MPK does not exist"):
         validate_benchmark_components(*args, ["backbone"])
 
@@ -68,7 +68,7 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
         ("ssd_mobilenet_v1", "w8a8", "model"),
         ("yolo26_tiny_drone", "w8a8", "model"),
         ("rf_detr_small", "w8a8_w16a16", "backbone"),
-        ("rf_detr_small", "w8a8_w16a16", "transformer"),
+        ("rf_detr_small", "w8a8_w16a16", "decoder"),
     ],
 )
 def test_generates_direct_devkit_manifest_for_compiled_model(

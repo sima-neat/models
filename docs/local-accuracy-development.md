@@ -75,7 +75,7 @@ accuracy:
     build_profiles: [w8a8_w16a16]
     engine: devkit_script
     status: ready
-    result_component: transformer
+    result_component: decoder
     dataset: {id: coco-2017, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
     metrics: [coco_map, coco_ap50, coco_ap75]
     required_metrics: [coco_map]

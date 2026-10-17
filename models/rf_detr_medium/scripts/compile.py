@@ -60,7 +60,7 @@ INVOCATION_ID = "rf_detr"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 # Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
 A16_PRECISIONS = ("w8a16", "w16a16")
-COMPONENT_IDS = ("backbone", "transformer")
+COMPONENT_IDS = ("backbone", "decoder")
 # Files the compilation phases pass to each other in the temporary directory.
 REFERENCE_OUTPUTS = "reference_outputs.npz"
 BACKBONE_OUTPUTS = "backbone_outputs.npz"
@@ -77,7 +77,7 @@ COMPONENT_INTERFACES = {
         "inputs": {INPUT: _float32_bytes(INPUT_SHAPE)},
         "outputs": [_float32_bytes(BOUNDARY_SHAPES[name]) for name in (FEATURES, SCORES, BOXES)],
     },
-    "transformer": {
+    "decoder": {
         "inputs": {name: _float32_bytes(BOUNDARY_SHAPES[name]) for name in (FEATURES, PROPOSALS)},
         "outputs": [_float32_bytes(OUTPUT_SHAPES[name]) for name in OUTPUTS],
     },
@@ -248,7 +248,7 @@ def _execute_backbone(backbone: Any, image: np.ndarray) -> tuple[np.ndarray, np.
     return _features_to_nchw(features), scores, boxes
 
 
-def _transformer_calibration_inputs(backbone: Any, images: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _decoder_calibration_inputs(backbone: Any, images: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return the features and top proposals the quantized backbone produces for each calibration image."""
     features = []
     proposals = []
@@ -310,8 +310,8 @@ def _precision_label(parameters: dict[str, Any]) -> str:
 def _pipeline_description(component_parameters: dict[str, dict[str, Any]]) -> str:
     """Name the compiled pipeline that fidelity compares with the original ONNX."""
     backbone = _precision_label(component_parameters["backbone"])
-    transformer = _precision_label(component_parameters["transformer"])
-    return f"AFE {backbone} backbone → CPU TopK/Gather → AFE {transformer} transformer (JAX execute)"
+    decoder = _precision_label(component_parameters["decoder"])
+    return f"AFE {backbone} backbone → CPU TopK/Gather → AFE {decoder} decoder (JAX execute)"
 
 
 def _calibration_names(
@@ -379,7 +379,7 @@ def _reference_outputs(source: Path, images: np.ndarray) -> dict[str, np.ndarray
 
 
 def _measure_fidelity(
-    transformer: Any,
+    decoder: Any,
     backbone_outputs: dict[str, np.ndarray],
     reference: dict[str, np.ndarray],
 ) -> list[dict[str, Any]]:
@@ -397,7 +397,7 @@ def _measure_fidelity(
             InputName(FEATURES): to_afe_layout(features[None]),
             InputName(PROPOSALS): select_top_proposals(scores[None], boxes[None]),
         }
-        outputs = transformer.execute(inputs=inputs, use_jax=True)
+        outputs = decoder.execute(inputs=inputs, use_jax=True)
         for error, output in zip(errors, outputs, strict=True):
             error.add(reference[error.name][index][None], np.asarray(output))
     return [error.summary() for error in errors]
@@ -410,9 +410,9 @@ def _prepare_phase(
     temporary_dir: Path,
 ) -> None:
     """Split the ONNX into the two component graphs, check the split, and save the reference outputs."""
-    backbone_graph, transformer_graph = prepare_model(source, temporary_dir / "graphs")
+    backbone_graph, decoder_graph = prepare_model(source, temporary_dir / "graphs")
     images = load_images(fidelity_dataset, evaluation_names)
-    validate_float_split(source, backbone_graph, transformer_graph, images[0])
+    validate_float_split(source, backbone_graph, decoder_graph, images[0])
     np.savez(temporary_dir / REFERENCE_OUTPUTS, **_reference_outputs(source, images))
 
 
@@ -426,7 +426,7 @@ def _backbone_phase(
     fidelity_dataset: Path,
     evaluation_names: tuple[str, ...],
 ) -> None:
-    """Compile the backbone and save its outputs for the transformer phase."""
+    """Compile the backbone and save its outputs for the decoder phase."""
     parameters = component_parameters["backbone"]
     calibration_images = load_images(calibration_dataset, calibration_names) if calibration_names else None
     name = _component_name(profile_id, "backbone")
@@ -448,15 +448,15 @@ def _backbone_phase(
         "evaluation_scores": np.concatenate(scores),
         "evaluation_boxes": np.concatenate(boxes),
     }
-    if component_parameters["transformer"]["precision"] == "w8a8":
-        # A W8A8 transformer calibrates on the proposals this quantized backbone selects.
-        outputs["calibration_features"], outputs["calibration_proposals"] = _transformer_calibration_inputs(
+    if component_parameters["decoder"]["precision"] == "w8a8":
+        # A W8A8 decoder calibrates on the proposals this quantized backbone selects.
+        outputs["calibration_features"], outputs["calibration_proposals"] = _decoder_calibration_inputs(
             backbone, calibration_images
         )
     np.savez(temporary_dir / BACKBONE_OUTPUTS, **outputs)
 
 
-def _transformer_phase(
+def _decoder_phase(
     graph: Path,
     temporary_dir: Path,
     profile_id: str,
@@ -464,7 +464,7 @@ def _transformer_phase(
     fidelity_config: dict[str, Any],
     candidate: str,
 ) -> None:
-    """Compile the transformer, then measure the whole pipeline's fidelity and write its report."""
+    """Compile the decoder, then measure the whole pipeline's fidelity and write its report."""
     with np.load(temporary_dir / BACKBONE_OUTPUTS) as saved:
         backbone_outputs = dict(saved)
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
@@ -475,16 +475,16 @@ def _transformer_phase(
             FEATURES: backbone_outputs["calibration_features"],
             PROPOSALS: backbone_outputs["calibration_proposals"],
         }
-    name = _component_name(profile_id, "transformer")
-    transformer = _quantize_component(
+    name = _component_name(profile_id, "decoder")
+    decoder = _quantize_component(
         graph,
         name,
         parameters,
         calibration_inputs,
         {tensor: tuple(BOUNDARY_SHAPES[tensor]) for tensor in (FEATURES, PROPOSALS)},
     )
-    _compile_component(transformer, temporary_dir / name, "transformer", parameters["precision"])
-    metrics = _measure_fidelity(transformer, backbone_outputs, reference)
+    _compile_component(decoder, temporary_dir / name, "decoder", parameters["precision"])
+    metrics = _measure_fidelity(decoder, backbone_outputs, reference)
     _write_fidelity(temporary_dir, profile_id, fidelity_config, candidate, metrics)
 
 
@@ -574,7 +574,7 @@ def compile_model(
     temporary_root = os.environ.get("RUNNER_TEMP")
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=temporary_root) as temporary:
         temporary_dir = Path(temporary)
-        backbone_graph, transformer_graph = graph_paths(temporary_dir / "graphs")
+        backbone_graph, decoder_graph = graph_paths(temporary_dir / "graphs")
         _run_phase(
             "RF-DETR graph preparation",
             _prepare_phase,
@@ -585,7 +585,7 @@ def compile_model(
         )
         graph_hashes = {
             "backbone": sha256_file(backbone_graph)[0],
-            "transformer": sha256_file(transformer_graph)[0],
+            "decoder": sha256_file(decoder_graph)[0],
         }
         _run_phase(
             "RF-DETR backbone compilation",
@@ -600,12 +600,12 @@ def compile_model(
             evaluation_names=evaluation_names,
         )
         _run_phase(
-            "RF-DETR transformer compilation and fidelity",
-            _transformer_phase,
-            graph=transformer_graph,
+            "RF-DETR decoder compilation and fidelity",
+            _decoder_phase,
+            graph=decoder_graph,
             temporary_dir=temporary_dir,
             profile_id=profile_id,
-            parameters=component_parameters["transformer"],
+            parameters=component_parameters["decoder"],
             fidelity_config=fidelity_config,
             candidate=_pipeline_description(component_parameters),
         )

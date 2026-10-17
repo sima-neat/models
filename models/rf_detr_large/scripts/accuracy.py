@@ -106,7 +106,7 @@ def decode(
 ) -> np.ndarray:
     """Return COCO result rows [image_id, x, y, w, h, score, category_id] for one image."""
     if dets.shape != (1, QUERY_COUNT, 4) or labels.shape != (1, QUERY_COUNT, CLASSES):
-        raise ValueError(f"unexpected transformer outputs: dets={dets.shape}, labels={labels.shape}")
+        raise ValueError(f"unexpected decoder outputs: dets={dets.shape}, labels={labels.shape}")
     if not (np.isfinite(dets).all() and np.isfinite(labels).all()):
         raise ValueError("MPK output contains non-finite values")
     scores = (1.0 / (1.0 + np.exp(-np.clip(labels[0], -80, 80)))).ravel()
@@ -135,8 +135,8 @@ def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
     mpks = dict(value.split("=", 1) for value in values)
-    if set(mpks) != {"backbone", "transformer"}:
-        raise SystemExit("--mpk must name exactly backbone=<path> and transformer=<path>")
+    if set(mpks) != {"backbone", "decoder"}:
+        raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
 
 
@@ -146,7 +146,7 @@ def log(*values: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mpk", action="append", required=True, help="component=path, for backbone and transformer")
+    parser.add_argument("--mpk", action="append", required=True, help="component=path, for backbone and decoder")
     parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/mini directory")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
@@ -160,15 +160,15 @@ def main(argv: list[str] | None = None) -> int:
     records = ground_truth.loadImgs(image_ids)
     valid = np.isin(np.arange(CLASSES), ground_truth.getCatIds())
 
-    backbone, transformer = ModelArtifact(mpks["backbone"]), ModelArtifact(mpks["transformer"])
+    backbone, decoder = ModelArtifact(mpks["backbone"]), ModelArtifact(mpks["decoder"])
     rows: list[np.ndarray] = []
     started = time.monotonic()
     images = prefetched(lambda record: preprocess((args.dataset / IMAGES / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
-        # The feature tensor goes to the transformer as is; only the proposals pass through NumPy.
+        # The feature tensor goes to the decoder as is; only the proposals pass through NumPy.
         proposals = select_top_proposals(view(scores), view(boxes))
-        dets, labels = (view(output) for output in transformer(features, proposals))
+        dets, labels = (view(output) for output in decoder(features, proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")

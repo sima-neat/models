@@ -104,7 +104,7 @@ A failed call exits unsuccessfully. Keep the log: a missing report is not a
 successful benchmark. Keep archives and results outside Git.
 
 The script runs once for each component that a `benchmark` entry covers in the
-build profile. RF-DETR's backbone and transformer therefore produce separate
+build profile. RF-DETR's backbone and decoder therefore produce separate
 results; their numbers are not a measured combined pipeline.
 
 ## Per-layer profiling

@@ -64,7 +64,7 @@ components:
         dtype: float32
         shape: [1, 256, 44, 44]
         layout: NCHW
-        description: Feature map consumed by the transformer.
+        description: Feature map consumed by the decoder.
       - name: proposal_scores
         dtype: float32
         shape: [1, 1936]
@@ -97,7 +97,7 @@ components:
     entrypoint: scripts/surgery.py:prepare_model
     parameters: {}
   recipe: scripts/compile.py
-- id: transformer
+- id: decoder
   role: detection_head
   source: *source
   interface:
@@ -158,12 +158,12 @@ build_profiles:
       precision: w8a8
       calibration_bins: 2048
       calibration_samples: 50
-  - id: transformer
+  - id: decoder
     parameters:
       precision: w16a16
   compile_invocations:
   - id: rf_detr
-    components: [backbone, transformer]
+    components: [backbone, decoder]
 - id: w8a16_w16a16
   target: modalix
   components:
@@ -171,43 +171,43 @@ build_profiles:
     parameters:
       precision: w8a16
       per_token: true
-  - id: transformer
+  - id: decoder
     parameters:
       precision: w16a16
   compile_invocations:
   - id: rf_detr
-    components: [backbone, transformer]
+    components: [backbone, decoder]
 compositions:
 - id: default
   type: declarative
   components:
   - {id: backbone, component: backbone, entrypoint: default}
-  - {id: transformer, component: transformer, entrypoint: default}
+  - {id: decoder, component: decoder, entrypoint: default}
   connections:
   - from: {component: backbone, output: backbone_features}
-    to: {component: transformer, input: backbone_features}
+    to: {component: decoder, input: backbone_features}
   inputs:
   - name: input
     to: {component: backbone, input: input}
   - name: proposals
-    to: {component: transformer, input: proposals}
+    to: {component: decoder, input: proposals}
   outputs:
   - name: proposal_scores
     from: {component: backbone, output: proposal_scores}
   - name: proposal_boxes
     from: {component: backbone, output: proposal_boxes}
   - name: dets
-    from: {component: transformer, output: dets}
+    from: {component: decoder, output: dets}
   - name: labels
-    from: {component: transformer, output: labels}
+    from: {component: decoder, output: labels}
 pipeline:
 - component: backbone
 - cpu: Top 300 proposals
-- component: transformer
+- component: decoder
 packages:
 - id: default
   default: true
-  components: [backbone, transformer]
+  components: [backbone, decoder]
   resources: []
   build_profiles: [w8a8_w16a16, w8a16_w16a16]
   composition: default
@@ -219,7 +219,7 @@ fidelity:
   # Reordered queries can lower numerical similarity for equivalent detections,
   # so fidelity does not gate publication.
   status: diagnostic
-  result_component: transformer
+  result_component: decoder
   dataset:
     id: coco-2017
     variant: cal
@@ -237,7 +237,7 @@ accuracy:
   build_profiles: [w8a8_w16a16, w8a16_w16a16]
   engine: devkit_script
   status: ready
-  result_component: transformer
+  result_component: decoder
   dataset:
     id: coco-2017
     variant: val
@@ -260,8 +260,8 @@ benchmark:
   reason: Establish a Core API baseline for the default MPK workload.
   metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
   required_metrics: [avg_power_watts, energy_per_inference_joules]
-- id: transformer_modalix
-  scope: {type: component, component: transformer}
+- id: decoder_modalix
+  scope: {type: component, component: decoder}
   build_profiles: [w8a8_w16a16, w8a16_w16a16]
   status: pending
   target: modalix
