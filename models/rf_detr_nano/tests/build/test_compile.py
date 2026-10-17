@@ -286,12 +286,10 @@ def test_only_w8a8_components_select_calibration_images(
         "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 3},
         "transformer": {"precision": "w16a16"},
     }
+    uncalibrated = compile_module._bindings(_metadata(), "w8a16_w16a16")
     selection = {"seed": 42, "offset": 3, "samples": 3}
 
-    assert (
-        compile_module._calibration_names(compile_module._bindings(_metadata(), "w16a16"), None, tmp_path, selection)
-        == ()
-    )
+    assert compile_module._calibration_names(uncalibrated, None, tmp_path, selection) == ()
     names = compile_module._calibration_names(calibrated, tmp_path, tmp_path, selection)
     assert names == compile_module.select_images(tmp_path, 42, 0, 3)
     with pytest.raises(ValueError, match="require --dataset"):
@@ -346,7 +344,7 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16", "w16a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16"]
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 1024
     assert correctness["scope"] == {"type": "package", "package": "default"}
