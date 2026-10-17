@@ -10,13 +10,16 @@ approver configuration and acceptance testing.
 `VULCAN_ENV` selects `staging` or `production`. GitHub's repository variable
 overrides the organization variable; Models currently sets `staging`. There is
 no implicit default. The configuration job selects that GitHub environment and
-reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (the authenticated writer origin).
-Each subsequent job uses the resolved environment and URL, with publisher roles
+reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (authenticated writer origin) and
+`VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` (public catalog reader). Candidate and
+promotion operations use the signed writer client; catalog snapshots are fetched
+without AWS credentials from the public reader.
+Each subsequent job uses the resolved environment and URLs, with publisher roles
 from that environment and approver credentials from `<VULCAN_ENV>-promote-develop`.
-The URL is configuration, not embedded in Python. For source CLI use, export both
+Both URLs are configuration, not embedded in Python. For source CLI use, export all three
 variables explicitly. Missing/invalid configuration fails before any registry call.
 
-The request plan saves both values. A retry with a different environment or URL
+The request plan saves the environment and both URLs. A retry with a different environment or URL
 fails before a registry call; use the original configuration to finish the old
 request, or start a new dispatch in the new environment with its own candidate.
 Environment-local candidate and promotion IDs must never be moved between registries.
@@ -34,8 +37,8 @@ Before normal use, a repository administrator and Vulcan operator must:
    inspection/approval/rejection. Scope its OIDC trust to that environment.
 3. Set environment variable `VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN` in
    the selected protected environment to the provisioned role ARN. Keep the publisher
-   role and `VULCAN_ARTIFACT_REGISTRY_API_URL` in the corresponding `staging` or
-   `production` environment. Use its authenticated writer origin, not the public reader.
+   role and both registry URL variables in the corresponding `staging` or
+   `production` environment. Set each URL to its corresponding writer or reader origin.
 4. Protect Develop and review changes to this workflow and its tooling. All jobs
    check out the workflow run's exact trusted commit, never the candidate ref.
 5. Make `.github/workflows/model-promotion.yml` available on the repository default

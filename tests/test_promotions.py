@@ -17,6 +17,7 @@ PROMOTION = '22222222-2222-4222-8222-222222222222'
 @pytest.fixture(autouse=True)
 def environment(monkeypatch):
     monkeypatch.setenv("VULCAN_ENV", "staging")
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL", "https://reader.example.com")
     monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", "https://writer.staging.example.com")
 
 
@@ -33,7 +34,7 @@ class Backend:
         if path.endswith('/deployments/' + CANDIDATE):
             return {'state': 'finalized', 'manifest_digest': 'b' * 64}
         if '/catalogs/current?' in path:
-            return {'catalog': {'canonical_sha256': self.snapshot}}
+            raise AssertionError('Catalog must not use the signed writer client')
         if path.endswith('/promotions'):
             if self.record is None:
                 self.record = dict(body, promotion_id=PROMOTION, state='pending', pending_protection=True,
@@ -61,7 +62,8 @@ class Backend:
 def plan(backend):
     return p.prepare(backend, deployment_id=CANDIDATE, reason='Validated fixture; evidence URL',
                      workflow={'run_id': '123', 'run_url': 'https://github.com/sima-neat/models/actions/runs/123'},
-                     identity='123')
+                     identity='123', read_api_url='https://reader.example.com',
+                     read_request=lambda url: {'catalog': {'canonical_sha256': backend.snapshot}})
 
 
 def test_prepare_does_not_mutate_and_pins_canonical_snapshot():
@@ -200,10 +202,12 @@ def test_saved_plan_cannot_be_overwritten(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
 def test_configuration_uses_selected_environment_endpoint(monkeypatch, environment):
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL", "https://reader.example.com")
     monkeypatch.setenv("VULCAN_ENV", environment)
     monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", f"https://writer.{environment}.example.com/")
     assert p.configuration() == {"vulcan_environment": environment,
-                                 "api_url": f"https://writer.{environment}.example.com"}
+                                 "api_url": f"https://writer.{environment}.example.com",
+                                 "read_api_url": "https://reader.example.com"}
 
 
 @pytest.mark.parametrize("environment", ["", "prod", "stg", "unknown"])
@@ -221,7 +225,8 @@ def test_configuration_rejects_invalid_writer_origins(monkeypatch, url):
         p.configuration()
 
 
-@pytest.mark.parametrize("changed", [{"vulcan_environment": "production"}, {"api_url": "https://other.example.com"}])
+@pytest.mark.parametrize("changed", [{"vulcan_environment": "production"}, {"api_url": "https://other.example.com"},
+                                     {"read_api_url": "https://other-reader.example.com"}])
 def test_retry_cannot_switch_registry(monkeypatch, tmp_path, changed):
     from model_registry.cli import main
     record = tmp_path / "plan.json"
@@ -230,3 +235,26 @@ def test_retry_cannot_switch_registry(monkeypatch, tmp_path, changed):
     monkeypatch.setattr(p, "SigV4RegistryClient", lambda *args: backend)
     assert main(["promotion", "request", "--record", str(record)]) == 2
     assert backend.calls == []
+
+
+def test_prepare_reads_catalog_publicly_and_candidate_privately():
+    backend = Backend()
+    urls = []
+
+    def public_read(url):
+        urls.append(url)
+        return {"catalog": {"canonical_sha256": "e" * 64}}
+
+    saved = p.prepare(backend, deployment_id=CANDIDATE, reason="Validated", workflow={}, identity="123",
+                      read_api_url="https://reader.example.com", read_request=public_read)
+    assert urls == ["https://reader.example.com" + p.ROOT + "/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"]
+    assert len(backend.calls) == 1
+    assert backend.calls[0][1] == p.ROOT + "/deployments/" + CANDIDATE
+    assert saved["body"]["expected_target_snapshot"] == "e" * 64
+
+
+@pytest.mark.parametrize("url", ["", "http://reader.example.com", "https://reader.example.com/path"])
+def test_configuration_rejects_invalid_reader_origins(monkeypatch, url):
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL", url)
+    with pytest.raises(ValidationError, match="VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL"):
+        p.configuration()

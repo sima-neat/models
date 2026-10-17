@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from .errors import ValidationError
-from .registry import SigV4RegistryClient, canonical_sha256
+from .registry import ReadRequest, SigV4RegistryClient, _public_registry_json, canonical_sha256
 
 ROOT = "/v1/repositories/sima-neat/models"
 TARGET = "refs/heads/develop"
@@ -19,12 +19,16 @@ def configuration() -> dict:
     environment = os.environ.get("VULCAN_ENV", "")
     if environment not in {"staging", "production"}:
         raise ValidationError("VULCAN_ENV must be staging or production")
-    url = os.environ.get("VULCAN_ARTIFACT_REGISTRY_API_URL", "").rstrip("/")
-    parsed = urlsplit(url)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-            or parsed.query or parsed.fragment or parsed.path):
-        raise ValidationError("VULCAN_ARTIFACT_REGISTRY_API_URL must be an HTTPS writer API origin")
-    return {"vulcan_environment": environment, "api_url": url}
+    config = {"vulcan_environment": environment}
+    for key, variable in (("api_url", "VULCAN_ARTIFACT_REGISTRY_API_URL"),
+                          ("read_api_url", "VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL")):
+        url = os.environ.get(variable, "").rstrip("/")
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or parsed.path):
+            raise ValidationError(f"{variable} must be an HTTPS API origin")
+        config[key] = url
+    return config
 
 
 def check_configuration(record: dict, config: dict) -> None:
@@ -63,13 +67,17 @@ def inspect(client, promotion_id: str) -> dict:
     return result
 
 
-def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity: str) -> dict:
+def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity: str,
+            read_api_url: str, read_request: ReadRequest | None = None) -> dict:
     if not reason.strip() or len(reason) > 2000:
         raise ValidationError("Promotion reason must contain 1–2000 characters")
     candidate = client.request("GET", f"{ROOT}/deployments/{identifier(deployment_id)}", None, "inspect")
     if candidate.get("state") != "finalized" or not candidate.get("manifest_digest"):
         raise ValidationError("Promotion requires a finalized candidate with an immutable digest")
-    target = client.request("GET", f"{ROOT}/catalogs/current?git_ref=refs%2Fheads%2Fdevelop", None, "inspect")
+    # Catalogs are public-reader routes, not publisher IAM routes. Never send AWS credentials here.
+    target = (read_request or _public_registry_json)(
+        f"{read_api_url.rstrip('/')}{ROOT}/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
+    )
     body = {
         "deployment_id": identifier(deployment_id), "manifest_digest": candidate["manifest_digest"],
         "target_git_ref": TARGET, "expected_target_snapshot": target["catalog"]["canonical_sha256"],
@@ -170,7 +178,7 @@ def run(args: argparse.Namespace) -> int:
         if args.issue_url:
             workflow["issue_url"] = args.issue_url
         result = prepare(client, deployment_id=args.deployment_id, reason=args.reason,
-                         workflow=workflow, identity=args.identity)
+                         workflow=workflow, identity=args.identity, read_api_url=config["read_api_url"])
     elif args.action == "request":
         result = request(client, read(args.record))
     else:

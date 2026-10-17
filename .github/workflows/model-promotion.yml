@@ -36,6 +36,7 @@ jobs:
     outputs:
       vulcan_environment: ${{ steps.config.outputs.vulcan_environment }}
       api_url: ${{ steps.config.outputs.api_url }}
+      read_api_url: ${{ steps.config.outputs.read_api_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -45,11 +46,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install .
-      - name: Resolve the selected environment's writer API
+      - name: Resolve the selected environment's writer and reader APIs
         id: config
         env:
           VULCAN_ENV: ${{ vars.VULCAN_ENV }}
           VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
         run: python scripts/model_promotion.py configure
 
   prepare:
@@ -57,6 +59,7 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
     runs-on: ubuntu-latest
     environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:
@@ -103,6 +106,7 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
     runs-on: ubuntu-latest
     environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:
@@ -148,6 +152,7 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
     runs-on: ubuntu-latest
     environment:
       name: ${{ format('{0}-promote-develop', needs.configure.outputs.vulcan_environment) }}
@@ -194,6 +199,7 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
     runs-on: ubuntu-latest
     environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:

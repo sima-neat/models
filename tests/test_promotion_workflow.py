@@ -26,6 +26,7 @@ def test_workflow_is_manual_and_uses_trusted_code_with_separate_credentials():
             assert not any('configure-aws-credentials' in s.get('uses', '') for s in job['steps'])
             continue
         assert job['env']['VULCAN_ENV'] == '${{ needs.configure.outputs.vulcan_environment }}'
+        assert job['env']['VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL'] == '${{ needs.configure.outputs.read_api_url }}'
         credentials = next(s for s in job['steps'] if 'configure-aws-credentials' in s.get('uses', ''))
         expected = 'PROMOTION' if name == 'approve' else 'PUBLISHER'
         assert f'REGISTRY_{expected}_ROLE_ARN' in credentials['with']['role-to-assume']
@@ -56,6 +57,7 @@ def orchestration(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     for key, value in {
         'GITHUB_REPOSITORY': 'sima-neat/models', 'GITHUB_REF': 'refs/heads/develop',
+        'VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://reader.example.com',
         'VULCAN_ENV': 'staging', 'VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://writer.staging.example.com',
         'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2',
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary'),

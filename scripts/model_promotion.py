@@ -91,7 +91,8 @@ def main():
                 raise p.ValidationError('Provide a reason of 1–2000 characters')
             if operation == 'promote':
                 plan = p.prepare(client, deployment_id=os.environ['DEPLOYMENT_ID'], reason=reason,
-                                 workflow={'run_id': run_id, 'run_url': run_url}, identity=run_id)
+                                 workflow={'run_id': run_id, 'run_url': run_url}, identity=run_id,
+                                 read_api_url=config['read_api_url'])
                 issue_url = issue(p.summary({**config, 'planned_request': plan['body'], 'workflow': run_url,
                                             'state': 'preparing; backend hold not yet confirmed'}))
                 plan['body']['workflow']['issue_url'] = issue_url
