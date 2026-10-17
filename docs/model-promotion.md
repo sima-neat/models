@@ -1,14 +1,30 @@
 # Promoting a model to Develop
 
-The **Promote model** workflow selects an existing finalized candidate in Vulcan
-staging's Develop catalog. It never compiles, copies binaries, or changes source
-provenance. Main/Hugging Face release and production promotion are not supported.
+The **Promote model** workflow selects an existing finalized candidate in
+the selected Vulcan environment's Develop catalog. It never compiles, copies binaries, or changes source
+provenance. Main/Hugging Face release is not supported. Production use still requires its own
+approver configuration and acceptance testing.
 
 ## Enable the protected gate
 
+`VULCAN_ENV` selects `staging` or `production`. GitHub's repository variable
+overrides the organization variable; Models currently sets `staging`. There is
+no implicit default. The configuration job selects that GitHub environment and
+reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (the authenticated writer origin).
+Each subsequent job uses the resolved environment and URL, with publisher roles
+from that environment and approver credentials from `<VULCAN_ENV>-promote-develop`.
+The URL is configuration, not embedded in Python. For source CLI use, export both
+variables explicitly. Missing/invalid configuration fails before any registry call.
+
+The request plan saves both values. A retry with a different environment or URL
+fails before a registry call; use the original configuration to finish the old
+request, or start a new dispatch in the new environment with its own candidate.
+Environment-local candidate and promotion IDs must never be moved between registries.
+
 Before normal use, a repository administrator and Vulcan operator must:
 
-1. Create `staging-promote-develop` with required reviewers, prevent self-review,
+1. Create `<VULCAN_ENV>-promote-develop` (`staging-promote-develop` or
+   `production-promote-develop`) with required reviewers, prevent self-review,
    and restrict deployment branches to `develop`. Verify the repository plan
    supports these protection rules, and restrict administrator bypass according
    to the team's approval policy. GitHub requires one eligible listed reviewer,
@@ -17,9 +33,9 @@ Before normal use, a repository administrator and Vulcan operator must:
    exact environment and a separate role authorized only for Develop request
    inspection/approval/rejection. Scope its OIDC trust to that environment.
 3. Set environment variable `VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN` in
-   `staging-promote-develop` to the provisioned role ARN. Keep the publisher role
-   in the existing `staging` environment. The workflow deliberately uses the
-   staging writer hostname, not the public reader or a user-supplied endpoint.
+   the selected protected environment to the provisioned role ARN. Keep the publisher
+   role and `VULCAN_ARTIFACT_REGISTRY_API_URL` in the corresponding `staging` or
+   `production` environment. Use its authenticated writer origin, not the public reader.
 4. Protect Develop and review changes to this workflow and its tooling. All jobs
    check out the workflow run's exact trusted commit, never the candidate ref.
 5. Make `.github/workflows/model-promotion.yml` available on the repository default

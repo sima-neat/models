@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Usage: model_promotion.py prepare|request|approve|report
+"""Usage: model_promotion.py configure|prepare|request|approve|report
 
 GitHub orchestration only. Inputs come from environment variables; registry
 semantics live in model_registry.promotions. Run only from trusted Develop code.
@@ -35,7 +35,7 @@ def output(name, value):
 
 def show(record):
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
-        stream.write(p.summary(record))
+        stream.write(p.summary({**record, **p.configuration()}))
 
 
 def issue(body):
@@ -62,7 +62,14 @@ def main():
     if os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models' or os.environ.get('GITHUB_REF') != p.TARGET:
         raise p.ValidationError('Promotion workflow must execute from sima-neat/models Develop')
     phase = sys.argv[1]
-    client = p.SigV4RegistryClient(p.API_URL, 'us-west-2')
+    config = p.configuration()
+    if phase == 'configure':
+        for key, value in config.items():
+            output(key, value)
+        return
+    client = p.SigV4RegistryClient(config['api_url'], 'us-west-2')
+    if phase != 'prepare':
+        p.check_configuration(p.read(PLAN), config)
     run_id = os.environ['GITHUB_RUN_ID']
     run_url = f'https://github.com/sima-neat/models/actions/runs/{run_id}'
     if phase == 'prepare':
@@ -85,17 +92,18 @@ def main():
             if operation == 'promote':
                 plan = p.prepare(client, deployment_id=os.environ['DEPLOYMENT_ID'], reason=reason,
                                  workflow={'run_id': run_id, 'run_url': run_url}, identity=run_id)
-                issue_url = issue(p.summary({'planned_request': plan['body'], 'workflow': run_url,
+                issue_url = issue(p.summary({**config, 'planned_request': plan['body'], 'workflow': run_url,
                                             'state': 'preparing; backend hold not yet confirmed'}))
                 plan['body']['workflow']['issue_url'] = issue_url
                 plan['key'] = 'promotion-request-' + p.canonical_sha256([run_id, plan['body']])
             else:
                 plan = {'record': p.inspect(client, os.environ['PROMOTION_ID'])}
                 issue_url = ''
-            plan.update(operation=operation, decision_reason=reason, issue_url=issue_url, identity=run_id)
+            plan.update(**config, operation=operation, decision_reason=reason, issue_url=issue_url, identity=run_id)
             p.save(PLAN, plan)
             output('upload_plan', 'true')
         plan = p.read(PLAN)
+        p.check_configuration(plan, config)
         output('operation', plan['operation'])
         show(plan)
     elif phase == 'request':
@@ -142,7 +150,7 @@ def update_issue(plan, record):
     number = int(plan['issue_url'].rsplit('/', 1)[1])
     marker = f"<!-- models-promotion-run:{plan['identity']} -->"
     gh('api', '--method', 'PATCH', f'repos/sima-neat/models/issues/{number}', body={
-        'body': marker + '\n\n' + p.summary(record),
+        'body': marker + '\n\n' + p.summary({**record, **p.configuration()}),
     })
 
 

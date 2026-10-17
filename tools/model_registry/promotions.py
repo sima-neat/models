@@ -1,17 +1,35 @@
-"""Pinned, retry-safe staging promotion operations; no compilation or catalog writes."""
+"""Pinned, retry-safe promotion operations; no compilation or catalog writes."""
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from .errors import ValidationError
 from .registry import SigV4RegistryClient, canonical_sha256
 
-API_URL = "https://artifacts-registry.stg.neat.sima.ai"
 ROOT = "/v1/repositories/sima-neat/models"
 TARGET = "refs/heads/develop"
+
+
+def configuration() -> dict:
+    environment = os.environ.get("VULCAN_ENV", "")
+    if environment not in {"staging", "production"}:
+        raise ValidationError("VULCAN_ENV must be staging or production")
+    url = os.environ.get("VULCAN_ARTIFACT_REGISTRY_API_URL", "").rstrip("/")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or parsed.path):
+        raise ValidationError("VULCAN_ARTIFACT_REGISTRY_API_URL must be an HTTPS writer API origin")
+    return {"vulcan_environment": environment, "api_url": url}
+
+
+def check_configuration(record: dict, config: dict) -> None:
+    if any(record.get(key) != value for key, value in config.items()):
+        raise ValidationError("Saved promotion environment/URL differs; use its original configuration")
 
 
 def save(path: Path, value: dict) -> None:
@@ -114,7 +132,7 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str) 
 def summary(record: dict) -> str:
     # Fenced JSON prevents candidate/user strings from forging review headings or links.
     payload = json.dumps(record, indent=2, sort_keys=True).replace("`", "\\u0060").replace("<", "\\u003c")
-    return ("## Develop promotion (Vulcan staging)\n\n"
+    return (f"## Develop promotion (Vulcan {record.get('vulcan_environment', 'unspecified')})\n\n"
             "Review the exact candidate, source, previous/proposed selections, reason, evidence, and expiry below. "
             "GitHub approval alone does not publish a selection.\n\n```json\n" + payload + "\n```\n\n"
             "If a GitHub job is rejected or cancelled, the backend may remain pending until explicit cancellation "
@@ -122,7 +140,7 @@ def summary(record: dict) -> str:
 
 
 def add_parser(subcommands) -> None:
-    parser = subcommands.add_parser("promotion", help="manage pinned staging Develop promotion requests (CI only)")
+    parser = subcommands.add_parser("promotion", help="manage pinned Develop promotion requests (CI only)")
     parser.add_argument("action", choices=("prepare", "request", "inspect", "approve", "reject", "cancel"))
     parser.add_argument("--record", type=Path, required=True, help="saved plan/request; inspect and prepare write it")
     parser.add_argument("--output", type=Path, help="write the API receipt separately from the immutable input")
@@ -137,7 +155,10 @@ def add_parser(subcommands) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    client = SigV4RegistryClient(API_URL, args.aws_region)
+    config = configuration()
+    client = SigV4RegistryClient(config["api_url"], args.aws_region)
+    if args.action not in {"prepare", "inspect"}:
+        check_configuration(read(args.record), config)
     if args.action == "inspect":
         result = inspect(client, args.promotion_id)
     elif args.action == "prepare":
@@ -156,6 +177,7 @@ def run(args: argparse.Namespace) -> int:
         if not args.identity:
             raise ValidationError("decisions require a stable --identity")
         result = decide(client, read(args.record), operation=args.action, reason=args.reason, identity=args.identity)
+    result = {**result, **config}
     if args.action in {"prepare", "inspect"}:
         save(args.record, result)
     elif args.output:

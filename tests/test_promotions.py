@@ -14,6 +14,12 @@ CANDIDATE = '11111111-1111-4111-8111-111111111111'
 PROMOTION = '22222222-2222-4222-8222-222222222222'
 
 
+@pytest.fixture(autouse=True)
+def environment(monkeypatch):
+    monkeypatch.setenv("VULCAN_ENV", "staging")
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", "https://writer.staging.example.com")
+
+
 class Backend:
     def __init__(self):
         self.calls = []
@@ -180,7 +186,7 @@ def test_cli_inspect_writes_record(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(p, 'SigV4RegistryClient', lambda *args: backend)
     destination = tmp_path / 'record.json'
     assert main(['promotion', 'inspect', '--record', str(destination), '--promotion-id', PROMOTION]) == 0
-    assert json.loads(destination.read_text()) == record
+    assert json.loads(destination.read_text()) == {**record, **p.configuration()}
     assert json.loads(capsys.readouterr().out)['promotion_id'] == PROMOTION
 
 
@@ -190,3 +196,37 @@ def test_saved_plan_cannot_be_overwritten(monkeypatch, tmp_path):
     monkeypatch.setattr(p, 'SigV4RegistryClient', lambda *args: Backend())
     with pytest.raises(ValidationError, match='already exists'):
         p.run(Namespace(action='prepare', record=path, identity='123', run_url='url', aws_region='us-west-2'))
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_configuration_uses_selected_environment_endpoint(monkeypatch, environment):
+    monkeypatch.setenv("VULCAN_ENV", environment)
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", f"https://writer.{environment}.example.com/")
+    assert p.configuration() == {"vulcan_environment": environment,
+                                 "api_url": f"https://writer.{environment}.example.com"}
+
+
+@pytest.mark.parametrize("environment", ["", "prod", "stg", "unknown"])
+def test_configuration_has_no_implicit_default(monkeypatch, environment):
+    monkeypatch.setenv("VULCAN_ENV", environment)
+    with pytest.raises(ValidationError, match="VULCAN_ENV"):
+        p.configuration()
+
+
+@pytest.mark.parametrize("url", ["", "http://writer.example.com", "https://user:password@writer.example.com",
+                                 "https://writer.example.com/path", "https://writer.example.com?query=1"])
+def test_configuration_rejects_invalid_writer_origins(monkeypatch, url):
+    monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", url)
+    with pytest.raises(ValidationError, match="HTTPS"):
+        p.configuration()
+
+
+@pytest.mark.parametrize("changed", [{"vulcan_environment": "production"}, {"api_url": "https://other.example.com"}])
+def test_retry_cannot_switch_registry(monkeypatch, tmp_path, changed):
+    from model_registry.cli import main
+    record = tmp_path / "plan.json"
+    p.save(record, {**p.configuration(), **changed})
+    backend = Backend()
+    monkeypatch.setattr(p, "SigV4RegistryClient", lambda *args: backend)
+    assert main(["promotion", "request", "--record", str(record)]) == 2
+    assert backend.calls == []

@@ -81,7 +81,7 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
 | `stage_plan.py` | which builds compile and which DevKit stages run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
-| `promotions.py` | pinned staging Develop requests, inspection, decisions, receipts and review summaries (CI only) |
+| `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
@@ -129,7 +129,7 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 ## CI flow
 
 Manual **Promote model** runs independently of compilation: prepare and persist a request plan →
-create the protected backend request and issue summary → protected `staging-promote-develop`
+create the protected backend request and issue summary → protected `<VULCAN_ENV>-promote-develop`
 review → approve the exact request → report backend state. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
 reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for

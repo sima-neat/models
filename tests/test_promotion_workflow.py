@@ -14,13 +14,18 @@ def test_workflow_is_manual_and_uses_trusted_code_with_separate_credentials():
     config = workflow()
     assert set(config.get('on', config.get(True))) == {'workflow_dispatch'}
     jobs = config['jobs']
-    assert "github.ref == 'refs/heads/develop'" in jobs['prepare']['if']
-    assert jobs['approve']['environment']['name'] == 'staging-promote-develop'
+    assert "github.ref == 'refs/heads/develop'" in jobs['configure']['if']
+    assert jobs['configure']['environment'] == '${{ vars.VULCAN_ENV }}'
+    assert 'needs.configure.outputs.vulcan_environment' in jobs['approve']['environment']['name']
     assert 'issues' not in jobs['approve']['permissions']
     for name, job in jobs.items():
         checkout = next(s for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
         assert checkout['with']['ref'] == '${{ github.sha }}'
         assert checkout['with']['persist-credentials'] is False
+        if name == 'configure':
+            assert not any('configure-aws-credentials' in s.get('uses', '') for s in job['steps'])
+            continue
+        assert job['env']['VULCAN_ENV'] == '${{ needs.configure.outputs.vulcan_environment }}'
         credentials = next(s for s in job['steps'] if 'configure-aws-credentials' in s.get('uses', ''))
         expected = 'PROMOTION' if name == 'approve' else 'PUBLISHER'
         assert f'REGISTRY_{expected}_ROLE_ARN' in credentials['with']['role-to-assume']
@@ -29,8 +34,8 @@ def test_workflow_is_manual_and_uses_trusted_code_with_separate_credentials():
 
 def test_request_plan_is_durable_before_mutation_and_gate_waits_for_summary():
     jobs = workflow()['jobs']
-    assert jobs['request']['needs'] == 'prepare'
-    assert set(jobs['approve']['needs']) == {'prepare', 'request'}
+    assert jobs['request']['needs'] == ['configure', 'prepare']
+    assert set(jobs['approve']['needs']) == {'configure', 'prepare', 'request'}
     upload = next(s for s in jobs['prepare']['steps'] if 'upload-artifact' in s.get('uses', ''))
     assert upload['with']['name'] == 'promotion-plan'
     assert 'overwrite' not in upload['with']
@@ -51,6 +56,7 @@ def orchestration(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     for key, value in {
         'GITHUB_REPOSITORY': 'sima-neat/models', 'GITHUB_REF': 'refs/heads/develop',
+        'VULCAN_ENV': 'staging', 'VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://writer.staging.example.com',
         'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2',
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary'),
     }.items():
@@ -84,7 +90,7 @@ def test_issue_recovery_uses_rest_marker_and_does_not_duplicate(monkeypatch, tmp
 def test_request_receipt_survives_issue_update_failure(monkeypatch, tmp_path):
     import pytest
     module = orchestration(monkeypatch, tmp_path)
-    module.p.save(module.PLAN, {'operation': 'promote', 'body': {}, 'key': 'stable'})
+    module.p.save(module.PLAN, {**module.p.configuration(), 'operation': 'promote', 'body': {}, 'key': 'stable'})
     record = {'promotion_id': '22222222-2222-4222-8222-222222222222', 'state': 'pending'}
     monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'request'])
     monkeypatch.setattr(module.p, 'request', lambda *args: record)
@@ -104,4 +110,14 @@ def test_untrusted_ref_fails_before_api_access(monkeypatch, tmp_path):
     module = orchestration(monkeypatch, tmp_path)
     monkeypatch.setenv('GITHUB_REF', 'refs/heads/candidate-branch')
     with pytest.raises(module.p.ValidationError, match='Develop'):
+        module.main()
+
+
+def test_environment_change_rejected_before_workflow_api_access(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    module.p.save(module.PLAN, {**module.p.configuration(), 'operation': 'promote'})
+    monkeypatch.setenv('VULCAN_ENV', 'production')
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'request'])
+    with pytest.raises(module.p.ValidationError, match='original configuration'):
         module.main()

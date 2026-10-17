@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Staging Develop operation (Main release is not supported)
+        description: Develop operation in VULCAN_ENV (Main release is not supported)
         type: choice
         options: [promote, status, cancel, reject]
         default: promote
@@ -29,10 +29,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare:
+  configure:
     if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ vars.VULCAN_ENV }}
+    outputs:
+      vulcan_environment: ${{ steps.config.outputs.vulcan_environment }}
+      api_url: ${{ steps.config.outputs.api_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - name: Resolve the selected environment's writer API
+        id: config
+        env:
+          VULCAN_ENV: ${{ vars.VULCAN_ENV }}
+          VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+        run: python scripts/model_promotion.py configure
+
+  prepare:
+    needs: configure
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:
       contents: read
       actions: read
@@ -73,9 +99,12 @@ jobs:
           retention-days: 30
 
   request:
-    needs: prepare
+    needs: [configure, prepare]
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:
       contents: read
       issues: write
@@ -114,11 +143,14 @@ jobs:
           retention-days: 30
 
   approve:
-    needs: [prepare, request]
+    needs: [configure, prepare, request]
     if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject'
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
     runs-on: ubuntu-latest
     environment:
-      name: staging-promote-develop
+      name: ${{ format('{0}-promote-develop', needs.configure.outputs.vulcan_environment) }}
       url: https://github.com/sima-neat/models/actions/runs/${{ github.run_id }}
     permissions:
       contents: read
@@ -157,10 +189,13 @@ jobs:
           retention-days: 30
 
   report:
-    needs: [request, approve]
+    needs: [configure, request, approve]
     if: always() && needs.request.result == 'success'
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
     permissions:
       contents: read
       issues: write
