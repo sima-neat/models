@@ -250,8 +250,10 @@ for the complete package) with `metadata.layout: directory` and separate
 `model-file` payload artifacts. The browser shows the aggregate
 `metadata.deployment_size_bytes`, not the small index size. **Download folder**
 opens instructions for `sima-cli models download`, which preserves paths and
-checks each file. It never starts individual browser downloads for a deployment
-folder or renames its JSON index to a ZIP.
+checks each file. Folder downloads require sima-cli 2.1.19 or later. The command
+uses the selected branch and adds `--stg` for staging; historical builds point
+to the current catalog variant instead of offering a command for a different
+deployment. The browser never downloads a folder's JSON index as a ZIP.
 
 Delivery is determined from the backend-resolved artifact. A resolved
 `metadata.storage_backend: huggingface` has

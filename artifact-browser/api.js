@@ -1,5 +1,5 @@
 // Registry API requests, local caches, and catalog build selection.
-import { selectedModel, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
+import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
 import { DEFAULT_BRANCH, state, elements, categoryFilters } from "./state.js";
 
 export async function api(path) {
@@ -360,7 +360,7 @@ export async function loadHistoricalCatalogModel(run) {
       `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/${encodeURIComponent(run.commit_sha)}?${query}`,
     );
     const definition = (payload.catalog?.document?.models || []).find((model) => (model.model_id || model.id) === modelId);
-    const model = definition ? selectedModel({ ...definition, model_id: definition.model_id || definition.id }) : null;
+    const model = definition ? deploymentCatalog({ ...definition, model_id: definition.model_id || definition.id }) : null;
     state.historicalCatalogModels.set(key, model);
     return model;
   } catch {

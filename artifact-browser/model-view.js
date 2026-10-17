@@ -3,7 +3,6 @@ import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accu
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
-import { artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand as downloadCommand } from "./downloads.js";
 import { config, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
@@ -14,7 +13,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
-import { packageFormat } from "./downloads.js";
+import { packageFormat, modelDownloadCommand, artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -856,8 +855,8 @@ function targetName(run) {
 }
 
 function cliDownloadCommand(variant) {
-  const branch = catalogMode() ? elements["branch-filter"].value : "";
-  return downloadCommand(variant.anchor, branch || undefined, config.environment?.toLowerCase() === "staging");
+  return modelDownloadCommand(variant.modelId, variant.profile,
+    elements["branch-filter"].value || branchName(variant.anchor.git_ref), config.environment?.toLowerCase() === "staging");
 }
 
 function sectionNavigation(sections) {
@@ -877,7 +876,7 @@ function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, single
     : "";
   if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
-    <div class="package-card-copy"><strong>Full package</strong><span>${folder ? "All deployment files in their original folder structure. Use the CLI to download and verify each file." : packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span>${location ? `<a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">Deployment on Hugging Face ↗</a>` : ""}</div>
+    <div class="package-card-copy"><strong>Full package</strong><span>${folder ? "Download the model folder with sima-cli using its verified manifest." : packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span>${location ? `<a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">Deployment on Hugging Face ↗</a>` : ""}</div>
     ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</dd></div><div><dt>${folder ? "Manifest SHA-256" : "SHA-256"}</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
     <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
   </div>`;

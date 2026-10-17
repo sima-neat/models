@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
+const {variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, modelDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
@@ -214,27 +214,38 @@ test('JSON indexes are folders even when older metadata omitted the explicit lay
   assert.equal(artifactDelivery({media_type: 'application/json; charset=utf-8', size_bytes: 40}), 'directory');
   assert.equal(deploymentSize({media_type: 'application/json', size_bytes: 40}), undefined);
   assert.equal(artifactDelivery({media_type: 'application/zip'}), 'archive');
-  assert.equal(cliDownloadCommand(run), 'sima-cli models download --id rf_detr_small --variant mixed --branch develop');
 });
 
 
 test('an approved deployment command targets the selected catalog branch and keeps source provenance', () => {
   const source = {...run, git_ref: 'refs/heads/feature/native-candidate'};
-  assert.equal(cliDownloadCommand(source, 'develop'),
+  assert.equal(modelDownloadCommand(source.metadata.model_id, source.metadata.build_profile_id, 'develop'),
     'sima-cli models download --id rf_detr_small --variant mixed --branch develop');
   assert.equal(source.git_ref, 'refs/heads/feature/native-candidate');
 });
 
 test('staging download commands keep the selected branch and use the staging registry', () => {
-  assert.equal(cliDownloadCommand(run, 'feature/llima-models', true),
+  assert.equal(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, 'feature/llima-models', true),
     'sima-cli models download --id rf_detr_small --variant mixed --branch feature/llima-models --stg');
-  assert.equal(cliDownloadCommand(run, 'main'),
+  assert.equal(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, 'main'),
     'sima-cli models download --id rf_detr_small --variant mixed --branch main');
 });
 
 test('download commands shell-quote branch names containing metacharacters', () => {
   for (const branch of ['feat/test;echo-pwned', 'feat/`echo-pwned`', 'feat/$(echo-pwned)']) {
-    assert.ok(cliDownloadCommand(run, branch).endsWith(`--branch '${branch}'`));
+    assert.ok(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, branch).endsWith(`--branch '${branch}'`));
   }
-  assert.ok(cliDownloadCommand(run, "feat/it's-safe").endsWith("--branch 'feat/it'\\''s-safe'"));
+  assert.ok(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, "feat/it's-safe")
+    .endsWith("--branch 'feat/it'\"'\"'s-safe'"));
+});
+
+test('directory manifests are folders even when served as JSON', () => {
+  assert.equal(packageFormat({media_type: 'application/json', metadata: {layout: 'directory'}}, 'manifest.json'), 'Folder');
+});
+test('CLI commands preserve branch, variant and staging and quote shell arguments', () => {
+  assert.equal(modelDownloadCommand('qwen3_5_0_8b', 'w4a16', 'feature/llima-models', true),
+    'sima-cli models download --id qwen3_5_0_8b --variant w4a16 --branch feature/llima-models --stg');
+  assert.equal(modelDownloadCommand('model', 'int8', 'main'),
+    'sima-cli models download --id model --variant int8 --branch main');
+  assert.ok(modelDownloadCommand('model', 'int8', 'feat/$(touch bad)').includes("--branch 'feat/$(touch bad)'"));
 });

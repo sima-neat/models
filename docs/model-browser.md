@@ -153,22 +153,25 @@ Open the URL the script prints, find your model in the catalog, and open its
 page. The preview is for checking content and layout; the real numbers come
 from CI after merge.
 
+### Model folder downloads
 
-LLiMa deployments are folders. **Download folder** shows the same
-`sima-cli models download` command as **Copy CLI command**; the CLI retrieves
-the manifest's files, preserves their paths, and verifies their checksums.
-Commands target the selected branch and include `--stg` on the staging registry.
-The displayed size covers all deployment files, and **Manifest SHA-256**
-identifies the index. The JSON index itself is not a model archive. Existing
-vision archives and previously published LLiMa ZIPs keep their direct downloads.
+A directory package (including LLiMa models) opens a **Download model folder**
+dialog with its file count, total download size, and a copyable `sima-cli models
+download` command. The command uses the selected branch and adds `--stg` for
+the staging registry. Commands are offered for the current catalog deployment;
+historical builds point to the current variant instead. LLM and VLM models
+require sima-cli 2.1.19 or later to download the files in parallel and assemble
+the model folder.
+The CLI verifies the manifest and each file and recreates their relative paths.
+The displayed size covers all deployment files; **Manifest SHA-256** identifies
+the index. MPK and ZIP packages keep their browser download flow.
 
-When the registry resolves an approved deployment to Hugging Face, the dialog
-shows its repository, pinned commit revision, and optional subdirectory. The
-repository link opens that exact deployment revision. This deployment location
-is separate from the original source checkpoint linked in the page header.
+When the registry resolves a deployment to Hugging Face, the dialog links to
+its pinned repository revision and optional subdirectory. This location is
+separate from the original source checkpoint linked in the page header.
 
-Select a feature branch to browse its finalized on-demand builds selected in
-that branch's catalog before promotion. Metadata and unselected runs do not
-create a card. Develop and
-Main continue to show the registry's approved deployments. Feature-branch
-candidates do not replace those selections and also appear in **Build history**.
+Branch views honor explicit `branch_deployments` (or `approved_deployments`)
+selections, including inherited compilation runs and their matching package.
+Newer unselected runs do not replace an explicitly selected deployment.
+Feature branches show finalized on-demand candidates before promotion; metadata
+and unselected runs do not create a card. Develop and Main show approved deployments.

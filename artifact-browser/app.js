@@ -1,4 +1,4 @@
-import { variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, cliDownloadCommand } from "./downloads.js";
+import { variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, modelDownloadCommand } from "./downloads.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
@@ -128,9 +128,11 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
 
 let pendingDownloads = null;
 let downloadRequest = 0;
+let pendingCommand = null;
 
 function resetDownloadDialog({ title, description, confirmLabel }) {
   pendingDownloads = null;
+  pendingCommand = null;
   elements["download-title"].textContent = title;
   elements["download-description"].textContent = description;
   elements["download-list"].innerHTML = "";
@@ -144,27 +146,34 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
   elements["download-confirm"].textContent = confirmLabel;
 }
 
-function folderDownloadInstructions(run, downloads) {
-  pendingDownloads = null;
+function showFolderDownload(run, downloads) {
+  const dialog = elements["download-dialog"];
   const current = state.models.some((model) => model.model_id === run.metadata?.model_id
     && (model.builds?.some((build) => build.run_id === run.id)
       || model.packages?.some((item) => item.run_id === run.id)));
-  const command = current ? cliDownloadCommand(run, elements["branch-filter"].value, config.environment?.toLowerCase() === "staging") : null;
-  elements["download-description"].textContent = "Download this deployment as a folder with its original paths. The CLI verifies each file against the deployment manifest.";
+  pendingCommand = current ? modelDownloadCommand(run.metadata.model_id, runProfile(run),
+    elements["branch-filter"].value || branchName(run.git_ref), config.environment?.toLowerCase() === "staging") : null;
+  elements["download-title"].textContent = "Download model folder";
+  elements["download-description"].textContent = "LLM and VLM models are provided as individual files rather than a ZIP archive. Use sima-cli 2.1.19 or later to download the files in parallel and assemble the model folder.";
   elements["download-list"].hidden = true;
   elements["download-package-info"].hidden = false;
   elements["download-package-info"].innerHTML = downloads.map((item) => {
     const location = item.delivery === "huggingface" ? huggingFaceLocation(item.artifact) : null;
-    return `<dt>Deployment</dt><dd>${escapeHtml(item.component)} · ${escapeHtml(formatBytes(item.size))}${item.artifact.metadata?.file_count ? ` · ${escapeHtml(item.artifact.metadata.file_count)} files` : ""}</dd>
-      <dt>Storage</dt><dd>${item.delivery === "huggingface" ? "Hugging Face" : "Registry folder"}</dd>
+    return `<dt>Deployment</dt><dd>${escapeHtml(item.component)}</dd>
+      <dt>Files</dt><dd>${escapeHtml(item.artifact.metadata?.file_count ?? "Not recorded")}</dd>
+      <dt>Download size</dt><dd>${escapeHtml(formatBytes(item.size))}</dd>
+      <dt>Storage</dt><dd>${item.delivery === "huggingface" ? "Hugging Face" : item.delivery === "archive" ? "Archive" : "Registry folder"}</dd>
       ${location ? `<dt>Repository</dt><dd><a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">${escapeHtml(location.repo_id)} ↗</a></dd><dt>Revision</dt><dd><code>${escapeHtml(location.revision)}</code></dd>${location.subdirectory ? `<dt>Folder</dt><dd>${escapeHtml(location.subdirectory)}</dd>` : ""}` : item.delivery === "huggingface" ? `<dt>Repository</dt><dd>Pinned repository location unavailable. Refresh the catalog to retry.</dd>` : ""}`;
-  }).join("") + (command ? `<dt>Download command</dt><dd><code>${escapeHtml(command)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(command)}" aria-label="Copy deployment download command">${icons.copy}</button></dd>` : `<dt>Download command</dt><dd>Open the current catalog variant for its verified CLI download command.</dd>`);
-  elements["download-confirm"].hidden = true;
-  const note = elements["download-dialog"].querySelector(".download-note");
+  }).join("") + (pendingCommand ? `<dt>Command</dt><dd><code>${escapeHtml(pendingCommand)}</code></dd>`
+    : `<dt>Command</dt><dd>Open the current catalog variant for its verified CLI download command.</dd>`);
+  const note = dialog.querySelector(".download-note");
   note.hidden = false;
   note.textContent = downloads.some((item) => item.delivery === "huggingface")
     ? "The repository link opens the compiled deployment at its pinned revision. Use that revision and folder when downloading from Hugging Face."
-    : "The JSON manifest describes the deployment. The CLI retrieves its files and preserves the folder structure.";
+    : "The CLI uses the manifest to preserve the folder structure and verify each file’s checksum.";
+  elements["download-confirm"].textContent = "Copy command";
+  elements["download-confirm"].hidden = !pendingCommand;
+  elements["download-confirm"].disabled = false;
 }
 
 async function downloadVariant(runId) {
@@ -183,7 +192,7 @@ async function downloadVariant(runId) {
     const downloads = await prepareDownloads(await variantDownloads(summary.run, api, model), api);
     if (request !== downloadRequest || !dialog.open) return;
     if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
-      folderDownloadInstructions(summary.run, downloads);
+      showFolderDownload(summary.run, downloads);
       return;
     }
     pendingDownloads = downloads;
@@ -231,7 +240,7 @@ async function downloadPackage(runId) {
     const format = packageFormat(artifact, filename);
     if (request !== downloadRequest || !dialog.open) return;
     if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
-      folderDownloadInstructions(run, downloads);
+      showFolderDownload(run, downloads);
       return;
     }
     pendingDownloads = downloads;
@@ -263,15 +272,13 @@ async function downloadPackage(runId) {
 }
 
 elements["download-cancel"].addEventListener("click", () => elements["download-dialog"].close());
-elements["download-dialog"].addEventListener("click", (event) => {
-  const button = event.target.closest("[data-copy]");
-  if (button) copyText(button.dataset.copy);
-});
 elements["download-dialog"].addEventListener("close", () => {
   downloadRequest += 1;
   pendingDownloads = null;
+  pendingCommand = null;
 });
 elements["download-confirm"].addEventListener("click", async () => {
+  if (pendingCommand) { await copyText(pendingCommand); return; }
   if (!pendingDownloads) return;
   const request = downloadRequest;
   elements["download-confirm"].disabled = true;

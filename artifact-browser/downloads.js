@@ -1,4 +1,4 @@
-import { selectedModel, variantBuildRuns } from "./branch-builds.js";
+import { deploymentCatalog, variantBuildRuns } from "./branch-builds.js";
 
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
@@ -20,16 +20,9 @@ export function huggingFaceLocation(artifact = {}) {
   return { ...location, url: `https://huggingface.co/${location.repo_id}/tree/${location.revision}${parts.length ? `/${parts.map(encodeURIComponent).join("/")}` : ""}` };
 }
 
-export function cliDownloadCommand(run, catalogBranch, staging = false) {
-  const metadata = run.metadata || {};
-  const branch = catalogBranch ?? (run.git_ref || "").replace(/^refs\/heads\//, "");
-  const quote = (value) => /^[A-Za-z0-9_./-]+$/.test(value) ? value : `'${String(value).replaceAll("'", "'\\''")}'`;
-  return `sima-cli models download --id ${quote(metadata.model_id)} --variant ${quote(metadata.build_profile_id || metadata.variant_id)} --branch ${quote(branch)}${staging ? " --stg" : ""}`;
-}
-
 // Keep component discovery independent of the visible search and compiler filters.
 export async function variantDownloads(run, api, catalogModel = null) {
-  if (catalogModel) catalogModel = selectedModel(catalogModel);
+  if (catalogModel) catalogModel = deploymentCatalog(catalogModel);
   const modelId = run.metadata?.model_id;
   const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
   const packs = (summary) => (summary.artifacts || []).filter((item) => item.artifact_type === "model-pack");
@@ -53,8 +46,9 @@ export async function variantDownloads(run, api, catalogModel = null) {
   return downloads.flat().sort((a, b) => a.component.localeCompare(b.component));
 }
 
-// A single-component package is published as its MPK; any other package is a ZIP.
+// Directory manifests describe folders; archive packages contain an MPK or ZIP.
 export function packageFormat(artifact, filename = "") {
+  if (artifact && artifactDelivery(artifact) !== "archive") return "Folder";
   return artifact?.media_type === "application/gzip" || filename.endsWith("_mpk.tar.gz") ? "MPK" : "ZIP";
 }
 
@@ -86,4 +80,11 @@ export function startDownloads(downloads, document) {
     frame.src = item.url;
     document.body.append(frame);
   });
+}
+
+// Quote catalog values as shell arguments; branch names can contain shell metacharacters.
+export function modelDownloadCommand(modelId, profile, branch, staging = false) {
+  const quote = value => /^[a-zA-Z0-9_./-]+$/.test(String(value)) ? String(value)
+    : "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  return `sima-cli models download --id ${quote(modelId)} --variant ${quote(profile)} --branch ${quote(branch)}${staging ? " --stg" : ""}`;
 }
