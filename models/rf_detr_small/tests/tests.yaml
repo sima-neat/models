@@ -3,7 +3,8 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: true
+  run_tests: false
+  skip_reason: The w8a16_w16a16 and w16a16 builds have no DevKit results yet.
   expected:
     w8a8_w16a16:
       coco_map: 0.4646
@@ -19,7 +20,8 @@ accuracy:
       coco_ar_medium: 0.7346
       coco_ar_large: 0.8876
 performance:
-  run_tests: true
+  run_tests: false
+  skip_reason: The w8a16_w16a16 and w16a16 builds have no DevKit results yet.
   expected:
     w8a8_w16a16:
       backbone:

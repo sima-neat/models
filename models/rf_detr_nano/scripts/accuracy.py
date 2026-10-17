@@ -17,14 +17,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pyneat
-from calibration import MEAN, STD, stable_topk_gather
+from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, stable_topk_gather
 from faster_coco_eval import COCO, COCOeval_faster
 from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
 IMAGES = "val2017"
-SIZE = 384
-QUERIES = 300
 CLASSES = 91
 TOP_K = 300
 SCORE_THRESHOLD = 0.001
@@ -65,7 +63,7 @@ def tensor_options() -> pyneat.ModelOptions:
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the backbone's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
-        resized = image.convert("RGB").resize((SIZE, SIZE), Image.Resampling.BILINEAR)
+        resized = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
     return cv2.LUT(np.asarray(resized), NORMALIZE)
 
 
@@ -107,7 +105,7 @@ def decode(
     dets: np.ndarray, labels: np.ndarray, image_id: int, width: int, height: int, valid: np.ndarray
 ) -> np.ndarray:
     """Return COCO result rows [image_id, x, y, w, h, score, category_id] for one image."""
-    if dets.shape != (1, QUERIES, 4) or labels.shape != (1, QUERIES, CLASSES):
+    if dets.shape != (1, QUERY_COUNT, 4) or labels.shape != (1, QUERY_COUNT, CLASSES):
         raise ValueError(f"unexpected transformer outputs: dets={dets.shape}, labels={labels.shape}")
     if not (np.isfinite(dets).all() and np.isfinite(labels).all()):
         raise ValueError("MPK output contains non-finite values")
@@ -169,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
         # The feature tensor goes to the transformer as is; only the proposals pass through NumPy.
-        proposals = stable_topk_gather(view(scores), view(boxes), QUERIES)
+        proposals = stable_topk_gather(view(scores), view(boxes))
         dets, labels = (view(output) for output in transformer(features, proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):

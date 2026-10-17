@@ -25,7 +25,7 @@ build_profiles:
     components:
       - id: detector
         parameters:
-          precision: bf16
+          precision: w16a16
           input_shape: [1, 3, 1536, 1536]
 ```
 

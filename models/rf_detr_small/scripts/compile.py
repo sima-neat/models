@@ -24,6 +24,7 @@ from afe.apis.defines import (
     HistogramMSEMethod,
     InputName,
     RequantizationMode,
+    SkipCalibration,
     bfloat16_scheme,
     default_quantization,
     gen2_target,
@@ -62,8 +63,9 @@ from surgery import (
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_small"
 INVOCATION_ID = "rf_detr"
-PROFILE_ID = "w8a8_w16a16"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
+# Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
+A16_PRECISIONS = ("w8a16", "w16a16")
 
 
 def _float32_bytes(shape: list[int]) -> int:
@@ -83,30 +85,41 @@ COMPONENT_INTERFACES = {
 }
 
 
-def _profile() -> dict[str, Any]:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    return next(profile for profile in model["build_profiles"] if profile["id"] == PROFILE_ID)
+def _bindings(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, Any]]:
+    """Return each component's build parameters in the build profile."""
+    profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
+    if len(profiles) != 1:
+        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
+    return {binding["id"]: binding["parameters"] for binding in profiles[0]["components"]}
 
 
-def _quantization(precision: str, calibration_bins: int) -> Any:
-    if precision == "int8":
+def _quantization(parameters: dict[str, Any]) -> Any:
+    precision = parameters["precision"]
+    int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+    if precision == "w8a8":
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    elif precision == "bf16":
-        activation = weights = bfloat16_scheme()
+        weights = int8_weights
+        calibration = HistogramMSEMethod(int(parameters["calibration_bins"]))
+        # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
+        bias_correction = BiasCorrectionType.REGULAR
+    elif precision in A16_PRECISIONS:
+        # BF16 activations need no calibrated ranges.
+        activation = bfloat16_scheme()
+        weights = int8_weights if precision == "w8a16" else bfloat16_scheme()
+        calibration = SkipCalibration()
+        bias_correction = BiasCorrectionType.NONE
     else:
         raise ValueError(f"unsupported precision: {precision}")
     return (
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
         .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(HistogramMSEMethod(calibration_bins))
-        # INT8 bias correction measured +0.1 COCO mAP on the RF-DETR Small backbone; BF16 needs none.
-        .with_bias_correction(BiasCorrectionType.REGULAR if precision == "int8" else BiasCorrectionType.NONE)
+        .with_calibration(calibration)
+        .with_bias_correction(bias_correction)
         .with_channel_equalization(False)
         .with_smooth_quant(False)
-        .with_prefer_int8_udf(True)
-        .with_per_token_quant(False)
+        # with_activation_quantization turns per-token quantization on for BF16; only declared components keep it.
+        .with_per_token_quant(bool(parameters.get("per_token", False)))
     )
 
 
@@ -114,22 +127,22 @@ def _quantize_component(
     graph: Path,
     temporary_dir: Path,
     name: str,
-    precision: str,
-    calibration_bins: int,
-    inputs: dict[str, np.ndarray],
+    parameters: dict[str, Any],
+    inputs: dict[str, np.ndarray] | None,
     input_shapes: dict[str, tuple[int, ...]],
-    output_names: list[str],
 ) -> tuple[Any, Path]:
     build_dir = temporary_dir / name
     build_dir.mkdir(parents=True, exist_ok=False)
     importer = onnx_source(str(graph), shape_dict=input_shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
-    data = convert_data_generator_to_iterable(
-        DataGenerator({InputName(key): to_afe_layout(value) for key, value in inputs.items()})
-    )
+    data = None
+    if inputs is not None:
+        data = convert_data_generator_to_iterable(
+            DataGenerator({InputName(key): to_afe_layout(value) for key, value in inputs.items()})
+        )
     quantized = loaded.quantize(
         calibration_data=data,
-        quantization_config=_quantization(precision, calibration_bins),
+        quantization_config=_quantization(parameters),
         model_name=name,
         log_level=logging.INFO,
     )
@@ -200,7 +213,7 @@ def _compile_component(
         retained_temporary_directory_name=None,
         use_power_limits=False,
         max_mla_power=None,
-        layer_norm_use_fp32_intermediates=precision == "bf16",
+        layer_norm_use_fp32_intermediates=precision in A16_PRECISIONS,
         rms_norm_use_fp32_intermediates=False,
         enable_filter_sharing=False,
         layout_search_effort_level=0,
@@ -268,21 +281,56 @@ def _finish_metrics(totals: dict[str, dict[str, float]], names: list[str]) -> li
     return results
 
 
+def _pipeline_description(bindings: dict[str, dict[str, Any]]) -> str:
+    """Name the compiled pipeline that fidelity compares with the original ONNX."""
+    backbone, transformer = (
+        bindings[component]["precision"].upper() + (" per-token" if bindings[component].get("per_token") else "")
+        for component in ("backbone", "transformer")
+    )
+    return f"AFE {backbone} backbone → CPU TopK/Gather → AFE {transformer} transformer (JAX execute)"
+
+
+def _calibration_names(
+    bindings: dict[str, dict[str, Any]],
+    calibration_dataset: Path | None,
+    fidelity_dataset: Path,
+    selection: dict[str, Any],
+) -> tuple[str, ...]:
+    """Select the calibration images of the W8A8 components; components with BF16 activations need none."""
+    counts = {
+        int(parameters["calibration_samples"]) for parameters in bindings.values() if parameters["precision"] == "w8a8"
+    }
+    if not counts:
+        return ()
+    if len(counts) > 1:
+        raise ValueError("W8A8 components must calibrate on the same images")
+    (count,) = counts
+    if calibration_dataset is None:
+        raise ValueError("W8A8 components require --dataset for calibration")
+    if calibration_dataset != fidelity_dataset:
+        raise ValueError("RF-DETR calibration and fidelity must use the same verified dataset")
+    if int(selection["offset"]) < count:
+        raise ValueError("fidelity selection must begin after the calibration images")
+    return select_images(calibration_dataset, int(selection["seed"]), 0, count)
+
+
 def _write_fidelity(
     output_dir: Path,
+    profile_id: str,
     config: dict[str, Any],
+    candidate: str,
     metrics: list[dict[str, Any]],
 ) -> Path:
     selection = config["selection"]
     report = {
         "schema_version": 1,
         "model_id": MODEL_ID,
-        "build_profile_id": PROFILE_ID,
+        "build_profile_id": profile_id,
         "component_id": config["result_component"],
         "scope": "full_pipeline",
         "status": config["status"],
         "reference": "Original full ONNX (ONNX Runtime)",
-        "candidate": "AFE INT8 backbone → CPU TopK/Gather → AFE BF16 transformer (JAX execute)",
+        "candidate": candidate,
         "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
         "selection": selection,
         "samples": selection["samples"],
@@ -302,7 +350,7 @@ def _prepare_graphs_and_reference(
     evaluation_names: tuple[str, ...],
     temporary_dir: Path,
 ) -> None:
-    _, backbone_graph, transformer_graph = prepare_model(source, temporary_dir / "graphs")
+    backbone_graph, transformer_graph = prepare_model(source, temporary_dir / "graphs")
     validation_image = load_images(dataset, evaluation_names[:1])[0]
     validate_float_split(
         source,
@@ -322,63 +370,70 @@ def _prepare_graphs_and_reference(
 
 def _compile_backbone(
     graph: Path,
-    dataset: Path,
-    calibration_names: tuple[str, ...],
-    evaluation_names: tuple[str, ...],
     temporary_dir: Path,
-    precision: str,
-    calibration_bins: int,
+    profile_id: str,
+    bindings: dict[str, dict[str, Any]],
+    calibration_dataset: Path | None,
+    calibration_names: tuple[str, ...],
+    fidelity_dataset: Path,
+    evaluation_names: tuple[str, ...],
 ) -> None:
-    calibration_images = load_images(dataset, calibration_names)
+    parameters = bindings["backbone"]
+    calibration_images = load_images(calibration_dataset, calibration_names) if calibration_names else None
     backbone, build_dir = _quantize_component(
         graph,
         temporary_dir,
-        f"{MODEL_ID}_{PROFILE_ID}_backbone",
-        precision,
-        calibration_bins,
-        {INPUT: calibration_images},
+        f"{MODEL_ID}_{profile_id}_backbone",
+        parameters,
+        {INPUT: calibration_images} if parameters["precision"] == "w8a8" else None,
         {INPUT: tuple(INPUT_SHAPE)},
-        [FEATURES, SCORES, BOXES],
     )
-    _compile_component(backbone, build_dir, "backbone", precision)
+    _compile_component(backbone, build_dir, "backbone", parameters["precision"])
 
-    calibration_features, calibration_proposals = transformer_inputs(backbone, calibration_images, InputName)
-    evaluation = [execute_backbone(backbone, image, InputName) for image in load_images(dataset, evaluation_names)]
-    np.savez(
-        temporary_dir / "backbone_outputs.npz",
-        calibration_features=calibration_features,
-        calibration_proposals=calibration_proposals,
-        evaluation_features=np.stack([values[0][0] for values in evaluation]),
-        evaluation_scores=np.stack([values[1][0] for values in evaluation]),
-        evaluation_boxes=np.stack([values[2][0] for values in evaluation]),
-    )
+    evaluation = [
+        execute_backbone(backbone, image, InputName) for image in load_images(fidelity_dataset, evaluation_names)
+    ]
+    boundaries = {
+        "evaluation_features": np.stack([values[0][0] for values in evaluation]),
+        "evaluation_scores": np.stack([values[1][0] for values in evaluation]),
+        "evaluation_boxes": np.stack([values[2][0] for values in evaluation]),
+    }
+    if bindings["transformer"]["precision"] == "w8a8":
+        # A W8A8 transformer calibrates on the proposals this quantized backbone selects.
+        boundaries["calibration_features"], boundaries["calibration_proposals"] = transformer_inputs(
+            backbone, calibration_images, InputName
+        )
+    np.savez(temporary_dir / "backbone_outputs.npz", **boundaries)
 
 
 def _compile_transformer(
     graph: Path,
     temporary_dir: Path,
-    precision: str,
-    calibration_bins: int,
+    profile_id: str,
+    parameters: dict[str, Any],
     fidelity_config: dict[str, Any],
+    candidate: str,
 ) -> None:
     with np.load(temporary_dir / "backbone_outputs.npz") as boundaries:
-        calibration_features = boundaries["calibration_features"]
-        calibration_proposals = boundaries["calibration_proposals"]
         evaluation_features = boundaries["evaluation_features"]
         evaluation_scores = boundaries["evaluation_scores"]
         evaluation_boxes = boundaries["evaluation_boxes"]
+        calibration = None
+        if parameters["precision"] == "w8a8":
+            calibration = {
+                FEATURES: boundaries["calibration_features"],
+                PROPOSALS: boundaries["calibration_proposals"],
+            }
 
         transformer, build_dir = _quantize_component(
             graph,
             temporary_dir,
-            f"{MODEL_ID}_{PROFILE_ID}_transformer",
-            precision,
-            calibration_bins,
-            {FEATURES: calibration_features, PROPOSALS: calibration_proposals},
+            f"{MODEL_ID}_{profile_id}_transformer",
+            parameters,
+            calibration,
             {name: tuple(BOUNDARY_SHAPES[name]) for name in (FEATURES, PROPOSALS)},
-            OUTPUTS,
         )
-        _compile_component(transformer, build_dir, "transformer", precision)
+        _compile_component(transformer, build_dir, "transformer", parameters["precision"])
 
         totals: dict[str, dict[str, float]] = {}
         with np.load(temporary_dir / "reference_outputs.npz") as reference:
@@ -395,7 +450,7 @@ def _compile_transformer(
                 expected = [reference[name][index][None] for name in OUTPUTS]
                 _record_metrics(totals, expected, actual, OUTPUTS)
     metrics = _finish_metrics(totals, OUTPUTS)
-    _write_fidelity(temporary_dir, fidelity_config, metrics)
+    _write_fidelity(temporary_dir, profile_id, fidelity_config, candidate, metrics)
 
 
 def _execute_phase(target: Callable[..., None], args: tuple[Any, ...]) -> None:
@@ -413,8 +468,8 @@ def _run_phase(name: str, target: Callable[..., None], *args: Any) -> None:
     logging.info("Completed %s", name)
 
 
-def _component_archive(temporary_dir: Path, component_id: str) -> Path:
-    build_dir = temporary_dir / f"{MODEL_ID}_{PROFILE_ID}_{component_id}"
+def _component_archive(temporary_dir: Path, profile_id: str, component_id: str) -> Path:
+    build_dir = temporary_dir / f"{MODEL_ID}_{profile_id}_{component_id}"
     archives = sorted(build_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")
@@ -423,35 +478,28 @@ def _component_archive(temporary_dir: Path, component_id: str) -> Path:
 
 def compile_model(
     source: Path,
-    calibration_dataset: Path,
+    profile_id: str,
+    calibration_dataset: Path | None,
     fidelity_dataset: Path,
     output_dir: Path,
 ) -> dict[str, Path]:
-    profile = _profile()
-    bindings = {binding["id"]: binding["parameters"] for binding in profile["components"]}
-    calibration_samples = int(bindings["backbone"]["calibration_samples"])
-    transformer_samples = int(bindings["transformer"]["calibration_samples"])
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    fidelity_config = next(entry for entry in metadata["fidelity"] if entry["id"] == "full_pipeline_fidelity")
+    bindings = _bindings(metadata, profile_id)
+    fidelity_config = next(entry for entry in metadata["fidelity"] if profile_id in entry["build_profiles"])
     selection = fidelity_config["selection"]
-    if transformer_samples != calibration_samples:
-        raise ValueError("backbone and transformer must use the same calibration sample count")
-    if int(selection["offset"]) != calibration_samples:
-        raise ValueError("fidelity selection must begin after the calibration partition")
-    if calibration_dataset.resolve() != fidelity_dataset.resolve():
-        raise ValueError("RF-DETR calibration and fidelity must use the same verified dataset")
-    calibration_names, evaluation_names = select_images(
-        calibration_dataset,
-        calibration_samples,
-        int(selection["samples"]),
+    calibration_names = _calibration_names(bindings, calibration_dataset, fidelity_dataset, selection)
+    evaluation_names = select_images(
+        fidelity_dataset,
         int(selection["seed"]),
+        int(selection["offset"]),
+        int(selection["samples"]),
     )
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     temporary_root = os.environ.get("RUNNER_TEMP")
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=temporary_root) as temporary:
         temporary_dir = Path(temporary)
-        _, backbone_graph, transformer_graph = graph_paths(temporary_dir / "graphs")
+        backbone_graph, transformer_graph = graph_paths(temporary_dir / "graphs")
         _run_phase(
             "RF-DETR graph preparation",
             _prepare_graphs_and_reference,
@@ -468,25 +516,26 @@ def compile_model(
             "RF-DETR backbone compilation",
             _compile_backbone,
             backbone_graph,
+            temporary_dir,
+            profile_id,
+            bindings,
             calibration_dataset,
             calibration_names,
+            fidelity_dataset,
             evaluation_names,
-            temporary_dir,
-            str(bindings["backbone"]["precision"]),
-            int(bindings["backbone"]["calibration_bins"]),
         )
         _run_phase(
             "RF-DETR transformer compilation and fidelity",
             _compile_transformer,
             transformer_graph,
             temporary_dir,
-            str(bindings["transformer"]["precision"]),
-            int(bindings["transformer"]["calibration_bins"]),
+            profile_id,
+            bindings["transformer"],
             fidelity_config,
+            _pipeline_description(bindings),
         )
-        backbone_archive_source = _component_archive(temporary_dir, "backbone")
-        transformer_archive_source = _component_archive(temporary_dir, "transformer")
-
+        backbone_archive_source = _component_archive(temporary_dir, profile_id, "backbone")
+        transformer_archive_source = _component_archive(temporary_dir, profile_id, "transformer")
         output_dir.mkdir(parents=True)
         archives = {}
         for component_id, source in (
@@ -504,7 +553,7 @@ def compile_model(
         shutil.copyfile(temporary_dir / "fidelity.json", fidelity_path)
         manifest = {
             "model_id": MODEL_ID,
-            "build_profile_id": PROFILE_ID,
+            "build_profile_id": profile_id,
             "compile_invocation_id": INVOCATION_ID,
             "outputs": [
                 {
@@ -534,30 +583,29 @@ def compile_model(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component is W8A8")
     parser.add_argument("--fidelity-dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
     args = parser.parse_args()
-    if args.build_profile != PROFILE_ID:
-        parser.error(f"unsupported build profile: {args.build_profile}")
     if args.compile_invocation != INVOCATION_ID:
         parser.error(f"unsupported compile invocation: {args.compile_invocation}")
     source = args.model.expanduser().resolve()
-    dataset = args.dataset.expanduser().resolve()
+    dataset = args.dataset.expanduser().resolve() if args.dataset else None
     fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
     if source.suffix != ".onnx":
         parser.error("--model must be the verified ONNX from the manual conversion workflow")
     if not source.is_file():
         parser.error(f"source does not exist: {source}")
-    if not dataset.exists():
+    if dataset is not None and not dataset.exists():
         parser.error(f"dataset does not exist: {dataset}")
     if not fidelity_dataset.exists():
         parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     outputs = compile_model(
         source,
+        args.build_profile,
         dataset,
         fidelity_dataset,
         args.output_dir.expanduser().resolve(),

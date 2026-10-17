@@ -176,7 +176,7 @@ def test_int8_reference_evaluator_adapts_opset17_qdq_dispatch(
     compile_module = load_script("compile")
     contract = load_script("qat/contract")
     source = synthetic_source(tmp_path / "int8.onnx", contract, qat=True)
-    evaluator = compile_module.build_reference_evaluator(source, "int8")
+    evaluator = compile_module.build_reference_evaluator(source, "w8a8")
     outputs = evaluator.run(
         None,
         {contract.INPUT_NAME: np.zeros(contract.INPUT_SHAPE, dtype=np.float32)},
@@ -372,14 +372,14 @@ def plugin(
 def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellation_mla: bool) -> Path:
     sequence = 1
     plugins = []
-    if precision == "int8":
+    if precision == "w8a8":
         plugins.append(plugin("EV74", sequence, kernel="quantization_transform", params={"output_data_type": "int8"}))
         sequence += 1
     plugins.append(plugin("MLA", sequence, output_nodes=[{"name": f"MLA_{i}"} for i in range(12)]))
     sequence += 1
     for _ in range(12):
-        kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
-        params = {"input_data_type": "int8"} if precision == "int8" else {
+        kernel = "dequantization_transform" if precision == "w8a8" else "cast_transform"
+        params = {"input_data_type": "int8"} if precision == "w8a8" else {
             "in_dtype": "bfloat16", "out_dtype": "float32"
         }
         plugins.append(plugin("EV74", sequence, kernel=kernel, params=params))
@@ -402,7 +402,7 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     with tarfile.open(path, "w:gz") as stream:
         members = [("ssd_mpk.json", manifest), ("ssd.elf", b"ELF")]
         if not tessellation_mla:
-            stage = "0_quanttess.json" if precision == "int8" else "0_tessellate.json"
+            stage = "0_quanttess.json" if precision == "w8a8" else "0_tessellate.json"
             members.append((stage, b"{}"))
         for name, payload in members:
             member = tarfile.TarInfo(name)
@@ -411,7 +411,7 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     return path
 
 
-@pytest.mark.parametrize("precision", ["int8", "bf16"])
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
 def test_mpk_audit_proves_default_variants(
     tmp_path: Path,
     precision: str,
@@ -419,19 +419,18 @@ def test_mpk_audit_proves_default_variants(
 ) -> None:
     compile_module = load_script("compile")
     tessellation_mla = True
-    variant = {"int8": "w8a8", "bf16": "w16a16"}[precision]
-    archive = write_mpk(tmp_path / f"{variant}_mpk.tar.gz", compile_module, precision, tessellation_mla)
-    report = compile_module.audit_mpk(archive, variant)
+    archive = write_mpk(tmp_path / f"{precision}_mpk.tar.gz", compile_module, precision, tessellation_mla)
+    report = compile_module.audit_mpk(archive, precision)
     assert report["output_transport_tensor_count"] == 12
     assert report["tessellation"] == ("mla" if tessellation_mla else "ev74")
     expected_stages = []
     if not tessellation_mla:
-        expected_stages = ["0_quanttess.json" if precision == "int8" else "0_tessellate.json"]
+        expected_stages = ["0_quanttess.json" if precision == "w8a8" else "0_tessellate.json"]
     assert report["tessellation_stages"] == expected_stages
     assert report["public_output_dtype"] == "float32"
 
 
-@pytest.mark.parametrize(("precision", "scalar_type"), [("int8", 6), ("bf16", 13)])
+@pytest.mark.parametrize(("precision", "scalar_type"), [("w8a8", 6), ("w16a16", 13)])
 def test_quantized_topology_audit_proves_compute_and_weight_precision(
     tmp_path: Path,
     precision: str,
@@ -445,7 +444,7 @@ def test_quantized_topology_audit_proves_compute_and_weight_precision(
             "_status": "SIMA_QUANTIZED",
             "conv_attrs.input_type": {"value": scalar_type},
         }
-        if precision == "int8":
+        if precision == "w8a8":
             config.update({"per_channel": True, "weight_quant_data": f"weights_{index}"})
         else:
             config["weights_attrs.data"] = f"weights_{index}"
@@ -497,12 +496,12 @@ def test_validation_output_normalization_handles_compiler_layouts(load_script: C
     ("precision", "passing", "failing"),
     [
         (
-            "int8",
+            "w8a8",
             {"minimum_cosine_similarity": 0.985, "maximum_normalized_root_mean_square_error": 0.18},
             {"minimum_cosine_similarity": 0.94209, "maximum_normalized_root_mean_square_error": 0.33537},
         ),
         (
-            "bf16",
+            "w16a16",
             {"minimum_cosine_similarity": 0.9995, "maximum_normalized_root_mean_square_error": 0.04},
             {"minimum_cosine_similarity": 0.998, "maximum_normalized_root_mean_square_error": 0.04},
         ),
@@ -578,26 +577,26 @@ def test_model_declares_default_precision_profiles() -> None:
         binding["parameters"]["precision"]
         for binding in bindings
     }
-    assert matrix == {"int8", "bf16"}
+    assert matrix == {"w8a8", "w16a16"}
     assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)
     assert {
         (binding["parameters"]["precision"], binding["parameters"]["calibration_method"])
         for binding in bindings
-    } == {("int8", "min_max"), ("bf16", "mse")}
-    int8_parameters = [
+    } == {("w8a8", "min_max"), ("w16a16", "mse")}
+    w8a8_parameters = [
         binding["parameters"]
         for binding in bindings
-        if binding["parameters"]["precision"] == "int8"
+        if binding["parameters"]["precision"] == "w8a8"
     ]
-    assert all(parameters["quantization_method"] == "qat" for parameters in int8_parameters)
-    assert all(parameters.get("smooth_quant", False) is False for parameters in int8_parameters)
-    assert all(parameters.get("bias_correction", "none") == "none" for parameters in int8_parameters)
-    bf16_parameters = [
+    assert all(parameters["quantization_method"] == "qat" for parameters in w8a8_parameters)
+    assert all(parameters.get("smooth_quant", False) is False for parameters in w8a8_parameters)
+    assert all(parameters.get("bias_correction", "none") == "none" for parameters in w8a8_parameters)
+    w16a16_parameters = [
         binding["parameters"]
         for binding in bindings
-        if binding["parameters"]["precision"] == "bf16"
+        if binding["parameters"]["precision"] == "w16a16"
     ]
-    assert all(parameters["quantization_method"] == "ptq" for parameters in bf16_parameters)
+    assert all(parameters["quantization_method"] == "ptq" for parameters in w16a16_parameters)
     status = {
         binding["parameters"]["precision"]: binding.get(
             "status", "supported"
@@ -605,6 +604,6 @@ def test_model_declares_default_precision_profiles() -> None:
         for binding in bindings
     }
     assert status == {
-        "int8": "supported",
-        "bf16": "supported",
+        "w8a8": "supported",
+        "w16a16": "supported",
     }

@@ -163,7 +163,7 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: int8
+      precision: w8a8
       model_size: 1600
       calibration_samples: 128
       calibration_tensor_sha256: d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e

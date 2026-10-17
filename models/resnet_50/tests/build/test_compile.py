@@ -141,7 +141,7 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
     recipe = load_script("compile")
     metadata = recipe._metadata()
 
-    assert recipe._variant(metadata, "w16a16")["parameters"]["precision"] == "bf16"
+    assert recipe._variant(metadata, "w16a16")["parameters"]["precision"] == "w16a16"
     assert recipe._variant(metadata, "w8a8")["parameters"]["calibration_samples"] == 500
     assert recipe._fidelity_config(metadata, "w8a8")["id"] == "logits_fidelity"
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):

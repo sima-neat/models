@@ -130,14 +130,14 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: bf16
+      precision: w16a16
 - id: w8a8
   target: modalix
   components:
   - id: model
     calibration: coco_images
     parameters:
-      precision: int8
+      precision: w8a8
       calibration_bins: 2048
       calibration_samples: 50
 compositions:

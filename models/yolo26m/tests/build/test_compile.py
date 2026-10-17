@@ -180,9 +180,9 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
-    assert compile_module._parameters("w16a16") == {"precision": "bf16"}
+    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
     assert compile_module._parameters("w8a8") == {
-        "precision": "int8",
+        "precision": "w8a8",
         "calibration_bins": 2048,
         "calibration_samples": 50,
     }

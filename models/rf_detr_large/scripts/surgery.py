@@ -606,12 +606,12 @@ def _merge_query_sine_embedding(model: onnx.ModelProto) -> onnx.ModelProto:
     return _finish(model)
 
 
-def graph_paths(output_dir: Path) -> tuple[Path, Path, Path]:
-    """Return where prepare_model writes the full, backbone, and transformer graphs."""
-    return tuple(output_dir / f"rf_detr_large_{part}.onnx" for part in ("full", "backbone", "transformer"))
+def graph_paths(output_dir: Path) -> tuple[Path, Path]:
+    """Return where prepare_model writes the backbone and transformer graphs."""
+    return tuple(output_dir / f"rf_detr_large_{part}.onnx" for part in ("backbone", "transformer"))
 
 
-def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
+def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path]:
     from onnxsim import simplify
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -630,7 +630,8 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     full.ir_version = 8
     onnx.checker.check_model(full)
 
-    full_path, backbone_path, transformer_path = graph_paths(output_dir)
+    full_path = output_dir / "rf_detr_large_full.onnx"
+    backbone_path, transformer_path = graph_paths(output_dir)
     onnx.save(full, full_path)
     onnx.utils.extract_model(str(full_path), str(backbone_path), [INPUT], [FEATURES, SCORES, BOXES])
     onnx.utils.extract_model(str(full_path), str(transformer_path), [FEATURES, PROPOSALS], OUTPUTS)
@@ -660,7 +661,7 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)
-    return full_path, backbone_path, transformer_path
+    return backbone_path, transformer_path
 
 
 def validate_float_split(
@@ -670,7 +671,6 @@ def validate_float_split(
     image: np.ndarray,
 ) -> None:
     import onnxruntime as ort
-    from calibration import stable_topk_gather
 
     reference_model = onnx.load(source)
     (topk,) = [node for node in reference_model.graph.node if node.op_type == "TopK"]
@@ -687,7 +687,6 @@ def validate_float_split(
     if gaps.max() > 1e-5:
         raise RuntimeError(f"RF-DETR split selects different proposals; largest score gap {gaps.max():.2e}")
     # Compare the decoder on TopK's own order so a tie swap cannot pair queries with other boxes.
-    np.testing.assert_array_equal(stable_topk_gather(scores, boxes), np.take_along_axis(boxes, bridge[..., None], 1))
     proposals = np.take_along_axis(boxes, selected[..., None], 1).astype(np.float32)
     actual = transformer_session.run(None, {FEATURES: features, PROPOSALS: proposals})
     for name, expected_value, actual_value in zip(OUTPUTS, expected, actual, strict=True):

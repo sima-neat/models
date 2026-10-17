@@ -119,7 +119,7 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: bf16
+      precision: w16a16
       input_name: pixel_values
       input_shape:
       - 1
@@ -132,7 +132,7 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: int8
+      precision: w8a8
       input_name: pixel_values
       input_shape:
       - 1

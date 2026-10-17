@@ -226,7 +226,7 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: int8
+      precision: w8a8
       activation_quantization: asymmetric_per_tensor_8bit
       weight_quantization: symmetric_per_channel_8bit
       calibration_method: mse
@@ -238,7 +238,7 @@ build_profiles:
   components:
   - id: model
     parameters:
-      precision: bf16
+      precision: w16a16
       activation_quantization: bfloat16
       weight_quantization: bfloat16
       calibration_method: mse
@@ -281,10 +281,10 @@ accuracy:
   - decoded_detection_recall_at_0_5_iou
   - decoded_detection_mean_matched_iou
   compiler_raw_head_thresholds:
-    int8:
+    w8a8:
       minimum_cosine_similarity: 0.98
       maximum_normalized_root_mean_square_error: 0.2
-    bf16:
+    w16a16:
       minimum_cosine_similarity: 0.999
       maximum_normalized_root_mean_square_error: 0.05
   note: Raw-head quality is compiler-gated; decoded accuracy and performance remain pending Modalix hardware qualification.

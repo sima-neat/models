@@ -459,12 +459,12 @@ def _optimize_decoder_attention(model: onnx.ModelProto, layers: int) -> onnx.Mod
     return _finish(model)
 
 
-def graph_paths(output_dir: Path) -> tuple[Path, Path, Path]:
-    """Return where prepare_model writes the full, backbone, and transformer graphs."""
-    return tuple(output_dir / f"rf_detr_small_{part}.onnx" for part in ("full", "backbone", "transformer"))
+def graph_paths(output_dir: Path) -> tuple[Path, Path]:
+    """Return where prepare_model writes the backbone and transformer graphs."""
+    return tuple(output_dir / f"rf_detr_small_{part}.onnx" for part in ("backbone", "transformer"))
 
 
-def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
+def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path]:
     from onnxsim import simplify
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -483,7 +483,8 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     full.ir_version = 8
     onnx.checker.check_model(full)
 
-    full_path, backbone_path, transformer_path = graph_paths(output_dir)
+    full_path = output_dir / "rf_detr_small_full.onnx"
+    backbone_path, transformer_path = graph_paths(output_dir)
     onnx.save(full, full_path)
     onnx.utils.extract_model(str(full_path), str(backbone_path), [INPUT], [FEATURES, SCORES, BOXES])
     onnx.utils.extract_model(str(full_path), str(transformer_path), [FEATURES, PROPOSALS], OUTPUTS)
@@ -511,7 +512,7 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)
-    return full_path, backbone_path, transformer_path
+    return backbone_path, transformer_path
 
 
 def validate_float_split(

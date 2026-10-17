@@ -151,14 +151,14 @@ def plugin(
 def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellation_mla: bool) -> Path:
     sequence = 1
     plugins = []
-    if precision == "int8":
+    if precision == "w8a8":
         plugins.append(plugin("EV74", sequence, kernel="quantization_transform", params={"output_data_type": "int8"}))
         sequence += 1
     plugins.append(plugin("MLA", sequence, output_nodes=[{"name": f"MLA_{i}"} for i in range(12)]))
     sequence += 1
     for _ in range(12):
-        kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
-        params = {"input_data_type": "int8"} if precision == "int8" else {
+        kernel = "dequantization_transform" if precision == "w8a8" else "cast_transform"
+        params = {"input_data_type": "int8"} if precision == "w8a8" else {
             "in_dtype": "bfloat16", "out_dtype": "float32"
         }
         plugins.append(plugin("EV74", sequence, kernel=kernel, params=params))
@@ -181,7 +181,7 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     with tarfile.open(path, "w:gz") as stream:
         members = [("ssd_mpk.json", manifest), ("ssd.elf", b"ELF")]
         if not tessellation_mla:
-            stage = "0_quanttess.json" if precision == "int8" else "0_tessellate.json"
+            stage = "0_quanttess.json" if precision == "w8a8" else "0_tessellate.json"
             members.append((stage, b"{}"))
         for name, payload in members:
             member = tarfile.TarInfo(name)
@@ -190,7 +190,7 @@ def write_mpk(path: Path, compile_module: ModuleType, precision: str, tessellati
     return path
 
 
-@pytest.mark.parametrize("precision", ["int8", "bf16"])
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
 def test_mpk_audit_proves_default_variants(
     tmp_path: Path,
     precision: str,
@@ -198,19 +198,18 @@ def test_mpk_audit_proves_default_variants(
 ) -> None:
     compile_module = load_script("compile")
     tessellation_mla = True
-    variant = {"int8": "w8a8", "bf16": "w16a16"}[precision]
-    archive = write_mpk(tmp_path / f"{variant}_mpk.tar.gz", compile_module, precision, tessellation_mla)
-    report = compile_module.audit_mpk(archive, variant)
+    archive = write_mpk(tmp_path / f"{precision}_mpk.tar.gz", compile_module, precision, tessellation_mla)
+    report = compile_module.audit_mpk(archive, precision)
     assert report["output_transport_tensor_count"] == 12
     assert report["tessellation"] == ("mla" if tessellation_mla else "ev74")
     expected_stages = []
     if not tessellation_mla:
-        expected_stages = ["0_quanttess.json" if precision == "int8" else "0_tessellate.json"]
+        expected_stages = ["0_quanttess.json" if precision == "w8a8" else "0_tessellate.json"]
     assert report["tessellation_stages"] == expected_stages
     assert report["public_output_dtype"] == "float32"
 
 
-@pytest.mark.parametrize(("precision", "scalar_type"), [("int8", 6), ("bf16", 13)])
+@pytest.mark.parametrize(("precision", "scalar_type"), [("w8a8", 6), ("w16a16", 13)])
 def test_quantized_topology_audit_proves_compute_and_weight_precision(
     tmp_path: Path,
     precision: str,
@@ -224,7 +223,7 @@ def test_quantized_topology_audit_proves_compute_and_weight_precision(
             "_status": "SIMA_QUANTIZED",
             "conv_attrs.input_type": {"value": scalar_type},
         }
-        if precision == "int8":
+        if precision == "w8a8":
             config.update({"per_channel": True, "weight_quant_data": f"weights_{index}"})
         else:
             config["weights_attrs.data"] = f"weights_{index}"
@@ -264,7 +263,7 @@ def test_quantization_quality_report_rejects_non_finite_output(load_script: Call
 
 @pytest.mark.parametrize(
     ("precision", "cosine", "nrmse"),
-    [("int8", 0.9848, 0.1742), ("bf16", 0.9994, 0.0346)],
+    [("w8a8", 0.9848, 0.1742), ("w16a16", 0.9994, 0.0346)],
 )
 def test_quantization_quality_gate_accepts_qualified_measurements(
     precision: str,
@@ -286,8 +285,8 @@ def test_quantization_quality_gate_rejects_regression(load_script: Callable[[str
         "minimum_cosine_similarity": 0.97,
         "maximum_normalized_root_mean_square_error": 0.21,
     }
-    with pytest.raises(RuntimeError, match="INT8 quantization quality failed"):
-        compile_module.enforce_quantization_quality(report, "int8")
+    with pytest.raises(RuntimeError, match="W8A8 quantization quality failed"):
+        compile_module.enforce_quantization_quality(report, "w8a8")
 
 
 def test_quantization_quality_report_normalizes_afe_output_layouts(load_script: Callable[[str], ModuleType]) -> None:
@@ -336,11 +335,11 @@ def test_first_qualification_thresholds_are_committed_from_vulcan_evidence() -> 
     specification = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["accuracy"][0]
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
     assert specification["compiler_raw_head_thresholds"] == {
-        "int8": {
+        "w8a8": {
             "minimum_cosine_similarity": 0.98,
             "maximum_normalized_root_mean_square_error": 0.20,
         },
-        "bf16": {
+        "w16a16": {
             "minimum_cosine_similarity": 0.999,
             "maximum_normalized_root_mean_square_error": 0.05,
         },
@@ -364,5 +363,5 @@ def test_model_declares_default_precision_profiles() -> None:
         binding["parameters"]["precision"]
         for binding in bindings
     }
-    assert matrix == {"int8", "bf16"}
+    assert matrix == {"w8a8", "w16a16"}
     assert all(binding["parameters"]["calibration_samples"] == 128 for binding in bindings)

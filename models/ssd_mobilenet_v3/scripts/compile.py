@@ -49,9 +49,9 @@ def build_reference_evaluator(path: Path, precision: str) -> Any:
 
     from onnx.reference import ReferenceEvaluator
 
-    if precision not in {"int8", "bf16"}:
+    if precision not in {"w8a8", "w16a16"}:
         raise ValueError(f"unsupported SSD reference precision: {precision}")
-    if precision != "int8":
+    if precision != "w8a8":
         return ReferenceEvaluator(str(path))
 
     # The ONNX package in ModelSDK 2.1.3 exposes Q/DQ implementations for
@@ -108,23 +108,23 @@ def variant_config(variant_id: str) -> dict[str, Any]:
     binding = next(item for item in profile["components"] if item["id"] == "model")
     variant = {**profile, "parameters": binding["parameters"]}
     parameters = variant["parameters"]
-    if variant["target"] != "modalix" or parameters.get("precision") not in {"int8", "bf16"}:
+    if variant["target"] != "modalix" or parameters.get("precision") not in {"w8a8", "w16a16"}:
         raise ValueError("SSD-MobileNet V3 supports only declared Modalix INT8 and BF16 variants")
     expected_quantization = (
         ("asymmetric_per_tensor_8bit", "symmetric_per_channel_8bit")
-        if parameters["precision"] == "int8"
+        if parameters["precision"] == "w8a8"
         else ("bfloat16", "bfloat16")
     )
     declared_quantization = (parameters.get("activation_quantization"), parameters.get("weight_quantization"))
     if declared_quantization != expected_quantization:
         raise ValueError(f"SSD quantization declaration mismatch: {declared_quantization}")
-    expected_calibration = "min_max" if parameters["precision"] == "int8" else "mse"
+    expected_calibration = "min_max" if parameters["precision"] == "w8a8" else "mse"
     if parameters.get("calibration_method") != expected_calibration or parameters.get("requantization") != "sima":
         raise ValueError(
             f"SSD {parameters['precision'].upper()} variants require {expected_calibration} calibration "
             "and SiMa requantization"
         )
-    if parameters.get("quantization_method") != ("qat" if parameters["precision"] == "int8" else "ptq"):
+    if parameters.get("quantization_method") != ("qat" if parameters["precision"] == "w8a8" else "ptq"):
         raise ValueError(f"SSD {parameters['precision'].upper()} quantization method declaration mismatch")
     if parameters.get("smooth_quant", False) or parameters.get("bias_correction", "none") != "none":
         raise ValueError("SSD QAT/BF16 sources must not receive PTQ SmoothQuant or bias correction")
@@ -169,14 +169,14 @@ def audit_quantized_model(path: Path, precision: str) -> dict[str, Any]:
     convolutions = [layer for layer in layers if str(layer.get("class_name", "")).startswith("MLA_0/ConvAddActivation")]
     if len(convolutions) != 98:
         raise RuntimeError(f"expected 98 quantized SSD MLA convolutions, found {len(convolutions)}")
-    expected_scalar_type = 6 if precision == "int8" else 13
+    expected_scalar_type = 6 if precision == "w8a8" else 13
     scalar_types = {layer.get("config", {}).get("conv_attrs.input_type", {}).get("value") for layer in convolutions}
     statuses = {layer.get("config", {}).get("_status") for layer in convolutions}
     if scalar_types != {expected_scalar_type} or statuses != {"SIMA_QUANTIZED"}:
         raise RuntimeError(
             f"{precision.upper()} SSD compute precision audit failed: types={scalar_types}, statuses={statuses}"
         )
-    if precision == "int8":
+    if precision == "w8a8":
         per_channel = {layer.get("config", {}).get("per_channel") for layer in convolutions}
         has_weight_quantization = {"weight_quant_data" in layer.get("config", {}) for layer in convolutions}
         if per_channel != {True} or has_weight_quantization != {True}:
@@ -191,7 +191,7 @@ def audit_quantized_model(path: Path, precision: str) -> dict[str, Any]:
         "compute_scalar_type": expected_scalar_type,
         "internal_precision": precision,
         "quantized_model_json_sha256": sha256_file(path),
-        "weight_quantization": "per_channel_int8" if precision == "int8" else "bfloat16",
+        "weight_quantization": "per_channel_int8" if precision == "w8a8" else "bfloat16",
     }
 
 
@@ -350,19 +350,19 @@ def audit_mpk(archive: Path, variant_id: str) -> dict[str, Any]:
         raise RuntimeError(f"SSD MPK public output ABI mismatch: {output_sizes}")
 
     mla_outputs = mla_plugins[0].get("output_nodes", [])
-    output_kernel = "dequantization_transform" if precision == "int8" else "cast_transform"
+    output_kernel = "dequantization_transform" if precision == "w8a8" else "cast_transform"
     conversions = [plugin for plugin in plugins if _kernel(plugin) == output_kernel]
-    if precision == "bf16":
+    if precision == "w16a16":
         conversions = [plugin for plugin in conversions if _params(plugin).get("out_dtype") == "float32"]
-    dtype_key = "input_data_type" if precision == "int8" else "in_dtype"
+    dtype_key = "input_data_type" if precision == "w8a8" else "in_dtype"
     internal_types = [str(_params(plugin).get(dtype_key, "")).lower() for plugin in conversions]
     if len(mla_outputs) != len(OUTPUTS):
         raise RuntimeError(f"expected {len(OUTPUTS)} SSD MLA outputs, found {len(mla_outputs)}")
-    aliases = {"int8"} if precision == "int8" else {"bf16", "bfloat16"}
+    aliases = {"int8"} if precision == "w8a8" else {"bf16", "bfloat16"}
     if len(internal_types) != len(OUTPUTS) or any(value not in aliases for value in internal_types):
         raise RuntimeError(f"{precision.upper()} SSD output transport audit failed: {internal_types}")
 
-    if precision == "int8":
+    if precision == "w8a8":
         quantize = [plugin for plugin in plugins if _kernel(plugin) == "quantization_transform"]
         dequantize = [plugin for plugin in plugins if _kernel(plugin) == "dequantization_transform"]
         quantized_types = [str(_params(plugin).get("output_data_type", "")).lower() for plugin in quantize]
@@ -428,7 +428,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_p
     calibration = imagenet_normalize(calibration)
     output_dir.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="ssd-mobilenet-v3-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
-        prepare = prepare_int8_model if precision == "int8" else prepare_model
+        prepare = prepare_int8_model if precision == "w8a8" else prepare_model
         prepared = prepare(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
         importer = ImporterParams(
             format=ModelFormat.onnx,
@@ -441,7 +441,7 @@ def compile_model(source: Path, output_dir: Path, variant_id: str, calibration_p
         )
         loaded = load_model(importer, target=gen2_target)
         calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT_NAME): calibration}))
-        if precision == "int8":
+        if precision == "w8a8":
             activation_scheme = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
             weight_scheme = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
         else:
@@ -496,7 +496,7 @@ def validate_saved_model(source: Path, output_dir: Path, variant_id: str, calibr
         dir=os.environ.get("RUNNER_TEMP"),
     ) as temporary:
         LOG.info("Fresh validation process: preparing %s precision source", precision.upper())
-        prepare = prepare_int8_model if precision == "int8" else prepare_model
+        prepare = prepare_int8_model if precision == "w8a8" else prepare_model
         prepared = prepare(source, Path(temporary) / "ssd_mobilenet_v3_heads.onnx")
         LOG.info("Fresh validation process: creating independent ONNX precision-source reference")
         reference = build_reference_evaluator(prepared, precision)

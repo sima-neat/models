@@ -185,9 +185,9 @@ build_profiles:
       - id: encoder
         shape_profile: batch_1
         calibration: representative_audio
-        parameters: {precision: int8}
+        parameters: {precision: w8a8}
       - id: decoder
-        parameters: {precision: int8}
+        parameters: {precision: w8a8}
 ```
 
 The profile ID is the variant ID users select. Compose it from the precision
@@ -199,8 +199,8 @@ profiles of one model would share an ID, append the first vocabulary tokens
 that tell them apart. The Model Browser shows variant IDs in uppercase,
 while `sima-cli models download --variant` takes the lowercase ID.
 
-`parameters.precision` stays the compiler's value (`int8` or `bf16`); the
-variant ID only names the result.
+Each binding's `parameters.precision` is that component's precision token,
+such as `w8a8`, and the recipe maps it to compiler settings.
 
 This avoids a Cartesian product of unrelated component configurations. Each
 supported binding is its own compile invocation, named after its component,

@@ -6,6 +6,7 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
@@ -51,14 +52,13 @@ def test_image_selection_is_seeded_and_disjoint(tmp_path: Path, load_script: Cal
     for index in range(8):
         Image.new("RGB", (2, 2), color=(index, index, index)).save(tmp_path / f"{index}.jpg")
 
-    first = calibration.select_images(tmp_path, calibration_count=3, fidelity_count=3, seed=42)
-    second = calibration.select_images(tmp_path, calibration_count=3, fidelity_count=3, seed=42)
+    calibration_names = calibration.select_images(tmp_path, seed=42, start=0, count=3)
+    fidelity_names = calibration.select_images(tmp_path, seed=42, start=3, count=3)
 
-    assert first == second
-    calibration_names, fidelity_names = first
-    assert len(calibration_names) == 3
+    assert calibration.select_images(tmp_path, seed=42, start=0, count=6) == calibration_names + fidelity_names
     assert len(fidelity_names) == 3
-    assert set(calibration_names).isdisjoint(fidelity_names)
+    with pytest.raises(ValueError, match="8 images, but 9 are required"):
+        calibration.select_images(tmp_path, seed=42, start=3, count=6)
 
 
 def test_afe_layout_converts_only_rank_four_tensors(load_script: Callable[[str], ModuleType]) -> None:
@@ -88,10 +88,9 @@ def test_coco_archive_selection_and_webp_decoding(tmp_path: Path, load_script: C
                 member = tarfile.TarInfo(name)
                 member.size = len(image.getvalue())
                 archive.addfile(member, io.BytesIO(image.getvalue()))
-        selected = calibration.select_images(dataset, calibration_count=3, fidelity_count=3, seed=42)
+        selected = calibration.select_images(dataset, seed=42, start=0, count=3)
         selections.append(selected)
-        assert calibration.load_images(dataset, selected[0]).shape == (3, 3, 512, 512)
-        assert set(selected[0]).isdisjoint(selected[1])
+        assert calibration.load_images(dataset, selected).shape == (3, 3, 512, 512)
     assert selections[0] == selections[1]
 
 
@@ -236,17 +235,12 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--compile-invocation", required=True)' in source
-    assert 'parser.add_argument("--fidelity-dataset", type=Path, required=True)' in source
     assert "export_model" not in source
     assert "prepare_model(source" in source
-    assert "transformer_inputs(" in source
     assert "loaded.quantize(" in source
     assert "any_shape_on_mla=" not in source
     assert "automatic_layout_conversion=" not in source
-    assert "with_per_token_quant(False)" in source
-    assert "HistogramMSEMethod(calibration_bins)" in source
     assert "flexible_batch_size=True" in source
-    assert 'layer_norm_use_fp32_intermediates=precision == "bf16"' in source
     assert "quantized.compile(" in source
     assert "compile-outputs.json" in source
     assert '"derived_graphs"' in source
@@ -258,6 +252,80 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert source.index('"RF-DETR backbone compilation"') < source.index(
         '"RF-DETR transformer compilation and fidelity"'
     )
+
+
+def _metadata() -> dict:
+    return yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+
+
+def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+    compile_module = load_script("compile")
+
+    bindings = compile_module._bindings(_metadata(), "w8a16_w16a16")
+
+    assert bindings == {
+        "backbone": {"precision": "w8a16", "per_token": True},
+        "transformer": {"precision": "w16a16"},
+    }
+    assert compile_module._pipeline_description(bindings) == (
+        "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 transformer (JAX execute)"
+    )
+    with pytest.raises(ValueError, match="no build profile 'w32a32'"):
+        compile_module._bindings(_metadata(), "w32a32")
+    with pytest.raises(ValueError, match="unsupported precision: int8"):
+        compile_module._quantization({"precision": "int8"})
+
+
+def test_only_w8a8_components_select_calibration_images(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    for index in range(8):
+        Image.new("RGB", (2, 2), color=(index, index, index)).save(tmp_path / f"{index}.jpg")
+    calibrated = {
+        "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 3},
+        "transformer": {"precision": "w16a16"},
+    }
+    selection = {"seed": 42, "offset": 3, "samples": 3}
+
+    assert (
+        compile_module._calibration_names(compile_module._bindings(_metadata(), "w16a16"), None, tmp_path, selection)
+        == ()
+    )
+    names = compile_module._calibration_names(calibrated, tmp_path, tmp_path, selection)
+    assert names == compile_module.select_images(tmp_path, 42, 0, 3)
+    with pytest.raises(ValueError, match="require --dataset"):
+        compile_module._calibration_names(calibrated, None, tmp_path, selection)
+    with pytest.raises(ValueError, match="begin after the calibration images"):
+        compile_module._calibration_names(calibrated, tmp_path, tmp_path, {**selection, "offset": 2})
+
+
+def test_bf16_activation_components_quantize_without_calibration_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    loaded = MagicMock()
+    monkeypatch.setattr(compile_module, "onnx_source", MagicMock())
+    monkeypatch.setattr(compile_module, "load_model", MagicMock(return_value=loaded))
+
+    compile_module._quantize_component(
+        tmp_path / "graph.onnx", tmp_path, "backbone", {"precision": "w16a16"}, None, {"input": (1, 3, 8, 8)}
+    )
+
+    assert loaded.quantize.call_args.kwargs["calibration_data"] is None
+
+
+@pytest.mark.parametrize(("precision", "fp32_intermediates"), [("w8a8", False), ("w8a16", True), ("w16a16", True)])
+def test_bf16_activation_layer_norms_keep_fp32_intermediates(
+    precision: str, fp32_intermediates: bool, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    quantized = MagicMock()
+
+    with pytest.raises(RuntimeError, match="expected one backbone MPK"):
+        compile_module._compile_component(quantized, tmp_path, "backbone", precision)
+
+    assert quantized.compile.call_args.kwargs["layer_norm_use_fp32_intermediates"] is fp32_intermediates
 
 
 def test_surgery_simplifies_only_the_transformer_partition() -> None:
@@ -278,10 +346,9 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16", "w16a16"]
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
-    assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 2048
-    assert model["build_profiles"][0]["components"][1]["parameters"]["calibration_bins"] == 2048
     assert correctness["scope"] == {"type": "package", "package": "default"}
     assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "transformer"]
     assert all(entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks)

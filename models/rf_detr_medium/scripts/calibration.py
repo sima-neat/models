@@ -36,24 +36,15 @@ def _image_names(dataset: Path) -> list[str]:
     raise ValueError(f"unsupported image dataset input: {dataset}")
 
 
-def select_images(
-    dataset: Path,
-    calibration_count: int,
-    fidelity_count: int,
-    seed: int,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def select_images(dataset: Path, seed: int, start: int, count: int) -> tuple[str, ...]:
+    """Return images start to start + count of the dataset's seeded shuffle."""
     names = _image_names(dataset)
-    required = calibration_count + fidelity_count
-    if calibration_count < 1 or fidelity_count < 1:
-        raise ValueError("calibration and fidelity sample counts must be positive")
-    if len(names) < required:
-        raise ValueError(f"dataset contains {len(names)} images, but {required} are required")
+    if start < 0 or count < 1:
+        raise ValueError("an image selection needs a non-negative start and a positive count")
+    if len(names) < start + count:
+        raise ValueError(f"dataset contains {len(names)} images, but {start + count} are required")
     random.Random(seed).shuffle(names)
-    calibration = tuple(names[:calibration_count])
-    fidelity = tuple(names[calibration_count:required])
-    if set(calibration) & set(fidelity):
-        raise RuntimeError("calibration and fidelity image selections overlap")
-    return calibration, fidelity
+    return tuple(names[start : start + count])
 
 
 def _image_bytes(dataset: Path, names: Sequence[str]) -> Iterator[bytes]:

@@ -53,7 +53,7 @@ def _parameters(profile_id: str) -> dict[str, Any]:
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> Any:
-    if precision == "int8":
+    if precision == "w8a8":
         config = (
             default_quantization.with_activation_quantization(
                 quantization_scheme(asymmetric=True, per_channel=False, bits=8)
@@ -62,7 +62,7 @@ def _quantization(precision: str, calibration_bins: int | None) -> Any:
             .with_calibration(HistogramMSEMethod(calibration_bins))
             .with_bias_correction(BiasCorrectionType.REGULAR)
         )
-    elif precision == "bf16":
+    elif precision == "w16a16":
         config = (
             default_quantization.with_activation_quantization(bfloat16_scheme())
             .with_weight_quantization(bfloat16_scheme())
@@ -120,9 +120,9 @@ def audit_mpk(archive: Path) -> None:
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
     parameters = _parameters(profile_id)
     precision = str(parameters["precision"])
-    calibration_bins = int(parameters["calibration_bins"]) if precision == "int8" else None
+    calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
     quantization = _quantization(precision, calibration_bins)
-    if precision == "int8":
+    if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 build requires --dataset from dataset-registry")
         samples = calibration_images(dataset, int(parameters["calibration_samples"]))

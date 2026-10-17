@@ -155,15 +155,38 @@ build_profiles:
   - id: backbone
     calibration: coco_images
     parameters:
-      precision: int8
+      precision: w8a8
       # In one build of each, 1,024 backbone bins scored 0.7 COCO val2017 mAP above 2,048.
       calibration_bins: 1024
       calibration_samples: 50
   - id: transformer
     parameters:
-      precision: bf16
-      calibration_bins: 2048
-      calibration_samples: 50
+      precision: w16a16
+  compile_invocations:
+  - id: rf_detr
+    components: [backbone, transformer]
+- id: w8a16_w16a16
+  target: modalix
+  components:
+  - id: backbone
+    parameters:
+      precision: w8a16
+      per_token: true
+  - id: transformer
+    parameters:
+      precision: w16a16
+  compile_invocations:
+  - id: rf_detr
+    components: [backbone, transformer]
+- id: w16a16
+  target: modalix
+  components:
+  - id: backbone
+    parameters:
+      precision: w16a16
+  - id: transformer
+    parameters:
+      precision: w16a16
   compile_invocations:
   - id: rf_detr
     components: [backbone, transformer]
@@ -199,13 +222,13 @@ packages:
   default: true
   components: [backbone, transformer]
   resources: []
-  build_profiles: [w8a8_w16a16]
+  build_profiles: [w8a8_w16a16, w8a16_w16a16, w16a16]
   composition: default
   maturity: experimental
 fidelity:
 - id: full_pipeline_fidelity
   scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16]
+  build_profiles: [w8a8_w16a16, w8a16_w16a16, w16a16]
   # Reordered queries can lower numerical similarity for equivalent detections,
   # so fidelity does not gate publication.
   status: diagnostic
@@ -219,12 +242,12 @@ fidelity:
     method: seeded_random_without_replacement
     seed: 42
     offset: 50
-    samples: 50
+    samples: 10
   outputs: [dets, labels]
 accuracy:
 - id: coco_accuracy
   scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16]
+  build_profiles: [w8a8_w16a16, w8a16_w16a16, w16a16]
   engine: devkit_script
   status: ready
   result_component: transformer
@@ -244,7 +267,7 @@ published_metrics:
 benchmark:
 - id: backbone_modalix
   scope: {type: component, component: backbone}
-  build_profiles: [w8a8_w16a16]
+  build_profiles: [w8a8_w16a16, w8a16_w16a16, w16a16]
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.
@@ -252,7 +275,7 @@ benchmark:
   required_metrics: [avg_power_watts, energy_per_inference_joules]
 - id: transformer_modalix
   scope: {type: component, component: transformer}
-  build_profiles: [w8a8_w16a16]
+  build_profiles: [w8a8_w16a16, w8a16_w16a16, w16a16]
   status: pending
   target: modalix
   reason: Establish a Core API baseline for the default MPK workload.

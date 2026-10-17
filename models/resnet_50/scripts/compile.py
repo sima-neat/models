@@ -55,7 +55,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     variant = _variant(_metadata(), variant_id)
     parameters = variant["parameters"]
     precision = str(parameters.get("precision"))
-    if variant["target"] != "modalix" or precision not in {"bf16", "int8"}:
+    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8"}:
         raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
 
     input_name = str(parameters["input_name"])
@@ -67,7 +67,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     importer = onnx_source(str(source), {input_name: input_shape}, {input_name: ScalarType.float32})
     loaded = load_model(importer, target=gen2_target)
 
-    if precision == "int8":
+    if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 variant requires --dataset from dataset-registry")
         sample_count = int(parameters["calibration_samples"])

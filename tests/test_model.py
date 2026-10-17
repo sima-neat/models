@@ -689,8 +689,8 @@ def test_catalog_model_is_valid() -> None:
     )
     profiles = {profile["id"]: profile for profile in model["build_profiles"]}
     assert set(profiles) == {"w16a16", "w8a8"}
-    assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "bf16"
-    assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "int8"
+    assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
+    assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
     assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",

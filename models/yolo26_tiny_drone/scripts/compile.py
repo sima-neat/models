@@ -46,7 +46,7 @@ def variant_config(variant_id: str) -> dict[str, Any]:
 def compile_variant(source: Path, output_dir: Path, variant_id: str, calibration_path: Path) -> Path:
     variant = variant_config(variant_id)
     parameters = variant["parameters"]
-    if variant["target"] != "modalix" or parameters.get("precision") != "int8":
+    if variant["target"] != "modalix" or parameters.get("precision") != "w8a8":
         raise ValueError("the qualified tiny-drone recipe supports only INT8 with MLA tensor layout")
     contract = DeploymentContract(model_size=int(parameters["model_size"]))
     source_audit = audit_onnx(source, contract)
