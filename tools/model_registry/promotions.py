@@ -68,12 +68,17 @@ def inspect(client, promotion_id: str) -> dict:
 
 
 def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity: str,
-            read_api_url: str, read_request: ReadRequest | None = None) -> dict:
+            read_api_url: str, read_request: ReadRequest | None = None,
+            expected_model_id: str | None = None, expected_profile_id: str | None = None) -> dict:
     if not reason.strip() or len(reason) > 2000:
         raise ValidationError("Promotion reason must contain 1–2000 characters")
     candidate = client.request("GET", f"{ROOT}/deployments/{identifier(deployment_id)}", None, "inspect")
     if candidate.get("state") != "finalized" or not candidate.get("manifest_digest"):
         raise ValidationError("Promotion requires a finalized candidate with an immutable digest")
+    if expected_model_id is not None and (
+        candidate.get("model_id"), candidate.get("profile_id")
+    ) != (expected_model_id, expected_profile_id):
+        raise ValidationError("Vulcan candidate does not match the requested model/profile")
     # Catalogs are public-reader routes, not publisher IAM routes. Never send AWS credentials here.
     target = (read_request or _public_registry_json)(
         f"{read_api_url.rstrip('/')}{ROOT}/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"

@@ -123,3 +123,56 @@ def test_environment_change_rejected_before_workflow_api_access(monkeypatch, tmp
     monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'request'])
     with pytest.raises(module.p.ValidationError, match='original configuration'):
         module.main()
+
+
+def test_model_inputs_explain_metadata_location():
+    inputs = workflow().get('on', workflow().get(True))['workflow_dispatch']['inputs']
+    assert 'deployment_id' not in inputs
+    assert 'model.yaml' in inputs['model_id']['description']
+    assert 'build_profiles' in inputs['build_profile']['description']
+
+
+def test_candidate_receipt_selects_newest_match_across_pages(monkeypatch, tmp_path):
+    import io
+    import json
+    import zipfile
+    from types import SimpleNamespace
+    module = orchestration(monkeypatch, tmp_path)
+    older = {'id': 1, 'name': 'candidate-qwen3_5_0_8b-w4a16-1',
+             'created_at': '2026-10-16T00:00:00Z', 'expired': False}
+    newer = {**older, 'id': 2, 'name': 'candidate-qwen3_5_0_8b-w4a16-2',
+             'created_at': '2026-10-17T00:00:00Z'}
+    unrelated = {**newer, 'id': 3, 'name': 'candidate-qwen3_5_0_8b-w8a16-1'}
+    monkeypatch.setattr(module, 'gh', lambda *args: [{'artifacts': [unrelated, older]},
+                                                   {'artifacts': [newer]}])
+    receipt = {'model_id': 'qwen3_5_0_8b', 'profile_id': 'w4a16', 'deployment_id': 'uuid'}
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as bundle:
+        bundle.writestr('candidate.json', json.dumps(receipt))
+    calls = []
+
+    def download(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=archive.getvalue())
+
+    monkeypatch.setattr(module.subprocess, 'run', download)
+    assert module.candidate_receipt('qwen3_5_0_8b', 'w4a16') == receipt
+    assert calls[0][-1].endswith('/2/zip')
+    newer['expired'] = True
+    import pytest
+    with pytest.raises(module.p.ValidationError, match='expired'):
+        module.candidate_receipt('qwen3_5_0_8b', 'w4a16')
+    assert len(calls) == 1
+    newer['expired'] = False
+    with pytest.raises(module.p.ValidationError, match='does not match'):
+        module.candidate_receipt('qwen3_5_0_8b', 'w8a16')
+
+
+def test_candidate_receipt_missing_or_invalid_inputs(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, 'gh', lambda *args: [{'artifacts': []}])
+    with pytest.raises(module.p.ValidationError, match='No candidate'):
+        module.candidate_receipt('qwen3_5_0_8b', 'w4a16')
+    with pytest.raises(module.p.ValidationError, match='model.yaml'):
+        module.candidate_receipt('', 'w4a16')

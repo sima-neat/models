@@ -9,8 +9,11 @@ on:
         options: [promote, status, cancel, reject]
         default: promote
         required: true
-      deployment_id:
-        description: Finalized candidate UUID (promote only)
+      model_id:
+        description: "Promote only. Model folder under models/ (e.g. qwen3_5_0_8b); also the top-level id in model.yaml."
+        type: string
+      build_profile:
+        description: "Promote only. ID under build_profiles in models/<model_id>/model.yaml (e.g. w4a16). Selects the newest candidate receipt."
         type: string
       promotion_id:
         description: Existing promotion UUID (status, cancel, reject)
@@ -88,7 +91,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PROMOTION_OPERATION: ${{ inputs.operation }}
-          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE: ${{ inputs.build_profile }}
           PROMOTION_ID: ${{ inputs.promotion_id }}
           PROMOTION_REASON: ${{ inputs.reason }}
         run: python scripts/model_promotion.py prepare

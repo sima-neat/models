@@ -55,11 +55,20 @@ provision approver trust until the required environment rules are in place.
 ## Build, request, review, consume
 
 1. Run **Vulcan Model Orchestrator** with the on-demand model and profile selected.
-   Obtain the finalized candidate UUID from its summary or `candidate.json`
-   artifact. Candidates may originate on a feature branch or Develop. Compile
+   Candidates may originate on a feature branch or Develop. Compile
    success is not runtime qualification; review the relevant evidence first.
-2. Run **Promote model** from **develop**, choose `promote`, enter the candidate
-   UUID and a reason including validation evidence links. Leave promotion ID blank.
+2. Run **Promote model** from **develop**, choose `promote`, enter `model_id` and
+   `build_profile`, and a reason including validation evidence links. The model ID
+   is the folder name under `models/` (also the top-level `id` in `model.yaml`);
+   the profile is an `id` under `build_profiles` in that file. For Qwen3.5 0.8B,
+   use `qwen3_5_0_8b` and `w4a16`. Leave promotion ID blank.
+   The workflow selects the newest matching candidate receipt by creation time
+   across source branches, verifies its identity and finalized state with Vulcan,
+   and pins the UUID before review. Missing or expired receipts fail with build
+   instructions; it never silently falls back to an older receipt. Check the
+   resolved source commit and candidate in the review summary. Retries restore
+   the saved plan instead of resolving a newer build. Source CLI users may still
+   supply an exact UUID with `--deployment-id`.
 3. The prepare job reads the candidate and current Develop canonical snapshot,
    creates a correlated request issue, and uploads `promotion-plan`. At this point
    the issue is only a preparation record: no pending hold is promised yet.

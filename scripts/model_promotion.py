@@ -6,10 +6,13 @@ semantics live in model_registry.promotions. Run only from trusted Develop code.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
+import re
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 from model_registry import promotions as p
@@ -58,6 +61,39 @@ def issue(body):
     return record['html_url']
 
 
+def candidate_receipt(model_id: str, profile_id: str) -> dict:
+    """Resolve the newest matching build receipt; never fall back past an expired one."""
+    if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (model_id, profile_id)):
+        raise p.ValidationError("Provide model_id and build_profile from models/<model_id>/model.yaml")
+    pages = gh('api', '--paginate', '--slurp',
+               'repos/sima-neat/models/actions/artifacts?per_page=100')
+    pattern = re.compile(rf"candidate-{re.escape(model_id)}-{re.escape(profile_id)}-[0-9]+")
+    matches = [a for page in pages for a in page['artifacts'] if pattern.fullmatch(a['name'])]
+    if not matches:
+        raise p.ValidationError(
+            "No candidate receipt found. Run Vulcan Model Orchestrator for this model/profile first.")
+    artifact = max(matches, key=lambda a: (a['created_at'], a['id']))
+    if artifact['expired']:
+        raise p.ValidationError("Newest candidate receipt expired. Run Vulcan Model Orchestrator again.")
+    archive = subprocess.run(
+        ['gh', 'api', f"repos/sima-neat/models/actions/artifacts/{int(artifact['id'])}/zip"],
+        check=True, capture_output=True,
+    ).stdout
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            member = bundle.getinfo('candidate.json')
+            if member.file_size > 16 * 1024 * 1024:
+                raise ValueError("candidate receipt exceeds 16 MiB")
+            receipt = json.loads(bundle.read(member))
+        if not isinstance(receipt, dict):
+            raise ValueError("expected a candidate object")
+    except (KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise p.ValidationError(f"Invalid candidate receipt: {exc}") from exc
+    if (receipt.get('model_id'), receipt.get('profile_id')) != (model_id, profile_id):
+        raise p.ValidationError("Candidate receipt does not match the requested model/profile")
+    return receipt
+
+
 def main():
     if os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models' or os.environ.get('GITHUB_REF') != p.TARGET:
         raise p.ValidationError('Promotion workflow must execute from sima-neat/models Develop')
@@ -90,10 +126,15 @@ def main():
             if not reason.strip() or len(reason) > 2000:
                 raise p.ValidationError('Provide a reason of 1–2000 characters')
             if operation == 'promote':
-                plan = p.prepare(client, deployment_id=os.environ['DEPLOYMENT_ID'], reason=reason,
+                model_id, profile_id = os.environ.get('MODEL_ID', ''), os.environ.get('BUILD_PROFILE', '')
+                receipt = candidate_receipt(model_id, profile_id)
+                plan = p.prepare(client, deployment_id=receipt.get('deployment_id'), reason=reason,
                                  workflow={'run_id': run_id, 'run_url': run_url}, identity=run_id,
-                                 read_api_url=config['read_api_url'])
-                issue_url = issue(p.summary({**config, 'planned_request': plan['body'], 'workflow': run_url,
+                                 read_api_url=config['read_api_url'],
+                                 expected_model_id=model_id, expected_profile_id=profile_id)
+                plan['selection'] = {'model_id': model_id, 'profile_id': profile_id}
+                issue_url = issue(p.summary({**config, 'selection': plan['selection'],
+                                            'planned_request': plan['body'], 'workflow': run_url,
                                             'state': 'preparing; backend hold not yet confirmed'}))
                 plan['body']['workflow']['issue_url'] = issue_url
                 plan['key'] = 'promotion-request-' + p.canonical_sha256([run_id, plan['body']])

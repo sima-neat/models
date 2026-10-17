@@ -258,3 +258,12 @@ def test_configuration_rejects_invalid_reader_origins(monkeypatch, url):
     monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL", url)
     with pytest.raises(ValidationError, match="VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL"):
         p.configuration()
+
+
+def test_prepare_checks_resolved_candidate_identity_with_backend():
+    backend = Backend()
+    with pytest.raises(ValidationError, match='does not match'):
+        p.prepare(backend, deployment_id=CANDIDATE, reason='Validated', workflow={}, identity='123',
+                  read_api_url='https://reader.example.com',
+                  expected_model_id='qwen3_5_0_8b', expected_profile_id='w4a16')
+    assert len(backend.calls) == 1
