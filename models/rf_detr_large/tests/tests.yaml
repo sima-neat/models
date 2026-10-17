@@ -3,8 +3,7 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The w8a16_w16a16 build has no DevKit results yet.
+  run_tests: true
   expected:
     w8a8_w16a16:
       coco_map: 0.4990
@@ -19,12 +18,29 @@ accuracy:
       coco_ar_small: 0.4989
       coco_ar_medium: 0.7544
       coco_ar_large: 0.8857
+    w8a16_w16a16:
+      coco_map: 0.5532
+      coco_ap50: 0.7474
+      coco_ap75: 0.6002
+      coco_ap_small: 0.3674
+      coco_ap_medium: 0.6018
+      coco_ap_large: 0.7355
+      coco_ar1: 0.4018
+      coco_ar10: 0.6706
+      coco_ar100: 0.7321
+      coco_ar_small: 0.5507
+      coco_ar_medium: 0.7922
+      coco_ar_large: 0.9095
 performance:
-  run_tests: false
-  skip_reason: The w8a16_w16a16 build has no DevKit results yet.
+  run_tests: true
   expected:
     w8a8_w16a16:
       backbone:
         throughput_fps: 48.9
       decoder:
         throughput_fps: 351.9
+    w8a16_w16a16:
+      backbone:
+        throughput_fps: 26.8
+      decoder:
+        throughput_fps: 348.3
