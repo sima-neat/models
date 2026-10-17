@@ -873,13 +873,13 @@ def test_candidates_join_every_invocation_and_never_promote_catalog() -> None:
         assert evaluate(job["if"], {
             "cancelled()": cancelled, "needs.plan.outputs.candidate_count": "2", "needs.compile.result": result,
         }) is expected
-    assert job["uses"] == "./.github/workflows/vulcan-model-candidate.yml"
-    workflow = load(ROOT / ".github/workflows/vulcan-model-candidate.yml")
-    steps = workflow["jobs"]["publish"]["steps"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
+    steps = job["steps"]
     download = next(item for item in steps if item.get("uses") == "actions/download-artifact@v7")
-    assert download["with"]["pattern"].endswith("-${{ inputs.build_profile_id }}-*")
+    assert download["with"]["pattern"].endswith("-${{ matrix.build_profile_id }}-*")
     assert not download["with"].get("merge-multiple", False)
-    text = (ROOT / ".github/workflows/vulcan-model-candidate.yml").read_text()
+    text = "\n".join(item.get("run", "") for item in steps)
     assert "model-registry publish-candidate" in text
     assert "model-registry publish-branch-deployment" in text
     assert "publish-catalog" not in text

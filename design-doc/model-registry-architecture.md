@@ -139,7 +139,7 @@ push (Vulcan Model Orchestrator, every push)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
-       other on-demand: join all invocations before finalization and feature selection
+  -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
   -> publish the catalog snapshot
   -> measure: start the DevKit stages that reused builds still lack
 DevKit stages (per build)
@@ -236,7 +236,8 @@ For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
 In staging, `publish-candidate` waits for every invocation of the selected
 model/profile. A single-component LLiMa build does this in its existing Publish
-job; other on-demand models join their invocations in the candidate job.
+job; other on-demand models join their invocations in the orchestrator's
+`publish-candidates` job.
 Each candidate requires its own compile tests to pass; a failure in another
 model/profile does not block its finalization.
 It registers one versioned contract, binds each compile and

@@ -407,21 +407,83 @@ jobs:
     if: >-
       !cancelled() && needs.plan.outputs.candidate_count != '0' &&
       (needs.compile.result == 'success' || needs.compile.result == 'failure')
+    runs-on: ubuntu-latest
+    environment: ${{ needs.select.outputs.vulcan_environment }}
     permissions:
       contents: read
       id-token: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.candidate_matrix) }}
-    uses: ./.github/workflows/vulcan-model-candidate.yml
-    with:
-      model_id: ${{ matrix.model_id }}
-      build_profile_id: ${{ matrix.build_profile_id }}
-      vulcan_environment: ${{ needs.select.outputs.vulcan_environment }}
-      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-      artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
-      artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-    secrets: inherit
+    env:
+      MODEL_ID: ${{ matrix.model_id }}
+      BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
+      REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+      AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+
+      - name: Download every invocation of this model/profile
+        uses: actions/download-artifact@v7
+        with:
+          pattern: compiler-output-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-*
+          path: _invocations
+
+      - name: Configure artifact-registry publisher credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Restore publication receipts from earlier attempts
+        if: github.run_attempt != '1'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: candidate-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-*
+          path: _candidate
+          merge-multiple: true
+
+      - name: Publish and finalize the complete candidate
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
+          model-registry publish-candidate --repository . --dist-dir _invocations --output-dir _candidate \
+            --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" \
+            --api-url "$REGISTRY_API_URL" --aws-region "$AWS_REGION" \
+            --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
+            --environment "$VULCAN_ENVIRONMENT" --branch "$GITHUB_REF_NAME" --git-sha "$GITHUB_SHA" \
+            --github-run-id "$GITHUB_RUN_ID" --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish this candidate in the feature-branch catalog
+        if: github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+        run: |
+          model-registry publish-branch-deployment --candidate _candidate/candidate.json \
+            --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" --aws-region "$AWS_REGION"
+
+      - name: Retain publication receipts even when publication fails
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-${{ matrix.model_id }}-${{ matrix.build_profile_id }}-${{ github.run_attempt }}
+          path: |
+            _candidate/candidate.json
+            _candidate/publication.json
+            _candidate/branch-publication.json
+            _candidate/uploads/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   publish-catalog:
     name: Publish the catalog at this revision

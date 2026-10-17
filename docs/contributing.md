@@ -189,7 +189,8 @@ names build profiles or components compiles and publishes those builds but
 skips ordinary package and catalog updates. On-demand builds publish their
 complete candidate, including packages; a feature-branch run also selects it
 in that branch's catalog after finalization. LLiMa does this in the existing
-Publish job; models with multiple invocations join them before publication.
+Publish job; models with multiple invocations join them in the orchestrator's
+`publish-candidates` job before publication.
 Each complete candidate publishes independently of failures in other models
 or profiles.
 Develop and Main still require separate approval and promotion.
