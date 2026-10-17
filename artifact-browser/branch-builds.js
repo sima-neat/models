@@ -87,7 +87,12 @@ export function deploymentCatalog(model) {
   for (const [profile, selection] of Object.entries(selections)) {
     const roots = selection.artifacts || [];
     const components = roots.filter(root => root.component_id && root.run_id);
-    for (const root of components) builds.push({ ...root, build_profile_id: profile });
+    for (const root of components) {
+      // Accuracy belongs to this exact component build, not merely its profile.
+      const original = (model.builds || []).find(build => build.run_id === root.run_id
+        && build.build_profile_id === profile && build.component_id === root.component_id);
+      builds.push({ ...original, ...root, build_profile_id: profile });
+    }
     for (const root of roots.filter(root => root.package_id && root.run_id)) {
       packages.push({ ...root, build_profile_id: profile,
         component_run_ids: Object.fromEntries(components.map(item => [item.component_id, item.run_id])) });
@@ -132,7 +137,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   for (const model of catalogModels) {
     for (const build of model.builds || []) {
       const run = runsById.get(build.run_id);
-      if (!run) continue;
+      if (!run || build.build_profile_id !== runProfile(run)
+        || build.component_id !== (run.metadata?.component_id || "model")) continue;
       const key = variantKey(model.model_id, runProfile(run));
       if (!latest.has(key)) latest.set(key, { modelId: model.model_id, profile: runProfile(run), runs: [], time: 0, catalog: true });
       const group = latest.get(key);
@@ -164,7 +170,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     const model = models.get(group.modelId);
     for (const run of group.runs) {
       const component = run.metadata?.component_id || "model";
-      const exactBuild = definition.builds?.find((build) => build.run_id === run.id);
+      const exactBuild = definition.builds?.find((build) => build.run_id === run.id
+        && build.build_profile_id === group.profile && build.component_id === component);
       model.builds.push({
         run_id: run.id,
         run,

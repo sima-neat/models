@@ -96,3 +96,22 @@ test('deployment-only catalogs resolve inherited builds and keep the selected pa
   assert.deepEqual(model.packages[0].component_run_ids, {model: resnet.id});
   assert.equal(branchModels([resnet], [], definitions, 'other').length, 0);
 });
+
+
+for (const field of ['branch_deployments', 'approved_deployments']) {
+  test(`${field} retains accuracy only from the exact selected component build`, () => {
+    const selection = {artifacts: [{run_id: resnet.id, component_id: 'model', artifact_name: 'mpk'}]};
+    const exact = {...catalogBuild(resnet), validation_fingerprint: 'measured-accuracy'};
+    const mismatches = [
+      {...exact, run_id: 'other-run', validation_fingerprint: 'wrong-run'},
+      {...exact, build_profile_id: 'bf16', validation_fingerprint: 'wrong-profile'},
+      {...exact, component_id: 'backbone', validation_fingerprint: 'wrong-component'},
+    ];
+    const definition = {model_id: 'resnet_50', builds: [...mismatches, exact], [field]: {int8: selection}};
+    const [model] = branchModels([resnet], [], [definition]);
+    assert.equal(model.builds[0].run_id, resnet.id);
+    assert.equal(model.builds[0].validation_fingerprint, 'measured-accuracy');
+    const [unmeasured] = branchModels([resnet], [], [{...definition, builds: mismatches}]);
+    assert.equal(unmeasured.builds[0].validation_fingerprint, undefined);
+  });
+}
