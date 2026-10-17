@@ -50,7 +50,7 @@ for command in validate validate-models fetch fetch-calibration fetch-fidelity-d
     exit 1
   }
 done
-for command in package publish publish-candidate publish-branch-deployment publish-benchmark publish-accuracy publish-catalog stage-registry-build; do
+for command in promotion package publish publish-candidate publish-branch-deployment publish-benchmark publish-accuracy publish-catalog stage-registry-build; do
   if "${MODEL_REGISTRY_BIN}" "${command}" --help >/dev/null 2>&1; then
     echo "Installed author CLI unexpectedly exposes CI command: ${command}" >&2
     exit 1

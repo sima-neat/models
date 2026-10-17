@@ -402,6 +402,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--compile-invocation-id", required=True)
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
 
+    if not author_safe:
+        from .promotions import add_parser
+
+        add_parser(subcommands)
+
     if author_safe:
         for command in tuple(subcommands.choices):
             if command not in AUTHOR_COMMANDS:
@@ -996,6 +1001,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
     parser = _parser(author_safe=author_safe)
     args = parser.parse_args(argv)
     try:
+        if args.command == "promotion":
+            from .promotions import run
+
+            return run(args)
         if args.command == "validate":
             return _validate(args)
         if args.command == "validate-models":

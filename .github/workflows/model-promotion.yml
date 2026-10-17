@@ -1,0 +1,193 @@
+name: Promote model
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Staging Develop operation (Main release is not supported)
+        type: choice
+        options: [promote, status, cancel, reject]
+        default: promote
+        required: true
+      deployment_id:
+        description: Finalized candidate UUID (promote only)
+        type: string
+      promotion_id:
+        description: Existing promotion UUID (status, cancel, reject)
+        type: string
+      reason:
+        description: Reason and validation evidence links for the request or decision
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Different requests must not cancel each other's review gates.
+concurrency:
+  group: model-promotion-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      id-token: write
+    outputs:
+      operation: ${{ steps.prepare.outputs.operation }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Prepare or restore the immutable request plan
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_OPERATION: ${{ inputs.operation }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          PROMOTION_ID: ${{ inputs.promotion_id }}
+          PROMOTION_REASON: ${{ inputs.reason }}
+        run: python scripts/model_promotion.py prepare
+      # Persist the exact body/key BEFORE the first backend mutation.
+      - uses: actions/upload-artifact@v7
+        if: steps.prepare.outputs.upload_plan == 'true'
+        with:
+          name: promotion-plan
+          path: _promotion/plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  request:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      record_artifact: ${{ steps.request.outputs.record_artifact }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Request promotion or inspect/cancel the existing request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/model_promotion.py request
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-record-${{ github.run_attempt }}
+          path: _promotion/record.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  approve:
+    needs: [prepare, request]
+    if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging-promote-develop
+      url: https://github.com/sima-neat/models/actions/runs/${{ github.run_id }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.request.outputs.record_artifact }}
+          path: _promotion
+      - name: Assume the separately authorized promotion role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN }}
+      - name: Decide the exact reviewed request
+        run: python scripts/model_promotion.py approve
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-decision-${{ github.run_attempt }}
+          path: _promotion/decision.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  report:
+    needs: [request, approve]
+    if: always() && needs.request.result == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.request.outputs.record_artifact }}
+          path: _promotion
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Report authoritative backend state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/model_promotion.py report

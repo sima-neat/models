@@ -141,6 +141,10 @@ from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
+On-demand candidates require a separate manual **Promote model** dispatch to become approved
+on Develop. A successful build or metadata publication is not approval. See
+[promoting a model](model-promotion.md) for the protected review and recovery procedure.
+
 When the change is merged to `develop`, the push runs **Vulcan Model Orchestrator**
 on the reviewed revision:
 

@@ -11,6 +11,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'adding-a-model', label: '1. Define the model contract'},
         {type: 'doc', id: 'local-development', label: '2. Qualify locally'},
         {type: 'doc', id: 'contributing', label: '3. Submit for review'},
+        {type: 'doc', id: 'model-promotion', label: '4. Request promotion'},
       ],
     },
     {
