@@ -33,7 +33,11 @@ concurrency:
 
 jobs:
   configure:
-    if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
+    # Temporary staging acceptance exception; remove before merging this branch.
+    if: >-
+      github.repository == 'sima-neat/models' &&
+      (github.ref == 'refs/heads/develop' ||
+       (github.ref == 'refs/heads/codex/promotion-catalog-reader' && vars.VULCAN_ENV == 'staging'))
     runs-on: ubuntu-latest
     environment: ${{ vars.VULCAN_ENV }}
     outputs:

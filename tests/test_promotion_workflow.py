@@ -176,3 +176,21 @@ def test_candidate_receipt_missing_or_invalid_inputs(monkeypatch, tmp_path):
         module.candidate_receipt('qwen3_5_0_8b', 'w4a16')
     with pytest.raises(module.p.ValidationError, match='model.yaml'):
         module.candidate_receipt('', 'w4a16')
+
+
+def test_acceptance_branch_is_staging_only(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/codex/promotion-catalog-reader')
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'configure'])
+    module.main()
+    assert 'vulcan_environment=staging' in (tmp_path / 'outputs').read_text()
+    monkeypatch.setenv('VULCAN_ENV', 'production')
+    with pytest.raises(module.p.ValidationError, match='Develop'):
+        module.main()
+    monkeypatch.setenv('VULCAN_ENV', 'staging')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'someone/models')
+    with pytest.raises(module.p.ValidationError, match='Develop'):
+        module.main()
+    guard = workflow()['jobs']['configure']['if']
+    assert "github.ref == 'refs/heads/codex/promotion-catalog-reader' && vars.VULCAN_ENV == 'staging'" in guard

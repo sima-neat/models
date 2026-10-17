@@ -2,7 +2,7 @@
 """Usage: model_promotion.py configure|prepare|request|approve|report
 
 GitHub orchestration only. Inputs come from environment variables; registry
-semantics live in model_registry.promotions. Run only from trusted Develop code.
+semantics live in model_registry.promotions. Run from Develop or the explicit staging acceptance branch.
 """
 from __future__ import annotations
 
@@ -95,8 +95,13 @@ def candidate_receipt(model_id: str, profile_id: str) -> dict:
 
 
 def main():
-    if os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models' or os.environ.get('GITHUB_REF') != p.TARGET:
-        raise p.ValidationError('Promotion workflow must execute from sima-neat/models Develop')
+    # Temporary staging acceptance exception; remove before merging this branch.
+    test_branch = (os.environ.get('GITHUB_REF') == 'refs/heads/codex/promotion-catalog-reader'
+                   and os.environ.get('VULCAN_ENV') == 'staging')
+    if (os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models'
+            or (os.environ.get('GITHUB_REF') != p.TARGET and not test_branch)):
+        raise p.ValidationError(
+            'Promotion workflow requires Develop or the explicit staging acceptance branch in sima-neat/models')
     phase = sys.argv[1]
     config = p.configuration()
     if phase == 'configure':

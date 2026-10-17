@@ -166,3 +166,7 @@ until a future approval replaces it; no withdrawal-first workflow is introduced.
 Tracking: [Models #315](https://github.com/sima-neat/models/issues/315), under
 [master plan #306](https://github.com/sima-neat/models/issues/306). Backend contract:
 [Vulcan integration guide](https://github.com/sima-neat/vulcan/pull/253#issuecomment-6210178603).
+
+Temporary acceptance testing also permits `codex/promotion-catalog-reader` when
+`VULCAN_ENV=staging`. It uses the same approval gate and targets Develop in staging.
+Remove this exact-branch exception before merging the implementation.
