@@ -522,14 +522,14 @@ def validate_float_split(
     image: np.ndarray,
 ) -> None:
     import onnxruntime as ort
-    from calibration import stable_topk_gather
+    from calibration import select_top_proposals
 
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
     backbone_session = ort.InferenceSession(str(backbone), providers=["CPUExecutionProvider"])
     transformer_session = ort.InferenceSession(str(transformer), providers=["CPUExecutionProvider"])
     sample = image[None]
     features, scores, boxes = backbone_session.run(None, {INPUT: sample})
-    proposals = stable_topk_gather(scores, boxes)
+    proposals = select_top_proposals(scores, boxes)
     expected = reference.run(None, {INPUT: sample})
     actual = transformer_session.run(None, {FEATURES: features, PROPOSALS: proposals})
     for name, expected_value, actual_value in zip(OUTPUTS, expected, actual, strict=True):

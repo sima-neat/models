@@ -13,6 +13,7 @@ import shutil
 import tarfile
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -34,14 +35,7 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from calibration import (
-    execute_backbone,
-    load_images,
-    select_images,
-    stable_topk_gather,
-    to_afe_layout,
-    transformer_inputs,
-)
+from calibration import load_images, select_images, select_top_proposals, to_afe_layout
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from sima_utils.data.data_generator import DataGenerator
@@ -66,6 +60,11 @@ INVOCATION_ID = "rf_detr"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 # Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
 A16_PRECISIONS = ("w8a16", "w16a16")
+COMPONENT_IDS = ("backbone", "transformer")
+# Files the compilation phases pass to each other in the temporary directory.
+REFERENCE_OUTPUTS = "reference_outputs.npz"
+BACKBONE_OUTPUTS = "backbone_outputs.npz"
+FIDELITY_REPORT = "fidelity.json"
 
 
 def _float32_bytes(shape: list[int]) -> int:
@@ -85,7 +84,7 @@ COMPONENT_INTERFACES = {
 }
 
 
-def _bindings(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, Any]]:
+def _component_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, Any]]:
     """Return each component's build parameters in the build profile."""
     profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
@@ -93,7 +92,12 @@ def _bindings(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, 
     return {binding["id"]: binding["parameters"] for binding in profiles[0]["components"]}
 
 
-def _quantization(parameters: dict[str, Any]) -> Any:
+def _component_name(profile_id: str, component_id: str) -> str:
+    """Name a component's quantized model and its build directory."""
+    return f"{MODEL_ID}_{profile_id}_{component_id}"
+
+
+def _quantization_config(parameters: dict[str, Any]) -> Any:
     precision = parameters["precision"]
     int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     if precision == "w8a8":
@@ -125,28 +129,24 @@ def _quantization(parameters: dict[str, Any]) -> Any:
 
 def _quantize_component(
     graph: Path,
-    temporary_dir: Path,
     name: str,
     parameters: dict[str, Any],
-    inputs: dict[str, np.ndarray] | None,
+    calibration_inputs: dict[str, np.ndarray] | None,
     input_shapes: dict[str, tuple[int, ...]],
-) -> tuple[Any, Path]:
-    build_dir = temporary_dir / name
-    build_dir.mkdir(parents=True, exist_ok=False)
+) -> Any:
     importer = onnx_source(str(graph), shape_dict=input_shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
     data = None
-    if inputs is not None:
+    if calibration_inputs is not None:
         data = convert_data_generator_to_iterable(
-            DataGenerator({InputName(key): to_afe_layout(value) for key, value in inputs.items()})
+            DataGenerator({InputName(key): to_afe_layout(value) for key, value in calibration_inputs.items()})
         )
-    quantized = loaded.quantize(
+    return loaded.quantize(
         calibration_data=data,
-        quantization_config=_quantization(parameters),
+        quantization_config=_quantization_config(parameters),
         model_name=name,
         log_level=logging.INFO,
     )
-    return quantized, build_dir
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -195,12 +195,20 @@ def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
     return {"elf": elfs[0], "mla_plugins": len(mla_plugins), "output_sizes": output_sizes}
 
 
+def _find_mpk(build_dir: Path, component_id: str) -> Path:
+    archives = sorted(build_dir.glob("*_mpk.tar.gz"))
+    if len(archives) != 1:
+        raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")
+    return archives[0]
+
+
 def _compile_component(
     quantized: Any,
     build_dir: Path,
     component_id: str,
     precision: str,
 ) -> Path:
+    build_dir.mkdir(parents=True, exist_ok=False)
     quantized.compile(
         output_path=str(build_dir),
         batch_size=1,
@@ -218,87 +226,105 @@ def _compile_component(
         enable_filter_sharing=False,
         layout_search_effort_level=0,
     )
-    archives = sorted(build_dir.glob("*_mpk.tar.gz"))
-    if len(archives) != 1:
-        raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")
-    audit_mpk(archives[0], component_id)
-    return archives[0]
+    archive = _find_mpk(build_dir, component_id)
+    audit_mpk(archive, component_id)
+    return archive
 
 
-def _record_metrics(
-    totals: dict[str, dict[str, float]],
-    reference: list[np.ndarray],
-    candidate: list[np.ndarray],
-    names: list[str],
-) -> None:
-    for name, expected, actual in zip(names, reference, candidate, strict=True):
+def _features_to_nchw(features: np.ndarray) -> np.ndarray:
+    """Return backbone features in the NCHW layout of the ONNX boundary, whichever layout AFE returns."""
+    batch, channels, height, width = BOUNDARY_SHAPES[FEATURES]
+    if features.shape == (batch, height, width, channels):
+        return features.transpose(0, 3, 1, 2)
+    if features.shape != (batch, channels, height, width):
+        raise RuntimeError(f"unexpected backbone feature shape: {features.shape}")
+    return features
+
+
+def _execute_backbone(backbone: Any, image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run the quantized backbone on one image and return its features, scores and boxes."""
+    outputs = backbone.execute(inputs={InputName(INPUT): to_afe_layout(image[None])}, use_jax=True)
+    features, scores, boxes = (np.asarray(output) for output in outputs)
+    return _features_to_nchw(features), scores, boxes
+
+
+def _transformer_calibration_inputs(backbone: Any, images: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return the features and top proposals the quantized backbone produces for each calibration image."""
+    features = []
+    proposals = []
+    for image in images:
+        image_features, scores, boxes = _execute_backbone(backbone, image)
+        features.append(image_features[0].astype(np.float32))
+        proposals.append(select_top_proposals(scores, boxes)[0])
+    return np.stack(features), np.stack(proposals)
+
+
+@dataclass
+class _OutputError:
+    """Running sums of one output's error against the original ONNX, over every fidelity image."""
+
+    name: str
+    count: int = 0
+    dot: float = 0.0
+    expected_squared: float = 0.0
+    actual_squared: float = 0.0
+    error_squared: float = 0.0
+    error_absolute: float = 0.0
+    max_absolute_error: float = 0.0
+
+    def add(self, expected: np.ndarray, actual: np.ndarray) -> None:
         expected = np.asarray(expected, dtype=np.float64)
         actual = np.asarray(actual, dtype=np.float64)
         if expected.shape != actual.shape:
-            raise RuntimeError(f"{name} shape mismatch: {expected.shape} != {actual.shape}")
+            raise RuntimeError(f"{self.name} shape mismatch: {expected.shape} != {actual.shape}")
         if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-            raise RuntimeError(f"{name} contains non-finite values")
+            raise RuntimeError(f"{self.name} contains non-finite values")
         error = actual - expected
         absolute = np.abs(error)
-        total = totals.setdefault(
-            name,
-            {
-                "count": 0.0,
-                "dot": 0.0,
-                "expected_squared": 0.0,
-                "actual_squared": 0.0,
-                "error_squared": 0.0,
-                "error_absolute": 0.0,
-                "max_absolute_error": 0.0,
-            },
-        )
-        total["count"] += expected.size
-        total["dot"] += float(np.dot(expected.ravel(), actual.ravel()))
-        total["expected_squared"] += float(np.sum(np.square(expected)))
-        total["actual_squared"] += float(np.sum(np.square(actual)))
-        total["error_squared"] += float(np.sum(np.square(error)))
-        total["error_absolute"] += float(np.sum(absolute))
-        total["max_absolute_error"] = max(total["max_absolute_error"], float(np.max(absolute)))
+        self.count += expected.size
+        self.dot += float(np.dot(expected.ravel(), actual.ravel()))
+        self.expected_squared += float(np.sum(np.square(expected)))
+        self.actual_squared += float(np.sum(np.square(actual)))
+        self.error_squared += float(np.sum(np.square(error)))
+        self.error_absolute += float(np.sum(absolute))
+        self.max_absolute_error = max(self.max_absolute_error, float(np.max(absolute)))
+
+    def summary(self) -> dict[str, Any]:
+        expected_rms = max(np.sqrt(self.expected_squared / self.count), np.finfo(np.float64).eps)
+        norm = np.sqrt(self.expected_squared * self.actual_squared)
+        cosine = self.dot / norm if norm else float(self.expected_squared == self.actual_squared)
+        return {
+            "name": self.name,
+            "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
+            "normalized_rmse": float(np.sqrt(self.error_squared / self.count) / expected_rms),
+            "mean_absolute_error": float(self.error_absolute / self.count),
+            "max_absolute_error": self.max_absolute_error,
+        }
 
 
-def _finish_metrics(totals: dict[str, dict[str, float]], names: list[str]) -> list[dict[str, Any]]:
-    results = []
-    for name in names:
-        total = totals[name]
-        count = total["count"]
-        expected_rms = max(np.sqrt(total["expected_squared"] / count), np.finfo(np.float64).eps)
-        norm = np.sqrt(total["expected_squared"] * total["actual_squared"])
-        cosine = total["dot"] / norm if norm else float(total["expected_squared"] == total["actual_squared"])
-        results.append(
-            {
-                "name": name,
-                "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-                "normalized_rmse": float(np.sqrt(total["error_squared"] / count) / expected_rms),
-                "mean_absolute_error": float(total["error_absolute"] / count),
-                "max_absolute_error": total["max_absolute_error"],
-            }
-        )
-    return results
+def _precision_label(parameters: dict[str, Any]) -> str:
+    """Name a component's precision, such as W8A16 per-token."""
+    return parameters["precision"].upper() + (" per-token" if parameters.get("per_token") else "")
 
 
-def _pipeline_description(bindings: dict[str, dict[str, Any]]) -> str:
+def _pipeline_description(component_parameters: dict[str, dict[str, Any]]) -> str:
     """Name the compiled pipeline that fidelity compares with the original ONNX."""
-    backbone, transformer = (
-        bindings[component]["precision"].upper() + (" per-token" if bindings[component].get("per_token") else "")
-        for component in ("backbone", "transformer")
-    )
+    backbone = _precision_label(component_parameters["backbone"])
+    transformer = _precision_label(component_parameters["transformer"])
     return f"AFE {backbone} backbone → CPU TopK/Gather → AFE {transformer} transformer (JAX execute)"
 
 
 def _calibration_names(
-    bindings: dict[str, dict[str, Any]],
+    component_parameters: dict[str, dict[str, Any]],
     calibration_dataset: Path | None,
     fidelity_dataset: Path,
     selection: dict[str, Any],
 ) -> tuple[str, ...]:
     """Select the calibration images of the W8A8 components; components with BF16 activations need none."""
     counts = {
-        int(parameters["calibration_samples"]) for parameters in bindings.values() if parameters["precision"] == "w8a8"
+        int(parameters["calibration_samples"])
+        for parameters in component_parameters.values()
+        if parameters["precision"] == "w8a8"
     }
     if not counts:
         return ()
@@ -320,7 +346,7 @@ def _write_fidelity(
     config: dict[str, Any],
     candidate: str,
     metrics: list[dict[str, Any]],
-) -> Path:
+) -> None:
     selection = config["selection"]
     report = {
         "schema_version": 1,
@@ -336,77 +362,101 @@ def _write_fidelity(
         "samples": selection["samples"],
         "metrics": metrics,
     }
-    path = output_dir / "fidelity.json"
-    path.write_text(
+    (output_dir / FIDELITY_REPORT).write_text(
         json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return path
 
 
-def _prepare_graphs_and_reference(
+def _reference_outputs(source: Path, images: np.ndarray) -> dict[str, np.ndarray]:
+    """Run the original ONNX on the fidelity images."""
+    session = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
+    outputs = {name: [] for name in OUTPUTS}
+    for image in images:
+        for name, value in zip(OUTPUTS, session.run(None, {INPUT: image[None]}), strict=True):
+            outputs[name].append(value[0])
+    return {name: np.stack(values) for name, values in outputs.items()}
+
+
+def _measure_fidelity(
+    transformer: Any,
+    backbone_outputs: dict[str, np.ndarray],
+    reference: dict[str, np.ndarray],
+) -> list[dict[str, Any]]:
+    """Compare the compiled pipeline's outputs on each fidelity image with the original ONNX's."""
+    errors = [_OutputError(name) for name in OUTPUTS]
+    for index, (features, scores, boxes) in enumerate(
+        zip(
+            backbone_outputs["evaluation_features"],
+            backbone_outputs["evaluation_scores"],
+            backbone_outputs["evaluation_boxes"],
+            strict=True,
+        )
+    ):
+        inputs = {
+            InputName(FEATURES): to_afe_layout(features[None]),
+            InputName(PROPOSALS): select_top_proposals(scores[None], boxes[None]),
+        }
+        outputs = transformer.execute(inputs=inputs, use_jax=True)
+        for error, output in zip(errors, outputs, strict=True):
+            error.add(reference[error.name][index][None], np.asarray(output))
+    return [error.summary() for error in errors]
+
+
+def _prepare_phase(
     source: Path,
-    dataset: Path,
+    fidelity_dataset: Path,
     evaluation_names: tuple[str, ...],
     temporary_dir: Path,
 ) -> None:
+    """Split the ONNX into the two component graphs, check the split, and save the reference outputs."""
     backbone_graph, transformer_graph = prepare_model(source, temporary_dir / "graphs")
-    validation_image = load_images(dataset, evaluation_names[:1])[0]
-    validate_float_split(
-        source,
-        backbone_graph,
-        transformer_graph,
-        validation_image,
-    )
-
-    session = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    outputs = {name: [] for name in OUTPUTS}
-    for image in load_images(dataset, evaluation_names):
-        values = session.run(None, {INPUT: image[None]})
-        for name, value in zip(OUTPUTS, values, strict=True):
-            outputs[name].append(value[0])
-    np.savez(temporary_dir / "reference_outputs.npz", **{name: np.stack(outputs[name]) for name in OUTPUTS})
+    images = load_images(fidelity_dataset, evaluation_names)
+    validate_float_split(source, backbone_graph, transformer_graph, images[0])
+    np.savez(temporary_dir / REFERENCE_OUTPUTS, **_reference_outputs(source, images))
 
 
-def _compile_backbone(
+def _backbone_phase(
     graph: Path,
     temporary_dir: Path,
     profile_id: str,
-    bindings: dict[str, dict[str, Any]],
+    component_parameters: dict[str, dict[str, Any]],
     calibration_dataset: Path | None,
     calibration_names: tuple[str, ...],
     fidelity_dataset: Path,
     evaluation_names: tuple[str, ...],
 ) -> None:
-    parameters = bindings["backbone"]
+    """Compile the backbone and save its outputs for the transformer phase."""
+    parameters = component_parameters["backbone"]
     calibration_images = load_images(calibration_dataset, calibration_names) if calibration_names else None
-    backbone, build_dir = _quantize_component(
+    name = _component_name(profile_id, "backbone")
+    backbone = _quantize_component(
         graph,
-        temporary_dir,
-        f"{MODEL_ID}_{profile_id}_backbone",
+        name,
         parameters,
         {INPUT: calibration_images} if parameters["precision"] == "w8a8" else None,
         {INPUT: tuple(INPUT_SHAPE)},
     )
-    _compile_component(backbone, build_dir, "backbone", parameters["precision"])
+    _compile_component(backbone, temporary_dir / name, "backbone", parameters["precision"])
 
-    evaluation = [
-        execute_backbone(backbone, image, InputName) for image in load_images(fidelity_dataset, evaluation_names)
-    ]
-    boundaries = {
-        "evaluation_features": np.stack([values[0][0] for values in evaluation]),
-        "evaluation_scores": np.stack([values[1][0] for values in evaluation]),
-        "evaluation_boxes": np.stack([values[2][0] for values in evaluation]),
+    features, scores, boxes = zip(
+        *(_execute_backbone(backbone, image) for image in load_images(fidelity_dataset, evaluation_names)),
+        strict=True,
+    )
+    outputs = {
+        "evaluation_features": np.concatenate(features),
+        "evaluation_scores": np.concatenate(scores),
+        "evaluation_boxes": np.concatenate(boxes),
     }
-    if bindings["transformer"]["precision"] == "w8a8":
+    if component_parameters["transformer"]["precision"] == "w8a8":
         # A W8A8 transformer calibrates on the proposals this quantized backbone selects.
-        boundaries["calibration_features"], boundaries["calibration_proposals"] = transformer_inputs(
-            backbone, calibration_images, InputName
+        outputs["calibration_features"], outputs["calibration_proposals"] = _transformer_calibration_inputs(
+            backbone, calibration_images
         )
-    np.savez(temporary_dir / "backbone_outputs.npz", **boundaries)
+    np.savez(temporary_dir / BACKBONE_OUTPUTS, **outputs)
 
 
-def _compile_transformer(
+def _transformer_phase(
     graph: Path,
     temporary_dir: Path,
     profile_id: str,
@@ -414,53 +464,38 @@ def _compile_transformer(
     fidelity_config: dict[str, Any],
     candidate: str,
 ) -> None:
-    with np.load(temporary_dir / "backbone_outputs.npz") as boundaries:
-        evaluation_features = boundaries["evaluation_features"]
-        evaluation_scores = boundaries["evaluation_scores"]
-        evaluation_boxes = boundaries["evaluation_boxes"]
-        calibration = None
-        if parameters["precision"] == "w8a8":
-            calibration = {
-                FEATURES: boundaries["calibration_features"],
-                PROPOSALS: boundaries["calibration_proposals"],
-            }
-
-        transformer, build_dir = _quantize_component(
-            graph,
-            temporary_dir,
-            f"{MODEL_ID}_{profile_id}_transformer",
-            parameters,
-            calibration,
-            {name: tuple(BOUNDARY_SHAPES[name]) for name in (FEATURES, PROPOSALS)},
-        )
-        _compile_component(transformer, build_dir, "transformer", parameters["precision"])
-
-        totals: dict[str, dict[str, float]] = {}
-        with np.load(temporary_dir / "reference_outputs.npz") as reference:
-            for index in range(len(evaluation_features)):
-                proposals = stable_topk_gather(
-                    evaluation_scores[index][None],
-                    evaluation_boxes[index][None],
-                )
-                inputs = {
-                    InputName(FEATURES): to_afe_layout(evaluation_features[index][None]),
-                    InputName(PROPOSALS): proposals,
-                }
-                actual = [np.asarray(output) for output in transformer.execute(inputs=inputs, use_jax=True)]
-                expected = [reference[name][index][None] for name in OUTPUTS]
-                _record_metrics(totals, expected, actual, OUTPUTS)
-    metrics = _finish_metrics(totals, OUTPUTS)
+    """Compile the transformer, then measure the whole pipeline's fidelity and write its report."""
+    with np.load(temporary_dir / BACKBONE_OUTPUTS) as saved:
+        backbone_outputs = dict(saved)
+    with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
+        reference = dict(saved)
+    calibration_inputs = None
+    if parameters["precision"] == "w8a8":
+        calibration_inputs = {
+            FEATURES: backbone_outputs["calibration_features"],
+            PROPOSALS: backbone_outputs["calibration_proposals"],
+        }
+    name = _component_name(profile_id, "transformer")
+    transformer = _quantize_component(
+        graph,
+        name,
+        parameters,
+        calibration_inputs,
+        {tensor: tuple(BOUNDARY_SHAPES[tensor]) for tensor in (FEATURES, PROPOSALS)},
+    )
+    _compile_component(transformer, temporary_dir / name, "transformer", parameters["precision"])
+    metrics = _measure_fidelity(transformer, backbone_outputs, reference)
     _write_fidelity(temporary_dir, profile_id, fidelity_config, candidate, metrics)
 
 
-def _execute_phase(target: Callable[..., None], args: tuple[Any, ...]) -> None:
+def _execute_phase(target: Callable[..., None], arguments: dict[str, Any]) -> None:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
-    target(*args)
+    target(**arguments)
 
 
-def _run_phase(name: str, target: Callable[..., None], *args: Any) -> None:
+def _run_phase(name: str, target: Callable[..., None], **arguments: Any) -> None:
     logging.info("Starting %s", name)
-    process = multiprocessing.get_context("spawn").Process(name=name, target=_execute_phase, args=(target, args))
+    process = multiprocessing.get_context("spawn").Process(name=name, target=_execute_phase, args=(target, arguments))
     process.start()
     process.join()
     if process.exitcode != 0:
@@ -468,12 +503,52 @@ def _run_phase(name: str, target: Callable[..., None], *args: Any) -> None:
     logging.info("Completed %s", name)
 
 
-def _component_archive(temporary_dir: Path, profile_id: str, component_id: str) -> Path:
-    build_dir = temporary_dir / f"{MODEL_ID}_{profile_id}_{component_id}"
-    archives = sorted(build_dir.glob("*_mpk.tar.gz"))
-    if len(archives) != 1:
-        raise RuntimeError(f"expected one {component_id} MPK, found {len(archives)}")
-    return archives[0]
+def _copy_component_archives(temporary_dir: Path, profile_id: str, output_dir: Path) -> dict[str, Path]:
+    """Copy each component's MPK to <output_dir>/<component>/."""
+    archives = {}
+    for component_id in COMPONENT_IDS:
+        built = _find_mpk(temporary_dir / _component_name(profile_id, component_id), component_id)
+        component_dir = output_dir / component_id
+        component_dir.mkdir()
+        archives[component_id] = component_dir / built.name
+        shutil.copyfile(built, archives[component_id])
+    return archives
+
+
+def _write_compile_outputs(
+    output_dir: Path,
+    profile_id: str,
+    archives: dict[str, Path],
+    graph_hashes: dict[str, str],
+    fidelity_component: str,
+) -> None:
+    """Write compile-outputs.json, which records each MPK, derived graph, and the fidelity report."""
+    fidelity_path = output_dir / fidelity_component / FIDELITY_REPORT
+    manifest = {
+        "model_id": MODEL_ID,
+        "build_profile_id": profile_id,
+        "compile_invocation_id": INVOCATION_ID,
+        "outputs": [
+            {
+                "component_id": component_id,
+                "mpk_path": f"{component_id}/{archives[component_id].name}",
+                "mpk_sha256": sha256_file(archives[component_id])[0],
+            }
+            for component_id in COMPONENT_IDS
+        ],
+        "derived_graphs": [
+            {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
+        ],
+        "correctness": {
+            "component_id": fidelity_component,
+            "path": f"{fidelity_component}/{FIDELITY_REPORT}",
+            "sha256": sha256_file(fidelity_path)[0],
+        },
+    }
+    (output_dir / "compile-outputs.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def compile_model(
@@ -484,10 +559,10 @@ def compile_model(
     output_dir: Path,
 ) -> dict[str, Path]:
     metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    bindings = _bindings(metadata, profile_id)
+    component_parameters = _component_parameters(metadata, profile_id)
     fidelity_config = next(entry for entry in metadata["fidelity"] if profile_id in entry["build_profiles"])
     selection = fidelity_config["selection"]
-    calibration_names = _calibration_names(bindings, calibration_dataset, fidelity_dataset, selection)
+    calibration_names = _calibration_names(component_parameters, calibration_dataset, fidelity_dataset, selection)
     evaluation_names = select_images(
         fidelity_dataset,
         int(selection["seed"]),
@@ -502,11 +577,11 @@ def compile_model(
         backbone_graph, transformer_graph = graph_paths(temporary_dir / "graphs")
         _run_phase(
             "RF-DETR graph preparation",
-            _prepare_graphs_and_reference,
-            source,
-            fidelity_dataset,
-            evaluation_names,
-            temporary_dir,
+            _prepare_phase,
+            source=source,
+            fidelity_dataset=fidelity_dataset,
+            evaluation_names=evaluation_names,
+            temporary_dir=temporary_dir,
         )
         graph_hashes = {
             "backbone": sha256_file(backbone_graph)[0],
@@ -514,69 +589,31 @@ def compile_model(
         }
         _run_phase(
             "RF-DETR backbone compilation",
-            _compile_backbone,
-            backbone_graph,
-            temporary_dir,
-            profile_id,
-            bindings,
-            calibration_dataset,
-            calibration_names,
-            fidelity_dataset,
-            evaluation_names,
+            _backbone_phase,
+            graph=backbone_graph,
+            temporary_dir=temporary_dir,
+            profile_id=profile_id,
+            component_parameters=component_parameters,
+            calibration_dataset=calibration_dataset,
+            calibration_names=calibration_names,
+            fidelity_dataset=fidelity_dataset,
+            evaluation_names=evaluation_names,
         )
         _run_phase(
             "RF-DETR transformer compilation and fidelity",
-            _compile_transformer,
-            transformer_graph,
-            temporary_dir,
-            profile_id,
-            bindings["transformer"],
-            fidelity_config,
-            _pipeline_description(bindings),
+            _transformer_phase,
+            graph=transformer_graph,
+            temporary_dir=temporary_dir,
+            profile_id=profile_id,
+            parameters=component_parameters["transformer"],
+            fidelity_config=fidelity_config,
+            candidate=_pipeline_description(component_parameters),
         )
-        backbone_archive_source = _component_archive(temporary_dir, profile_id, "backbone")
-        transformer_archive_source = _component_archive(temporary_dir, profile_id, "transformer")
         output_dir.mkdir(parents=True)
-        archives = {}
-        for component_id, source in (
-            ("backbone", backbone_archive_source),
-            ("transformer", transformer_archive_source),
-        ):
-            component_dir = output_dir / component_id
-            component_dir.mkdir()
-            archive = component_dir / source.name
-            shutil.copyfile(source, archive)
-            archives[component_id] = archive
-
+        archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
         fidelity_component = fidelity_config["result_component"]
-        fidelity_path = output_dir / fidelity_component / "fidelity.json"
-        shutil.copyfile(temporary_dir / "fidelity.json", fidelity_path)
-        manifest = {
-            "model_id": MODEL_ID,
-            "build_profile_id": profile_id,
-            "compile_invocation_id": INVOCATION_ID,
-            "outputs": [
-                {
-                    "component_id": component_id,
-                    "mpk_path": f"{component_id}/{archives[component_id].name}",
-                    "mpk_sha256": sha256_file(archives[component_id])[0],
-                }
-                for component_id in ("backbone", "transformer")
-            ],
-            "derived_graphs": [
-                {"component_id": component_id, "sha256": graph_hashes[component_id]}
-                for component_id in ("backbone", "transformer")
-            ],
-            "correctness": {
-                "component_id": fidelity_component,
-                "path": f"{fidelity_component}/fidelity.json",
-                "sha256": sha256_file(fidelity_path)[0],
-            },
-        }
-        (output_dir / "compile-outputs.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / fidelity_component / FIDELITY_REPORT)
+        _write_compile_outputs(output_dir, profile_id, archives, graph_hashes, fidelity_component)
         return archives
 
 

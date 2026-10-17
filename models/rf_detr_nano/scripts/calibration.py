@@ -1,4 +1,4 @@
-"""Prepare representative images and RF-DETR transformer boundary tensors."""
+"""Select and preprocess RF-DETR images, and select the transformer's top proposals."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import numpy as np
 from PIL import Image
 
 IMAGE_SIZE = 384
-FEATURE_SIZE = IMAGE_SIZE // 16
 QUERY_COUNT = 300
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)[:, None, None]
@@ -83,7 +82,8 @@ def to_afe_layout(array: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
-def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY_COUNT) -> np.ndarray:
+def select_top_proposals(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY_COUNT) -> np.ndarray:
+    """Return the boxes of the highest-scoring proposals, keeping equal scores in their original order."""
     if scores.ndim != 2 or boxes.ndim != 3 or boxes.shape[2] != 4:
         raise ValueError(f"unexpected proposal shapes: scores={scores.shape}, boxes={boxes.shape}")
     if scores.shape != boxes.shape[:2]:
@@ -94,31 +94,3 @@ def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY
         raise ValueError("proposal scores and boxes must be finite")
     indices = np.argsort(-scores, axis=1, kind="stable")[:, :count]
     return np.take_along_axis(boxes, indices[..., None], axis=1).astype(np.float32)
-
-
-def normalize_features(feature: np.ndarray) -> np.ndarray:
-    if feature.shape == (1, FEATURE_SIZE, FEATURE_SIZE, 256):
-        return feature.transpose(0, 3, 1, 2)
-    if feature.shape != (1, 256, FEATURE_SIZE, FEATURE_SIZE):
-        raise RuntimeError(f"unexpected backbone feature shape: {feature.shape}")
-    return feature
-
-
-def execute_backbone(backbone: object, image: np.ndarray, input_name: object) -> tuple[np.ndarray, ...]:
-    outputs = backbone.execute(inputs={input_name("input"): to_afe_layout(image[None])}, use_jax=True)
-    feature, scores, boxes = (np.asarray(output) for output in outputs)
-    return normalize_features(feature), scores, boxes
-
-
-def transformer_inputs(
-    backbone: object,
-    images: np.ndarray,
-    input_name: object,
-) -> tuple[np.ndarray, np.ndarray]:
-    features = []
-    proposals = []
-    for image in images:
-        feature, scores, boxes = execute_backbone(backbone, image, input_name)
-        features.append(feature[0].astype(np.float32))
-        proposals.append(stable_topk_gather(scores, boxes)[0])
-    return np.stack(features), np.stack(proposals)

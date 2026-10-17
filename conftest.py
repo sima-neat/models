@@ -125,6 +125,8 @@ def load_script(model_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[s
         spec = importlib.util.spec_from_file_location(f"{model_dir.name}_{name.replace('/', '_')}", path)
         assert spec and spec.loader, f"cannot load {path}"
         module = importlib.util.module_from_spec(spec)
+        # A script's dataclasses look their module up while it runs.
+        monkeypatch.setitem(sys.modules, spec.name, module)
         # Scripts import their siblings by name, so another model's sibling must not stand in for this one's.
         shadowed = {item.stem: sys.modules.pop(item.stem, None) for item in path.parent.glob("*.py")}
         sys.path.insert(0, str(path.parent))

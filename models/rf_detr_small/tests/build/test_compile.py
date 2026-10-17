@@ -94,12 +94,12 @@ def test_coco_archive_selection_and_webp_decoding(tmp_path: Path, load_script: C
     assert selections[0] == selections[1]
 
 
-def test_topk_gather_uses_stable_score_order(load_script: Callable[[str], ModuleType]) -> None:
+def test_top_proposals_keep_equal_scores_in_order(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     scores = np.asarray([[0.5, 0.9, 0.9, 0.1]], dtype=np.float32)
     boxes = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
 
-    result = calibration.stable_topk_gather(scores, boxes, count=3)
+    result = calibration.select_top_proposals(scores, boxes, count=3)
 
     np.testing.assert_array_equal(result, boxes[:, [1, 2, 0]])
 
@@ -261,19 +261,19 @@ def _metadata() -> dict:
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
-    bindings = compile_module._bindings(_metadata(), "w8a16_w16a16")
+    parameters = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
 
-    assert bindings == {
+    assert parameters == {
         "backbone": {"precision": "w8a16", "per_token": True},
         "transformer": {"precision": "w16a16"},
     }
-    assert compile_module._pipeline_description(bindings) == (
+    assert compile_module._pipeline_description(parameters) == (
         "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 transformer (JAX execute)"
     )
     with pytest.raises(ValueError, match="no build profile 'w32a32'"):
-        compile_module._bindings(_metadata(), "w32a32")
+        compile_module._component_parameters(_metadata(), "w32a32")
     with pytest.raises(ValueError, match="unsupported precision: int8"):
-        compile_module._quantization({"precision": "int8"})
+        compile_module._quantization_config({"precision": "int8"})
 
 
 def test_only_w8a8_components_select_calibration_images(
@@ -286,7 +286,7 @@ def test_only_w8a8_components_select_calibration_images(
         "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 3},
         "transformer": {"precision": "w16a16"},
     }
-    uncalibrated = compile_module._bindings(_metadata(), "w8a16_w16a16")
+    uncalibrated = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
     selection = {"seed": 42, "offset": 3, "samples": 3}
 
     assert compile_module._calibration_names(uncalibrated, None, tmp_path, selection) == ()
@@ -307,7 +307,7 @@ def test_bf16_activation_components_quantize_without_calibration_data(
     monkeypatch.setattr(compile_module, "load_model", MagicMock(return_value=loaded))
 
     compile_module._quantize_component(
-        tmp_path / "graph.onnx", tmp_path, "backbone", {"precision": "w16a16"}, None, {"input": (1, 3, 8, 8)}
+        tmp_path / "graph.onnx", "backbone", {"precision": "w16a16"}, None, {"input": (1, 3, 8, 8)}
     )
 
     assert loaded.quantize.call_args.kwargs["calibration_data"] is None
@@ -321,9 +321,46 @@ def test_bf16_activation_layer_norms_keep_fp32_intermediates(
     quantized = MagicMock()
 
     with pytest.raises(RuntimeError, match="expected one backbone MPK"):
-        compile_module._compile_component(quantized, tmp_path, "backbone", precision)
+        compile_module._compile_component(quantized, tmp_path / "backbone", "backbone", precision)
 
     assert quantized.compile.call_args.kwargs["layer_norm_use_fp32_intermediates"] is fp32_intermediates
+
+
+def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
+    compile_module = load_script("compile")
+    rng = np.random.RandomState(0)
+    expected = rng.standard_normal((2, 3, 4))
+    actual = expected + rng.standard_normal((2, 3, 4)) * 0.1
+    error = compile_module._OutputError("dets")
+
+    for image in range(2):
+        error.add(expected[image], actual[image])
+    summary = error.summary()
+
+    difference = actual - expected
+    assert summary["name"] == "dets"
+    np.testing.assert_allclose(
+        summary["cosine_similarity"],
+        np.dot(expected.ravel(), actual.ravel()) / (np.linalg.norm(expected) * np.linalg.norm(actual)),
+    )
+    np.testing.assert_allclose(
+        summary["normalized_rmse"], np.sqrt(np.mean(difference**2)) / np.sqrt(np.mean(expected**2))
+    )
+    np.testing.assert_allclose(summary["mean_absolute_error"], np.mean(np.abs(difference)))
+    np.testing.assert_allclose(summary["max_absolute_error"], np.max(np.abs(difference)))
+    with pytest.raises(RuntimeError, match="dets shape mismatch"):
+        error.add(expected[0], actual[0, :2])
+
+
+def test_backbone_features_convert_to_the_onnx_boundary_layout(load_script: Callable[[str], ModuleType]) -> None:
+    compile_module = load_script("compile")
+    batch, channels, height, width = compile_module.BOUNDARY_SHAPES[compile_module.FEATURES]
+    nchw = np.arange(batch * channels * height * width, dtype=np.float32).reshape(batch, channels, height, width)
+
+    np.testing.assert_array_equal(compile_module._features_to_nchw(nchw.transpose(0, 2, 3, 1)), nchw)
+    assert compile_module._features_to_nchw(nchw) is nchw
+    with pytest.raises(RuntimeError, match="unexpected backbone feature shape"):
+        compile_module._features_to_nchw(nchw[:, :1])
 
 
 def test_surgery_simplifies_only_the_transformer_partition() -> None:

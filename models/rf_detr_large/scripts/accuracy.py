@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pyneat
-from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, stable_topk_gather
+from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, select_top_proposals
 from faster_coco_eval import COCO, COCOeval_faster
 from PIL import Image
 
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
         # The feature tensor goes to the transformer as is; only the proposals pass through NumPy.
-        proposals = stable_topk_gather(view(scores), view(boxes))
+        proposals = select_top_proposals(view(scores), view(boxes))
         dets, labels = (view(output) for output in transformer(features, proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):
