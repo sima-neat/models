@@ -254,7 +254,7 @@ async function downloadPackage(runId) {
     note.hidden = true;
     note.textContent = "";
     elements["download-list"].hidden = true;
-    elements["download-confirm"].textContent = `Download ${format}`;
+    elements["download-confirm"].textContent = "Download";
     elements["download-confirm"].disabled = false;
   } catch (error) {
     if (request === downloadRequest && dialog.open) elements["download-status"].textContent = error.message;
