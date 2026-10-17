@@ -1,4 +1,4 @@
-import { variantDownloads, prepareDownloads, startDownloads, packageFormat } from "./downloads.js";
+import { variantDownloads, prepareDownloads, startDownloads, packageFormat, modelDownloadCommand } from "./downloads.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
@@ -128,9 +128,11 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
 
 let pendingDownloads = null;
 let downloadRequest = 0;
+let pendingCommand = null;
 
 function resetDownloadDialog({ title, description, confirmLabel }) {
   pendingDownloads = null;
+  pendingCommand = null;
   elements["download-title"].textContent = title;
   elements["download-description"].textContent = description;
   elements["download-list"].innerHTML = "";
@@ -141,6 +143,25 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
   elements["download-status"].textContent = "";
   elements["download-confirm"].disabled = true;
   elements["download-confirm"].textContent = confirmLabel;
+}
+
+function showFolderDownload(run, artifact) {
+  const dialog = elements["download-dialog"];
+  pendingCommand = modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id,
+    elements["branch-filter"].value || branchName(run.git_ref), state.apiBase.includes(".stg."));
+  elements["download-title"].textContent = "Download model folder";
+  elements["download-description"].textContent = "LLM and VLM models are provided as individual files rather than a ZIP archive. Use sima-cli 2.1.19 or later to download the files in parallel and assemble the model folder.";
+  elements["download-list"].hidden = true;
+  elements["download-package-info"].hidden = false;
+  elements["download-package-info"].innerHTML = `
+    <dt>Command</dt><dd><code>${escapeHtml(pendingCommand)}</code></dd>
+    <dt>Files</dt><dd>${escapeHtml(artifact.metadata.file_count ?? "Not recorded")}</dd>
+    <dt>Download size</dt><dd>${escapeHtml(formatBytes(artifact.metadata.deployment_size_bytes))}</dd>`;
+  const note = dialog.querySelector(".download-note");
+  note.hidden = false;
+  note.textContent = "The CLI uses the manifest to preserve the folder structure and verify each file’s checksum. This command downloads the selected branch’s current deployment.";
+  elements["download-confirm"].textContent = "Copy command";
+  elements["download-confirm"].disabled = false;
 }
 
 async function downloadVariant(runId) {
@@ -154,6 +175,12 @@ async function downloadVariant(runId) {
   dialog.showModal();
   try {
     const summary = await api(`/v1/runs/${encodeURIComponent(runId)}`);
+    const folder = (summary.artifacts || []).find(item => item.artifact_type === "model-pack" && packageFormat(item) === "Folder");
+    if (folder) {
+      if (request !== downloadRequest || !dialog.open) return;
+      showFolderDownload(summary.run, folder);
+      return;
+    }
     const downloads = await prepareDownloads(await variantDownloads(summary.run, api), api);
     if (request !== downloadRequest || !dialog.open) return;
     pendingDownloads = downloads;
@@ -191,6 +218,11 @@ async function downloadPackage(runId) {
     const modelId = metadata.model_id || "model";
     const profile = metadata.build_profile_id ? variantLabel(metadata.build_profile_id) : "This build";
     const components = Object.keys(metadata.component_run_ids || artifact.metadata?.component_run_ids || {});
+    if (packageFormat(artifact) === "Folder") {
+      if (request !== downloadRequest || !dialog.open) return;
+      showFolderDownload(run, artifact);
+      return;
+    }
     // The registry serves the package under its published filename: the MPK itself, or a ZIP.
     const downloads = await prepareDownloads([{
       runId: run.id,
@@ -233,8 +265,10 @@ elements["download-cancel"].addEventListener("click", () => elements["download-d
 elements["download-dialog"].addEventListener("close", () => {
   downloadRequest += 1;
   pendingDownloads = null;
+  pendingCommand = null;
 });
 elements["download-confirm"].addEventListener("click", async () => {
+  if (pendingCommand) { await copyText(pendingCommand); return; }
   if (!pendingDownloads) return;
   const request = downloadRequest;
   elements["download-confirm"].disabled = true;

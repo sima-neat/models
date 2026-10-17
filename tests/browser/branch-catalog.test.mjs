@@ -77,3 +77,22 @@ test('catalog runs are resolved by commit, then by id for runs the list omits', 
   assert.equal(paths.filter((path) => path.includes('commit_sha=')).length, 1);
   assert.deepEqual(paths.filter((path) => path.startsWith('/v1/runs/')), ['/v1/runs/superseded']);
 });
+
+test('deployment-only catalogs resolve inherited builds and keep the selected package despite newer runs', async () => {
+  const selection = {artifacts: [
+    {run_id: resnet.id, component_id: 'model', artifact_name: 'llima', layout: 'directory'},
+    {run_id: 'folder-package', package_id: 'default', artifact_name: 'package', layout: 'directory'},
+  ]};
+  const definitions = [{model_id: 'resnet_50', builds: [], pending_builds: [],
+    branch_deployments: {int8: selection}}];
+  const inherited = await catalogBuildRuns(definitions, [], async path => {
+    assert.equal(path, '/v1/runs/resnet-develop');
+    return {run: resnet};
+  }, '/repo');
+  const newer = {...resnet, id: 'newer', finished_at: '2026-10-17T00:00:00Z'};
+  const [model] = branchModels([newer, ...inherited], [], definitions);
+  assert.equal(model.builds[0].run_id, resnet.id);
+  assert.equal(model.packages[0].run_id, 'folder-package');
+  assert.deepEqual(model.packages[0].component_run_ids, {model: resnet.id});
+  assert.equal(branchModels([resnet], [], definitions, 'other').length, 0);
+});

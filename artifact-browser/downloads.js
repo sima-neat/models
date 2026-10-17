@@ -18,6 +18,7 @@ export async function variantDownloads(run, api) {
 
 // A single-component package is published as its MPK; any other package is a ZIP.
 export function packageFormat(artifact, filename = "") {
+  if (artifact?.metadata?.layout === "directory") return "Folder";
   return artifact?.media_type === "application/gzip" || filename.endsWith("_mpk.tar.gz") ? "MPK" : "ZIP";
 }
 
@@ -45,4 +46,11 @@ export function startDownloads(downloads, document) {
     frame.src = item.url;
     document.body.append(frame);
   });
+}
+
+// Quote catalog values as shell arguments; branch names can contain shell metacharacters.
+export function modelDownloadCommand(modelId, profile, branch, staging = false) {
+  const quote = value => /^[a-zA-Z0-9_./-]+$/.test(String(value)) ? String(value)
+    : "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  return `sima-cli models download --id ${quote(modelId)} --variant ${quote(profile)} --branch ${quote(branch)}${staging ? " --stg" : ""}`;
 }

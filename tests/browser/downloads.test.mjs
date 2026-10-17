@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {variantDownloads, prepareDownloads, startDownloads, packageFormat} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
+const {variantDownloads, prepareDownloads, startDownloads, packageFormat, modelDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'transformer-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
@@ -102,4 +102,15 @@ test('a single-component package is an MPK and any other package is a ZIP', () =
   assert.equal(packageFormat({media_type: 'application/gzip'}), 'MPK');
   assert.equal(packageFormat({}, 'yolo26n_w8a8_mpk.tar.gz'), 'MPK');
   assert.equal(packageFormat({media_type: 'application/zip'}, 'rf_detr_nano_w8a8_w16a16_default.zip'), 'ZIP');
+});
+
+test('directory manifests are folders even when served as JSON', () => {
+  assert.equal(packageFormat({media_type: 'application/json', metadata: {layout: 'directory'}}, 'manifest.json'), 'Folder');
+});
+test('CLI commands preserve branch, variant and staging and quote shell arguments', () => {
+  assert.equal(modelDownloadCommand('qwen3_5_0_8b', 'w4a16', 'feature/llima-models', true),
+    'sima-cli models download --id qwen3_5_0_8b --variant w4a16 --branch feature/llima-models --stg');
+  assert.equal(modelDownloadCommand('model', 'int8', 'main'),
+    'sima-cli models download --id model --variant int8 --branch main');
+  assert.ok(modelDownloadCommand('model', 'int8', 'feat/$(touch bad)').includes("--branch 'feat/$(touch bad)'"));
 });

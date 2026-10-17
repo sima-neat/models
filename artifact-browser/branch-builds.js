@@ -78,9 +78,28 @@ export async function variantBuildRuns(run, fetchPage) {
   return variantBuilds([run, ...others])[0].runs;
 }
 
+// Deployment selections supersede legacy build lists for their profiles.
+export function deploymentCatalog(model) {
+  const selections = { ...model.approved_deployments, ...model.branch_deployments };
+  const profiles = new Set(Object.keys(selections));
+  const builds = (model.builds || []).filter(build => !profiles.has(build.build_profile_id));
+  const packages = (model.packages || []).filter(pack => !profiles.has(pack.build_profile_id));
+  for (const [profile, selection] of Object.entries(selections)) {
+    const roots = selection.artifacts || [];
+    const components = roots.filter(root => root.component_id && root.run_id);
+    for (const root of components) builds.push({ ...root, build_profile_id: profile });
+    for (const root of roots.filter(root => root.package_id && root.run_id)) {
+      packages.push({ ...root, build_profile_id: profile,
+        component_run_ids: Object.fromEntries(components.map(item => [item.component_id, item.run_id])) });
+    }
+  }
+  return { ...model, builds, packages };
+}
+
 // Resolves the compile runs behind catalog builds that `knownRuns` lacks, such as builds a new
 // branch inherits. The catalog names each run and its commit; the run carries its own branch.
 export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repositoryPath) {
+  catalogModels = catalogModels.map(deploymentCatalog);
   const known = new Set(knownRuns.map((run) => run.id));
   const missing = new Map(catalogModels.flatMap((model) => model.builds || [])
     .filter((build) => build.run_id && !known.has(build.run_id))
@@ -99,6 +118,7 @@ export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repo
 // Shows the catalog's build of each model and build profile, unless `compileRuns` holds a newer
 // completed build of it, which the catalog may not record yet.
 export function branchModels(compileRuns, packageRuns, catalogModels, compiler = "") {
+  catalogModels = catalogModels.map(deploymentCatalog);
   const definitions = new Map(catalogModels.map((model) => [model.model_id, model]));
   const runs = compileRuns.filter((run) => {
     const meta = run.metadata || {};
@@ -125,6 +145,9 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     new Set([...(model.builds || []), ...(model.pending_builds || [])].map((build) => build.build_profile_id))]));
   for (const group of variantBuilds(runs)) {
     if (declaredProfiles.get(group.modelId)?.has(group.profile) === false) continue;
+    const selection = definitions.get(group.modelId)?.branch_deployments?.[group.profile]
+      || definitions.get(group.modelId)?.approved_deployments?.[group.profile];
+    if (selection) continue; // Keep the explicitly selected deployment, even if newer runs exist.
     const key = variantKey(group.modelId, group.profile);
     const previous = latest.get(key);
     // A build holding every run the catalog names is the catalog's build, with all its components.
@@ -162,7 +185,9 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     // A package belongs to the shown build when it bundles exactly that build's component runs.
     const candidates = [
       ...packageRuns.filter((run) => run.status === "completed" && run.run_type === "model_package"
-        && run.metadata?.model_id === model.model_id)
+        && run.metadata?.model_id === model.model_id
+        && !model.branch_deployments?.[run.metadata.build_profile_id]
+        && !model.approved_deployments?.[run.metadata.build_profile_id])
         .map((run) => ({ run_id: run.id, build_profile_id: run.metadata.build_profile_id, component_run_ids: run.metadata.component_run_ids || {} })),
       ...(definitions.get(model.model_id)?.packages || []),
     ];

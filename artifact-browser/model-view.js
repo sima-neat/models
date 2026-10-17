@@ -13,7 +13,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
-import { packageFormat } from "./downloads.js";
+import { packageFormat, modelDownloadCommand } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -854,7 +854,7 @@ function targetName(run) {
 }
 
 function cliDownloadCommand(variant) {
-  return `sima-cli models download --id ${variant.modelId} --variant ${variant.profile} --branch ${branchName(variant.anchor.git_ref)}`;
+  return modelDownloadCommand(variant.modelId, variant.profile, elements["branch-filter"].value || branchName(variant.anchor.git_ref), state.apiBase.includes(".stg."));
 }
 
 function sectionNavigation(sections) {
@@ -872,8 +872,8 @@ function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, single
     : "";
   if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
-    <div class="package-card-copy"><strong>Full package</strong><span>${packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span></div>
-    ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
+    <div class="package-card-copy"><strong>Full package</strong><span>${packageFormat(packageArtifact) === "Folder" ? "Download the model folder with sima-cli using its verified manifest." : packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span></div>
+    ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(packageArtifact.metadata?.deployment_size_bytes ?? packageArtifact.size_bytes))}</dd></div><div><dt>SHA-256</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
     <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
   </div>`;
 }
@@ -914,7 +914,7 @@ export function renderDetail(variant) {
     : details;
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
-    ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.size_bytes))}</small>` : ""}</button>`
+    ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(packageArtifact.metadata?.deployment_size_bytes ?? packageArtifact.size_bytes))}</small>` : ""}</button>`
     : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download</span></button>` : "";
   const sections = [
     overviewMarkup && ["overview-section", "Overview"],

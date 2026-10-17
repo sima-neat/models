@@ -294,3 +294,19 @@ No registry API or database schema changes are required.
 The preview's layer timings are illustrative generated data, including zero-time
 entries and multiple MLA stages to exercise the analysis controls. Production
 pages use only the compiled layer timings in each published Core report.
+
+### Model folder downloads
+
+A directory package (including LLiMa models) opens a **Download model folder**
+dialog with its file count, total download size, and a copyable `sima-cli models
+download` command. The command uses the selected branch and adds `--stg` for
+the staging registry. It downloads that branch's current deployment, including
+when opened from build history. LLM and VLM models are served as individual files rather than a ZIP archive
+and require sima-cli 2.1.19 or later to download the files in parallel and
+assemble the model folder.
+The CLI verifies the manifest and each file and recreates their relative paths.
+MPK and ZIP packages keep their browser download flow.
+
+Branch views honor explicit `branch_deployments` (or `approved_deployments`)
+selections, including inherited compilation runs and their matching package.
+Newer unselected runs do not replace an explicitly selected deployment.

@@ -146,3 +146,19 @@ python artifact-browser/preview.py
 Open the URL the script prints, find your model in the catalog, and open its
 page. The preview is for checking content and layout; the real numbers come
 from CI after merge.
+
+### Model folder downloads
+
+A directory package (including LLiMa models) opens a **Download model folder**
+dialog with its file count, total download size, and a copyable `sima-cli models
+download` command. The command uses the selected branch and adds `--stg` for
+the staging registry. It downloads that branch's current deployment, including
+when opened from build history. LLM and VLM models are served as individual files rather than a ZIP archive
+and require sima-cli 2.1.19 or later to download the files in parallel and
+assemble the model folder.
+The CLI verifies the manifest and each file and recreates their relative paths.
+MPK and ZIP packages keep their browser download flow.
+
+Branch views honor explicit `branch_deployments` (or `approved_deployments`)
+selections, including inherited compilation runs and their matching package.
+Newer unselected runs do not replace an explicitly selected deployment.
