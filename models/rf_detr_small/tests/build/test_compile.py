@@ -263,7 +263,7 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 
     assert parameters == {
         "backbone": {"precision": "w8a16", "per_token": True},
-        "decoder": {"precision": "w16a16"},
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
     }
     assert compile_module._pipeline_description(parameters) == (
         "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 decoder (JAX execute)"
@@ -272,19 +272,30 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
         compile_module._component_parameters(_metadata(), "w32a32")
     with pytest.raises(ValueError, match="unsupported precision: int8"):
         compile_module._quantization_config({"precision": "int8"})
+    with pytest.raises(ValueError, match="W8A8 component must declare calibration_bins"):
+        compile_module._quantization_config({"precision": "w8a8"})
 
 
-def test_only_w8a8_components_select_calibration_images(
+def test_the_decoder_calibrates_in_every_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+    # AFE runs the decoder's query sine embedding as an INT8 lookup table even at W16A16.
+    compile_module = load_script("compile")
+
+    for profile in _metadata()["build_profiles"]:
+        parameters = compile_module._component_parameters(_metadata(), profile["id"])
+        assert compile_module._calibrates(parameters["decoder"]), profile["id"]
+
+
+def test_only_calibrated_components_select_calibration_images(
     tmp_path: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
     compile_module = load_script("compile")
     for index in range(8):
         Image.new("RGB", (2, 2), color=(index, index, index)).save(tmp_path / f"{index}.jpg")
     calibrated = {
-        "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 3},
-        "decoder": {"precision": "w16a16"},
+        "backbone": {"precision": "w8a16", "per_token": True},
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 3},
     }
-    uncalibrated = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
+    uncalibrated = {"backbone": {"precision": "w8a16"}, "decoder": {"precision": "w16a16"}}
     selection = {"seed": 42, "offset": 3, "samples": 3}
 
     assert compile_module._calibration_names(uncalibrated, None, tmp_path, selection) == ()
@@ -292,6 +303,9 @@ def test_only_w8a8_components_select_calibration_images(
     assert names == compile_module.select_images(tmp_path, 42, 0, 3)
     with pytest.raises(ValueError, match="require --dataset"):
         compile_module._calibration_names(calibrated, None, tmp_path, selection)
+    mismatched = {**calibrated, "backbone": {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 4}}
+    with pytest.raises(ValueError, match="must use the same images"):
+        compile_module._calibration_names(mismatched, tmp_path, tmp_path, selection)
     with pytest.raises(ValueError, match="begin after the calibration images"):
         compile_module._calibration_names(calibrated, tmp_path, tmp_path, {**selection, "offset": 2})
 
@@ -385,3 +399,16 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert correctness["scope"] == {"type": "package", "package": "default"}
     assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "decoder"]
     assert all(entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks)
+
+
+def test_an_afe_system_exit_fails_the_phase(
+    monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    monkeypatch.setattr(compile_module.logging, "basicConfig", lambda **_: None)
+
+    def quantize() -> None:
+        raise SystemExit()
+
+    with pytest.raises(RuntimeError, match="quantize stopped in AFE"):
+        compile_module._execute_phase(quantize, {})

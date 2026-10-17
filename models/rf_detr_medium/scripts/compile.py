@@ -97,23 +97,32 @@ def _component_name(profile_id: str, component_id: str) -> str:
     return f"{MODEL_ID}_{profile_id}_{component_id}"
 
 
+def _calibrates(parameters: dict[str, Any]) -> bool:
+    return "calibration_samples" in parameters
+
+
 def _quantization_config(parameters: dict[str, Any]) -> Any:
     precision = parameters["precision"]
     int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     if precision == "w8a8":
+        if not _calibrates(parameters):
+            raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
         weights = int8_weights
-        calibration = HistogramMSEMethod(int(parameters["calibration_bins"]))
         # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
         bias_correction = BiasCorrectionType.REGULAR
     elif precision in A16_PRECISIONS:
-        # BF16 activations need no calibrated ranges.
         activation = bfloat16_scheme()
         weights = int8_weights if precision == "w8a16" else bfloat16_scheme()
-        calibration = SkipCalibration()
         bias_correction = BiasCorrectionType.NONE
     else:
         raise ValueError(f"unsupported precision: {precision}")
+    # BF16 activations need no calibrated ranges, except where AFE keeps an operator in INT8: it has no
+    # BF16 Sin or Cos and runs them as INT8 lookup tables. The decoder's query sine embedding is such a
+    # Sin, so the decoder calibrates even at W16A16, while a W8A16 backbone skips calibration.
+    calibration = (
+        HistogramMSEMethod(int(parameters["calibration_bins"])) if _calibrates(parameters) else SkipCalibration()
+    )
     return (
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
@@ -320,19 +329,19 @@ def _calibration_names(
     fidelity_dataset: Path,
     selection: dict[str, Any],
 ) -> tuple[str, ...]:
-    """Select the calibration images of the W8A8 components; components with BF16 activations need none."""
+    """Select the calibration images of the components that calibrate."""
     counts = {
         int(parameters["calibration_samples"])
         for parameters in component_parameters.values()
-        if parameters["precision"] == "w8a8"
+        if _calibrates(parameters)
     }
     if not counts:
         return ()
     if len(counts) > 1:
-        raise ValueError("W8A8 components must calibrate on the same images")
+        raise ValueError("calibrated components must use the same images")
     (count,) = counts
     if calibration_dataset is None:
-        raise ValueError("W8A8 components require --dataset for calibration")
+        raise ValueError("calibrated components require --dataset")
     if calibration_dataset != fidelity_dataset:
         raise ValueError("RF-DETR calibration and fidelity must use the same verified dataset")
     if int(selection["offset"]) < count:
@@ -434,7 +443,7 @@ def _backbone_phase(
         graph,
         name,
         parameters,
-        {INPUT: calibration_images} if parameters["precision"] == "w8a8" else None,
+        {INPUT: calibration_images} if _calibrates(parameters) else None,
         {INPUT: tuple(INPUT_SHAPE)},
     )
     _compile_component(backbone, temporary_dir / name, "backbone", parameters["precision"])
@@ -448,8 +457,8 @@ def _backbone_phase(
         "evaluation_scores": np.concatenate(scores),
         "evaluation_boxes": np.concatenate(boxes),
     }
-    if component_parameters["decoder"]["precision"] == "w8a8":
-        # A W8A8 decoder calibrates on the proposals this quantized backbone selects.
+    if _calibrates(component_parameters["decoder"]):
+        # The decoder calibrates on the proposals this quantized backbone selects.
         outputs["calibration_features"], outputs["calibration_proposals"] = _decoder_calibration_inputs(
             backbone, calibration_images
         )
@@ -470,7 +479,7 @@ def _decoder_phase(
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = dict(saved)
     calibration_inputs = None
-    if parameters["precision"] == "w8a8":
+    if _calibrates(parameters):
         calibration_inputs = {
             FEATURES: backbone_outputs["calibration_features"],
             PROPOSALS: backbone_outputs["calibration_proposals"],
@@ -490,7 +499,11 @@ def _decoder_phase(
 
 def _execute_phase(target: Callable[..., None], arguments: dict[str, Any]) -> None:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
-    target(**arguments)
+    try:
+        target(**arguments)
+    except SystemExit as error:
+        # AFE reports a failed quantization or compilation by raising SystemExit(), which exits with code 0.
+        raise RuntimeError(f"{target.__name__} stopped in AFE; the AFE log above names the cause") from error
 
 
 def _run_phase(name: str, target: Callable[..., None], **arguments: Any) -> None:
@@ -620,7 +633,7 @@ def compile_model(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component is W8A8")
+    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component calibrates")
     parser.add_argument("--fidelity-dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)

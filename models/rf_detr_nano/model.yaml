@@ -162,6 +162,10 @@ build_profiles:
   - id: decoder
     parameters:
       precision: w16a16
+      # AFE runs Sin and Cos as INT8 lookup tables even at BF16, so the decoder's query sine
+      # embedding needs calibrated input ranges.
+      calibration_bins: 2048
+      calibration_samples: 50
   compile_invocations:
   - id: rf_detr
     components: [backbone, decoder]
@@ -169,12 +173,19 @@ build_profiles:
   target: modalix
   components:
   - id: backbone
+    # The decoder calibrates on this backbone's outputs for these images; the W8A16 backbone itself skips
+    # calibration.
+    calibration: coco_images
     parameters:
       precision: w8a16
       per_token: true
   - id: decoder
     parameters:
       precision: w16a16
+      # AFE runs Sin and Cos as INT8 lookup tables even at BF16, so the decoder's query sine
+      # embedding needs calibrated input ranges.
+      calibration_bins: 2048
+      calibration_samples: 50
   compile_invocations:
   - id: rf_detr
     components: [backbone, decoder]
