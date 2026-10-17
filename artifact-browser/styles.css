@@ -224,9 +224,9 @@ kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color
 .compare-chart-grid line { stroke: var(--line); stroke-dasharray: 3 6; }
 .compare-chart-grid text { fill: var(--ink-soft); font-size: 12px; }
 .compare-axis-title { fill: var(--ink-soft); font-size: 13px; }
-[data-color="0"] { --compare-color: var(--blue); --compare-soft: var(--blue-soft); }
-[data-color="1"] { --compare-color: var(--green); --compare-soft: var(--green-soft); }
-[data-color="2"] { --compare-color: var(--violet); --compare-soft: var(--violet-soft); }
+[data-color="0"] { --compare-color: var(--blue); }
+[data-color="1"] { --compare-color: var(--green); }
+[data-color="2"] { --compare-color: var(--amber); }
 .compare-point { cursor: pointer; outline: none; }
 .compare-point[aria-disabled="true"] { cursor: default; }
 .compare-point-hit { fill: transparent; }

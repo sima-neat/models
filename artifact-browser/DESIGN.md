@@ -37,7 +37,8 @@ itself uses sections and rules instead of nested cards.
 Compare starts with a task, then shows measured single-component vision variants
 in one scatter plot: accuracy vertically, throughput horizontally. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
-variants with missing measurements. LLM/VLM comparisons remain TBD.
+variants with missing measurements. Selection colors use the shared SiMa blue,
+green and orange palette. LLM/VLM comparisons remain TBD.
 
 The model page reads at a glance first and expands on request. Each section
 shows its key facts directly; longer detail sits behind one kind of control: a
