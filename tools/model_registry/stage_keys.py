@@ -10,7 +10,6 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .accuracy_result import ACCURACY_RESULT_SCHEMA
@@ -25,6 +24,7 @@ from .model import (
     compile_invocations_for,
     load_and_validate_model,
 )
+from .source import source_identity
 
 MODEL_COMPILE_INPUT_PATHS = {
     "yolo26_tiny_drone": (
@@ -38,11 +38,6 @@ MODEL_COMPILE_INPUT_PATHS = {
 
 # The runner used by ONNX builds.
 COMPILE_TOOLING = ("scripts/run_model_compilation.sh",)
-LLIMA_COMPILE_TOOLING = (
-    "scripts/run_llima_compilation.sh",
-    "tools/model_registry/artifact.py",
-    "tools/model_registry/cli.py",
-)
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
@@ -106,11 +101,10 @@ def _file_digests(root: Path, required: list[str], optional: list[str] = ()) -> 
     return digests
 
 
-def _compile_input_files(root: Path, model_id: str, *, native: bool = False) -> list[Path]:
+def _compile_input_files(root: Path, model_id: str) -> list[Path]:
     """Code the compile runs: the shared runner, model scripts, and any declared training code."""
     candidates: list[Path] = []
-    tooling = LLIMA_COMPILE_TOOLING if native else COMPILE_TOOLING
-    for prefix in (*tooling, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
+    for prefix in (*COMPILE_TOOLING, *MODEL_COMPILE_INPUT_PATHS.get(model_id, ())):
         path = root / prefix.rstrip("/")
         if path.is_file():
             candidates.append(path)
@@ -213,6 +207,19 @@ def compile_key(
         ) from exc
     components = {item["id"]: item for item in model["components"]}
     bindings = {item["id"]: item for item in profile["components"]}
+    if any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"]):
+        # LLiMa recipes orchestrate a pinned compiler; graph options belong in parameters.
+        return _key({
+            "compiler_version": compiler,
+            "target": profile["target"],
+            "components": [
+                {
+                    "source_sha256": source_identity(components[component_id]["source"]),
+                    "parameters": bindings[component_id]["parameters"],
+                }
+                for component_id in invocation["components"]
+            ],
+        })
     identity = {
         "model_id": model_id,
         "compile_invocation": {
@@ -233,11 +240,8 @@ def compile_key(
         "fidelity": _compile_consumed_fidelity(model, profile_id),
         "compiler_version": compiler,
     }
-    native = any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"])
-    if native:
-        identity["checkpoint_name"] = Path(urlsplit(model["upstream"]["repository"]).path).name
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-    _hash_files(digest, root, _compile_input_files(root, model_id, native=native))
+    _hash_files(digest, root, _compile_input_files(root, model_id))
     return digest.hexdigest()
 
 

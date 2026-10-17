@@ -569,8 +569,8 @@ def test_compile_script_runs_in_activated_model_compiler_shell() -> None:
             "Install pytest for the model's compile tests",
             "Compile the invocation with its model's compile script",
             "Verify every MPK and record its provenance",
-            "Retain the complete compiler output",
             "Test the build with its model's compile tests",
+            "Retain the complete compiler output",
         )
     ]
     assert order == sorted(order)
@@ -581,7 +581,10 @@ def test_compile_tests_check_the_build_before_its_publication() -> None:
     compile_job = workflow["jobs"]["compile"]
     script = step(compile_job, "Test the build with its model's compile tests")["run"]
 
-    assert step_index(compile_job, "Test the build with its model's compile tests") == len(compile_job["steps"]) - 1
+    assert step_index(compile_job, "Test the build with its model's compile tests") < step_index(
+        compile_job, "Retain the complete compiler output"
+    )
+    assert "if" not in step(compile_job, "Retain the complete compiler output")
     assert workflow["jobs"]["publish"]["needs"] == "compile"
     # pytest is installed before compiling, and only the test step puts it on PYTHONPATH.
     install = step(compile_job, "Install pytest for the model's compile tests")["run"]
@@ -863,7 +866,13 @@ def test_native_candidates_finalize_and_select_in_the_existing_publish_job() -> 
 def test_candidates_join_every_invocation_and_never_promote_catalog() -> None:
     job = load(WORKFLOW)["jobs"]["publish-candidates"]
     assert "compile" in job["needs"]
-    assert "needs.compile.result == 'success'" in job["if"]
+    for result, cancelled, expected in (
+        ("success", False, True), ("failure", False, True),
+        ("skipped", False, False), ("cancelled", False, False), ("failure", True, False),
+    ):
+        assert evaluate(job["if"], {
+            "cancelled()": cancelled, "needs.plan.outputs.candidate_count": "2", "needs.compile.result": result,
+        }) is expected
     assert job["uses"] == "./.github/workflows/vulcan-model-candidate.yml"
     workflow = load(ROOT / ".github/workflows/vulcan-model-candidate.yml")
     steps = workflow["jobs"]["publish"]["steps"]

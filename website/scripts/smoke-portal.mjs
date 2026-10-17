@@ -127,7 +127,8 @@ async function checkLayerAnalysis(browser, url) {
 const {server, ready} = startPreview();
 let failed = false;
 try {
-  const variantUrl = await ready;
+  // The first catalog model may have no benchmark data.
+  const variantUrl = new URL('/?model=resnet_50&variant=w8a8', await ready);
   const browser = await chromium.launch();
   try {
     const checks = [

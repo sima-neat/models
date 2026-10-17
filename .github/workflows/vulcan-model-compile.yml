@@ -232,6 +232,12 @@ jobs:
               --runner-approval-spec-revision "$RUNNER_APPROVAL_SPEC_REVISION"
           done
 
+      # Only retain outputs eligible for publication after the compile tests succeed.
+      - name: Test the build with its model's compile tests
+        run: |
+          PYTHONPATH="$RUNNER_TEMP/model-test-tools${PYTHONPATH:+:$PYTHONPATH}" REGISTRY_PYTHON="$MODEL_COMPILER_PYTHON" \
+            scripts/run_model_tests.sh compile "$MODEL_DIR" "$PROFILE_OUTPUT_DIR"
+
       - name: Retain the complete compiler output
         uses: actions/upload-artifact@v7
         with:
@@ -239,12 +245,6 @@ jobs:
           path: ${{ env.ARTIFACT_ROOT }}
           if-no-files-found: error
           retention-days: 14
-
-      # A failing test fails this job, so the publish job never runs for this build.
-      - name: Test the build with its model's compile tests
-        run: |
-          PYTHONPATH="$RUNNER_TEMP/model-test-tools${PYTHONPATH:+:$PYTHONPATH}" REGISTRY_PYTHON="$MODEL_COMPILER_PYTHON" \
-            scripts/run_model_tests.sh compile "$MODEL_DIR" "$PROFILE_OUTPUT_DIR"
 
   publish:
     name: Publish

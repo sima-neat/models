@@ -60,12 +60,13 @@ profile = next(item for item in model["build_profiles"] if item["id"] == profile
 parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
 arguments = []
 for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
-    if name in parameters:
+    if name in parameters and not (name == "language_group_size" and parameters[name] == 128):
         arguments.extend([f"--{name}", str(parameters[name])])
 subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), str(named_checkpoint), output, *arguments], check=True)
 PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
 llima-deploy "$work/compiled" "$PROFILE_OUTPUT_DIR/$component_id/deployment"
+install -m 0755 "$work/compiled/compile.sh" "$PROFILE_OUTPUT_DIR/$component_id/deployment/compile.sh"
 "$PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component_id" --write-manifest
 printf '{"scope": "compile_recipe", "started_at": "%s", "finished_at": "%s"}\n' \
   "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_OUTPUT_DIR/compile-timing.json"

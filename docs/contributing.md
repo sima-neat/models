@@ -190,6 +190,8 @@ skips ordinary package and catalog updates. On-demand builds publish their
 complete candidate, including packages; a feature-branch run also selects it
 in that branch's catalog after finalization. LLiMa does this in the existing
 Publish job; models with multiple invocations join them before publication.
+Each complete candidate publishes independently of failures in other models
+or profiles.
 Develop and Main still require separate approval and promotion.
 
 ## Review and merge expectations

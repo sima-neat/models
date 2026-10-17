@@ -113,9 +113,11 @@ result depends on.
 | performance | `performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
 | accuracy | `accuracy.py` | `accuracy_key` in `stage_keys.py` | `model_accuracy` run under the result component's compile run |
 
-The compile key covers the invocation's `model.yaml` projection, the fidelity
+The ONNX compile key covers the invocation's `model.yaml` projection, the fidelity
 entries, the model's compile scripts, declared training code, and the compiler
-version. The performance and accuracy keys cover the compile runs and MPK
+version. The LLiMa key covers checkpoint content, target, declared graph
+parameters and pinned compiler identity; scripts and registry helpers are not
+compile inputs. The performance and accuracy keys cover the compile runs and MPK
 digests they measure, their `model.yaml` entries and model script, the shared
 tooling of that stage, and the DevKit runtime pin. A recompiled build gets new
 DevKit keys and is therefore remeasured. No key reads a model's `tests/`, so a
@@ -235,6 +237,8 @@ For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 In staging, `publish-candidate` waits for every invocation of the selected
 model/profile. A single-component LLiMa build does this in its existing Publish
 job; other on-demand models join their invocations in the candidate job.
+Each candidate requires its own compile tests to pass; a failure in another
+model/profile does not block its finalization.
 It registers one versioned contract, binds each compile and
 package run before publishing its records, and declares every required file.
 New uploads use the returned candidate prefix, with shared payloads reused
@@ -294,9 +298,10 @@ approved roots; the CLI downloads and verifies files.
 
 The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging
 Face component. The shared downloader assembles its pinned, verified file
-set; the recipe only calls `llima-compile`. The runner then runs
+set; the recipe calls `llima-compile` and records a standalone `compile.sh` with
+the complete arguments it used. The runner then runs
 `llima-deploy` into `<model>/<profile>/<component>/deployment/`, containing
-`devkit/`, `elf_files/`, and any `npy_files/`. `verify-artifact --write-manifest`
+`devkit/`, `elf_files/`, any `npy_files/`, and that script. `verify-artifact --write-manifest`
 writes `deployment-manifest.json` beside the folder. Compile outputs point to
 that index and its SHA-256. ONNX builds retain their runner and compile-key
 inputs.

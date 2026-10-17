@@ -112,7 +112,7 @@ def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, A
                 "build_profile_id": entry["build_profile_id"],
                 "component_id": component_id,
                 "compile_fingerprint": entry["build_fingerprint"],
-                "compile_invocation_id": entry["build_fingerprint"],
+                "compile_invocation_id": entry["compile_invocation_id"],
                 "run_id": _id("compile", sha, entry["model_id"], entry["build_profile_id"], component_id),
                 "artifact_sha256": _sha256("mpk", sha, entry["model_id"], entry["build_profile_id"], component_id),
             })

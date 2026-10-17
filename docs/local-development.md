@@ -369,10 +369,11 @@ model-registry verify-artifact /path/to/output/<model-id>/<profile-id>/<componen
 ```
 
 Activate the matching LLiMa and pinned Model Compiler tools first. The recipe
-only calls `llima-compile`; the runner verifies the pinned checkpoint download,
+calls `llima-compile` and saves its complete arguments in a standalone `compile.sh`.
+The runner verifies the pinned checkpoint download,
 calls that recipe, and runs `llima-deploy`. It writes
 `<model-id>/<profile-id>/<component-id>/deployment/` with `devkit/`, `elf_files/`,
-and any `npy_files/`. Verification writes `deployment-manifest.json` beside
+any `npy_files/`, and that script. Verification writes `deployment-manifest.json` beside
 the folder. `compile-outputs.json` points to `<component-id>/deployment-manifest.json`
 and hashes that index; it does not point to an archive.
 

@@ -406,7 +406,7 @@ jobs:
     needs: [select, plan, compile, resolve-vulcan-config]
     if: >-
       !cancelled() && needs.plan.outputs.candidate_count != '0' &&
-      needs.compile.result == 'success'
+      (needs.compile.result == 'success' || needs.compile.result == 'failure')
     permissions:
       contents: read
       id-token: write

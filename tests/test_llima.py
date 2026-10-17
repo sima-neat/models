@@ -59,6 +59,7 @@ def deployment(path: Path) -> Path:
     (path / "elf_files/language.elf").write_bytes(b"\x7fELFsynthetic-language")
     (path / "elf_files/vision.elf").write_bytes(b"\x7fELFsynthetic-vision")
     (path / "npy_files/embeddings.npy").write_bytes(b"synthetic-weights")
+    (path / "compile.sh").write_text('#!/usr/bin/env bash\nllima-compile "$@"\n')
     (path / "empty.txt").write_bytes(b"")
     return path
 
@@ -337,8 +338,8 @@ def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypa
     assert receipt["s3_version_id"] == "original"
 
 
-@pytest.mark.parametrize("image_input", [True, False])
-def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
+@pytest.mark.parametrize("image_input, group_size", [(True, 64), (False, 128)])
+def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input, group_size):
     root = tmp_path / "repository"
     for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{MODEL}"):
         shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns("__pycache__"))
@@ -346,7 +347,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
     parameters = model["build_profiles"][0]["components"][0]["parameters"]
-    parameters.update(max_num_tokens=8192, language_group_size=64)
+    parameters.update(max_num_tokens=8192, language_group_size=group_size)
     if image_input:
         parameters.update(input_height=512, input_width=640)
     else:
@@ -356,7 +357,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input):
     source = deployment(tmp_path / "deployment")
     config_path = source / "devkit/vlm_config.json"
     config = json.loads(config_path.read_text())
-    config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=64)
+    config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=group_size)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
     config_path.write_text(json.dumps(config))
     checkpoint = tmp_path / "source-sets/9f" / ("9f" + "a" * 62)
@@ -401,13 +402,31 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert not Path(arguments[0]).exists()
     assert (checkpoint / "config.json").read_text() == "{}"
     assert arguments[arguments.index("--max_num_tokens") + 1] == "8192"
-    assert arguments[arguments.index("--language_group_size") + 1] == "64"
+    if group_size == 128:
+        assert "--language_group_size" not in arguments
+    else:
+        assert arguments[arguments.index("--language_group_size") + 1] == str(group_size)
     assert ("--input_height" in arguments) is image_input
     assert ("--input_width" in arguments) is image_input
     if image_input:
         assert arguments[arguments.index("--input_height") + 1] == "512"
         assert arguments[arguments.index("--input_width") + 1] == "640"
     output = tmp_path / "output"
+    replay = output / MODEL / PROFILE / "model/deployment/compile.sh"
+    replay_arguments = tmp_path / "replay-arguments.json"
+    executable = tools / "llima-compile"
+    executable.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+                          'open(os.environ["COMPILE_ARGUMENTS"], "w").write(json.dumps(sys.argv[1:]))\n')
+    subprocess.run(["bash", str(replay)], cwd=tmp_path, check=True, env={
+        **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "COMPILE_ARGUMENTS": str(replay_arguments),
+    })
+    recorded = json.loads(replay_arguments.read_text())
+    assert recorded[0] == "Qwen3.5-0.8B-Autoround-Safetensors"
+    assert recorded[1:3] == ["-o", "Qwen3.5-0.8B-Autoround-compiled"]
+    assert recorded[3:] == arguments[3:]
+    assert recorded[recorded.index("--jobs") + 1] == "12"
+    manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
+    assert "compile.sh" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
     verify_artifact(output / MODEL / PROFILE / "model", write_manifest=True, provenance={
         "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
@@ -418,7 +437,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     })
     prepared = _preflight_compilations(root, output, load_models(root), environment="staging", git_sha="a" * 40)
     assert prepared[0]["compiled_parameters"] == {
-        "max_num_tokens": 8192, "language_group_size": 64,
+        "max_num_tokens": 8192, "language_group_size": group_size,
         "input_height": 512 if image_input else 448, "input_width": 640 if image_input else 448,
     }
 

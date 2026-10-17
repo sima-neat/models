@@ -58,7 +58,7 @@ models/<model-id>/
 Put every model-specific setting in `model.yaml`, not in separate
 configuration files. [Step 11](#11-write-the-readme) describes the README.
 
-Keep board-only code inside `performance.py` or `accuracy.py`. Any other
+Keep board-only code inside `performance.py` or `accuracy.py`. For ONNX, any other
 `.py` or `.sh` file under `scripts/` is a compile input, so a helper that
 `accuracy.py` imports recompiles the model when it changes. See [step
 9](#9-know-what-a-change-reruns).
@@ -270,7 +270,8 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 
 | Stage | Key inputs |
 | --- | --- |
-| compile | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and backend tooling: `scripts/run_model_compilation.sh` for ONNX; `scripts/run_llima_compilation.sh`, `tools/model_registry/artifact.py`, and `tools/model_registry/cli.py` plus the `upstream.repository` basename for LLiMa |
+| compile (ONNX) | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and `scripts/run_model_compilation.sh` |
+| compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
 | performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
@@ -285,11 +286,11 @@ recompiled build is always remeasured.
 | `performance.py` or a `benchmark` entry | that model's performance |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
-| a compile input of a model | that model's affected builds, then their DevKit stages |
-| the `upstream.repository` basename of an LLiMa model | that model's builds, then their declared DevKit stages |
+| a source model or graph parameter | that model's affected builds, then their DevKit stages |
+| an ONNX compile script or other ONNX compile input | that model's affected builds, then their DevKit stages |
 | the Model Compiler pin | every build, then every DevKit stage |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their DevKit stages |
-| `scripts/run_llima_compilation.sh`, `artifact.py`, or `cli.py` | LLiMa builds, then their declared DevKit stages |
+| LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class | no LLiMa compilation |
 
 The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
 in `tools/model_registry/stage_keys.py`.
@@ -513,14 +514,9 @@ The shared runner forwards these parameters as compiler options after the
 checkpoint and output arguments; `compile.sh` must pass them to `llima-compile`.
 Keep these values in `model.yaml` rather than duplicating them in the recipe.
 
-The executable recipe takes two positional paths followed by compiler options:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-llima-compile "$1" -o "$2" \
-  "${@:3}" --jobs 6 --log_level INFO
-```
+The executable recipe takes two positional paths followed by compiler options.
+After compilation, it writes a standalone `compile.sh` into its output folder,
+recording the complete arguments it executed. The Qwen recipe shows this pattern.
 
 Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
 runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
@@ -533,7 +529,8 @@ The runner downloads the pinned files and passes the recipe a temporary symlink
 named after `upstream.repository`, preserving the verified cache and giving
 generated files the checkpoint's name. It then runs
 `llima-deploy` into `<output-root>/<model>/<profile>/<component>/deployment/`.
-This folder contains `devkit/`, `elf_files/`, and any `npy_files/`. Run
+This folder contains `devkit/`, `elf_files/`, any `npy_files/`, and the standalone
+`compile.sh` with the selected context, image dimensions and other flags. Run
 `model-registry verify-artifact <component-output> --write-manifest` to check
 the deployment and write `deployment-manifest.json` beside it. The verifier
 rejects incomplete configurations, missing executables, unsafe paths, and links.
@@ -547,14 +544,16 @@ the deployment folder with `manifest.json` at its root; its component uses
 file. See the [manifest and metadata contract](metadata-schema.md#llima-checkpoint-and-deployment-formats).
 No native stage creates a deployment ZIP.
 
-The native compile key covers its runner, `tools/model_registry/artifact.py` and
-`tools/model_registry/cli.py` for deployment verification. ONNX builds retain
-their existing runner and compile keys.
-README and hero changes remain outside compile identities.
+The native compile key covers checkpoint content, the target, graph parameters
+and the pinned compiler identity. Declare graph-changing options in component
+`parameters`, including precision, group size, context length and image dimensions.
+Script edits, logging, job counts and runner selection do not invalidate it.
+ONNX builds retain their existing compile keys. README and hero changes remain
+outside compile identities.
 
 Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corresponding
 stage is implemented. A manual Qwen build compiles and publishes only; performance
 and accuracy are separate follow-ups [#294](https://github.com/sima-neat/models/issues/294)
 and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen profile
-uses the default runner with six compile jobs, 4096 tokens, 448×448 input,
+requests the expensive runner with twelve compile jobs, 4096 tokens, 448×448 input,
 and language group size 128.

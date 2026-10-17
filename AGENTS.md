@@ -39,7 +39,8 @@ and give a new job a new module named after what it does.
 
 LLMs and VLMs declare the complete model as one component, with a pinned Hugging
 Face `file_set`, `interface.format: huggingface`, and `scripts/compile.sh`. The
-recipe only calls `llima-compile`; `scripts/run_llima_compilation.sh` downloads,
+recipe calls `llima-compile` and saves a standalone `compile.sh` with its complete
+arguments; `scripts/run_llima_compilation.sh` downloads,
 compiles, and runs `llima-deploy` into the component's `deployment/` folder.
 `model-registry verify-artifact --write-manifest` verifies that folder and writes
 `deployment-manifest.json` beside it. Publication preserves the folder as
@@ -52,6 +53,10 @@ Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
 `language_group_size` in its component parameters. Image dimensions are optional
 overrides for configurable VLMs; omit them for LLMs and fixed-resolution VLMs.
 Recipes forward the runner's compiler options rather than duplicating these values.
+LLiMa compile keys cover checkpoint content, the target, graph parameters and
+the pinned compiler identity. Keep graph-changing options in component
+`parameters`; script edits, job counts, logging and runner classes do not
+invalidate LLiMa builds.
 
 Any expensive model may set top-level `build-on-demand: true` (default `false`).
 Pushes still validate it and publish catalog metadata, but never compile or
@@ -128,8 +133,8 @@ in the same commit.
 | When you change | Also change |
 |---|---|
 | what a stage depends on: a `model.yaml` field its key reads, or a shared file it runs | the key function or the `PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `stage_keys.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
-| the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is a compile input |
-| board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is a compile input, so editing it recompiles and then remeasures the model |
+| the set of model scripts a DevKit stage or conversion runs | `NON_COMPILE_SCRIPTS` in `stage_keys.py`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
+| board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | a new model's `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script): it saves the whole Core `BenchmarkReport` with `BenchmarkReport.save()`, so board telemetry and later Core fields reach the registry unchanged |
 | a Core benchmark reading the registry should publish | a row with its Vulcan measurement name in `REPORT_METRICS` or `TELEMETRY_METRICS` in `benchmark_metrics.py` and the same table in the browser's `benchmark-adapters.js`, its label in the browser's `metrics.js`, its row in `DETAIL_CARDS` in `model-view.js` when a Benchmark details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a compile input outside `models/<id>/`, such as declared training code | `MODEL_COMPILE_INPUT_PATHS` in `stage_keys.py` |
@@ -291,9 +296,9 @@ Write the README for an application developer:
 
 Keep maintainer explanations next to what they explain: in `model.yaml`
 comments, or in the docstrings of `convert.py`, `performance.py`, and
-`accuracy.py`. Every other file under `models/<id>/scripts/` is part of the
-compile key, so a comment there recompiles the model. Procedures that apply to
-every model belong in `docs/`. Maintainer guides inside a model directory, such
+`accuracy.py`. For ONNX models, every other file under `models/<id>/scripts/`
+is part of the compile key, so a comment there recompiles the model. Procedures
+that apply to every model belong in `docs/`. Maintainer guides inside a model directory, such
 as `scripts/qat/README.md`, use whatever structure suits their workflow.
 
 Every model has a hero: a regular (non-symlinked) 1200x480 PNG no
