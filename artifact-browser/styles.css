@@ -230,7 +230,6 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .compare-legend:not(:empty) { margin-top: 20px; }
 .compare-legend button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font-size: 12px; cursor: pointer; }
 .compare-legend .compare-column-marker { margin: 0; }
-.compare-not-plotted { color: var(--ink-soft); font-size: 11px; white-space: nowrap; }
 .compare-legend button > span:last-child { margin-left: 5px; color: var(--ink-soft); }
 .compare-legend button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .compare-chart-scroll { overflow-x: auto; }

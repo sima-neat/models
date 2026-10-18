@@ -174,9 +174,9 @@ function comparisonPlot(columns) {
     return `<g class="compare-point" data-compare-toggle="${escapeHtml(column.option.key)}" data-color="${selectionColor(column.option.key)}" role="button" tabindex="0" aria-pressed="${selectionColor(column.option.key) >= 0}" aria-disabled="${selectionColor(column.option.key) < 0 && state.comparePicks.filter(Boolean).length >= MAX_COMPARED_BUILDS}" aria-label="${escapeHtml(label)}">
       <circle class="compare-point-hit" cx="${x(px)}" cy="${y(py)}" r="16"/><circle class="compare-point-dot" cx="${x(px)}" cy="${y(py)}" r="7"/></g>`;
   }).join("");
-  const legend = columns.filter(column => selectionColor(column.option.key) >= 0).map(({option}) => {
-    const isPlotted = plotted.some(point => point.column.option.key === option.key);
-    return `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison${isPlotted ? "" : " (not plotted)"}"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}${isPlotted ? "" : '<small class="compare-not-plotted">Not plotted</small>'}<span aria-hidden="true">×</span></button>`;
+  const legend = plotted.filter(({column}) => selectionColor(column.option.key) >= 0).map(({column}) => {
+    const {option} = column;
+    return `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}<span aria-hidden="true">×</span></button>`;
   }).join("");
   return `<section class="compare-chart-panel" aria-labelledby="compare-chart-title">
     <div class="compare-chart-header"><div><h3 id="compare-chart-title">Accuracy &amp; speed</h3><p>${plotted.length} of ${columns.length} variants shown · Select up to three to inspect below.</p></div>

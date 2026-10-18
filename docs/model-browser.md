@@ -68,7 +68,8 @@ in inferences/s is the horizontal axis. Accuracy is grouped by dataset and metri
 Multi-component models are excluded for now. Select up to three points or use the compact
 **Add model** selector to show detailed measurements, including power and memory.
 Remove a selected variant using the × in its table heading or its chart label.
-Selected variants without a point in the current graph are labelled **Not plotted**.
+The chart labels only selected variants plotted against its current dataset and metric.
+Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
 preserves the task and selected variants. LLM/VLM comparison shows **TBD**.
 

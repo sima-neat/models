@@ -326,7 +326,7 @@ async function checkTaskComparison(browser, base) {
         if (await tooltip.isVisible()) throw new Error('tooltip remains visible after pointer leaves');
         await first.focus();
         await first.press('Enter');
-        if (await page.locator(`.compare-legend [data-compare-toggle="${firstKey}"] .compare-not-plotted`).count()) throw new Error('plotted selection was labelled Not plotted');
+        if (await page.locator(`.compare-legend [data-compare-toggle="${firstKey}"]`).count() !== 1) throw new Error('plotted selection is missing from the legend');
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         if (await page.locator('.compare-table thead th').count() !== 3) throw new Error('selection did not populate three comparison columns');
@@ -346,7 +346,7 @@ async function checkTaskComparison(browser, base) {
         await remove.focus();
         await remove.press('Enter');
         if (await page.locator('.compare-table thead th').count() !== 1) throw new Error('table removal did not update selected columns');
-        if (await page.locator(`.compare-point[data-compare-toggle="${removedKey}"]`).getAttribute('aria-pressed') !== 'false') throw new Error('table removal did not update the chart');
+        if (await page.locator(`.compare-point[data-compare-toggle="${removedKey}"][aria-pressed="true"]`).count()) throw new Error('table removal did not update the chart');
         if (new URL(page.url()).searchParams.getAll('build').includes(removedKey)) throw new Error('table removal left the variant in the URL');
         if (await add.isDisabled() || !await add.locator(`option[value="${removedKey}"]`).count()) throw new Error('table removal did not restore the variant to Add model');
         if (await page.locator('[data-compare-control="component"]').count()) throw new Error('component control remains visible');
@@ -355,6 +355,10 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('[data-compare-control="axis"] option[value="latency"]').count()) throw new Error('latency remains selectable as an axis');
         const chartLabels = await page.locator('.compare-axis-title').allTextContents();
         if (chartLabels[0] !== 'Throughput (inferences/s)' || !chartLabels[1].includes('mAP')) throw new Error('accuracy/throughput axes changed');
+        const droneKey = await add.locator('option').filter({hasText: 'Tiny Drone'}).first().getAttribute('value');
+        await add.selectOption(droneKey);
+        if (await page.locator(`.compare-point[data-compare-toggle="${droneKey}"], .compare-legend [data-compare-toggle="${droneKey}"]`).count()) throw new Error('model with a different accuracy dataset appears in the chart');
+        if (await page.locator(`.compare-table .compare-remove[data-compare-toggle="${droneKey}"]`).count() !== 1) throw new Error('model with a different accuracy dataset is missing from the table');
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();
@@ -363,7 +367,7 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('variant without accuracy is no longer selectable');
-        if (await page.locator('.compare-legend .compare-not-plotted').innerText() !== 'Not plotted') throw new Error('selection without a point is missing its Not plotted label');
+        if (await page.locator('.compare-legend button').count()) throw new Error('selection without measured accuracy appears in the legend');
         await page.locator('.compare-table .compare-remove').click();
         if (await page.locator('.compare-table, .compare-selected').count()) throw new Error('removing the final variant left an empty table');
         if (new URL(page.url()).searchParams.getAll('build').length) throw new Error('removing the final variant left a selection in the URL');

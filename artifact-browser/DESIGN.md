@@ -60,7 +60,8 @@ text neutral and readable in both themes.
 Compare starts with a task, then shows measured single-component vision variants
 in one scatter plot: accuracy vertically, throughput horizontally. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
-variants with missing measurements. Selection colors use the shared SiMa blue,
+variants with missing measurements. The graph legend includes plotted selections only;
+variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,
 green and orange palette. LLM/VLM comparisons remain TBD.
 
 The model page reads at a glance first and expands on request.
