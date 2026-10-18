@@ -123,7 +123,9 @@ in this order:
    opens a **Chart / Table** selector. **Chart** shows
    measured execution times in microseconds with a **Slowest layers first** caption and a fixed time
    axis and a legend of layer families inferred from compiled names. **Table**
-   shows names, execution time and share without bars, with a **Compiler order** caption. Name
+   shows names, execution time and share without bars, with a **Compiler order** caption.
+   Its compact table is left-aligned, with fixed-width numeric columns; the chart
+   uses the full available width. Name
    search and a minimum-time slider apply to either view; only one is displayed.
    Each layer also identifies its stage and compiler position. The summary shows
    profiled MLA time, the layer count (including zero-time entries), and the ten

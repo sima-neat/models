@@ -767,17 +767,22 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-controls :is(input, button):focus-visible, .layer-table-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .layer-results { margin: 18px 0 12px; }
 .layer-table-scroll { box-sizing: border-box; overflow: auto; scrollbar-gutter: stable; padding-inline-end: 16px; max-height: 640px; }
+.layer-numeric-scroll { max-width: 850px; }
 .layer-table { --layer-time-value-width: 88px; --layer-time-gap: 16px; width: 100%; table-layout: fixed; border-collapse: collapse; color: var(--ink); font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .layer-table th, .layer-table td { padding: 16px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 .layer-table thead th { position: sticky; top: 0; z-index: 1; vertical-align: top; background: var(--canvas); color: var(--ink-soft); font-size: 13px; font-weight: 600; }
 .layer-table th:first-child { width: 55%; padding-left: 0; }
 .layer-duration-table th:first-child { width: 43%; }
+.layer-numeric-table th:first-child { width: auto; }
+.layer-numeric-table th:nth-child(2) { width: 160px; }
 .layer-numeric-table th:last-child { width: 88px; }
+.layer-numeric-table th, .layer-numeric-table td { padding-block: 8px; }
 .layer-numeric-table thead th:nth-child(2) { white-space: normal; }
 .layer-table tbody th { font-weight: 400; }
 .layer-axis { display: flex; justify-content: space-between; gap: 4px; margin-top: 10px; margin-inline-end: calc(var(--layer-time-value-width) + var(--layer-time-gap)); font-size: 12px; font-weight: 400; }
 .layer-name { overflow-wrap: anywhere; }
 .layer-name small { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
+.layer-numeric-table .layer-name small { margin-top: 2px; }
 .layer-timing-value { display: grid; grid-template-columns: minmax(0, 1fr) var(--layer-time-value-width); align-items: center; gap: var(--layer-time-gap); }
 .layer-timing-value > span:last-child { text-align: right; white-space: nowrap; }
 .layer-bar-track { display: block; height: 12px; border-radius: 3px; background: var(--line); overflow: hidden; }
@@ -794,7 +799,8 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
   .layer-table-scroll { padding-inline-end: 12px; }
   .layer-table { --layer-time-value-width: 64px; --layer-time-gap: 8px; font-size: 13px; }
   .layer-table th, .layer-table td { padding: 14px 8px; }
-  .layer-numeric-table th:first-child { width: 55%; }
+  .layer-numeric-table th, .layer-numeric-table td { padding-block: 8px; }
+  .layer-numeric-table th:nth-child(2) { width: 96px; }
   .layer-duration-table th:first-child { width: 43%; }
   .layer-numeric-table th:last-child { width: 58px; }
   .layer-table thead th { font-size: 12px; }

@@ -495,7 +495,7 @@ function layerAnalysisResults(analysis, view) {
     .map(([id, title]) => `<span class="layer-family-${id}"><i aria-hidden="true"></i>${title}</span>`).join("");
   return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${table ? "Compiler order" : "Slowest layers first"}</p>
     ${layers.length ? `${table ? "" : `<div class="layer-legend" aria-label="Layer families inferred from compiled names"><span>Family (from name)</span>${legend}</div>`}
-    <div class="layer-table-scroll" tabindex="0" role="region" aria-label="${table ? "Compiled layer timings" : "Layer execution time chart"}"><table class="layer-table ${table ? "layer-numeric-table" : "layer-duration-table"}">
+    <div class="layer-table-scroll${table ? " layer-numeric-scroll" : ""}" tabindex="0" role="region" aria-label="${table ? "Compiled layer timings" : "Layer execution time chart"}"><table class="layer-table ${table ? "layer-numeric-table" : "layer-duration-table"}">
       <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time <span class="layer-time-unit">(µs)</span>${table ? "" : axis}</th>${table ? '<th scope="col">Share (%)</th>' : ""}</tr></thead>
       <tbody>${rows}</tbody></table></div>` : '<p class="muted-message">No layers match these filters.</p>'}`;
 }
