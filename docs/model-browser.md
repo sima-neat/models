@@ -120,16 +120,38 @@ in this order:
    CI reuses a build until its compile inputs change, so that commit can be
    later than the build's.
    When the report includes layer stats, **Runtime Layer Analysis**
-   opens a **Chart / Table** selector. **Chart** shows
-   measured execution times in microseconds with a **Slowest layers first** caption and a fixed time
-   axis and a legend of layer families inferred from compiled names. **Table**
-   shows names, execution time and share without bars, with a **Compiler order** caption.
-   Its compact table is left-aligned, with fixed-width numeric columns; the chart
-   uses the full available width. Name
-   search and a minimum-time slider apply to either view; only one is displayed.
+   shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
+   headings. Each execution-time cell shows its exact value above a thin bar,
+   colored by operation family with a compact legend. Families are inferred from
+   compiled names: Convolution, Matmul / Einsum, Activation, Pooling, Elementwise,
+   Tensor layout, Normalization, Resize, Reduction, Input / output and Other.
+   Matching follows the named operation, rather than searching the whole string.
+   Compiler-generated slice/concat vertices are Tensor layout even when their names
+   reference another computation. Segments retain their computation's family;
+   placeholders and `_output` vertices are Input / output. Fused `conv2d_add_relu`
+   is Convolution, while `add_relu` is Elementwise. Nested reshape transformations
+   stay Tensor layout. Unrecognized operations use Other. This is a display
+   classification, not a source-graph operator mapping or consumer-time attribution.
+   The benchmark API filters out input placeholders but retains `_output` entries;
+   the Input / output family in those reports therefore describes output handling.
+   Local previews use synthetic layer profiles covering the ten recognized families for UI
+   review; those profiles do not represent the selected model's actual graph.
+   The legend shows families present in the component and stays
+   unchanged when filtering. All bars share a time axis from zero to the rounded-up
+   maximum execution time, with a midpoint tick on desktop. Desktop columns have equal
+   widths and aligned starting points; narrow screens reserve space for percentages.
+   Rounded bars, a quiet axis line, soft row separators and a hover highlight help
+   follow each layer's measurements across the row.
+   Hovering anywhere on a layer's row emphasizes its matching family in the legend,
+   without shifting the labels. Moving between cells preserves the emphasis; it
+   clears when the pointer leaves the row.
+   **Runtime order / Slowest layers first** changes the row order; Runtime order
+   follows the reported layer sequence, and Slowest layers first is the default.
+   The bar scale stays fixed when filtering or reordering. Name
+   search and a minimum-time slider preserve the selected order.
    Each layer also identifies its stage and compiler position. The summary shows
    profiled MLA time, the layer count (including zero-time entries), and the ten
-   slowest layers' share. Filtering preserves the totals, time axis and percentage
+   slowest layers' share. Filtering preserves the totals, bar scale and percentage
    denominator. These timings come from a separate profiling pass; they are not
    a partition of headline latency. Compiled layer names may differ from ONNX
    operators. Historical reports without stats omit this section.

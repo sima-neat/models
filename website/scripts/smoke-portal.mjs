@@ -77,23 +77,59 @@ async function checkLayerAnalysis(browser, url) {
       await page.locator('[data-disclosure^="layers:"] > summary').first().click();
       const panel = page.locator('[data-layer-analysis]').first();
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      if (await panel.locator('.layer-duration-table tbody tr').count() !== 48) throw new Error('Chart must show every layer');
-      if (!(await panel.locator('.layer-results').innerText()).includes('Slowest layers first')) throw new Error('Chart ordering caption is missing');
+      if (await panel.locator('.layer-table tbody tr').count() !== 48) throw new Error('Layer timings must show every layer');
+      if (await panel.locator('.layer-legend i').count() !== 10) throw new Error('Preview must demonstrate all ten recognized operation families');
+      if (await panel.locator('tbody .layer-family-other').count()) throw new Error('Preview must use recognized compiler operations');
+      await page.evaluate(() => document.fonts.ready);
+      const legendPositions = () => panel.locator('.layer-legend').evaluate(legend => {
+        const bounds = legend.getBoundingClientRect();
+        return [...legend.querySelectorAll('[data-layer-family]')].map(item => {
+          const box = item.getBoundingClientRect();
+          return [box.left - bounds.left, box.top - bounds.top, box.width, box.height];
+        });
+      });
+      const initialLegendPositions = await legendPositions();
+      for (const family of ['conv', 'activation']) {
+        const row = panel.locator(`tbody .layer-family-${family}`).first();
+        for (const cell of ['.layer-name', '.layer-timing-number', '.layer-bar-track', '.layer-share']) {
+          await row.locator(cell).hover();
+          const highlighted = panel.locator('.layer-legend .is-highlighted');
+          if (await highlighted.count() !== 1 || await highlighted.getAttribute('data-layer-family') !== family) throw new Error('Row hover must emphasize only its own family');
+          if (await highlighted.locator('.layer-legend-label > span').evaluate(label => getComputedStyle(label).fontWeight) !== '600') throw new Error('Hovered family label should be bold');
+          if (await row.locator('.layer-timing-number').evaluate(value => getComputedStyle(value).fontWeight) !== '400') throw new Error('Execution times must remain regular weight');
+          const hoveredPositions = await legendPositions();
+          if (hoveredPositions.some((box, index) => box.some((value, axis) => Math.abs(value - initialLegendPositions[index][axis]) > .5))) throw new Error(`Row hover shifts the legend: ${JSON.stringify({initialLegendPositions, hoveredPositions})}`);
+        }
+      }
+      await panel.locator('.layer-results').hover();
+      if (await panel.locator('.layer-legend .is-highlighted').count()) throw new Error('Legend emphasis must clear after leaving the row');
+      if (!(await panel.locator('.layer-results').innerText()).includes('Slowest layers first')) throw new Error('Layer ordering caption is missing');
       if (await panel.locator('[data-layer-filter="stage"]').count()) throw new Error('stage dropdown should be absent');
       const axis = await panel.locator('.layer-axis').innerText();
+      if (await panel.locator('.layer-axis > span').first().innerText() !== '0') throw new Error('Time axis must start at zero');
+      const maximum = Number((await panel.locator('.layer-axis > span').last().innerText()).replaceAll(',', ''));
+      if (maximum !== Number(await panel.locator('[data-layer-filter="minUs"]').getAttribute('max'))) throw new Error('Time axis and filters use different scales');
+      const barWidths = await panel.locator('tbody tr').evaluateAll(rows => Object.fromEntries(rows.map(row => [
+        row.querySelector('.layer-name small').textContent,
+        row.querySelector('.layer-bar-track > span').style.width,
+      ])));
+      const scaleUnchanged = () => panel.locator('tbody tr').evaluateAll((rows, widths) => rows.every(row =>
+        row.querySelector('.layer-bar-track > span').style.width === widths[row.querySelector('.layer-name small').textContent]
+      ), barWidths);
       const summary = await panel.locator('.layer-summary').innerText();
       await panel.locator('[data-layer-filter="query"]').fill('RESHAPE');
-      if (await panel.locator('.layer-axis').innerText() !== axis) throw new Error('search changed the time axis');
-      if (await panel.locator('.layer-duration-table tbody tr').count() !== 16) throw new Error('name filtering failed');
+      if (!await scaleUnchanged()) throw new Error('Search changed the bar scale');
+      if (await panel.locator('.layer-axis').innerText() !== axis) throw new Error('Search changed the time axis');
+      if (await panel.locator('.layer-table tbody tr').count() !== 16) throw new Error('name filtering failed');
       const slider = await panel.locator('[data-layer-filter="minUs"]').elementHandle();
       await slider.evaluate(el => { el.value = Number(el.max) / 2; el.dispatchEvent(new Event('input', {bubbles: true})); });
       if (!await slider.evaluate(el => el.isConnected)) throw new Error('filtering replaced the slider during dragging');
       await slider.evaluate(el => { el.value = 0; el.dispatchEvent(new Event('input', {bubbles: true})); });
-      await panel.getByRole('button', {name: 'Table', exact: true}).click();
-      if (!(await panel.locator('.layer-results').innerText()).includes('Compiler order')) throw new Error('Table ordering caption is missing');
-      if (await panel.locator('.layer-numeric-table tbody tr').count() !== 16) throw new Error('view switch lost filters');
-      if (await panel.locator('.layer-bar-track').count()) throw new Error('Table should show numbers without bars');
-      if (await panel.locator('.layer-name small').first().innerText() !== 'Stage 0 · #3') throw new Error('Table lost compiler order');
+      await panel.getByRole('button', {name: 'Runtime order', exact: true}).click();
+      if (!(await panel.locator('.layer-results').innerText()).includes('Runtime order')) throw new Error('Runtime ordering caption is missing');
+      if (await panel.locator('.layer-table tbody tr').count() !== 16) throw new Error('Reordering lost filters');
+      if (await panel.locator('.layer-bar-track').count() !== 16 || await panel.locator('.layer-share').count() !== 16) throw new Error('Reordering lost bars or percentages');
+      if (await panel.locator('.layer-name small').first().innerText() !== 'Stage 0 · #3') throw new Error('Runtime order lost the reported layer sequence');
       // A classic scrollbar and the widest percentage must leave the Share column readable.
       await page.addStyleTag({content: '.layer-table-scroll::-webkit-scrollbar { width: 18px; height: 18px; }'});
       const layout = await panel.evaluate(panel => {
@@ -129,8 +165,14 @@ async function checkLayerAnalysis(browser, url) {
       if (!await panel.getByText('No layers match these filters.').isVisible()) throw new Error('missing empty filter state');
       if (await panel.locator('.layer-summary').innerText() !== summary) throw new Error('filters changed summary totals');
       await panel.locator('[data-layer-filter="query"]').fill('');
-      await panel.getByRole('button', {name: 'Chart', exact: true}).click();
-      if (await panel.locator('.layer-bar-track').count() !== 48) throw new Error('Chart lost layers');
+      await panel.getByRole('button', {name: 'Slowest layers first', exact: true}).click();
+      if (await panel.locator('.layer-bar-track').count() !== 48) throw new Error('Reordering lost layers');
+      const times = await panel.locator('.layer-timing-number').allTextContents();
+      const durations = times.map(value => Number(value.replaceAll(',', '')));
+      if (durations.some((value, index) => index && value > durations[index - 1])) throw new Error('Slowest layers are not first');
+      if (!await scaleUnchanged()) throw new Error('Reordering changed the bar scale');
+      if (await panel.locator('.layer-axis').innerText() !== axis) throw new Error('Reordering changed the time axis');
+      if (!await panel.getByRole('button', {name: 'Slowest layers first', exact: true}).getAttribute('aria-pressed').then(value => value === 'true')) throw new Error('Selected order is not marked');
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('page overflows viewport');
       console.log(`ok  Runtime Layer Analysis · ${name}`);
     } finally {

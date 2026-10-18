@@ -78,12 +78,45 @@ test('minimum execution time combines with search without changing totals or hid
   assert.equal(selectLayers(analysis, {minUs: 31}).layers.length, 0);
 });
 
-test('duration colors infer families from compiled names and tolerate unknown names', () => {
+test('operation families follow AFE composite names and tolerate unknown names', () => {
   assert.equal(layerFamily('MLA_0/conv2d_add_relu'), 'conv');
   assert.equal(layerFamily('MLA_0/tuple_einsum_307'), 'matmul');
   assert.equal(layerFamily('pool'), 'pool');
   assert.equal(layerFamily('swish'), 'activation');
-  assert.equal(layerFamily('concat'), 'merge');
+  assert.equal(layerFamily('concat'), 'layout');
   assert.equal(layerFamily('placeholder'), 'io');
-  assert.equal(layerFamily('reshape'), 'other');
+  assert.equal(layerFamily('reshape'), 'layout');
+  assert.equal(layerFamily('MLA_0/add_relu_5'), 'elementwise');
+  assert.equal(layerFamily('MLA_0/multiply_100'), 'elementwise');
+  assert.equal(layerFamily('MLA_0/softmax_110'), 'normalization');
+  assert.equal(layerFamily('MLA_0/image.resize2d_57/0'), 'resize');
+  assert.equal(layerFamily('MLA_0/sum_10'), 'reduction');
+  assert.equal(layerFamily('MLA_0/qnn_conv2d_bias_10'), 'conv');
+  assert.equal(layerFamily('MLA_0/qnn_add_12'), 'elementwise');
+  assert.equal(layerFamily('MLA_0/block_0/conv2d'), 'conv');
+  assert.equal(layerFamily('MLA_0/block_0/activation'), 'activation');
+  assert.equal(layerFamily('unrecognized_conv_name'), 'other');
+});
+
+test('N2A helpers are classified by their operation, not producer or consumer names', () => {
+  for (const name of [
+    'slice_MLA_0/transpose_301_0_MLA_0/tuple_einsum_304_0',
+    'slice_MLA_0/swish_1_0_MLA_0/conv2d_add_2_1',
+    'concat_MLA_0/conv2d_add_0_MLA_0/swish_1_0',
+    'batch_concat_MLA_0/conv2d_add_2_off0_sz4',
+    'MLA_0/tuple_einsum_304_batch_slice_from_MLA_0/transpose_301_0',
+    'concat_MLA_0/softmax_110_MLA_0/softmax_110_output',
+  ]) assert.equal(layerFamily(name), 'layout', name);
+  assert.equal(layerFamily('MLA_0/placeholder_0_0_MLA_0/conv2d_add_relu_0_0'), 'io');
+  assert.equal(layerFamily('MLA_0/conv2d_add_374_output'), 'io');
+  assert.equal(layerFamily('MLA_0/softmax_110_output'), 'io');
+  assert.equal(layerFamily('MLA_0/conv2d_add_374_output_segment_0'), 'io');
+});
+
+test('segments and nested reshape transformations retain the parent operation family', () => {
+  assert.equal(layerFamily('MLA_0/tuple_einsum_104_segment_0'), 'matmul');
+  assert.equal(layerFamily('MLA_0/softmax_105_batch_segment_1'), 'normalization');
+  assert.equal(layerFamily('MLA_0/reshape_94/reshape_channel/split_and_concat'), 'layout');
+  assert.equal(layerFamily('MLA_0/reshape_94/reshape_spatial/squeeze_idim2'), 'layout');
+  assert.equal(layerFamily('MLA_0/conv2d_add_10_output_reshape'), 'layout');
 });

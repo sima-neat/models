@@ -44,18 +44,38 @@ export function layerTimeScale(analysis) {
 }
 
 export const LAYER_FAMILIES = {
-  conv: "Convolution", matmul: "Matmul / einsum", activation: "Activation",
-  pool: "Pooling", merge: "Add / concat", io: "Input / output", other: "Other",
+  conv: "Convolution", matmul: "Matmul / Einsum", activation: "Activation",
+  pool: "Pooling", elementwise: "Elementwise", layout: "Tensor layout",
+  normalization: "Normalization", resize: "Resize", reduction: "Reduction",
+  io: "Input / output", other: "Other",
 };
 
-// Display hints inferred from compiled names, not source-graph operator mappings.
+// AFE names Relay/composite operations; N2A adds vertices for segmentation and outputs.
+// Generated slice/concat names include producer/consumer names after the operation prefix.
+// Keep those helpers separate from the referenced computation. These remain name-based
+// display families: the profiling report does not carry the compiler's operator type.
 export function layerFamily(name) {
-  const text = name.toLowerCase();
-  if (text.includes("conv")) return "conv";
-  if (text.includes("matmul") || text.includes("einsum")) return "matmul";
-  if (text.includes("pool")) return "pool";
-  if (/relu|swish|sigmoid|gelu|activation/.test(text)) return "activation";
-  if (/concat|add/.test(text)) return "merge";
-  if (/placeholder|input|output/.test(text)) return "io";
+  const text = name.toLowerCase().replace(/^mla_\d+\//, "");
+  // large_tensor_helper.py creates these before the consumer and can reuse them.
+  if (/^(?:slice_|concat_|batch_concat_)/.test(text) || text.includes("_batch_slice_from_")) return "layout";
+  if (/^(?:placeholder|input|output)(?:_|$)/.test(text)
+    || /_output(?:_(?:batch_)?segment_\d+)?$/.test(text)) return "io";
+  if (/_output_reshape(?:_|\/|$)/.test(text)) return "layout";
+
+  // Parent-first matching keeps decomposed reshapes together, while supporting
+  // scoped names from historical reports (block_0/conv2d, etc.).
+  for (const component of text.split("/")) {
+    const operation = component.replace(/^(?:nn\.|qnn[._])/, "");
+    if (/^(?:group_)?conv(?:[123]d)?(?:transpose)?(?:_|$)/.test(operation)) return "conv";
+    if (/^(?:matmul|batch_matmul|dense|einsum|einsum_with_repetition|tuple_einsum|single_input_tuple_einsum)(?:_|$)/.test(operation)) return "matmul";
+    if (/^(?:pad_|global_)?(?:avg|max)?_?pool(?:[123]d)?(?:_|$)/.test(operation)) return "pool";
+    if (/^(?:softmax|log_softmax|layer_norm|layernorm|rms_norm|rmsnorm|instance_norm|instancenorm|batch_norm|l2_norm|lrn)(?:_|$)/.test(operation)) return "normalization";
+    // add_relu/add_clip are AddActivationOp, rather than standalone activations.
+    if (/^(?:add|subtract|multiply|mul|divide|maximum|minimum|constant_multiply_add|power|exp|log|log2|log10|sqrt|rsqrt|reciprocal|sin|cos|erf)(?:_|$)/.test(operation)) return "elementwise";
+    if (/^(?:relu|leaky_relu|prelu|swish|hard_swish|sigmoid|hard_sigmoid|gelu|quick_gelu|elu|selu|tanh|softplus|clip|activation)(?:_|$)/.test(operation)) return "activation";
+    if (/^(?:reshape|transpose|strided_slice|slice|slice_concat|tuple_concat|concatenate|concat|split|squeeze|expand_dims|flatten|batch_flatten|broadcast_to|pad|depth_to_space|tile|take|gather|copy|channel_permute|tessellate|detessellate|layout_transform)(?:_|$)/.test(operation)) return "layout";
+    if (/^(?:image\.resize[123]d|resize|upsampling)(?:_|$)/.test(operation)) return "resize";
+    if (/^(?:reduce_(?:sum|max|min|mean|prod)|sum|max|min|mean|prod|variance|argmax|argmin|topk)(?:_|$)/.test(operation)) return "reduction";
+  }
   return "other";
 }

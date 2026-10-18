@@ -69,7 +69,12 @@ The preview's benchmark results start from
 `artifact-browser/fixtures/performance-result.json`, a ResNet-50 result
 that `import-core-benchmark` produced from a DevKit Core benchmark, so its
 board telemetry and power rails are real readings; the preview varies only
-speed, energy, and MLA memory per build, and generates illustrative layer timings. Edit it to exercise other metric
+speed, energy, and MLA memory per build, and generates illustrative layer timings
+covering all ten recognized operation families in each profiling panel. These synthetic
+layer names include fused operations, nested reshapes, segmentation helpers,
+outputs and zero-time entries. Input placeholders are omitted, matching the
+benchmark API. These names do not describe the selected model's actual graph.
+Edit it to exercise other metric
 values or availability states. Keep one fixture per benchmark adapter, not
 per schema version: a new format that needs its own adapter adds its own
 fixture and tests, and the existing fixture keeps covering the older formats.

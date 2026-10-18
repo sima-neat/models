@@ -477,26 +477,23 @@ function executionGraphSection(graph, runId) {
 const layerTime = (value) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 function layerAnalysisResults(analysis, view) {
-  const table = view.mode === "table";
-  const { layers, totalUs, count } = selectLayers(analysis, {
-    ...view, order: table ? "compiler" : "time",
-  });
+  const { layers, totalUs, count } = selectLayers(analysis, view);
   const scaleUs = layerTimeScale(analysis);
   const label = (layer) => `<th scope="row" class="layer-name" title="${escapeHtml(layer.name)}">${escapeHtml(layer.name.replace(/^MLA_\d+\//, ""))}<small>Stage ${layer.stage} · #${layer.order}</small></th>`;
-  const rows = layers.map((layer) => `<tr class="layer-family-${layerFamily(layer.name)}">
+  const rows = layers.map((layer) => `<tr class="layer-family-${layerFamily(layer.name)}" data-layer-family="${layerFamily(layer.name)}">
     ${label(layer)}
-    ${table
-      ? `<td class="layer-timing-number">${layerTime(layer.timeUs)}</td><td class="layer-share">${(totalUs > 0 ? layer.timeUs / totalUs * 100 : 0).toFixed(2)}%</td>`
-      : `<td><div class="layer-timing-value"><span class="layer-bar-track" aria-hidden="true" title="${layerTime(layer.timeUs)} µs"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span><span>${layerTime(layer.timeUs)} <small>µs</small></span></div></td>`}
+    <td><div class="layer-timing"><span class="layer-timing-number">${layerTime(layer.timeUs)}</span><span class="layer-bar-track" aria-hidden="true"><span style="width:${layer.timeUs / scaleUs * 100}%"></span></span></div></td>
+    <td class="layer-share">${(totalUs > 0 ? layer.timeUs / totalUs * 100 : 0).toFixed(2)}%</td>
   </tr>`).join("");
-  const axis = `<span class="layer-axis" aria-label="Scale: 0 to ${layerTime(scaleUs)} microseconds"><span>0</span><span>${layerTime(scaleUs / 2)}</span><span>${layerTime(scaleUs)}</span></span>`;
-  const families = new Set(layers.map((layer) => layerFamily(layer.name)));
+  const families = new Set(analysis.layers.map((layer) => layerFamily(layer.name)));
   const legend = Object.entries(LAYER_FAMILIES).filter(([id]) => families.has(id))
-    .map(([id, title]) => `<span class="layer-family-${id}"><i aria-hidden="true"></i>${title}</span>`).join("");
-  return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${table ? "Compiler order" : "Slowest layers first"}</p>
-    ${layers.length ? `${table ? "" : `<div class="layer-legend" aria-label="Layer families inferred from compiled names"><span>Family (from name)</span>${legend}</div>`}
-    <div class="layer-table-scroll${table ? " layer-numeric-scroll" : ""}" tabindex="0" role="region" aria-label="${table ? "Compiled layer timings" : "Layer execution time chart"}"><table class="layer-table ${table ? "layer-numeric-table" : "layer-duration-table"}">
-      <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time <span class="layer-time-unit">(µs)</span>${table ? "" : axis}</th>${table ? '<th scope="col">Share (%)</th>' : ""}</tr></thead>
+    .map(([id, title]) => `<span class="layer-family-${id}" data-layer-family="${id}"><i aria-hidden="true"></i><span class="layer-legend-label" data-label="${escapeHtml(title)}"><span>${title}</span></span></span>`).join("");
+  const axis = `<span class="layer-axis" aria-label="Scale: 0 to ${layerTime(scaleUs)} microseconds"><span>0</span><span>${layerTime(scaleUs / 2)}</span><span>${layerTime(scaleUs)}</span></span>`;
+  return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${view.order === "compiler" ? "Runtime order" : "Slowest layers first"}</p>
+    <div class="layer-legend" aria-label="Layer types inferred from compiled names"><span>Layer type (from name)</span>${legend}</div>
+    ${layers.length ? `<div class="layer-table-scroll" tabindex="0" role="region" aria-label="Compiled layer timings"><table class="layer-table">
+      <colgroup><col><col><col></colgroup>
+      <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time <span class="layer-time-unit">(µs)</span>${axis}</th><th scope="col">Share (%)</th></tr></thead>
       <tbody>${rows}</tbody></table></div>` : '<p class="muted-message">No layers match these filters.</p>'}`;
 }
 
@@ -512,14 +509,14 @@ function layerAnalysisBody(analysis, view) {
   <div class="layer-controls">
     <label class="layer-search">Layer name<input type="search" data-layer-filter="query" value="${escapeHtml(view.query)}" placeholder="Search compiled layers" autocomplete="off"></label>
     <label class="layer-threshold"><span>Minimum time: <output data-layer-threshold-value>${layerTime(view.minUs)} µs</output></span><input type="range" data-layer-filter="minUs" min="0" max="${scaleUs}" step="any" value="${view.minUs}"></label>
-    <div class="layer-view-toggle" role="group" aria-label="Layer statistics view">${["duration", "table"].map((mode) => `<button type="button" data-layer-filter="mode" value="${mode}" aria-pressed="${view.mode === mode}">${mode === "duration" ? "Chart" : "Table"}</button>`).join("")}</div>
+    <div class="layer-order-toggle" role="group" aria-label="Layer order">${[["compiler", "Runtime order"], ["time", "Slowest layers first"]].map(([order, label]) => `<button type="button" data-layer-filter="order" value="${order}" aria-pressed="${view.order === order}">${label}</button>`).join("")}</div>
   </div>
   <div data-layer-results>${layerAnalysisResults(analysis, view)}</div>`;
 }
 
 function layerAnalysisSection(analysis, runId) {
   if (!analysis) return "";
-  const view = state.layerViews.get(runId)?.view || { query: "", minUs: 0, mode: "duration" };
+  const view = state.layerViews.get(runId)?.view || { query: "", minUs: 0, order: "time" };
   state.layerViews.set(runId, { analysis, view });
   return disclosure(`layers:${runId}`, "Runtime Layer Analysis",
     `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view)}</div>`,
@@ -530,14 +527,24 @@ export function updateLayerAnalysis(event) {
   const control = event.target.closest("[data-layer-filter]");
   if (!control) return;
   const field = control.dataset.layerFilter;
-  if (event.type !== (field === "mode" ? "click" : "input")) return;
+  if (event.type !== (field === "order" ? "click" : "input")) return;
   const panel = control.closest("[data-layer-analysis]");
   const { analysis, view } = state.layerViews.get(panel.dataset.layerAnalysis);
   view[field] = field === "minUs" ? Number(control.value) : control.value;
   panel.querySelector("[data-layer-results]").innerHTML = layerAnalysisResults(analysis, view);
   panel.querySelector("[data-layer-threshold-value]").textContent = `${layerTime(view.minUs)} µs`;
-  panel.querySelectorAll('[data-layer-filter="mode"]').forEach((button) => {
-    button.setAttribute("aria-pressed", String(button.value === view.mode));
+  panel.querySelectorAll('[data-layer-filter="order"]').forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.value === view.order));
+  });
+}
+
+export function highlightLayerLegend(event) {
+  const row = event.target.closest(".layer-table tbody tr[data-layer-family]");
+  if (!row || row.contains(event.relatedTarget)) return;
+  const panel = row.closest("[data-layer-analysis]");
+  const family = row.dataset.layerFamily;
+  panel.querySelectorAll(".layer-legend [data-layer-family]").forEach((item) => {
+    item.classList.toggle("is-highlighted", event.type === "pointerover" && item.dataset.layerFamily === family);
   });
 }
 

@@ -298,6 +298,37 @@ def _benchmark_template() -> dict[str, Any]:
     return json.loads((BROWSER / "fixtures" / "performance-result.json").read_text(encoding="utf-8"))
 
 
+# Synthetic compiler-style names cover the ten recognized families in one profiling panel.
+# The first ten entries show one of each; nested transforms and helpers exercise
+# classification without substituting measured data or model-specific graph metadata.
+_PREVIEW_LAYER_NAMES = (
+    "MLA_{stage}/conv2d_add_relu_0",
+    "MLA_{stage}/swish_1",
+    "MLA_{stage}/reshape_2/reshape_channel/pad_c",
+    "MLA_{stage}/tuple_einsum_3",
+    "MLA_{stage}/max_pool2d_4",
+    "MLA_{stage}/add_relu_5",
+    "MLA_{stage}/softmax_6",
+    "MLA_{stage}/image.resize2d_7/0",
+    "MLA_{stage}/sum_8",
+    "MLA_{stage}/conv2d_add_9_output",
+    "MLA_{stage}/multiply_10",
+    "MLA_{stage}/reshape_11/reshape_spatial",
+    "MLA_{stage}/reshape_12/reshape_channel/split_and_concat",
+    "MLA_{stage}/reshape_13",
+    "MLA_{stage}/reshape_14",
+    "MLA_{stage}/reshape_15",
+    "MLA_{stage}/reshape_16",
+    "MLA_{stage}/reshape_17",
+    "slice_MLA_{stage}/transpose_20_0_MLA_{stage}/tuple_einsum_3_0",
+    "concat_MLA_{stage}/softmax_6_MLA_{stage}/transpose_20_1",
+    "MLA_{stage}/transpose_20",
+    "MLA_{stage}/copy_21",
+    "MLA_{stage}/conv2d_add_22_output",
+    "MLA_{stage}/copy_23",
+)
+
+
 def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
     result = copy.deepcopy(_benchmark_template())
     key = (model["id"], build["build_profile_id"], build["component_id"])
@@ -319,11 +350,11 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
     # Preview timings are generated, not published measurements of these model definitions.
     report["layer_stats"] = [
-        {"name": f"MLA_{stage}/block_{index // 3}/{['conv2d', 'activation', 'reshape'][index % 3]}",
+        {"name": name.format(stage=stage),
          "stage_index": stage,
-         "total_execution_time_us": 0.0 if index % 9 == 8 else round(
+         "total_execution_time_us": 0.0 if index in (21, 23) else round(
              latency * 1000 * (0.065 / (1 + index / 4)) * (0.8 + _fraction("layer", *key, str(index))), 2)}
-        for stage in (0, 2) for index in range(24)
+        for stage in (0, 2) for index, name in enumerate(_PREVIEW_LAYER_NAMES)
     ]
     # The rest of the board telemetry keeps the template's DevKit readings.
     return result

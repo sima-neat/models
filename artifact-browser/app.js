@@ -20,7 +20,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis,
+  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, highlightLayerLegend,
   showExecutionTooltip, hideExecutionTooltip, keepExecutionTooltip, deferHideExecutionTooltip,
 } from "./model-view.js";
 
@@ -792,11 +792,13 @@ elements["compare-pane"].addEventListener("focusout", hideComparisonTooltip);
 window.addEventListener("scroll", hideComparisonTooltip, true);
 window.addEventListener("resize", hideComparisonTooltip);
 elements["detail-pane"].addEventListener("pointerover", (event) => {
+  highlightLayerLegend(event);
   if (event.pointerType === "touch") return;
   const stage = event.target.closest("[data-execution-stage]");
   if (stage && !stage.contains(event.relatedTarget)) showExecutionTooltip(stage);
 });
 elements["detail-pane"].addEventListener("pointerout", (event) => {
+  highlightLayerLegend(event);
   if (event.pointerType === "touch") return;
   const stage = event.target.closest("[data-execution-stage]");
   if (stage && !stage.contains(event.relatedTarget)) deferHideExecutionTooltip();
