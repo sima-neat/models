@@ -104,7 +104,7 @@ function comparisonTable(columns) {
     return row(label, columns.map((column) => performanceCell(column, key, best)));
   }).join("");
   return `<div class="compare-table-wrap" role="region" aria-label="Selected model measurements" tabindex="0"><table class="compare-table">
-    <thead><tr><td>Measurements</td>${columns.map(({ option, failed }, index) => `<th scope="col"><span class="compare-column-marker" data-color="${index}" aria-hidden="true"></span><button type="button" class="catalog-model-link" data-compare-open="${escapeHtml(option.build.run_id)}">${escapeHtml(option.model.display_name || option.model.model_id)}</button><small>${escapeHtml(failed ? "Could not load this build" : variantLabel(option.profile))}</small></th>`).join("")}</tr></thead>
+    <thead><tr><td>Measurements</td>${columns.map(({ option, failed }, index) => `<th scope="col"><div class="compare-column-heading"><div><span class="compare-column-marker" data-color="${index}" aria-hidden="true"></span><button type="button" class="catalog-model-link" data-compare-open="${escapeHtml(option.build.run_id)}">${escapeHtml(option.model.display_name || option.model.model_id)}</button><small>${escapeHtml(failed ? "Could not load this build" : variantLabel(option.profile))}</small></div><button type="button" class="compare-remove" data-compare-toggle="${escapeHtml(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name || option.model.model_id)} ${escapeHtml(variantLabel(option.profile))} from comparison" title="Remove from comparison"><span aria-hidden="true">×</span></button></div></th>`).join("")}</tr></thead>
     <tbody>
       ${group("Model")}
       ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}
@@ -174,10 +174,14 @@ function comparisonPlot(columns) {
     return `<g class="compare-point" data-compare-toggle="${escapeHtml(column.option.key)}" data-color="${selectionColor(column.option.key)}" role="button" tabindex="0" aria-pressed="${selectionColor(column.option.key) >= 0}" aria-disabled="${selectionColor(column.option.key) < 0 && state.comparePicks.filter(Boolean).length >= MAX_COMPARED_BUILDS}" aria-label="${escapeHtml(label)}">
       <circle class="compare-point-hit" cx="${x(px)}" cy="${y(py)}" r="16"/><circle class="compare-point-dot" cx="${x(px)}" cy="${y(py)}" r="7"/></g>`;
   }).join("");
+  const legend = columns.filter(column => selectionColor(column.option.key) >= 0).map(({option}) => {
+    const isPlotted = plotted.some(point => point.column.option.key === option.key);
+    return `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison${isPlotted ? "" : " (not plotted)"}"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}${isPlotted ? "" : '<small class="compare-not-plotted">Not plotted</small>'}<span aria-hidden="true">×</span></button>`;
+  }).join("");
   return `<section class="compare-chart-panel" aria-labelledby="compare-chart-title">
     <div class="compare-chart-header"><div><h3 id="compare-chart-title">Accuracy &amp; speed</h3><p>${plotted.length} of ${columns.length} variants shown · Select up to three to inspect below.</p></div>
       ${axes.length > 1 ? `<div class="compare-chart-controls">${selectControl("Accuracy metric", "axis", axes, state.compareAxis)}</div>` : ""}</div>
-    <div class="compare-legend">${columns.filter(column => selectionColor(column.option.key) >= 0).map(({option}) => `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}<span aria-hidden="true">×</span></button>`).join("")}</div>
+    <div class="compare-legend">${legend}</div>
     ${plotted.length ? `<div class="compare-chart-scroll" role="region" aria-label="Model measurement chart" tabindex="0"><svg class="compare-chart" viewBox="0 0 960 410" role="group" aria-label="Model measurements: throughput versus ${escapeHtml(yLabel)}">
       <g class="compare-chart-grid">${grid}</g><text class="compare-axis-title" x="503" y="398" text-anchor="middle">Throughput (inferences/s)</text>
       <text class="compare-axis-title" transform="translate(23 195) rotate(-90)" text-anchor="middle">${escapeHtml(yLabel)}</text>${dots}</svg></div>` : '<p class="compare-empty">No matching measurements yet. Use Add model to inspect a variant.</p>'}

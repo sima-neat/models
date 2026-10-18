@@ -36,7 +36,8 @@ from model_registry.model import component_pipelines, load_models, mpk_filename,
 from model_registry.published_metrics import published_metrics_by_model  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
-BRANCH = "develop"
+UI_MODE = os.environ.get("MODEL_BROWSER_UI_MODE", "developer")
+BRANCH = "main" if UI_MODE == "customer" else "develop"
 GIT_REF = f"refs/heads/{BRANCH}"
 # Two catalog revisions, so every variant has an older build in its build history.
 REVISIONS = (
@@ -490,7 +491,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._bytes(
                 b"window.MODEL_REGISTRY_CONFIG = Object.freeze({"
                 b'apiBase: location.origin, environment: "Local preview", '
-                b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
+                + f'uiMode: "{UI_MODE}", '.encode()
+                + b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
                 "text/javascript",
             )
         elif path == "/published-metrics.json":

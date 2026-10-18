@@ -277,8 +277,24 @@ body {
   }
 }
 
+html.developer-center-shell-enabled { --ifm-navbar-height: 3.25rem; }
+html.developer-center-shell-enabled #__docusaurus { padding-top: 60px; }
+html.developer-center-shell-enabled .navbar--fixed-top { top: 60px; }
+html.developer-center-shell-enabled .navbar--fixed-top .navbar__brand,
+html.developer-center-shell-enabled .navbar--fixed-top .navbar__items--right { display: none; }
+html.developer-center-shell-enabled .navbar-sidebar { top: 112px; height: calc(100vh - 112px); }
+.developer-center-shell .navbar__link--active::after { content: none; }
+.developer-center-shell .navbar__inner { flex-wrap: nowrap; }
+@media (max-width: 996px) {
+  .developer-center-shell .navbar__items:not(.navbar__items--right) { flex: 0 0 auto; }
+  html.developer-center-shell-enabled .navbar--fixed-top { padding-inline: 16px; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__item { display: flex; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__catalog-item { margin-right: 0; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__link { font-size: 0.92rem; margin-right: 0; padding-inline: 0.4rem; }
+}
+
 .navbar {
-  padding: 0 clamp(22px, 4vw, 70px);
+  padding: 0 1rem;
   border-bottom: 1px solid var(--portal-line);
   background: var(--portal-raised);
 }
@@ -295,17 +311,17 @@ body {
 
 .navbar__catalog-item {
   height: 100%;
-  margin-right: 24px;
+  margin-right: 0;
   padding: 0;
 }
 
 .navbar__catalog-item .navbar__link,
 .theme-layout-navbar-left > .navbar__link {
-  padding: 0;
+  padding: 0 0.75rem;
 }
 
 .theme-layout-navbar-left > .navbar__link {
-  margin-right: 24px;
+  margin-right: 0;
 }
 
 .navbar__logo {
@@ -316,9 +332,8 @@ body {
 
 .navbar__title,
 .navbar__link {
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
 }
 
 .navbar__link {
@@ -326,27 +341,12 @@ body {
   display: flex;
   height: 100%;
   align-items: center;
-  color: var(--portal-ink-soft);
+  color: var(--portal-ink);
 }
 
 .navbar__link:hover,
 .navbar__link--active {
-  color: var(--portal-ink);
-}
-
-.navbar__link--active::after {
-  position: absolute;
-  right: var(--ifm-navbar-item-padding-horizontal);
-  bottom: -1px;
-  left: var(--ifm-navbar-item-padding-horizontal);
-  height: 2px;
-  background: var(--portal-blue);
-  content: '';
-}
-
-.theme-layout-navbar-left > .navbar__link.navbar__link--active::after {
-  right: 0;
-  left: 0;
+  color: var(--portal-blue);
 }
 
 .navbar__environment-item {

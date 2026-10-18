@@ -1,17 +1,35 @@
 import useIsBrowser from '@docusaurus/useIsBrowser';
+import {useEffect} from 'react';
 import type {Props} from '@theme/ColorModeToggle';
 
 export default function ColorModeToggle({className, buttonClassName, onChange}: Props): React.JSX.Element {
   const isBrowser = useIsBrowser();
   const dark = isBrowser && document.documentElement.dataset.theme === 'dark';
   const nextMode = dark ? 'light' : 'dark';
+  const changeTheme = () => {
+    try {
+      localStorage.setItem('portal-theme', nextMode);
+    } catch {
+      // Theme switching also works when browser storage is restricted.
+    }
+    document.cookie = `sima-neat-theme=${nextMode}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+    onChange(nextMode);
+  };
+  useEffect(() => {
+    const syncTheme = (event: Event) => {
+      const theme = (event as CustomEvent).detail?.theme;
+      if (theme === 'light' || theme === 'dark') onChange(theme);
+    };
+    window.addEventListener('developer-center-theme-change', syncTheme);
+    return () => window.removeEventListener('developer-center-theme-change', syncTheme);
+  }, [onChange]);
 
   return (
     <div className={className}>
       <button
         className={`clean-btn portal-theme-toggle ${buttonClassName ?? ''}`}
         type="button"
-        onClick={() => onChange(nextMode)}
+        onClick={changeTheme}
         disabled={!isBrowser}
         aria-label={`Switch to ${nextMode} mode`}
         title={`Switch to ${nextMode} mode`}>

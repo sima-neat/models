@@ -53,6 +53,7 @@ def test_artifact_browser_assets_exist() -> None:
         "brand.css",
         "styles.css",
         "config.js",
+        "portal-shell.js",
         "favicon.svg",
         "README.md",
     ):
@@ -86,19 +87,15 @@ def test_browser_calls_registry_directly_without_backend_proxy() -> None:
 def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
 
-    assert 'class="brand" href="./"' in html
-    assert 'class="brand" href="/"' not in html
-    assert '<nav class="product-nav" aria-label="Model Registry">' in html
-    assert '<a id="nav-models" href="./" aria-current="page">Models</a>' in html
+    assert 'aria-label="Developer Portal home"' in html
+    assert '<nav class="product-nav" aria-label="Models">' in html
+    assert '<a id="nav-models" href="./" aria-current="page">Browse models</a>' in html
     assert '<a id="nav-compare" href="./?view=compare">Compare</a>' in html
     assert (
-        '<a href="./docs"><span class="nav-long">Developer docs</span><span class="nav-short">Docs</span></a>'
+        '<a class="developer-only" href="./docs"><span class="nav-long">Developer docs</span><span class="nav-short">Docs</span></a>'
         in html
     )
-    assert (
-        '<a class="buy-button" href="https://devkit.sima.ai/" target="_blank" rel="noopener noreferrer">Buy</a>'
-        in html
-    )
+    assert 'class="sectionbar"' in html
     assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
     assert '>GitHub</a>' not in html
 
@@ -272,6 +269,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "scripts").mkdir(parents=True)
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
+    shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
     for source in ("models", "schemas", "tools"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
@@ -340,7 +338,7 @@ def test_portal_assembly_rejects_relative_imports_it_does_not_deploy(tmp_path: P
         assert f"downloads.js imports {specifier}" in result.stderr
 
 
-def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None:
+def test_model_instructions_load_inline_with_integrity_checks() -> None:
     script = _browser_source("api.js", "model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
     renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
@@ -350,7 +348,9 @@ def test_model_cards_use_lazy_integrity_checked_progressive_disclosure() -> None
     assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
     assert 'crypto.subtle.digest("SHA-256"' in script
     assert "state.documentationCache.set(documentationKey(documentation), markdown)" in script
-    assert 'disclosure("model-card", "Full model card", modelCardBody(documentation)' in script
+    assert '<div data-model-card-body>${modelCardBody(documentation)}</div>' in script
+    assert 'disclosure("model-card"' not in script
+    assert "loadModelCard();" in script
     assert "documentationHeroUrl" in script
     assert "documentation.hero?.markdown_path" in script
     assert ".model-card-hero" in styles
@@ -419,12 +419,10 @@ def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    # One helper renders every expandable row on the model page; the catalog's More filters copies its markup.
+    # One helper renders every expandable row on the model page.
     assert browser.count("<details") == 1
     assert '<details class="disclosure" data-disclosure=' in browser
-    assert '<details id="more-filters" class="more-filters disclosure">' in html
-    assert html.count("<details") == 1
-    assert '<span class="disclosure-label">More filters</span><svg class="chevron"' in html
+    assert "<details" not in html
     assert ".disclosure[open] > summary > .chevron { transform: rotate(90deg); }" in styles
     # Re-rendering keeps the rows the reader opened, keyed by the row rather than by its section.
     assert "state.openDisclosures.has(key)" in browser
@@ -434,7 +432,7 @@ def test_every_expandable_area_is_the_shared_disclosure_row() -> None:
         assert removed not in browser
 
 
-def test_execution_graph_opens_its_tensors_from_details_beside_its_heading() -> None:
+def test_execution_graph_opens_its_tensors_from_details_beside_the_diagram() -> None:
     script = _browser_source("model-view.js")
     app = _browser_source("app.js")
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
@@ -442,8 +440,8 @@ def test_execution_graph_opens_its_tensors_from_details_beside_its_heading() -> 
 
     assert "executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan)" in adapters
     assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
-    # Details sits in the heading row and controls the tensor table, which starts closed.
-    assert '<div class="execution-head"><h5>Execution graph</h5>${details}</div>' in script
+    # Details sits beside the diagram and controls the tensor table, which starts closed.
+    assert '<div class="execution-graph-row"><ol>${steps}</ol>${details}</div>' in script
     assert 'aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>' in script
     assert '<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>' in script
     assert '"Tensors"' not in script
@@ -579,7 +577,8 @@ def test_combined_portal_shares_theme_storage_and_section_navigation() -> None:
     assert "trailingSlash: false" not in config
     assert "namespace: false" in config
     assert "className: 'navbar__catalog-item'" in config
-    assert 'href="${baseUrl}">Models</a>' in config
+    assert 'href="${baseUrl}">Browse models</a>' in config
+    assert 'href="${baseUrl}?view=compare">Compare</a>' in config
     assert "label: 'YAML reference'" not in config
     assert "label: 'GitHub'" not in config
     assert 'Staging registry' in config
@@ -734,7 +733,7 @@ def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
 
     assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in write_url
     assert 'url.searchParams.set("branch", branch);' not in write_url
-    assert 'state.urlBranch = link.has("branch")' in script
+    assert 'state.urlBranch = customerView || link.has("branch")' in script
 
 
 def test_all_branches_selection_has_an_explicit_url_value() -> None:
@@ -768,7 +767,7 @@ def test_detail_error_can_be_retried_and_closed() -> None:
 def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None:
     script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js")
 
-    assert 'const DEFAULT_BRANCH = "develop"' in script
+    assert 'const DEFAULT_BRANCH = customerView ? "main" : "develop"' in script
     assert "sima-neat-model-branch:" in script
     assert "readBranchPreference" in script
     assert "writeBranchPreference(state.preferredBranch)" in script
@@ -832,7 +831,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert "font-family: var(--font-body)" in styles
 
 
-def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
+def test_developer_filters_are_directly_visible_and_status_is_not_presented() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = _browser_source("app.js", "catalog-view.js")
     browser = _browser_source()
@@ -841,9 +840,11 @@ def test_secondary_filters_are_collapsed_and_status_is_not_presented() -> None:
     assert 'id="filter-toggle"' in html
     assert 'aria-expanded="false"' in html
     assert 'id="filter-drawer" class="filter-drawer" data-open="false"' in html
-    assert '<details id="more-filters" class="more-filters disclosure">' in html
-    assert html.index('id="task-filter"') < html.index('id="more-filters"') < html.index('id="branch-filter"')
-    assert 'if (moreFiltersActive()) elements["more-filters"].open = true;' in script
+    assert 'id="more-filters"' not in html
+    assert "moreFiltersActive" not in script
+    assert html.index('id="task-filter"') < html.index('id="architecture-filter"') < html.index('id="branch-filter"')
+    assert '<label class="developer-only"><span>Branch</span>' in html
+    assert '<label class="developer-only"><span>Compiler</span>' in html
     assert 'id="filter-count"' in html
     assert "--filter-surface: color-mix(in srgb, var(--surface) 88%, var(--blue-soft))" in styles
     assert "background: var(--filter-surface)" in styles
@@ -879,14 +880,11 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     script = _browser_source("app.js", "state.js", "catalog-view.js")
 
-    for element_id in (
-        "model-type-filter",
-        "task-filter",
-        "architecture-filter",
-        "paradigm-filter",
-        "input-modality-filter",
-    ):
+    for element_id in ("task-filter", "architecture-filter"):
         assert f'id="{element_id}"' in html
+    for removed in ("model-type-filter", "paradigm-filter", "input-modality-filter"):
+        assert f'id="{removed}"' not in html
+        assert removed not in script
     assert "/catalogs/current?git_ref=" in script
     assert "payload.catalog?.document?.taxonomy" in script
     assert '"task-filter": "task"' in script
@@ -900,13 +898,13 @@ def test_filters_list_only_used_values_and_hide_without_a_choice() -> None:
     script = _browser_source("catalog-view.js")
 
     assert '<span>Model family</span><select id="architecture-filter">' in html
-    assert '<span>Architecture</span><select id="paradigm-filter">' in html
     assert "state.runs.flatMap((run) => run[field] ?? [])" in script
     assert "if (build.run) return { ...build.run, ...catalogCategories(model) };" in _browser_source("api.js")
     model_view = _browser_source("model-view.js")
     assert "const categories = catalogModel?.categories || run.model_categories || {};" in model_view
     assert 'element.closest("label").hidden = element.options.length < 3 && !element.value' in script
-    assert 'hideFilterWithoutChoice(elements["compiler-filter"])' in script
+    assert 'hideFilterWithoutChoice(elements["compiler-filter"])' not in script
+    assert 'hideFilterWithoutChoice(elements["branch-filter"])' not in script
 
 
 def test_category_filters_are_server_side_and_shareable() -> None:
@@ -1004,7 +1002,7 @@ def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     assert compact_controls in styles
     assert ".detail-links > [data-tooltip]:hover::after" in styles
     # Narrow screens anchor tooltips to the links row so a hidden tooltip never widens the page.
-    assert ".detail-links { position: relative; grid-column: 1 / -1;" in styles
+    assert ".detail-title-actions { position: relative;" in styles
 
 
 def test_model_page_sections_have_accessible_jump_links() -> None:
@@ -1034,10 +1032,13 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
 
     assert '<button class="download-action" type="button" data-download="package"' in script
     assert '<button class="download-action" type="button" data-download-variant=' in script
-    assert '<span>Copy CLI command</span>' in script
-    assert "modelDownloadCommand(variant.modelId, variant.profile" in script
+    html = (BROWSER / "index.html").read_text(encoding="utf-8")
+    app = _browser_source("app.js")
+    assert 'id="download-copy-cli"' in html
+    assert 'class="cli-action"' not in script
+    assert "modelDownloadCommand(run.metadata.model_id, runProfile(run)" in app
     # The CLI fetches the catalog build, so an older build from history offers no command.
-    assert '${catalogModelOfVariant(variant) ? `<button class="cli-action"' in script
+    assert "const current = state.models.some" in app
     # Details lead with the package card: size, checksum, and both downloads as icon buttons.
     assert "${icons.download}<span>Download package</span>" in script
     assert "${icons.download}<span>Download components</span>" in script
@@ -1048,7 +1049,7 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert 'class="download-button"' not in browser
     assert 'class="artifact-main"' not in browser
     assert "artifact-download-shortcut" not in browser
-    assert ".download-action:focus-visible, .cli-action:focus-visible" in styles
+    assert ".download-action:focus-visible" in styles
 
 
 def test_package_download_dialog_uses_one_consistent_label_value_grid() -> None:

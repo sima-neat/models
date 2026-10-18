@@ -5,15 +5,19 @@ import {spawn} from 'node:child_process';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
+import {portalConfig} from './portal-config.mjs';
 
 const siteDirectory = join(dirname(fileURLToPath(import.meta.url)), '..');
 const preview = join(siteDirectory, '..', 'artifact-browser', 'preview.py');
 const portal = join(siteDirectory, 'portal-build');
 const port = Number(process.env.SMOKE_PORT || 8766);
 const pageAssets = new Set(['document', 'script', 'stylesheet']);
+const config = portalConfig();
+const customer = config.uiMode === 'customer';
 
 function startPreview() {
   const server = spawn(process.env.PYTHON || 'python3', [preview, '--root', portal, '--port', String(port)], {
+    env: {...process.env, MODEL_BROWSER_UI_MODE: config.uiMode},
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const ready = new Promise((resolve, reject) => {
@@ -49,6 +53,15 @@ async function checkPage(browser, url, readySelector) {
   await page.goto(url.href);
   await page.waitForSelector(readySelector, {timeout: 15_000})
     .catch(() => problems.push(`${readySelector} did not render`));
+  if (await page.locator('[data-model-card-body]').count()) {
+    await page.waitForSelector('[data-model-card-body] .model-documentation-body', {timeout: 15_000})
+      .catch(() => problems.push('Inline model instructions did not load'));
+    if (await page.locator('[data-disclosure="model-card"]').count()) problems.push('Model instructions require an extra disclosure');
+  }
+  if (customer && await page.locator('.detail-title').count()) {
+    if (await page.locator('#details-section, [data-scroll-to="details-section"]').count()) problems.push('Customer UI exposes Details');
+    if (await page.locator('[data-disclosure="accuracy"], [data-disclosure="published-scores"]').count()) problems.push('Customer UI exposes evaluation detail rows');
+  }
   await page.close();
   return problems;
 }
@@ -64,7 +77,8 @@ async function checkLayerAnalysis(browser, url) {
       await page.locator('[data-disclosure^="layers:"] > summary').first().click();
       const panel = page.locator('[data-layer-analysis]').first();
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      if (await panel.locator('.layer-duration-table tbody tr').count() !== 48) throw new Error('Duration must show every layer');
+      if (await panel.locator('.layer-duration-table tbody tr').count() !== 48) throw new Error('Chart must show every layer');
+      if (!(await panel.locator('.layer-results').innerText()).includes('Slowest layers first')) throw new Error('Chart ordering caption is missing');
       if (await panel.locator('[data-layer-filter="stage"]').count()) throw new Error('stage dropdown should be absent');
       const axis = await panel.locator('.layer-axis').innerText();
       const summary = await panel.locator('.layer-summary').innerText();
@@ -76,6 +90,7 @@ async function checkLayerAnalysis(browser, url) {
       if (!await slider.evaluate(el => el.isConnected)) throw new Error('filtering replaced the slider during dragging');
       await slider.evaluate(el => { el.value = 0; el.dispatchEvent(new Event('input', {bubbles: true})); });
       await panel.getByRole('button', {name: 'Table', exact: true}).click();
+      if (!(await panel.locator('.layer-results').innerText()).includes('Compiler order')) throw new Error('Table ordering caption is missing');
       if (await panel.locator('.layer-numeric-table tbody tr').count() !== 16) throw new Error('view switch lost filters');
       if (await panel.locator('.layer-bar-track').count()) throw new Error('Table should show numbers without bars');
       if (await panel.locator('.layer-name small').first().innerText() !== 'Stage 0 · #3') throw new Error('Table lost compiler order');
@@ -114,8 +129,8 @@ async function checkLayerAnalysis(browser, url) {
       if (!await panel.getByText('No layers match these filters.').isVisible()) throw new Error('missing empty filter state');
       if (await panel.locator('.layer-summary').innerText() !== summary) throw new Error('filters changed summary totals');
       await panel.locator('[data-layer-filter="query"]').fill('');
-      await panel.getByRole('button', {name: 'Duration', exact: true}).click();
-      if (await panel.locator('.layer-bar-track').count() !== 48) throw new Error('Duration lost layers');
+      await panel.getByRole('button', {name: 'Chart', exact: true}).click();
+      if (await panel.locator('.layer-bar-track').count() !== 48) throw new Error('Chart lost layers');
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('page overflows viewport');
       console.log(`ok  Runtime Layer Analysis · ${name}`);
     } finally {
@@ -133,6 +148,20 @@ async function checkCatalogLayouts(browser, url) {
       try {
         await page.goto(url.href);
         await page.locator('.model-card').first().waitFor();
+        if (await page.locator('#more-filters, #model-type-filter, #paradigm-filter, #input-modality-filter').count()) throw new Error('removed filters remain in the catalog');
+        if (viewport.width === 390) await page.locator('#filter-toggle').click();
+        for (const id of ['branch-filter', 'compiler-filter', 'history-filter']) {
+          if (await page.locator(`#${id}`).isVisible() !== !customer) throw new Error(`${id} is not visible for the correct audience`);
+        }
+        const taskFilter = page.locator('#task-filter');
+        await taskFilter.click();
+        await page.locator('#result-title').click();
+        if (await taskFilter.evaluate(el => getComputedStyle(el).outlineStyle !== 'none')) throw new Error('mouse use left a focus outline on the filter');
+        await page.locator('#search').focus();
+        await page.keyboard.press('Tab');
+        if (viewport.width === 390) await page.keyboard.press('Tab');
+        if (!await taskFilter.evaluate(el => document.activeElement === el && getComputedStyle(el).outlineStyle === 'solid')) throw new Error('keyboard navigation lost its filter focus outline');
+        if (viewport.width === 390) await page.locator('#filter-toggle').click();
         const names = await page.locator('.model-card strong').allTextContents();
         const tasksByModel = await page.locator('.model-card').evaluateAll(cards => Object.fromEntries(cards.map(card => [
           card.querySelector('strong').textContent,
@@ -175,7 +204,7 @@ async function checkCatalogLayouts(browser, url) {
         if (await page.locator('.catalog-task-group').count() !== 1 || await page.locator('.catalog-task-group h3').innerText() !== 'Object Detection') throw new Error('filtered task grouping is incorrect');
         await settled();
         const componentText = await page.locator('[data-catalog-entry="rf_detr_nano"] [data-table-performance]').innerText();
-        if (!componentText.includes('backbone') || !componentText.includes('transformer')) throw new Error('component measurements were lost');
+        if (!componentText.includes('backbone') || !componentText.includes('decoder')) throw new Error('component measurements were lost');
         await page.getByRole('button', {name: 'Cards', exact: true}).click();
         if (await page.locator('.model-card').count() !== 4) throw new Error('switching lost the search filter');
         await tableButton.click();
@@ -202,14 +231,64 @@ async function checkCatalogLayouts(browser, url) {
         await page.screenshot({path: `/tmp/models-ui-cards-${viewport.width}-${theme}.png`});
         await tableButton.click();
         await page.goto(new URL('/?history=1&branch=develop', url).href);
-        await page.locator('.run-row').first().waitFor();
-        if (await page.locator('#catalog-layout-toggle').isVisible()) throw new Error('model layout switch leaked into build history');
+        if (customer) {
+          await page.locator('.model-card, .catalog-table').first().waitFor();
+          if (await page.locator('#history-filter').isVisible() || await page.locator('#branch-filter').isVisible()) throw new Error('customer UI exposes developer controls');
+          if (await page.locator('#branch-filter').inputValue() !== 'main') throw new Error('customer URL changed the catalog branch');
+        } else {
+          await page.locator('.run-row').first().waitFor();
+          if (await page.locator('#catalog-layout-toggle').isVisible()) throw new Error('model layout switch leaked into build history');
+        }
         if (errors.length) throw new Error(errors.join('; '));
         console.log(`ok  Catalog cards/table · ${viewport.width}px ${theme}`);
       } finally {
         await page.close();
       }
     }
+  }
+}
+
+async function checkExecutionTooltips(browser, url) {
+  for (const [width, theme] of [[1440, 'light'], [390, 'dark']]) {
+    const page = await browser.newPage({viewport: {width, height: 1000}, hasTouch: width === 390});
+    try {
+      await page.goto(url.href);
+      const stage = page.locator('.execution-step[data-runs-on="MLA"]').first();
+      await stage.scrollIntoViewIfNeeded();
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      if (width === 390) await stage.tap();
+      else await stage.hover();
+      const tooltip = page.locator('#execution-tooltip');
+      await tooltip.waitFor();
+      if (await tooltip.locator('strong').first().innerText() !== 'Model Inference') throw new Error('stage tooltip names the wrong stage');
+      if (await tooltip.locator('p').innerText() !== 'Runs the compiled model.') throw new Error('stage tooltip has wrong explanation');
+      if (await tooltip.locator('.execution-tooltip-processor').innerText() !== 'MLA · Machine Learning Accelerator') throw new Error('stage tooltip has wrong processor');
+      const colors = await stage.evaluate(stage => {
+        const graph = getComputedStyle(stage.querySelector('small'));
+        const badge = getComputedStyle(document.querySelector('.execution-tooltip-processor'));
+        return graph.color === badge.color && graph.backgroundColor === badge.backgroundColor;
+      });
+      if (!colors) throw new Error('tooltip processor color differs from the graph');
+      if (await stage.getAttribute('aria-describedby') !== 'execution-tooltip') throw new Error('tooltip is not associated with its stage');
+      const bounds = await tooltip.boundingBox();
+      if (bounds.x < 0 || bounds.x + bounds.width > width || bounds.y < 0 || bounds.y + bounds.height > 1000) throw new Error('stage tooltip is clipped by viewport');
+      if (width === 1440) {
+        await tooltip.hover();
+        await page.waitForTimeout(200);
+        if (!await tooltip.isVisible()) throw new Error('stage tooltip cannot be hovered');
+      } else {
+        await page.waitForTimeout(200);
+        if (!await tooltip.isVisible()) throw new Error('tap did not keep the stage tooltip open');
+      }
+      await page.keyboard.press('Escape');
+      if (await tooltip.isVisible()) throw new Error('Escape did not dismiss stage tooltip');
+      await stage.blur();
+      await stage.focus();
+      await tooltip.waitFor();
+      await page.locator('.execution-details').first().focus();
+      if (await tooltip.isVisible()) throw new Error('stage tooltip survived focus moving away');
+      console.log(`ok  Execution stage tooltip · ${width}px ${theme}`);
+    } finally { await page.close(); }
   }
 }
 
@@ -247,6 +326,7 @@ async function checkTaskComparison(browser, base) {
         if (await tooltip.isVisible()) throw new Error('tooltip remains visible after pointer leaves');
         await first.focus();
         await first.press('Enter');
+        if (await page.locator(`.compare-legend [data-compare-toggle="${firstKey}"] .compare-not-plotted`).count()) throw new Error('plotted selection was labelled Not plotted');
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         if (await page.locator('.compare-table thead th').count() !== 3) throw new Error('selection did not populate three comparison columns');
@@ -261,6 +341,14 @@ async function checkTaskComparison(browser, base) {
         await page.locator('.compare-table-wrap').first().screenshot({path: `/tmp/models-ui-compare-table-${viewport.width}-${theme}.png`});
         await page.locator('.compare-legend button').first().click();
         if (await page.locator('.compare-table thead th').count() !== 2) throw new Error('model could not be deselected');
+        const remove = page.locator('.compare-table .compare-remove').first();
+        const removedKey = await remove.getAttribute('data-compare-toggle');
+        await remove.focus();
+        await remove.press('Enter');
+        if (await page.locator('.compare-table thead th').count() !== 1) throw new Error('table removal did not update selected columns');
+        if (await page.locator(`.compare-point[data-compare-toggle="${removedKey}"]`).getAttribute('aria-pressed') !== 'false') throw new Error('table removal did not update the chart');
+        if (new URL(page.url()).searchParams.getAll('build').includes(removedKey)) throw new Error('table removal left the variant in the URL');
+        if (await add.isDisabled() || !await add.locator(`option[value="${removedKey}"]`).count()) throw new Error('table removal did not restore the variant to Add model');
         if (await page.locator('[data-compare-control="component"]').count()) throw new Error('component control remains visible');
         const available = await add.locator('option').allTextContents();
         if (available.some(text => text.includes('RF-DETR'))) throw new Error('multi-component model remains selectable');
@@ -275,6 +363,10 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('variant without accuracy is no longer selectable');
+        if (await page.locator('.compare-legend .compare-not-plotted').innerText() !== 'Not plotted') throw new Error('selection without a point is missing its Not plotted label');
+        await page.locator('.compare-table .compare-remove').click();
+        if (await page.locator('.compare-table, .compare-selected').count()) throw new Error('removing the final variant left an empty table');
+        if (new URL(page.url()).searchParams.getAll('build').length) throw new Error('removing the final variant left a selection in the URL');
         await page.locator('[data-compare-control="task"]').selectOption('text_generation');
         await page.locator('.compare-tbd').waitFor();
         if (await page.locator('.compare-chart, .compare-table, [data-compare-add]').count()) throw new Error('LLM task rendered vision measurements');
@@ -298,6 +390,7 @@ try {
       ['component pipeline', new URL('/?model=rf_detr_nano&variant=w8a8_w16a16', variantUrl), '#components-section .component-pipeline'],
     ];
     await checkLayerAnalysis(browser, variantUrl);
+    await checkExecutionTooltips(browser, variantUrl);
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
     await checkTaskComparison(browser, variantUrl);
     for (const [name, url, readySelector] of checks) {

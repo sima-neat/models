@@ -2,6 +2,7 @@ import {execFileSync} from 'node:child_process';
 import {cpSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {portalConfig} from './portal-config.mjs';
 
 const siteDirectory = join(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = join(siteDirectory, '..');
@@ -18,9 +19,10 @@ const revision = (
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
   'benchmark-adapters', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
-  'config',
+  'config', 'portal-shell',
 ];
 const stylesheets = ['brand', 'styles'];
+const config = portalConfig();
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
@@ -31,6 +33,7 @@ for (const asset of fingerprintedAssets) {
   const extension = stylesheets.includes(asset) ? 'css' : 'js';
   cpSync(join(browser, `${asset}.${extension}`), join(output, `${asset}.${revision}.${extension}`));
 }
+writeFileSync(join(output, `config.${revision}.js`), `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`);
 
 let browserHtml = readFileSync(join(browser, 'index.html'), 'utf8');
 browserHtml = browserHtml
@@ -75,3 +78,4 @@ console.log(`Assembled Model Registry portal at ${output}`);
 console.log(`Catalog: ${routeBase}/`);
 console.log(`Developer docs: ${routeBase}/docs`);
 console.log(`Asset revision: ${revision}`);
+console.log(`Audience: ${config.uiMode}; registry: ${config.environment}; catalog: ${config.defaultBranch}`);

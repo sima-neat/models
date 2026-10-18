@@ -2,13 +2,12 @@
 export const config = window.MODEL_REGISTRY_CONFIG || {};
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
 const configuredRepository = config.repository || {};
-export const DEFAULT_BRANCH = "develop";
+export const customerView = config.uiMode === "customer";
+export const DEFAULT_BRANCH = customerView ? "main" : "develop";
+document.documentElement.dataset.uiMode = customerView ? "customer" : "developer";
 export const CATEGORY_QUERY_FIELDS = {
-  "model-type-filter": "model_type",
   "task-filter": "task",
   "architecture-filter": "architecture_id",
-  "paradigm-filter": "architecture_paradigm",
-  "input-modality-filter": "input_modality",
 };
 const initialQuery = new URLSearchParams(location.search);
 
@@ -55,12 +54,12 @@ export const state = {
 export const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "search", "filter-toggle",
-    "filter-count", "filter-drawer", "more-filters", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
-    "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
+    "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "task-filter",
+    "architecture-filter", "clear-filters", "result-title",
     "result-count", "result-list", "catalog-layout-toggle", "load-more", "detail-pane", "compare-pane", "toast-region", "workspace",
     "nav-models", "nav-compare",
     "download-dialog", "download-title", "download-description", "download-package-info",
-    "download-list", "download-confirm", "download-cancel", "download-status",
+    "download-list", "download-confirm", "download-copy-cli", "download-cancel", "download-status", "execution-tooltip",
   ].map((id) => [id, document.getElementById(id)]),
 );
 

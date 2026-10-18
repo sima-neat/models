@@ -1,9 +1,10 @@
 import { variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, modelDownloadCommand } from "./downloads.js";
+import { mountDeveloperPortal } from "./portal-shell.js";
 import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
 import {
-  config, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
+  config, customerView, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
   categoryFilters, catalogMode, branchSnapshotMode, currentVariant, showView,
 } from "./state.js";
 import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } from "./ui.js";
@@ -15,11 +16,12 @@ import {
 } from "./api.js";
 import {
   populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount,
-  setFilterDrawer, updateFilterDisclosure, applyCatalog, loadBranches, renderRuns,
+  setFilterDrawer, updateFilterIndicators, applyCatalog, loadBranches, renderRuns,
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, loadModelCard, renderDetail, errorPanel, updateLayerAnalysis,
+  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis,
+  showExecutionTooltip, hideExecutionTooltip, keepExecutionTooltip, deferHideExecutionTooltip,
 } from "./model-view.js";
 
 function writeCategoryFilterUrl() {
@@ -51,9 +53,11 @@ function setTheme(theme) {
   try {
     localStorage.setItem("sima-neat-artifact-theme", theme);
     localStorage.setItem("theme", theme);
+    localStorage.setItem("portal-theme", theme);
   } catch {
     // Storage may be disabled; theme selection still works for this page load.
   }
+  document.cookie = `sima-neat-theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   const dark = theme === "dark";
   elements["theme-toggle"].innerHTML = dark ? icons.sun : icons.moon;
   elements["theme-toggle"].setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} mode`);
@@ -133,11 +137,13 @@ let pendingCommand = null;
 function resetDownloadDialog({ title, description, confirmLabel }) {
   pendingDownloads = null;
   pendingCommand = null;
+  elements["download-copy-cli"].hidden = true;
   elements["download-title"].textContent = title;
   elements["download-description"].textContent = description;
   elements["download-list"].innerHTML = "";
   elements["download-list"].hidden = false;
   elements["download-package-info"].hidden = true;
+  elements["download-package-info"].classList.remove("download-package-summary");
   elements["download-package-info"].innerHTML = "";
   elements["download-dialog"].querySelector(".download-note").hidden = true;
   elements["download-status"].textContent = "";
@@ -146,13 +152,17 @@ function resetDownloadDialog({ title, description, confirmLabel }) {
   elements["download-confirm"].textContent = confirmLabel;
 }
 
-function showFolderDownload(run, downloads) {
-  const dialog = elements["download-dialog"];
+function catalogDownloadCommand(run) {
   const current = state.models.some((model) => model.model_id === run.metadata?.model_id
     && (model.builds?.some((build) => build.run_id === run.id)
       || model.packages?.some((item) => item.run_id === run.id)));
-  pendingCommand = current ? modelDownloadCommand(run.metadata.model_id, runProfile(run),
+  return current ? modelDownloadCommand(run.metadata.model_id, runProfile(run),
     elements["branch-filter"].value || branchName(run.git_ref), config.environment?.toLowerCase() === "staging") : null;
+}
+
+function showFolderDownload(run, downloads) {
+  const dialog = elements["download-dialog"];
+  pendingCommand = catalogDownloadCommand(run);
   elements["download-title"].textContent = "Download model folder";
   elements["download-description"].textContent = "This model is provided as a folder of individual files, similar to a Hugging Face repository, rather than a ZIP archive. Use sima-cli 2.1.19 or later to download the files in parallel and assemble the model folder.";
   elements["download-list"].hidden = true;
@@ -171,7 +181,7 @@ function showFolderDownload(run, downloads) {
   note.textContent = downloads.some((item) => item.delivery === "huggingface")
     ? "The repository link opens the compiled deployment at its pinned revision. Use that revision and folder when downloading from Hugging Face."
     : "The CLI uses the manifest to preserve the folder structure and verify each file’s checksum.";
-  elements["download-confirm"].textContent = "Copy command";
+  elements["download-confirm"].innerHTML = `${icons.copy}<span>Copy CLI command</span>`;
   elements["download-confirm"].hidden = !pendingCommand;
   elements["download-confirm"].disabled = false;
 }
@@ -196,6 +206,8 @@ async function downloadVariant(runId) {
       return;
     }
     pendingDownloads = downloads;
+    pendingCommand = catalogDownloadCommand(summary.run);
+    elements["download-copy-cli"].hidden = !pendingCommand;
     const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id
       ? profileLabel(summary.run) : "Selected variant";
     const fileLabel = downloads.length === 1 ? "file" : "files";
@@ -244,22 +256,25 @@ async function downloadPackage(runId) {
       return;
     }
     pendingDownloads = downloads;
+    pendingCommand = catalogDownloadCommand(run);
+    elements["download-copy-cli"].hidden = !pendingCommand;
     const license = metadata.license || {};
     const redistribution = license.redistribution
       ? `${license.spdx || "License"} · redistribution ${license.redistribution}`
       : license.spdx || "Not recorded";
     const componentLabel = `${components.length} ${components.length === 1 ? "component" : "components"}`;
-    elements["download-description"].textContent = format === "MPK"
-      ? `${profile} is one verified MPK.`
-      : `${profile} is packaged as one verified ZIP.`;
+    const modelName = state.models.find((model) => model.model_id === metadata.model_id)?.display_name
+      || metadata.model_id || "model";
+    elements["download-title"].textContent = `Download ${modelName}`;
+    elements["download-description"].textContent = `${profile} · ${formatBytes(deploymentSize(artifact))}`;
     elements["download-package-info"].hidden = false;
+    elements["download-package-info"].classList.add("download-package-summary");
     elements["download-package-info"].innerHTML = `
-      <dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd>
-      <dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)}</dd>
-      <dt>${format} size</dt><dd>${escapeHtml(formatBytes(artifact.size_bytes))}</dd>
-      <dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd>
-      <dt>License</dt><dd>${escapeHtml(redistribution)}</dd>
-      ${license.attribution ? `<dt>Attribution</dt><dd>${escapeHtml(license.attribution)}</dd>` : ""}`;
+      <div class="download-filename"><dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd></div>
+      ${customerView ? "" : `<div class="download-technical-fact"><dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)} · ${escapeHtml(format)}</dd></div>
+        <div class="download-technical-fact"><dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd></div>`}
+      <div class="download-license"><dt>License</dt><dd>${escapeHtml(redistribution)}</dd></div>
+      ${!customerView && license.attribution ? `<div class="download-technical-fact"><dt>Attribution</dt><dd>${escapeHtml(license.attribution)}</dd></div>` : ""}`;
     const note = elements["download-dialog"].querySelector(".download-note");
     note.hidden = true;
     note.textContent = "";
@@ -271,14 +286,18 @@ async function downloadPackage(runId) {
   }
 }
 
+elements["download-copy-cli"].innerHTML = `${icons.copy}<span>Copy CLI command</span>`;
 elements["download-cancel"].addEventListener("click", () => elements["download-dialog"].close());
+elements["download-copy-cli"].addEventListener("click", () => {
+  if (pendingCommand) copyText(pendingCommand);
+});
 elements["download-dialog"].addEventListener("close", () => {
   downloadRequest += 1;
   pendingDownloads = null;
   pendingCommand = null;
 });
 elements["download-confirm"].addEventListener("click", async () => {
-  if (pendingCommand) { await copyText(pendingCommand); return; }
+  if (!pendingDownloads && pendingCommand) { await copyText(pendingCommand); return; }
   if (!pendingDownloads) return;
   const request = downloadRequest;
   elements["download-confirm"].disabled = true;
@@ -394,8 +413,9 @@ async function initialize() {
   setTheme(document.documentElement.dataset.theme || "light");
   const link = new URLSearchParams(location.search);
   elements.search.value = link.get("q") || "";
-  elements["history-filter"].checked = link.get("history") === "1";
-  state.selectedId = link.get("run");
+  elements["history-filter"].checked = !customerView && link.get("history") === "1";
+  state.selectedId = customerView ? null : link.get("run");
+  if (customerView) elements["compiler-filter"].value = "";
   const compareLink = link.get("view") === "compare";
   // Other pages keep the picks, so returning to Compare finds them.
   if (compareLink) state.comparePicks = picksFromUrl(link);
@@ -413,8 +433,8 @@ async function initialize() {
     elements["compare-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span></div>`;
   } else if (state.selectedId || linkedVariant) detailSkeleton();
   else showEmptyDetail();
-  state.urlBranch = link.has("branch");
-  state.preferredBranch = state.urlBranch ? link.get("branch") : readBranchPreference();
+  state.urlBranch = customerView || link.has("branch");
+  state.preferredBranch = customerView ? DEFAULT_BRANCH : state.urlBranch ? link.get("branch") : readBranchPreference();
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   // Returning to the catalog keeps the cards on screen while they reload, so the restored scroll position holds.
   if (!elements["result-list"].querySelector(".model-card, .run-entry")) {
@@ -458,10 +478,15 @@ async function initialize() {
   }
 
   try {
-    const branchResult = await Promise.resolve(loadBranches()).then(
+    if (customerView) state.availableBranches = [DEFAULT_BRANCH];
+    const branchResult = await Promise.resolve(customerView ? undefined : loadBranches()).then(
       () => ({ status: "fulfilled" }),
       (reason) => ({ status: "rejected", reason }),
     );
+    if (customerView) {
+      elements["branch-filter"].innerHTML = `<option value="${DEFAULT_BRANCH}">${DEFAULT_BRANCH}</option>`;
+      elements["branch-filter"].value = DEFAULT_BRANCH;
+    }
     const taxonomyResult = await Promise.resolve(loadTaxonomy(elements["branch-filter"].value || DEFAULT_BRANCH)).then(
       () => ({ status: "fulfilled" }),
       (reason) => ({ status: "rejected", reason }),
@@ -520,6 +545,21 @@ function latestVariantRun({ modelId, profile }) {
 }
 
 elements["theme-toggle"].addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+window.addEventListener("developer-center-theme-change", (event) => {
+  const theme = event.detail?.theme;
+  if (theme === "light" || theme === "dark") setTheme(theme);
+});
+const portalMenu = document.querySelector(".portal-menu-toggle");
+portalMenu.addEventListener("click", () => {
+  portalMenu.setAttribute("aria-expanded", String(portalMenu.getAttribute("aria-expanded") !== "true"));
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && portalMenu.getAttribute("aria-expanded") === "true") {
+    portalMenu.setAttribute("aria-expanded", "false");
+    portalMenu.focus();
+  }
+});
+mountDeveloperPortal();
 elements["catalog-layout-toggle"].addEventListener("click", (event) => {
   const button = event.target.closest("[data-catalog-layout]");
   if (!button) return;
@@ -530,6 +570,13 @@ elements["catalog-layout-toggle"].addEventListener("click", (event) => {
 elements["filter-toggle"].addEventListener("click", () => {
   setFilterDrawer(elements["filter-toggle"].getAttribute("aria-expanded") !== "true");
 });
+// Native selects can retain :focus-visible after their popup is closed with the mouse.
+elements["filter-drawer"].addEventListener("pointerdown", (event) => {
+  if (event.target.matches("select")) event.target.dataset.pointerFocus = "true";
+});
+["keydown", "focusout"].forEach((type) => elements["filter-drawer"].addEventListener(type, (event) => {
+  if (event.target.matches("select")) delete event.target.dataset.pointerFocus;
+}));
 let searchTimer;
 elements.search.addEventListener("input", () => {
   renderRuns();
@@ -557,7 +604,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   url.searchParams.set("branch", state.preferredBranch);
   deletePageParams(url);
   history.pushState({}, "", url);
-  updateFilterDisclosure();
+  updateFilterIndicators();
   try {
     await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);
   } catch (error) {
@@ -573,7 +620,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   }
 });
 elements["compiler-filter"].addEventListener("change", async () => {
-  updateFilterDisclosure();
+  updateFilterIndicators();
   if (branchSnapshotMode() && catalogMode()) {
     state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
       elements["compiler-filter"].value, elements["branch-filter"].value);
@@ -591,7 +638,7 @@ elements["compiler-filter"].addEventListener("change", async () => {
 });
 elements["history-filter"].addEventListener("change", async () => {
   writeHistoryUrl();
-  updateFilterDisclosure();
+  updateFilterIndicators();
   try {
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
@@ -601,7 +648,7 @@ elements["history-filter"].addEventListener("change", async () => {
 Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", async () => {
   state.categorySelection[elementId] = elements[elementId].value;
   writeCategoryFilterUrl();
-  updateFilterDisclosure();
+  updateFilterIndicators();
   if (branchSnapshotMode()) {
     renderRuns();
     return;
@@ -635,7 +682,7 @@ elements["clear-filters"].addEventListener("click", async () => {
   writeSearchUrl();
   writeCategoryFilterUrl();
   writeHistoryUrl();
-  updateFilterDisclosure();
+  updateFilterIndicators();
   try {
     await loadRuns({ branch: resetBranch });
   } catch (error) {
@@ -744,6 +791,36 @@ elements["compare-pane"].addEventListener("focusin", (event) => {
 elements["compare-pane"].addEventListener("focusout", hideComparisonTooltip);
 window.addEventListener("scroll", hideComparisonTooltip, true);
 window.addEventListener("resize", hideComparisonTooltip);
+elements["detail-pane"].addEventListener("pointerover", (event) => {
+  if (event.pointerType === "touch") return;
+  const stage = event.target.closest("[data-execution-stage]");
+  if (stage && !stage.contains(event.relatedTarget)) showExecutionTooltip(stage);
+});
+elements["detail-pane"].addEventListener("pointerout", (event) => {
+  if (event.pointerType === "touch") return;
+  const stage = event.target.closest("[data-execution-stage]");
+  if (stage && !stage.contains(event.relatedTarget)) deferHideExecutionTooltip();
+});
+elements["detail-pane"].addEventListener("focusin", (event) => {
+  const stage = event.target.closest("[data-execution-stage]");
+  if (stage) showExecutionTooltip(stage);
+});
+elements["detail-pane"].addEventListener("focusout", hideExecutionTooltip);
+elements["execution-tooltip"].addEventListener("pointerenter", keepExecutionTooltip);
+elements["execution-tooltip"].addEventListener("pointerleave", deferHideExecutionTooltip);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideExecutionTooltip();
+});
+document.addEventListener("click", (event) => {
+  const stage = event.target.closest("[data-execution-stage]");
+  if (stage) showExecutionTooltip(stage);
+  else if (!elements["execution-tooltip"].contains(event.target)) hideExecutionTooltip();
+});
+window.addEventListener("scroll", (event) => {
+  if (!elements["execution-tooltip"].contains(event.target)) hideExecutionTooltip();
+}, true);
+window.addEventListener("resize", hideExecutionTooltip);
+window.addEventListener("popstate", hideExecutionTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", (event) => {
@@ -789,13 +866,12 @@ elements["detail-pane"].addEventListener("click", (event) => {
   }
   if (event.target.closest(".close-detail")) returnToCatalog();
 });
-// Re-rendering the page keeps the rows the reader opened; opening the full model card loads it.
+// Re-rendering the page keeps the rows the reader opened.
 elements["detail-pane"].addEventListener("toggle", (event) => {
   const key = event.target.dataset?.disclosure;
   if (!key) return;
   if (event.target.open) state.openDisclosures.add(key);
   else state.openDisclosures.delete(key);
-  if (key === "model-card" && event.target.open) loadModelCard();
 }, true);
 elements["detail-pane"].addEventListener("keydown", (event) => {
   const tab = event.target.closest('[role="tab"]');

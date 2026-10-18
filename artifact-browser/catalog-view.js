@@ -29,11 +29,8 @@ function hideFilterWithoutChoice(element) {
 export function populateCategoryFilters() {
   if (!state.taxonomy) return;
   const definitions = [
-    ["model-type-filter", "model_types", "model_type", "Any type"],
     ["task-filter", "tasks", "tasks", "Any task"],
     ["architecture-filter", "architectures", "architecture_id", "Any family"],
-    ["paradigm-filter", "architecture_paradigms", "architecture_paradigm", "Any architecture"],
-    ["input-modality-filter", "modalities", "input_modalities", "Any input"],
   ];
   definitions.forEach(([elementId, section, field, emptyLabel]) => {
     const element = elements[elementId];
@@ -81,21 +78,10 @@ export function setFilterDrawer(open) {
   elements["filter-toggle"].setAttribute("aria-expanded", String(open));
 }
 
-// Filters outside Task and Architecture sit under "More filters", which opens when one of them is set.
-function moreFiltersActive() {
-  const current = categoryFilters();
-  return Boolean(
-    current.model_type || current.architecture_paradigm || current.input_modality
-    || (elements["branch-filter"].value && elements["branch-filter"].value !== DEFAULT_BRANCH)
-    || elements["compiler-filter"].value || elements["history-filter"].checked,
-  );
-}
-
-export function updateFilterDisclosure() {
+export function updateFilterIndicators() {
   const count = activeFilterCount();
   elements["filter-count"].textContent = String(count);
   elements["filter-count"].hidden = count === 0;
-  if (moreFiltersActive()) elements["more-filters"].open = true;
 }
 
 export function applyCatalog(payload, { append = false, cache = true } = {}) {
@@ -187,11 +173,8 @@ function filteredRuns() {
       && terms.every((term) => searchableText.includes(term))
       && (!current.branch || branchName(run.git_ref) === current.branch)
       && (!current.compiler || run.toolchain_version === current.compiler)
-      && (!current.model_type || run.model_type === current.model_type)
       && (!current.task || (run.tasks || []).includes(current.task))
-      && (!current.architecture_id || run.architecture_id === current.architecture_id)
-      && (!current.architecture_paradigm || run.architecture_paradigm === current.architecture_paradigm)
-      && (!current.input_modality || (run.input_modalities || []).includes(current.input_modality));
+      && (!current.architecture_id || run.architecture_id === current.architecture_id);
   });
 }
 
@@ -222,11 +205,8 @@ function filteredModels() {
       !current.compiler || build.toolchain_version === current.compiler
     ));
     const matches = terms.every((term) => searchableText.includes(term))
-      && (!current.model_type || model.model_type === current.model_type)
       && (!current.task || (model.tasks || []).includes(current.task))
-      && (!current.architecture_id || model.architecture_id === current.architecture_id)
-      && (!current.architecture_paradigm || model.architecture_paradigm === current.architecture_paradigm)
-      && (!current.input_modality || (model.input_modalities || []).includes(current.input_modality));
+      && (!current.architecture_id || model.architecture_id === current.architecture_id);
     return matches && builds.length ? [{ ...model, builds }] : [];
   });
 }
@@ -252,10 +232,8 @@ function populateFilters({ persistBranchFallback = false } = {}) {
     writeBranchPreference(selectedBranch);
   }
   elements["compiler-filter"].value = compilers.includes(selectedCompiler) ? selectedCompiler : "";
-  hideFilterWithoutChoice(elements["branch-filter"]);
-  hideFilterWithoutChoice(elements["compiler-filter"]);
   populateCategoryFilters();
-  updateFilterDisclosure();
+  updateFilterIndicators();
 }
 
 function componentList(runs) {
@@ -369,7 +347,7 @@ function renderCatalogTable(models) {
     .sort(([left], [right]) => taskLabel(left).localeCompare(taskLabel(right)))
     .map(([task, entries]) => {
       const headingId = `catalog-task-${task || "other"}`;
-      return `<section class="catalog-task-group" data-task="${escapeHtml(task)}" aria-labelledby="${escapeHtml(headingId)}">
+      return `<section class="catalog-task-group" aria-labelledby="${escapeHtml(headingId)}">
         <h3 id="${escapeHtml(headingId)}">${escapeHtml(taskLabel(task))}</h3>
         <div class="catalog-table-scroll" role="region" aria-label="${escapeHtml(taskLabel(task))} model table" tabindex="0">
           <table class="catalog-table" aria-labelledby="${escapeHtml(headingId)}">
@@ -409,7 +387,7 @@ function renderModelCard(model) {
   const active = activeModelBuild(model);
   const run = runFromCatalogBuild(model, active.build);
   const displayName = model.display_name || model.model_id;
-  const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag" data-task="${escapeHtml(id)}">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
+  const tasks = (model.tasks || []).map((id) => `<span class="model-card-tag">${escapeHtml(taxonomyLabel("tasks", id))}</span>`).join("");
   const variants = `${profiles.length} variant${profiles.length === 1 ? "" : "s"}`;
   return `<button class="model-card" type="button" data-model-card="${escapeHtml(model.model_id)}" data-run-id="${escapeHtml(run.id)}">
     ${modelCardImage(model)}

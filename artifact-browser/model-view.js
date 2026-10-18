@@ -3,7 +3,7 @@ import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accu
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
 import { adaptBenchmarkResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
-import { config, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
+import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
 import {
   metricDefinition, metricDisplay, formatDate, formatDuration,
@@ -13,7 +13,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl,
 } from "./api.js";
-import { packageFormat, modelDownloadCommand, artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
+import { packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -93,11 +93,13 @@ function sourceInputPanel(inputs) {
 }
 
 export function detailSkeleton() {
+  hideExecutionTooltip();
   showView("model");
   elements["detail-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span><span></span></div>`;
 }
 
 export function showEmptyDetail() {
+  hideExecutionTooltip();
   elements["detail-pane"].innerHTML = "";
   showView("catalog");
 }
@@ -397,13 +399,70 @@ function benchmarkContext(benchmark) {
   ].filter(Boolean).join(" · ");
 }
 
-// Each step of the benchmarked Model and the processor it ran on. Details, at the right of the heading,
-// opens the tensors between the steps under the graph.
+const EXECUTION_STAGE_INFO = {
+  Preproc: ["Prepare input", "Prepares input data for the model."],
+  Cast: ["Convert input", "Changes the input data type."],
+  Quant: ["Quantize input", "Converts input values to the model’s integer format."],
+  Tess: ["Arrange input", "Rearranges input data for the accelerator."],
+  CastTess: ["Convert & Arrange Input", "Changes the input data type and prepares its layout for the accelerator."],
+  QuantTess: ["Quantize & Arrange Input", "Converts input values to integers and prepares their layout for the accelerator."],
+  "Compiled Model": ["Model Inference", "Runs the compiled model."],
+  Detess: ["Restore output layout", "Rearranges the model output for further processing."],
+  Dequant: ["Dequantize output", "Converts integer output values back to floating point."],
+  DetessCast: ["Convert & arrange output", "Restores the output layout and changes its data type."],
+  DetessDequant: ["Prepare output", "Restores the output layout and converts values back to floating point."],
+  SimaBoxDecode: ["Decode output", "Converts raw model outputs into usable results."],
+};
+const PROCESSOR_LABELS = { EV74: "Vector Processor", MLA: "Machine Learning Accelerator", A65: "Arm CPU" };
+
+function executionStageInfo(step) {
+  const [title, description] = EXECUTION_STAGE_INFO[step.name] || [step.name, "Runs this processing step."];
+  const processor = [step.runsOn, PROCESSOR_LABELS[step.runsOn]].filter(Boolean).join(" · ");
+  return `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(description)}</p>
+    ${step.runsOn ? `<span class="execution-tooltip-processor" data-runs-on="${escapeHtml(step.runsOn)}">${escapeHtml(processor)}</span>` : ""}`;
+}
+
+let executionTooltipStage = null;
+let executionTooltipTimer;
+
+export function hideExecutionTooltip() {
+  clearTimeout(executionTooltipTimer);
+  executionTooltipStage?.removeAttribute("aria-describedby");
+  executionTooltipStage = null;
+  elements["execution-tooltip"].hidden = true;
+}
+
+export function keepExecutionTooltip() {
+  clearTimeout(executionTooltipTimer);
+}
+
+export function deferHideExecutionTooltip() {
+  executionTooltipTimer = setTimeout(hideExecutionTooltip, 150);
+}
+
+export function showExecutionTooltip(stage) {
+  hideExecutionTooltip();
+  const tooltip = elements["execution-tooltip"];
+  tooltip.innerHTML = stage.querySelector("template").innerHTML;
+  tooltip.dataset.runsOn = stage.dataset.runsOn || "";
+  tooltip.hidden = false;
+  executionTooltipStage = stage;
+  stage.setAttribute("aria-describedby", tooltip.id);
+  const anchor = stage.getBoundingClientRect();
+  const roomAbove = Math.max(0, anchor.top - 84);
+  const roomBelow = Math.max(0, innerHeight - anchor.bottom - 24);
+  tooltip.style.maxHeight = `${Math.max(roomAbove, roomBelow)}px`;
+  const box = tooltip.getBoundingClientRect();
+  tooltip.style.left = `${Math.max(12, Math.min(innerWidth - box.width - 12, anchor.left + anchor.width / 2 - box.width / 2))}px`;
+  tooltip.style.top = `${box.height <= roomAbove + .5 ? anchor.top - box.height - 12 : anchor.bottom + 12}px`;
+}
+
+// Each step of the benchmarked Model and the processor it ran on. Details opens its tensor table.
 function executionGraphSection(graph, runId) {
   if (!graph) return "";
-  const steps = graph.steps.map((step) => (step.runsOn
-    ? `<li><span class="execution-step" data-runs-on="${escapeHtml(step.runsOn)}">${escapeHtml(step.name)}<small>${escapeHtml(step.runsOn)}</small></span></li>`
-    : `<li class="execution-end"><span class="execution-step">${escapeHtml(step.name)}</span></li>`)).join("");
+  const steps = graph.steps.map((step) => step.runsOn
+    ? `<li><button type="button" class="execution-step" data-execution-stage data-runs-on="${escapeHtml(step.runsOn)}">${escapeHtml(step.name)}<small>${escapeHtml(step.runsOn)}</small><template>${executionStageInfo(step)}</template></button></li>`
+    : `<li class="execution-end"><span class="execution-step">${escapeHtml(step.name)}</span></li>`).join("");
   const rows = graph.tensors.map((tensor) => `<tr${tensor.connection ? "" : ' class="continued"'}><th scope="row">${escapeHtml(tensor.connection)}</th>${[tensor.dtype, tensor.shape, tensor.scale, tensor.zeroPoint].map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("");
   const table = `<div class="tensor-table"><table><thead><tr>${["Connection", "Type", "Shape", "Scale", "Zero point"].map((label) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const key = `tensors:${runId}`;
@@ -411,7 +470,7 @@ function executionGraphSection(graph, runId) {
   const details = graph.tensors.length
     ? `<button type="button" class="execution-details" data-details="${escapeHtml(key)}" aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>`
     : "";
-  return `<section class="execution-graph" aria-label="Execution graph"><div class="execution-head"><h5>Execution graph</h5>${details}</div><ol>${steps}</ol>
+  return `<section class="execution-graph" aria-label="Execution graph"><h5>Execution graph</h5><div class="execution-graph-row"><ol>${steps}</ol>${details}</div>
     ${graph.tensors.length ? `<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>` : ""}</section>`;
 }
 
@@ -434,7 +493,7 @@ function layerAnalysisResults(analysis, view) {
   const families = new Set(layers.map((layer) => layerFamily(layer.name)));
   const legend = Object.entries(LAYER_FAMILIES).filter(([id]) => families.has(id))
     .map(([id, title]) => `<span class="layer-family-${id}"><i aria-hidden="true"></i>${title}</span>`).join("");
-  return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${table ? "compiler order" : "slowest first"}</p>
+  return `<p class="layer-results" role="status">${layers.length.toLocaleString()} of ${count.toLocaleString()} layers · ${table ? "Compiler order" : "Slowest layers first"}</p>
     ${layers.length ? `${table ? "" : `<div class="layer-legend" aria-label="Layer families inferred from compiled names"><span>Family (from name)</span>${legend}</div>`}
     <div class="layer-table-scroll" tabindex="0" role="region" aria-label="${table ? "Compiled layer timings" : "Layer execution time chart"}"><table class="layer-table ${table ? "layer-numeric-table" : "layer-duration-table"}">
       <thead><tr><th scope="col">Compiled layer</th><th scope="col">Execution time <span class="layer-time-unit">(µs)</span>${table ? "" : axis}</th>${table ? '<th scope="col">Share (%)</th>' : ""}</tr></thead>
@@ -453,7 +512,7 @@ function layerAnalysisBody(analysis, view) {
   <div class="layer-controls">
     <label class="layer-search">Layer name<input type="search" data-layer-filter="query" value="${escapeHtml(view.query)}" placeholder="Search compiled layers" autocomplete="off"></label>
     <label class="layer-threshold"><span>Minimum time: <output data-layer-threshold-value>${layerTime(view.minUs)} µs</output></span><input type="range" data-layer-filter="minUs" min="0" max="${scaleUs}" step="any" value="${view.minUs}"></label>
-    <div class="layer-view-toggle" role="group" aria-label="Layer statistics view">${["duration", "table"].map((mode) => `<button type="button" data-layer-filter="mode" value="${mode}" aria-pressed="${view.mode === mode}">${mode === "duration" ? "Duration" : "Table"}</button>`).join("")}</div>
+    <div class="layer-view-toggle" role="group" aria-label="Layer statistics view">${["duration", "table"].map((mode) => `<button type="button" data-layer-filter="mode" value="${mode}" aria-pressed="${view.mode === mode}">${mode === "duration" ? "Chart" : "Table"}</button>`).join("")}</div>
   </div>
   <div data-layer-results>${layerAnalysisResults(analysis, view)}</div>`;
 }
@@ -494,9 +553,9 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   const details = benchmarkDetails(benchmark, payload);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}${measurementSource(benchmarkRun, modelId)}</p>
-    ${executionGraphSection(benchmark.executionGraph, runId)}
+    ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}
     ${layerAnalysisSection(benchmark.layerAnalysis, runId)}
-    ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}`;
+    ${executionGraphSection(benchmark.executionGraph, runId)}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
@@ -619,7 +678,7 @@ export function accuracyHeadline(variant) {
 function accuracyPanel(result, modelId, published = []) {
   const report = result?.report;
   const source = measurementSource(result?.run, modelId);
-  const publishedMarkup = published.length
+  const publishedMarkup = !customerView && published.length
     ? disclosure("published-scores", "Published scores", publishedTables(published), `${published.length} ${published.length === 1 ? "source" : "sources"}`)
     : "";
   if (report?.schema_version === 2) {
@@ -726,7 +785,7 @@ function accuracySection(report, metricsMarkup, contextMarkup, tableMarkup = "",
     <div class="detail-section-title"><h3>Accuracy</h3><span class="status-badge ${statusClass}">${status}</span></div>
     <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}${sourceMarkup}</p>
     <div class="accuracy-summary">${metricsMarkup}</div>
-    ${disclosure("accuracy", "Evaluation details", details, coverageLabel)}
+    ${customerView ? "" : disclosure("accuracy", "Evaluation details", details, coverageLabel)}
     ${publishedMarkup}
   </section>`;
 }
@@ -777,7 +836,7 @@ function modelCardRemainder(markdown) {
 
 function modelCardBody(documentation) {
   const markdown = state.documentationCache.get(documentationKey(documentation));
-  if (markdown === undefined) return `<p class="muted-message" data-model-card-pending>Loading model card…</p>`;
+  if (markdown === undefined) return `<p class="muted-message" data-model-card-pending>Loading usage instructions…</p>`;
   const remainder = modelCardRemainder(markdown);
   const heroUrl = documentationHeroUrl(documentation);
   return `<div class="model-documentation-body">${renderMarkdown(remainder ?? markdown, {
@@ -787,30 +846,33 @@ function modelCardBody(documentation) {
   })}</div>`;
 }
 
+function modelHero(model) {
+  const documentation = model?.documentation;
+  if (!documentation) return "";
+  const heroUrl = documentationHeroUrl(documentation);
+  return heroUrl
+    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" decoding="async" /></figure>`
+    : "";
+}
+
 function overviewSection(model) {
   const documentation = model?.documentation;
   if (!documentation?.overview_markdown) return "";
-  const heroUrl = documentationHeroUrl(documentation);
-  const hero = heroUrl
-    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" loading="lazy" decoding="async" /></figure>`
-    : "";
-  const fullCard = documentation.run_id && documentation.artifact_sha256
-    ? disclosure("model-card", "Full model card", modelCardBody(documentation), "README")
+  const instructions = documentation.run_id && documentation.artifact_sha256
+    ? `<div data-model-card-body>${modelCardBody(documentation)}</div>`
     : "";
   return `<section id="overview-section" class="overview-section" tabindex="-1" aria-labelledby="overview-title">
     <div class="detail-section-title"><h3 id="overview-title">Overview</h3></div>
-    ${hero}
     <div class="model-documentation-body">${renderMarkdown(documentation.overview_markdown, { resolveLink: (source) => resolveDocumentationLink(documentation, source) })}</div>
-    ${fullCard}
+    ${instructions}
   </section>`;
 }
 
-// Fetches the README behind an open Full model card row, verifies it against the catalog checksum, and
-// fills the row. A row that already shows the card is left alone.
-export async function loadModelCard() {
+// Loads the remaining README sections inline after checking the catalog checksum.
+async function loadModelCard() {
   const variant = currentVariant();
   const documentation = variant ? catalogModelForRun(variant.anchor)?.documentation : null;
-  const body = () => elements["detail-pane"].querySelector('[data-disclosure="model-card"] > .disclosure-body');
+  const body = () => elements["detail-pane"].querySelector("[data-model-card-body]");
   if (!documentation || !body()?.querySelector("[data-model-card-pending]")) return;
   const requestId = ++state.documentationRequestId;
   try {
@@ -820,9 +882,9 @@ export async function loadModelCard() {
     if (digest !== documentation.artifact_sha256) throw new Error("The model card checksum did not match the catalog.");
     state.documentationCache.set(documentationKey(documentation), markdown);
   } catch (error) {
-    if (requestId !== state.documentationRequestId) return;
+    if (requestId !== state.documentationRequestId || state.selectedVariantKey !== variant.key) return;
     const target = body();
-    if (target) target.innerHTML = `<p class="muted-message" data-model-card-pending>The model card could not be loaded. Close and reopen this row to try again.</p>`;
+    if (target) target.innerHTML = `<p class="muted-message" data-model-card-pending>The usage instructions could not be loaded.</p><button class="text-button" type="button" data-action="retry">Retry</button>`;
     showToast(error.message, true);
     return;
   }
@@ -862,11 +924,6 @@ function targetName(run) {
   return target ? target.charAt(0).toUpperCase() + target.slice(1) : "the target";
 }
 
-function cliDownloadCommand(variant) {
-  return modelDownloadCommand(variant.modelId, variant.profile,
-    elements["branch-filter"].value || branchName(variant.anchor.git_ref), config.environment?.toLowerCase() === "staging");
-}
-
 function sectionNavigation(sections) {
   return `<nav class="subnav" aria-label="Model page sections">${sections.map(([id, label]) => (
     `<button type="button" data-scroll-to="${id}">${label}</button>`
@@ -891,6 +948,7 @@ function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, single
 }
 
 export function renderDetail(variant) {
+  hideExecutionTooltip();
   showView("model");
   const run = variant.anchor;
   const details = variant.details;
@@ -942,7 +1000,7 @@ export function renderDetail(variant) {
     overviewMarkup && ["overview-section", "Overview"],
     ["components-section", "Performance"],
     accuracyMarkup && ["accuracy-section", "Accuracy"],
-    ["details-section", "Details"],
+    !customerView && ["details-section", "Details"],
     license?.spdx && ["license-section", "License"],
   ].filter(Boolean);
 
@@ -953,12 +1011,12 @@ export function renderDetail(variant) {
         <h2>${escapeHtml(displayName)}</h2>
         <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.map(precisionLabel).join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
+        <div class="detail-title-actions">
+          ${downloadAction}
+          <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+        </div>
       </div>
-      <div class="detail-title-actions">
-        ${downloadAction}
-        ${catalogModelOfVariant(variant) ? `<button class="cli-action" type="button" data-copy="${escapeHtml(cliDownloadCommand(variant))}">${icons.copy}<span>Copy CLI command</span></button>` : ""}
-        <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
-      </div>
+      ${modelHero(catalogModel)}
     </header>
     ${detailBuildSwitcher(variant)}
     ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
@@ -975,7 +1033,7 @@ export function renderDetail(variant) {
 
     ${accuracyMarkup}
 
-    <section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
+    ${customerView ? "" : `<section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
       ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent)}
       <div class="disclosure-list">
         ${disclosure("provenance", "Build provenance", `<dl class="key-grid">
@@ -988,11 +1046,11 @@ export function renderDetail(variant) {
         ${sourceInputPanel(inputs)}
         ${details.map((detail) => componentRow(detail, singleComponent)).join("")}
       </div>
-    </section>
+    </section>`}
 
     ${licensePanel(license)}
   </div>`;
-  if (state.openDisclosures.has("model-card")) loadModelCard();
+  loadModelCard();
 }
 
 export function errorPanel(message, title = "Registry unavailable", { closable = false } = {}) {

@@ -7,6 +7,20 @@ you can check how your model will appear before you submit it.
 
 ## The catalog
 
+Models uses the shared Developer Portal header on the deployed site. Its own
+navigation underneath contains **Browse models**, **Compare** and **Developer docs**.
+The section navigation matches Software documentation: full-width, left-aligned
+links with a blue active label. The catalog and contributor documentation share
+the portal's theme preference.
+Standalone previews retain local navigation when the shared header is unavailable.
+
+CI builds the customer UI from `main` and the developer UI from `develop` and
+feature branches. Both currently use the staging registry and share the staging
+publication URL; the most recently published build determines its UI. The customer
+view uses the main catalog and hides branch/compiler filters, build history,
+the Details section and contributor navigation. The developer view keeps those
+controls. Selecting a branch in the developer UI changes the catalog, not the UI.
+
 The catalog opens as a grid of cards, one per model. **Cards** and **Table**
 switch between the two views and remember the choice. The table shows the model,
 selected precision, measured accuracy and component performance. Changing
@@ -16,9 +30,14 @@ same model-family ordering inside each group. Models with multiple tasks appear
 in every applicable group; selecting a task filter shows only that group. The
 model count counts unique models, and precision changes apply to every copy of
 the model. Build history keeps its existing list.
-Task labels and table task headings share a SiMa palette accent in light and
-dark mode; model names stay neutral. Pastel accents use a darker text tone on light surfaces.
+Task labels use a single blue accent in light and dark mode; model names and
+table task headings stay neutral.
+Model cards show a blue outline and soft blue glow on hover in both themes.
+Model metadata uses small tinted chips: blue for tasks, orange for precision
+and purple for model type; other metadata stays neutral.
 Dropdown menus use matching text and backgrounds in both themes.
+Filter dropdowns stay neutral after mouse selection; keyboard use shows a neutral focus outline.
+The selected precision tab has a soft blue fill and border.
 
 A card shows four things, all
 taken from the model directory:
@@ -35,28 +54,42 @@ them. Write the description as one plain sentence about what the model does.
 Changing the name, description, or hero does not recompile or remeasure any
 build, because none of them is part of a stage key.
 
-Search matches model, build-profile, and component names and the taxonomy
-labels. Task and model family filters sit beside the cards. Architecture, type,
-input, branch, and compiler filters are under **More filters**. A filter lists
-only the values the loaded builds use and is hidden when fewer than two remain.
+The search field matches model, build-profile, and component names and the taxonomy
+labels. Task and model family filters sit beside the cards. Developer view also
+shows Branch, Compiler and Build history directly in the filter panel. Customer
+view keeps only Task and Model family. Category filters list the values the
+loaded builds use and are hidden when fewer than two remain; developer controls
+stay visible even when only one branch or compiler is available.
 
 **Compare** in the top bar explores all model variants for one task. The
 chart shows all measured precisions together. Hover over a point to see the model,
 variant, throughput and accuracy. Accuracy is the vertical axis and throughput
 in inferences/s is the horizontal axis. Accuracy is grouped by dataset and metric.
 Multi-component models are excluded for now. Select up to three points or use the compact
-**Add model** selector to show detailed measurements, including power and memory. The link
+**Add model** selector to show detailed measurements, including power and memory.
+Remove a selected variant using the × in its table heading or its chart label.
+Selected variants without a point in the current graph are labelled **Not plotted**.
+The graph, table and model selector update together. The link
 preserves the task and selected variants. LLM/VLM comparison shows **TBD**.
 
-**Buy**, at the right of the top bar, opens the DevKit store at
-[devkit.sima.ai](https://devkit.sima.ai/) in a new tab. On a phone, the top
-bar shortens **Developer docs** to **Docs**.
+On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
 ## The model page
 
 Selecting a card opens the model page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
-marked with › that opens in place. A model with several build profiles shows
+marked with › that opens in place. The header places the model image beside its
+name, description and download action in both UI modes; narrow screens stack them.
+The validation and source-link icons form a separate group beside Download, with
+space between the groups. The download dialog offers an outlined **Copy CLI command**
+button with a copy icon alongside browser downloads where available. Customer
+package dialogs name the model, summarize the variant and size, and show a quiet
+filename block and license line with a **Download model** action. Developer dialogs
+use the same layout with extra fields for package identifiers, component counts,
+format, checksums and attribution. Dialogs and action buttons use softly rounded corners.
+The model's License section retains attribution in both views. Dialog actions
+place Cancel on the left, Copy CLI command in the middle and Download on the right.
+A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
 first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
@@ -67,11 +100,11 @@ their verified settings, including fixed image resolutions without compiler
 overrides; older builds fall back to recorded compile parameters. Sections appear
 in this order:
 
-1. **Overview.** The hero and the `## Overview` section of the README, including
+1. **Overview.** The `## Overview` section of the README, including
    any model-specific note about changing context length or image resolution
-   during compilation. The
-   **Full model card** row opens the rest of the README, its **Inputs and
-   outputs** and **Building applications** sections, so the title, hero, and
+   during compilation. The **Inputs and outputs** and **Building applications**
+   sections appear inline from the
+   rest of the README after its checksum is verified, so the title, hero, and
    overview are never shown twice. The README follows the
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 2. **Performance.** For each component, four tiles with one number each:
@@ -83,15 +116,11 @@ in this order:
    the commit and GitHub workflow of the run that measured the component.
    CI reuses a build until its compile inputs change, so that commit can be
    later than the build's.
-   **Execution graph** then draws the steps the component runs, from input to
-   output, each tagged with the processor it runs on; the step on the MLA is
-   the **Compiled Model**. **Details**, at the right of its heading, opens a
-   table of the tensors passed between steps with their data type, shape,
-   scale, and zero point. When the report includes layer stats, **Runtime Layer Analysis**
-   opens an Insight-style **Duration / Table** selector. **Duration** shows
-   measured execution times in microseconds, slowest first, with a fixed time
+   When the report includes layer stats, **Runtime Layer Analysis**
+   opens a **Chart / Table** selector. **Chart** shows
+   measured execution times in microseconds with a **Slowest layers first** caption and a fixed time
    axis and a legend of layer families inferred from compiled names. **Table**
-   shows names, execution time and share in compiler order, without bars. Name
+   shows names, execution time and share without bars, with a **Compiler order** caption. Name
    search and a minimum-time slider apply to either view; only one is displayed.
    Each layer also identifies its stage and compiler position. The summary shows
    profiled MLA time, the layer count (including zero-time entries), and the ten
@@ -121,20 +150,30 @@ in this order:
    JSON and **Download CSV** saves one table of the component's context,
    every metric, every SoM rail, every CPU core, and all compiled layer timings.
    A metric the browser does not place in the tiles or the cards appears under **Other measurements**,
-   so a new metric shows up without a browser change. A
+   so a new metric shows up without a browser change.
+   Runtime Layer Analysis sits below Benchmark details, followed by an **Execution graph** that
+   draws the steps the component runs, from input to output, each tagged with the
+   processor it runs on; the step on the MLA is the **Compiled Model**. The diagram
+   uses the available width, with equal-width Input and Output boxes and **Details**
+   beside it. Its heading matches Benchmark details in size and aligns with the diagram. This button opens a
+   table of the tensors passed between steps with their data type, shape,
+   scale, and zero point. Hover, focus or tap a processing stage for a short explanation of
+   what it does, with its processor named in a badge at the bottom. The top accent
+   line and badge use the same colour as the graph. Input and Output have no tooltips.
+   Tensor information stays under Details. A
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
    Each component's measurements then appear under the same number.
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
-   **Evaluation details** explains the status and coverage and lists
+   In the developer UI, **Evaluation details** explains the status and coverage and lists
    the remaining metrics, each with its published score when
    `published_metrics` in `model.yaml` records one for the measured dataset.
-   **Published scores** lists every published entry with its dataset,
+   Its **Published scores** row lists every published entry with its dataset,
    conditions, and source. A build with no accuracy result yet shows only the
    published scores.
-4. **Details.** The package with its size, checksum, and download buttons.
+4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
    A single-component package downloads as its MPK. A multi-component package
    downloads as a ZIP of its MPKs and also offers **Download components**.
    Then come rows for build provenance (the commit and workflow that compiled the
