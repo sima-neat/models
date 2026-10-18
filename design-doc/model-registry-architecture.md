@@ -131,7 +131,8 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 Manual **Promote model** takes a model ID and build profile, resolves the newest matching
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
-create the protected backend request and issue summary → protected `<VULCAN_ENV>-promote-develop`
+create the protected backend request and issue summary → mention model owners and send
+a Slack approval reminder → protected `<VULCAN_ENV>-promote-develop`
 review → approve the exact request → report backend state. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
 reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for

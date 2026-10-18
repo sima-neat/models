@@ -169,6 +169,8 @@ def main():
         show(record)
         # Make review details visible before the protected job is scheduled.
         update_issue(plan, record)
+        if operation == 'promote' and record.get('state') == 'pending':
+            request_review(plan, record)
     elif phase == 'approve':
         plan, record = p.read(PLAN), p.read(RECORD)
         operation = 'approve' if plan['operation'] == 'promote' else 'reject'
@@ -189,6 +191,38 @@ def main():
         update_issue(plan, current)
     else:
         raise p.ValidationError('Unknown workflow phase')
+
+
+
+def request_review(plan, record):
+    """Mention the owning team once per request; each retry can send a Slack reminder."""
+    number = int(plan['issue_url'].rsplit('/', 1)[1])
+    marker = f"<!-- models-promotion-review:{record['promotion_id']} -->"
+    pages = gh('api', '--paginate', '--slurp', f'repos/sima-neat/models/issues/{number}/comments?per_page=100')
+    if not any(marker in comment.get('body', '') and comment.get('user', {}).get('login') == 'github-actions[bot]'
+               for page in pages for comment in page):
+        gh('api', '--method', 'POST', f'repos/sima-neat/models/issues/{number}/comments', body={
+            'body': marker + '\n\n@sima-neat/owners-models: this promotion is ready for review. '
+                    f"Review the candidate and evidence in this issue, then approve or reject at "
+                    f"https://github.com/sima-neat/models/actions/runs/{plan['identity']}.",
+        })
+    source = record.get('source', {})
+    text = (
+        f"Model promotion approval requested ({p.configuration()['vulcan_environment']})\n"
+        f"Model: {source.get('model_id', 'unknown')} / {source.get('profile_id', 'unknown')}\n"
+        "Reviewers: sima-neat/owners-models\n"
+        f"Promotion: {record['promotion_id']}\n"
+        f"Review evidence: {plan['issue_url']}\n"
+        f"Approve or reject: https://github.com/sima-neat/models/actions/runs/{plan['identity']}\n"
+        "Review the pinned candidate and validation evidence before approving."
+    )
+    # Plain text prevents model metadata from injecting Slack mentions or formatting.
+    p.save(DIRECTORY / 'slack-review.json', {
+        'channel': os.environ.get('SLACK_MODEL_PROMOTION_CHANNEL_ID', ''),
+        'text': text, 'mrkdwn': False, 'parse': 'none',
+        'unfurl_links': False, 'unfurl_media': False,
+    })
+    output('review_ready', 'true')
 
 
 def update_issue(plan, record):

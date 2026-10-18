@@ -194,3 +194,42 @@ def test_acceptance_branch_is_staging_only(monkeypatch, tmp_path):
         module.main()
     guard = workflow()['jobs']['configure']['if']
     assert "github.ref == 'refs/heads/codex/promotion-catalog-reader' && vars.VULCAN_ENV == 'staging'" in guard
+
+
+def test_review_notification_mentions_once_and_links_pinned_request(monkeypatch, tmp_path):
+    import json
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('SLACK_MODEL_PROMOTION_CHANNEL_ID', 'C123')
+    comments = []
+    calls = []
+
+    def github(*args, **kwargs):
+        calls.append((args, kwargs))
+        if '--method' in args:
+            comments.append({**kwargs['body'], 'user': {'login': 'github-actions[bot]'}})
+            return {}
+        return [comments]
+
+    monkeypatch.setattr(module, 'gh', github)
+    plan = {'issue_url': 'https://github.com/sima-neat/models/issues/330', 'identity': '123'}
+    record = {'promotion_id': 'pinned-id', 'source': {'model_id': 'qwen3_5_0_8b', 'profile_id': 'w4a16'}}
+    module.request_review(plan, record)
+    module.request_review(plan, record)
+    assert len(comments) == 1
+    assert '@sima-neat/owners-models' in comments[0]['body']
+    message = json.loads((tmp_path / '_promotion/slack-review.json').read_text())
+    assert message['channel'] == 'C123'
+    assert message['mrkdwn'] is False and message['parse'] == 'none'
+    assert 'qwen3_5_0_8b / w4a16' in message['text']
+    assert 'pinned-id' in message['text']
+    assert plan['issue_url'] in message['text']
+    assert 'actions/runs/123' in message['text']
+
+
+def test_slack_notification_is_before_gate_and_failure_is_nonblocking():
+    steps = workflow()['jobs']['request']['steps']
+    notify = next(s for s in steps if s.get('name') == 'Notify model owners in Slack')
+    assert notify['if'] == "steps.request.outputs.review_ready == 'true'"
+    assert notify['continue-on-error'] is True
+    assert notify['with']['token'] == '${{ secrets.SLACK_BOT_TOKEN }}'
+    assert notify['with']['payload-file-path'] == '_promotion/slack-review.json'

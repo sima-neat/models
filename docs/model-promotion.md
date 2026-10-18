@@ -170,3 +170,21 @@ Tracking: [Models #315](https://github.com/sima-neat/models/issues/315), under
 Temporary acceptance testing also permits `codex/promotion-catalog-reader` when
 `VULCAN_ENV=staging`. It uses the same approval gate and targets Develop in staging.
 Remove this exact-branch exception before merging the implementation.
+
+## Approval reminders
+
+After Vulcan confirms a pending promotion, the request job adds a comment
+mentioning `@sima-neat/owners-models` to the evidence issue. It posts that comment
+once per promotion, including on retries. It then sends a Slack reminder with
+the model/profile, environment, promotion ID, evidence issue, and approval URL.
+This notification does not approve the request.
+
+Configure `SLACK_MODEL_PROMOTION_CHANNEL_ID` in the selected staging/production
+GitHub environment (or repository/organization variables). Make
+`SLACK_BOT_TOKEN` available to the request job; the bot needs `chat:write` and
+access to the destination channel. The Slack reminder identifies the GitHub
+team by name; it does not assume a corresponding Slack user group.
+
+Only pending promote requests send reminders. Retrying the request job may send
+another Slack reminder; the GitHub team comment is deduplicated. Slack delivery
+failure is visible as a failed notification step but does not block approval.
