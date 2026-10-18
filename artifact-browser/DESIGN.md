@@ -58,7 +58,9 @@ The selected precision tab uses a soft blue fill and border while keeping its
 text neutral and readable in both themes.
 
 Compare starts with a task, then shows measured single-component vision variants
-in one scatter plot: accuracy vertically, throughput horizontally. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
+in one scatter plot: accuracy vertically, throughput horizontally. The dataset is
+shown below the chart title, with a Dataset & metric selector when multiple groups
+are available. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
 variants with missing measurements. The graph legend includes plotted selections only;
 variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,

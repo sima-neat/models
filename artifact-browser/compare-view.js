@@ -135,6 +135,10 @@ function selectionColor(key) {
   return state.comparePicks.filter(Boolean).indexOf(key);
 }
 
+function datasetLabel(dataset) {
+  return [dataset.id, dataset.variant, dataset.split].filter(Boolean).join(" / ");
+}
+
 function comparisonPlot(columns) {
   const points = columns.flatMap(column => {
     const readings = column.components[0]?.measurements;
@@ -145,7 +149,7 @@ function comparisonPlot(columns) {
   for (const {column} of points) {
     const accuracy = column.accuracy;
     if (accuracy?.comparisonKey && Number.isFinite(accuracy.numericValue)) {
-      groups.set(accuracy.comparisonKey, `${accuracy.label} · ${accuracy.dataset.id}${accuracy.dataset.variant ? ` / ${accuracy.dataset.variant}` : ""}`);
+      groups.set(accuracy.comparisonKey, `${datasetLabel(accuracy.dataset)} · ${accuracy.label}`);
     }
   }
   const axes = [...groups];
@@ -179,8 +183,10 @@ function comparisonPlot(columns) {
     return `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}<span aria-hidden="true">×</span></button>`;
   }).join("");
   return `<section class="compare-chart-panel" aria-labelledby="compare-chart-title">
-    <div class="compare-chart-header"><div><h3 id="compare-chart-title">Accuracy &amp; speed</h3><p>${plotted.length} of ${columns.length} variants shown · Select up to three to inspect below.</p></div>
-      ${axes.length > 1 ? `<div class="compare-chart-controls">${selectControl("Accuracy metric", "axis", axes, state.compareAxis)}</div>` : ""}</div>
+    <div class="compare-chart-header"><div><h3 id="compare-chart-title">Accuracy &amp; speed</h3>
+      ${accuracy?.dataset ? `<p class="compare-chart-dataset">Dataset: ${escapeHtml(datasetLabel(accuracy.dataset))}</p>` : ""}
+      <p>${plotted.length} of ${columns.length} variants shown · Select up to three to inspect below.</p></div>
+      ${axes.length > 1 ? `<div class="compare-chart-controls">${selectControl("Dataset & metric", "axis", axes, state.compareAxis)}</div>` : ""}</div>
     <div class="compare-legend">${legend}</div>
     ${plotted.length ? `<div class="compare-chart-scroll" role="region" aria-label="Model measurement chart" tabindex="0"><svg class="compare-chart" viewBox="0 0 960 410" role="group" aria-label="Model measurements: throughput versus ${escapeHtml(yLabel)}">
       <g class="compare-chart-grid">${grid}</g><text class="compare-axis-title" x="503" y="398" text-anchor="middle">Throughput (inferences/s)</text>

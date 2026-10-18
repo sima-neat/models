@@ -355,6 +355,7 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('[data-compare-control="axis"] option[value="latency"]').count()) throw new Error('latency remains selectable as an axis');
         const chartLabels = await page.locator('.compare-axis-title').allTextContents();
         if (chartLabels[0] !== 'Throughput (inferences/s)' || !chartLabels[1].includes('mAP')) throw new Error('accuracy/throughput axes changed');
+        if (!(await page.locator('.compare-chart-dataset').innerText()).includes('coco-2017')) throw new Error('chart does not identify its accuracy dataset');
         const droneKey = await add.locator('option').filter({hasText: 'Tiny Drone'}).first().getAttribute('value');
         await add.selectOption(droneKey);
         if (await page.locator(`.compare-point[data-compare-toggle="${droneKey}"], .compare-legend [data-compare-toggle="${droneKey}"]`).count()) throw new Error('model with a different accuracy dataset appears in the chart');
@@ -363,6 +364,8 @@ async function checkTaskComparison(browser, base) {
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();
         if (choices.length !== 3 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
+        const dataset = await page.locator('.compare-chart-dataset').innerText();
+        if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
         // The FP16 classification variant has no accuracy result; it stays available in Add model.
         if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
         await add.selectOption('resnet_50.w16a16');

@@ -64,7 +64,9 @@ stay visible even when only one branch or compiler is available.
 **Compare** in the top bar explores all model variants for one task. The
 chart shows all measured precisions together. Hover over a point to see the model,
 variant, throughput and accuracy. Accuracy is the vertical axis and throughput
-in inferences/s is the horizontal axis. Accuracy is grouped by dataset and metric.
+in inferences/s is the horizontal axis. The dataset, variant and split appear below
+the chart title. Accuracy is grouped by dataset and metric; when more than one
+group is available, choose it with **Dataset & metric**.
 Multi-component models are excluded for now. Select up to three points or use the compact
 **Add model** selector to show detailed measurements, including power and memory.
 Remove a selected variant using the × in its table heading or its chart label.
