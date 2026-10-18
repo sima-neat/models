@@ -424,7 +424,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert recorded[0] == "Qwen3.5-0.8B-Autoround-Safetensors"
     assert recorded[1:3] == ["-o", "Qwen3.5-0.8B-Autoround-compiled"]
     assert recorded[3:] == arguments[3:]
-    assert recorded[recorded.index("--jobs") + 1] == "12"
+    assert recorded[recorded.index("--jobs") + 1] == "20"
     manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
     assert "compile.sh" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
