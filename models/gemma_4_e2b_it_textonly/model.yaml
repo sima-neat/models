@@ -82,7 +82,7 @@ calibrations: []
 build_profiles:
 - id: w4a16
   target: modalix
-  runner_class: most-expensive
+  runner_class: expensive
   components:
   - id: model
     parameters:
