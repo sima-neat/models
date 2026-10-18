@@ -247,6 +247,18 @@ jobs:
           role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
       - name: Report authoritative backend state
+        id: report
         env:
           GH_TOKEN: ${{ github.token }}
+          SLACK_VULCAN_EVENT_CHANNEL_ID: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
+          APPROVAL_RESULT: ${{ needs.approve.result }}
         run: python scripts/model_promotion.py report
+      - name: Notify promotion outcome in Slack
+        if: always() && steps.report.outputs.completion_ready == 'true'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: _promotion/slack-completion.json

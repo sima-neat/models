@@ -263,3 +263,57 @@ def test_production_exact_candidate_skips_artifact_discovery(monkeypatch, tmp_pa
     assert calls[0]['expected_model_id'] == 'qwen3_5_0_8b'
     assert calls[0]['expected_profile_id'] == 'w4a16'
     assert module.p.read(module.PLAN)['vulcan_environment'] == 'production'
+
+
+def test_completion_notice_uses_backend_outcome_not_job_success(monkeypatch, tmp_path):
+    import json
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('SLACK_VULCAN_EVENT_CHANNEL_ID', 'C123')
+    monkeypatch.setenv('APPROVAL_RESULT', 'success')
+    plan = {'identity': '123', 'issue_url': 'https://github.com/sima-neat/models/issues/330'}
+    record = {'promotion_id': 'pinned', 'state': 'pending',
+              'source': {'model_id': 'qwen3_5_0_8b', 'profile_id': 'w4a16'}}
+    for state, snapshot, verified, expected in [
+        ('pending', None, True, 'not confirmed'),
+        ('promoted', None, True, 'not confirmed'),
+        ('promoted', 'abc123', True, 'completed'),
+        ('rejected', None, True, 'rejected'),
+        ('cancelled', None, True, 'cancelled'),
+        ('expired', None, True, 'expired'),
+        ('promoted', 'abc123', False, 'not confirmed'),
+    ]:
+        module.completion_notice(plan, {**record, 'state': state, 'result_snapshot': snapshot}, verified=verified)
+        message = json.loads((tmp_path / '_promotion/slack-completion.json').read_text())
+        assert message['channel'] == 'C123'
+        assert message['text'].startswith('Model promotion ' + expected)
+        assert 'qwen3_5_0_8b / w4a16' in message['text']
+        assert 'actions/runs/123' in message['text']
+        assert ('Published snapshot: abc123' in message['text']) == (expected == 'completed')
+
+
+def test_report_failure_still_prepares_unknown_outcome_notice(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    module.p.save(module.PLAN, {**module.p.configuration(), 'operation': 'promote',
+                               'identity': '123', 'issue_url': ''})
+    module.p.save(module.RECORD, {'promotion_id': 'pinned', 'state': 'pending'})
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'report'])
+
+    def fail(*args):
+        raise module.p.ValidationError('backend unavailable')
+
+    monkeypatch.setattr(module.p, 'inspect', fail)
+    with pytest.raises(module.p.ValidationError, match='backend unavailable'):
+        module.main()
+    payload = module.p.read(tmp_path / '_promotion/slack-completion.json')
+    assert 'Backend state: unknown' in payload['text']
+    assert 'completion_ready=true' in (tmp_path / 'outputs').read_text()
+
+
+def test_outcome_slack_step_runs_even_if_issue_reporting_fails():
+    steps = workflow()['jobs']['report']['steps']
+    report = next(s for s in steps if s.get('id') == 'report')
+    assert report['env']['APPROVAL_RESULT'] == '${{ needs.approve.result }}'
+    notice = next(s for s in steps if s.get('name') == 'Notify promotion outcome in Slack')
+    assert notice['if'] == "always() && steps.report.outputs.completion_ready == 'true'"
+    assert notice['with']['payload-file-path'] == '_promotion/slack-completion.json'

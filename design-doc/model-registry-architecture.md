@@ -133,7 +133,7 @@ GitHub candidate receipt, and verifies its identity with Vulcan. It runs indepen
 compilation: prepare and persist a request plan →
 create the protected backend request and issue summary → mention model owners and send
 a Slack approval reminder → protected `<VULCAN_ENV>-promote-develop`
-review → approve the exact request → report backend state. Only trusted Develop workflow code
+review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
 reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for
 configuration, retries, and the staging acceptance boundary.

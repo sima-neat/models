@@ -145,7 +145,8 @@ On-demand candidates require a separate manual **Promote model** dispatch to bec
 on Develop. Enter the model folder ID and a build profile ID from its `model.yaml`;
 the workflow resolves the newest matching candidate receipt and pins it for review.
 Pending requests mention `@sima-neat/owners-models` in the issue and send a Slack
-reminder to the configured `SLACK_VULCAN_EVENT_CHANNEL_ID`.
+reminder to the configured `SLACK_VULCAN_EVENT_CHANNEL_ID`. After the decision,
+the same channel receives the backend outcome, including unsuccessful promotion attempts.
 A successful build or metadata publication is not approval. See
 [promoting a model](model-promotion.md) for the protected review and recovery procedure.
 

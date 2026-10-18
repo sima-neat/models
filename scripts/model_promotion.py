@@ -188,7 +188,12 @@ def main():
         show(result)
     elif phase == 'report':
         plan, record = p.read(PLAN), p.read(RECORD)
-        current = p.inspect(client, record['promotion_id'])
+        current = None
+        try:
+            current = p.inspect(client, record['promotion_id'])
+        finally:
+            if plan['operation'] != 'status':
+                completion_notice(plan, current or record, verified=current is not None)
         show(current)
         update_issue(plan, current)
     else:
@@ -218,13 +223,47 @@ def request_review(plan, record):
         f"Approve or reject: https://github.com/sima-neat/models/actions/runs/{plan['identity']}\n"
         "Review the pinned candidate and validation evidence before approving."
     )
+    slack_payload('slack-review.json', text)
+    output('review_ready', 'true')
+
+
+def completion_notice(plan, record, *, verified):
+    state = record.get('state', 'unknown') if verified else 'unknown'
+    if state == 'promoted' and record.get('result_snapshot'):
+        outcome = 'Model promotion completed'
+    elif state in {'rejected', 'cancelled', 'expired'}:
+        outcome = f'Model promotion {state}'
+    else:
+        outcome = 'Model promotion not confirmed'
+    source = record.get('source', {})
+    issue_url = plan.get('issue_url') or record.get('workflow', {}).get('issue_url', '')
+    text = (
+        f"{outcome} ({p.configuration()['vulcan_environment']})\n"
+        f"Model: {source.get('model_id', 'unknown')} / {source.get('profile_id', 'unknown')}\n"
+        f"Backend state: {state}\n"
+        f"Approval job: {os.environ.get('APPROVAL_RESULT', 'unknown')}\n"
+        f"Promotion: {record['promotion_id']}\n"
+        f"Workflow: https://github.com/sima-neat/models/actions/runs/{plan['identity']}"
+    )
+    if issue_url:
+        text += f"\nEvidence: {issue_url}"
+    if state == 'promoted' and record.get('result_snapshot'):
+        text += f"\nPublished snapshot: {record['result_snapshot']}"
+    elif state == 'pending':
+        text += "\nThe request is still pending; no completed promotion was confirmed."
+    elif not verified:
+        text += "\nCould not read backend state; inspect the workflow before retrying."
+    slack_payload('slack-completion.json', text)
+    output('completion_ready', 'true')
+
+
+def slack_payload(filename, text):
     # Plain text prevents model metadata from injecting Slack mentions or formatting.
-    p.save(DIRECTORY / 'slack-review.json', {
+    p.save(DIRECTORY / filename, {
         'channel': os.environ.get('SLACK_VULCAN_EVENT_CHANNEL_ID', ''),
         'text': text, 'mrkdwn': False, 'parse': 'none',
         'unfurl_links': False, 'unfurl_media': False,
     })
-    output('review_ready', 'true')
 
 
 def update_issue(plan, record):

@@ -167,7 +167,7 @@ Tracking: [Models #315](https://github.com/sima-neat/models/issues/315), under
 [master plan #306](https://github.com/sima-neat/models/issues/306). Backend contract:
 [Vulcan integration guide](https://github.com/sima-neat/vulcan/pull/253#issuecomment-6210178603).
 
-## Approval reminders
+## Approval and outcome notifications
 
 After Vulcan confirms a pending promotion, the request job adds a comment
 mentioning `@sima-neat/owners-models` to the evidence issue. It posts that comment
@@ -199,3 +199,14 @@ Model ID and build profile remain required and are verified against the candidat
 returned by the selected registry. A staging UUID cannot be used to promote in
 production. This does not enable production candidate publication; that producer
 path still requires separate implementation and acceptance testing.
+
+After the approval/decision job finishes, the report job sends a second Slack
+message to the same channel. It includes the model/profile, environment, promotion
+ID, workflow and evidence links, approval-job result, and freshly read backend
+state. Only `promoted` with a result snapshot is described as completed.
+Rejected, cancelled, expired, still-pending, and unreadable backend states are
+reported explicitly. Status-only dispatches do not send outcome notifications.
+The outcome message is prepared before updating the issue, so an issue-update
+failure does not suppress Slack delivery. Reporting requires the saved plan and
+request receipt; failures before those are available cannot send this outcome.
+Retries may resend the outcome notification.
