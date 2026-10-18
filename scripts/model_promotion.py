@@ -2,7 +2,7 @@
 """Usage: model_promotion.py configure|prepare|request|approve|report
 
 GitHub orchestration only. Inputs come from environment variables; registry
-semantics live in model_registry.promotions. Run from Develop or the explicit staging acceptance branch.
+semantics live in model_registry.promotions. Run only from trusted Develop code.
 """
 from __future__ import annotations
 
@@ -65,6 +65,9 @@ def candidate_receipt(model_id: str, profile_id: str) -> dict:
     """Resolve the newest matching build receipt; never fall back past an expired one."""
     if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (model_id, profile_id)):
         raise p.ValidationError("Provide model_id and build_profile from models/<model_id>/model.yaml")
+    if p.configuration()['vulcan_environment'] != 'staging':
+        raise p.ValidationError(
+            "Automatic lookup is staging-only. Provide an exact candidate UUID from the selected environment.")
     pages = gh('api', '--paginate', '--slurp',
                'repos/sima-neat/models/actions/artifacts?per_page=100')
     pattern = re.compile(rf"candidate-{re.escape(model_id)}-{re.escape(profile_id)}-[0-9]+")
@@ -95,13 +98,8 @@ def candidate_receipt(model_id: str, profile_id: str) -> dict:
 
 
 def main():
-    # Temporary staging acceptance exception; remove before merging this branch.
-    test_branch = (os.environ.get('GITHUB_REF') == 'refs/heads/codex/promotion-catalog-reader'
-                   and os.environ.get('VULCAN_ENV') == 'staging')
-    if (os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models'
-            or (os.environ.get('GITHUB_REF') != p.TARGET and not test_branch)):
-        raise p.ValidationError(
-            'Promotion workflow requires Develop or the explicit staging acceptance branch in sima-neat/models')
+    if os.environ.get('GITHUB_REPOSITORY') != 'sima-neat/models' or os.environ.get('GITHUB_REF') != p.TARGET:
+        raise p.ValidationError('Promotion workflow must execute from sima-neat/models Develop')
     phase = sys.argv[1]
     config = p.configuration()
     if phase == 'configure':
@@ -132,8 +130,12 @@ def main():
                 raise p.ValidationError('Provide a reason of 1–2000 characters')
             if operation == 'promote':
                 model_id, profile_id = os.environ.get('MODEL_ID', ''), os.environ.get('BUILD_PROFILE', '')
-                receipt = candidate_receipt(model_id, profile_id)
-                plan = p.prepare(client, deployment_id=receipt.get('deployment_id'), reason=reason,
+                if not model_id or not profile_id:
+                    raise p.ValidationError('Provide model_id and build_profile from models/<model_id>/model.yaml')
+                deployment_id = os.environ.get('DEPLOYMENT_ID', '').strip()
+                if not deployment_id:
+                    deployment_id = candidate_receipt(model_id, profile_id).get('deployment_id')
+                plan = p.prepare(client, deployment_id=deployment_id, reason=reason,
                                  workflow={'run_id': run_id, 'run_url': run_url}, identity=run_id,
                                  read_api_url=config['read_api_url'],
                                  expected_model_id=model_id, expected_profile_id=profile_id)

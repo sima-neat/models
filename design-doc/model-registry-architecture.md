@@ -331,7 +331,3 @@ upload limit. Aggregate deployment size has no limit.
 Empty measurement declarations schedule no board stages. Qwen's defaults
 and the separate performance and accuracy follow-ups are in the
 [author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
-
-Temporary acceptance testing also permits `codex/promotion-catalog-reader` when
-`VULCAN_ENV=staging`. It uses the same approval gate and targets Develop in staging.
-Remove this exact-branch exception before merging the implementation.

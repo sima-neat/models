@@ -127,7 +127,7 @@ def test_environment_change_rejected_before_workflow_api_access(monkeypatch, tmp
 
 def test_model_inputs_explain_metadata_location():
     inputs = workflow().get('on', workflow().get(True))['workflow_dispatch']['inputs']
-    assert 'deployment_id' not in inputs
+    assert 'Required for production' in inputs['deployment_id']['description']
     assert 'model.yaml' in inputs['model_id']['description']
     assert 'build_profiles' in inputs['build_profile']['description']
 
@@ -178,22 +178,24 @@ def test_candidate_receipt_missing_or_invalid_inputs(monkeypatch, tmp_path):
         module.candidate_receipt('', 'w4a16')
 
 
-def test_acceptance_branch_is_staging_only(monkeypatch, tmp_path):
+def test_acceptance_branch_is_no_longer_allowed(monkeypatch, tmp_path):
     import pytest
     module = orchestration(monkeypatch, tmp_path)
     monkeypatch.setenv('GITHUB_REF', 'refs/heads/codex/promotion-catalog-reader')
     monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'configure'])
-    module.main()
-    assert 'vulcan_environment=staging' in (tmp_path / 'outputs').read_text()
+    with pytest.raises(module.p.ValidationError, match='Develop'):
+        module.main()
+    assert workflow()['jobs']['configure']['if'] == (
+        "github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'")
+
+
+def test_production_lookup_never_searches_staging_receipts(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
     monkeypatch.setenv('VULCAN_ENV', 'production')
-    with pytest.raises(module.p.ValidationError, match='Develop'):
-        module.main()
-    monkeypatch.setenv('VULCAN_ENV', 'staging')
-    monkeypatch.setenv('GITHUB_REPOSITORY', 'someone/models')
-    with pytest.raises(module.p.ValidationError, match='Develop'):
-        module.main()
-    guard = workflow()['jobs']['configure']['if']
-    assert "github.ref == 'refs/heads/codex/promotion-catalog-reader' && vars.VULCAN_ENV == 'staging'" in guard
+    monkeypatch.setattr(module, 'gh', lambda *args: pytest.fail('Must not search staging receipts'))
+    with pytest.raises(module.p.ValidationError, match='exact candidate UUID'):
+        module.candidate_receipt('qwen3_5_0_8b', 'w4a16')
 
 
 def test_review_notification_mentions_once_and_links_pinned_request(monkeypatch, tmp_path):
@@ -233,3 +235,31 @@ def test_slack_notification_is_before_gate_and_failure_is_nonblocking():
     assert notify['continue-on-error'] is True
     assert notify['with']['token'] == '${{ secrets.SLACK_BOT_TOKEN }}'
     assert notify['with']['payload-file-path'] == '_promotion/slack-review.json'
+
+
+def test_production_exact_candidate_skips_artifact_discovery(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('VULCAN_ENV', 'production')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('PROMOTION_OPERATION', 'promote')
+    monkeypatch.setenv('PROMOTION_REASON', 'Reviewed production evidence')
+    monkeypatch.setenv('MODEL_ID', 'qwen3_5_0_8b')
+    monkeypatch.setenv('BUILD_PROFILE', 'w4a16')
+    monkeypatch.setenv('DEPLOYMENT_ID', '11111111-1111-4111-8111-111111111111')
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'prepare'])
+    monkeypatch.setattr(module, 'gh', lambda *args, **kwargs: [{'artifacts': []}])
+    monkeypatch.setattr(module, 'candidate_receipt', lambda *args: pytest.fail('Must use exact candidate'))
+    monkeypatch.setattr(module, 'issue', lambda *args: 'https://github.com/sima-neat/models/issues/999')
+    calls = []
+
+    def prepare(client, **kwargs):
+        calls.append(kwargs)
+        return {'body': {'deployment_id': kwargs['deployment_id'], 'workflow': {}}, 'key': 'key'}
+
+    monkeypatch.setattr(module.p, 'prepare', prepare)
+    module.main()
+    assert calls[0]['deployment_id'] == '11111111-1111-4111-8111-111111111111'
+    assert calls[0]['expected_model_id'] == 'qwen3_5_0_8b'
+    assert calls[0]['expected_profile_id'] == 'w4a16'
+    assert module.p.read(module.PLAN)['vulcan_environment'] == 'production'

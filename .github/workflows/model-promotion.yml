@@ -15,6 +15,9 @@ on:
       build_profile:
         description: "Promote only. ID under build_profiles in models/<model_id>/model.yaml (e.g. w4a16). Selects the newest candidate receipt."
         type: string
+      deployment_id:
+        description: "Exact finalized candidate UUID in VULCAN_ENV. Required for production; optional override in staging. Find it in that environment's build candidate.json."
+        type: string
       promotion_id:
         description: Existing promotion UUID (status, cancel, reject)
         type: string
@@ -33,11 +36,7 @@ concurrency:
 
 jobs:
   configure:
-    # Temporary staging acceptance exception; remove before merging this branch.
-    if: >-
-      github.repository == 'sima-neat/models' &&
-      (github.ref == 'refs/heads/develop' ||
-       (github.ref == 'refs/heads/codex/promotion-catalog-reader' && vars.VULCAN_ENV == 'staging'))
+    if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment: ${{ vars.VULCAN_ENV }}
     outputs:
@@ -95,6 +94,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PROMOTION_OPERATION: ${{ inputs.operation }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE: ${{ inputs.build_profile }}
           PROMOTION_ID: ${{ inputs.promotion_id }}

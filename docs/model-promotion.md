@@ -62,7 +62,7 @@ provision approver trust until the required environment rules are in place.
    is the folder name under `models/` (also the top-level `id` in `model.yaml`);
    the profile is an `id` under `build_profiles` in that file. For Qwen3.5 0.8B,
    use `qwen3_5_0_8b` and `w4a16`. Leave promotion ID blank.
-   The workflow selects the newest matching candidate receipt by creation time
+   In staging, leave `deployment_id` blank to select the newest matching candidate receipt by creation time
    across source branches, verifies its identity and finalized state with Vulcan,
    and pins the UUID before review. Missing or expired receipts fail with build
    instructions; it never silently falls back to an older receipt. Check the
@@ -167,10 +167,6 @@ Tracking: [Models #315](https://github.com/sima-neat/models/issues/315), under
 [master plan #306](https://github.com/sima-neat/models/issues/306). Backend contract:
 [Vulcan integration guide](https://github.com/sima-neat/vulcan/pull/253#issuecomment-6210178603).
 
-Temporary acceptance testing also permits `codex/promotion-catalog-reader` when
-`VULCAN_ENV=staging`. It uses the same approval gate and targets Develop in staging.
-Remove this exact-branch exception before merging the implementation.
-
 ## Approval reminders
 
 After Vulcan confirms a pending promotion, the request job adds a comment
@@ -189,3 +185,17 @@ team by name; it does not assume a corresponding Slack user group.
 Only pending promote requests send reminders. Retrying the request job may send
 another Slack reminder; the GitHub team comment is deduplicated. Slack delivery
 failure is visible as a failed notification step but does not block approval.
+
+## Environment-local candidate selection
+
+Automatic model/profile discovery uses legacy build receipts, which are staging-only:
+candidate publication currently rejects other environments. Production dispatches
+must provide an exact `deployment_id` from the production registry. They fail
+before searching GitHub artifacts when that ID is omitted. The UUID is also an
+optional override in staging, allowing selection of a specific validated build.
+Find it in the build's `candidate.json` receipt, using `deployment_id`.
+
+Model ID and build profile remain required and are verified against the candidate
+returned by the selected registry. A staging UUID cannot be used to promote in
+production. This does not enable production candidate publication; that producer
+path still requires separate implementation and acceptance testing.

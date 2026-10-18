@@ -228,7 +228,3 @@ If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
 failure.
-
-Temporary acceptance testing also permits `codex/promotion-catalog-reader` when
-`VULCAN_ENV=staging`. It uses the same approval gate and targets Develop in staging.
-Remove this exact-branch exception before merging the implementation.
