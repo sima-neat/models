@@ -218,7 +218,7 @@ def request_review(plan, record):
     )
     # Plain text prevents model metadata from injecting Slack mentions or formatting.
     p.save(DIRECTORY / 'slack-review.json', {
-        'channel': os.environ.get('SLACK_MODEL_PROMOTION_CHANNEL_ID', ''),
+        'channel': os.environ.get('SLACK_VULCAN_EVENT_CHANNEL_ID', ''),
         'text': text, 'mrkdwn': False, 'parse': 'none',
         'unfurl_links': False, 'unfurl_media': False,
     })

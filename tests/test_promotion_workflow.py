@@ -199,7 +199,7 @@ def test_acceptance_branch_is_staging_only(monkeypatch, tmp_path):
 def test_review_notification_mentions_once_and_links_pinned_request(monkeypatch, tmp_path):
     import json
     module = orchestration(monkeypatch, tmp_path)
-    monkeypatch.setenv('SLACK_MODEL_PROMOTION_CHANNEL_ID', 'C123')
+    monkeypatch.setenv('SLACK_VULCAN_EVENT_CHANNEL_ID', 'C123')
     comments = []
     calls = []
 

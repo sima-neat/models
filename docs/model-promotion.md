@@ -179,8 +179,9 @@ once per promotion, including on retries. It then sends a Slack reminder with
 the model/profile, environment, promotion ID, evidence issue, and approval URL.
 This notification does not approve the request.
 
-Configure `SLACK_MODEL_PROMOTION_CHANNEL_ID` in the selected staging/production
-GitHub environment (or repository/organization variables). Make
+Reuse `SLACK_VULCAN_EVENT_CHANNEL_ID`, the shared channel variable used by
+other Vulcan notifications. It must be available to the selected environment
+through environment, repository, or organization variables. Make
 `SLACK_BOT_TOKEN` available to the request job; the bot needs `chat:write` and
 access to the destination channel. The Slack reminder identifies the GitHub
 team by name; it does not assume a corresponding Slack user group.

@@ -145,7 +145,7 @@ jobs:
         id: request
         env:
           GH_TOKEN: ${{ github.token }}
-          SLACK_MODEL_PROMOTION_CHANNEL_ID: ${{ vars.SLACK_MODEL_PROMOTION_CHANNEL_ID }}
+          SLACK_VULCAN_EVENT_CHANNEL_ID: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
         run: python scripts/model_promotion.py request
       - name: Notify model owners in Slack
         if: steps.request.outputs.review_ready == 'true'
