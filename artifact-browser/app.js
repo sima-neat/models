@@ -154,7 +154,7 @@ function showFolderDownload(run, downloads) {
   pendingCommand = current ? modelDownloadCommand(run.metadata.model_id, runProfile(run),
     elements["branch-filter"].value || branchName(run.git_ref), config.environment?.toLowerCase() === "staging") : null;
   elements["download-title"].textContent = "Download model folder";
-  elements["download-description"].textContent = "LLM and VLM models are provided as individual files rather than a ZIP archive. Use sima-cli 2.1.19 or later to download the files in parallel and assemble the model folder.";
+  elements["download-description"].textContent = "This model is provided as a folder of individual files, similar to a Hugging Face repository, rather than a ZIP archive. Use sima-cli 2.1.19 or later to download the files in parallel and assemble the model folder.";
   elements["download-list"].hidden = true;
   elements["download-package-info"].hidden = false;
   elements["download-package-info"].innerHTML = downloads.map((item) => {

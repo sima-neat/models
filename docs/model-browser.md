@@ -155,11 +155,13 @@ from CI after merge.
 
 ### Model folder downloads
 
-A directory package (including LLiMa models) opens a **Download model folder**
-dialog with its file count, total download size, and a copyable `sima-cli models
-download` command. The command uses the selected branch and adds `--stg` for
+A directory package opens a **Download model folder**
+dialog explaining that the model is provided as individual files in a folder,
+similar to a Hugging Face repository. This applies to any directory package,
+including Whisper, LLMs, and VLMs. The dialog shows its file count, total download
+size, and a copyable `sima-cli models download` command. The command uses the selected branch and adds `--stg` for
 the staging registry. Commands are offered for the current catalog deployment;
-historical builds point to the current variant instead. LLM and VLM models
+historical builds point to the current variant instead. Folder downloads
 require sima-cli 2.1.19 or later to download the files in parallel and assemble
 the model folder.
 The CLI verifies the manifest and each file and recreates their relative paths.
