@@ -6,7 +6,7 @@ if [[ $# -lt 2 ]]; then
   echo "usage: $0 <checkpoint_directory> <output_directory> [llima-compile options...]" >&2
   exit 2
 fi
-arguments=("${@:3}" --jobs 12)
+arguments=("${@:3}" --jobs 20)
 llima-compile "$1" -o "$2" "${arguments[@]}"
 
 # Keep the executed options in a standalone recipe for this deployment.
