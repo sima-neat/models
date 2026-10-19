@@ -243,7 +243,6 @@ def test_preview_reports_a_package_result_on_its_last_components_build(tmp_path:
     assert result["model"]["package_id"] == "default"
     assert [item["component_id"] for item in result["components"]] == ["backbone", "decoder"]
     assert [item["sha256"] for item in result["components"]] == [build["artifact_sha256"] for build in builds]
-    assert [item["name"] for item in result["cpu_stages"]] == ["Top 300 proposals"]
 
 
 def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
@@ -1565,10 +1564,10 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "${singleComponent || measuredPackage ? \"\" : `<p class=\"section-note\">" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
     # A declared pipeline orders and numbers the components under a strip; otherwise they keep run order.
-    # A package result replaces the component scores under the strip, and times the strip's CPU stage.
+    # A package result replaces the component scores under the strip.
     assert "componentPerformance(detail, !singleComponent, order && index + 1, model)" in render_detail
     strip, package, components = (render_detail.index(marker) for marker in (
-        '${order ? pipelineStrip(variant.pipeline, measuredPackage?.result.cpuStages) : ""}',
+        '${order ? pipelineStrip(variant.pipeline) : ""}',
         "? packagePerformance(measuredPackage, model)",
         ": performanceDetails.map((detail, index) => componentPerformance(",
     ))

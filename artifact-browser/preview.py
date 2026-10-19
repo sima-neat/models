@@ -399,7 +399,6 @@ def _package_result(model: dict, build: dict, builds: list[dict], compiler: dict
         "compile_run_id": item["run_id"], "layer_stats": component["benchmark_report"]["layer_stats"],
         "execution_plan": _benchmark_template()["execution_plan"],
     } for item, component in zip(members, results)]
-    result["cpu_stages"] = [{"name": "Top 300 proposals", "avg_ms": 3.607, "p99_ms": 7.648}]
     report = result["benchmark_report"]
     fps = round(0.98 / sum(1 / item["benchmark_report"]["fps"] for item in results), 1)
     latency = round(sum(item["benchmark_report"]["latency_ms"] for item in results) + 3.607, 3)

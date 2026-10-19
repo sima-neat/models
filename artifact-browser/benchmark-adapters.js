@@ -173,7 +173,7 @@ export function executionGraph(plan) {
 }
 
 // A package result measures its components running as one pipeline and records each component's
-// layer timings and execution plan, plus the CPU steps between them.
+// layer timings and execution plan.
 function packageComponents(result) {
   if (!Array.isArray(result.components)) return null;
   return result.components.map((component) => ({
@@ -187,7 +187,6 @@ function adaptResult(result) {
   return {
     ...common(result),
     components: packageComponents(result),
-    cpuStages: Array.isArray(result.cpu_stages) ? result.cpu_stages : [],
     orchestration: result.orchestration || null,
   };
 }

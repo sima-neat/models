@@ -135,20 +135,6 @@
         }
       }
     },
-    "cpu_stages": {
-      "description": "The time each CPU stage between a package's components took per frame during the measurement.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["name", "avg_ms", "p99_ms"],
-        "properties": {
-          "name": {"type": "string", "minLength": 1},
-          "avg_ms": {"$ref": "#/$defs/reportNumber"},
-          "p99_ms": {"$ref": "#/$defs/reportNumber"}
-        }
-      }
-    },
     "orchestration": {
       "type": "object",
       "additionalProperties": false,
@@ -177,7 +163,7 @@
     {
       "if": {"properties": {"benchmark_type": {"const": "model.orchestration"}}},
       "then": {
-        "required": ["components", "cpu_stages"],
+        "required": ["components"],
         "properties": {
           "model": {"required": ["package_id"]},
           "tool": {"properties": {"name": {"const": "pyneat.ModelRunner"}}},
@@ -185,7 +171,7 @@
         }
       },
       "else": {
-        "not": {"anyOf": [{"required": ["components"]}, {"required": ["cpu_stages"]}]},
+        "not": {"required": ["components"]},
         "properties": {
           "model": {"not": {"required": ["package_id"]}},
           "tool": {"properties": {"name": {"const": "pyneat.Model.benchmark"}}},

@@ -193,8 +193,7 @@ in this order:
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
    When the build has a [package benchmark](benchmarking.md#package-benchmark)
    result, the tiles, context line, and **Benchmark details** are that result,
-   for the components and CPU step running together, and the CPU step shows its
-   measured mean time. **Runtime Layer Analysis** and **Execution graph** each
+   for the components and CPU step running together. **Runtime Layer Analysis** and **Execution graph** each
    switch between the components. The catalog and Compare show the package
    result as the model's one value. Otherwise, each component's measurements
    appear under its number.

@@ -171,7 +171,6 @@ def import_core_benchmark(
         result["components"] = [
             {**build, **context["components"][build["component_id"]]} for build in manifest["components"]
         ]
-        result["cpu_stages"] = context["cpu_stages"]
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")

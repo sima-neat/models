@@ -106,7 +106,6 @@ def rf_detr_result(tmp_path: Path, *, include_power: bool = True) -> Path:
             }
             for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items()
         ],
-        cpu_stages=[{"name": "Top 300 proposals", "avg_ms": 1.2, "p99_ms": 2.0}],
     )
     result["benchmark_report"]["layer_stats"] = []
     result["model"].update(

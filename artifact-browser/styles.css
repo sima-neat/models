@@ -364,7 +364,6 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .pipeline-chip { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 18px 0 8px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 16px; font-weight: 500; white-space: nowrap; }
 .pipeline-chip.cpu { gap: 8px; padding: 0 16px; border: 1px dashed var(--line-strong); background: transparent; color: var(--ink-soft); font-size: 15px; font-weight: 400; }
 .pipeline-cpu { font-size: 12px; font-weight: 500; letter-spacing: .04em; }
-.pipeline-time { color: var(--ink); font: 500 13px var(--font-mono); }
 /* The order never wraps partway: it is one row when it fits and one column when it does not. */
 @container (max-width: 800px) {
   .component-pipeline { flex-direction: column; }

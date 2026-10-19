@@ -140,13 +140,12 @@ the backbone, the CPU step, and the decoder each work on a different frame,
 and each stage ends the next one's input when it finishes. One
 `pyneat.TelemetryMonitor` samples the board over the throughput window.
 `benchmark-report.json` uses Core's report fields; `benchmark-context.json`
-adds each component's layer timings and execution plan and the CPU step's mean
-and p99 time.
+adds each component's layer timings and execution plan.
 
 The result is a schema 6 `performance-result.json` with `benchmark_type`
 `model.orchestration`, `model.package_id`, a `components` list (each
-component's build, layer timings, and execution plan), and `cpu_stages`. Its
-scores are the whole model's. Component numbers are never added together.
+component's build, layer timings, and execution plan). Its scores are the
+whole model's. Component numbers are never added together.
 
 Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
 component rates measured on the same board, because the MLA runs one MPK at a

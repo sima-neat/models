@@ -630,16 +630,11 @@ function pipelineOrder(variant) {
 }
 
 // One line from input to output: numbered component chips, with any CPU step between them as a dashed chip.
-// A CPU step the package benchmark timed shows its mean time.
-function pipelineStrip(pipeline, cpuStages = []) {
+function pipelineStrip(pipeline) {
   let number = 0;
-  const cpuTime = (name) => {
-    const timed = cpuStages.find((stage) => stage.name === name);
-    return timed ? `<span class="pipeline-time">${escapeHtml(timed.avg_ms.toFixed(1))} ms</span>` : "";
-  };
   const stages = pipeline.map((stage) => ("component" in stage
     ? `<li><span class="pipeline-chip"><span class="component-number">${++number}</span>${escapeHtml(humanize(stage.component))}</span></li>`
-    : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}${cpuTime(stage.cpu)}</span></li>`));
+    : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}</span></li>`));
   return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
 }
 
@@ -1101,7 +1096,7 @@ export function renderDetail(variant) {
 
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components${measuredPackage ? ", measured running together." : ", each measured on its own."}</p>`}
-      ${order ? pipelineStrip(variant.pipeline, measuredPackage?.result.cpuStages) : ""}
+      ${order ? pipelineStrip(variant.pipeline) : ""}
       ${measuredPackage
         ? packagePerformance(measuredPackage, model)
         : performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1, model)).join("")}

@@ -110,8 +110,6 @@ class Window:
         self.frames = 0
         self.seconds = 0.0
         self.telemetry = None
-        # The top-proposal time of every frame, in the order the frames reach the decoder.
-        self.top_k_seconds: list[float] = []
 
     def count_output(self) -> None:
         self.outputs += 1
@@ -126,9 +124,6 @@ class Window:
 
     def fps(self) -> float:
         return self.frames / self.seconds
-
-    def measured_top_k_seconds(self) -> list[float]:
-        return self.top_k_seconds[WARMUP_FRAMES : WARMUP_FRAMES + self.frames]
 
 
 def push(runner: pyneat.ModelRunner, inputs: list[pyneat.Tensor], name: str) -> None:
@@ -190,9 +185,7 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
     def forward_proposals() -> None:
         try:
             for features, scores, boxes in drain(backbone, "backbone", pushed):
-                started = time.perf_counter()
                 proposals = select_top_proposals(scores, boxes)
-                window.top_k_seconds.append(time.perf_counter() - started)
                 push(decoder, [features, proposals], "decoder")
                 pushed["decoder"] += 1
                 # The decoder holds its inputs now, so the backbone gets its output buffers back.
@@ -243,12 +236,6 @@ def write_results(
         "layer_stats": [],
     }
     (output / "benchmark-report.json").write_text(json.dumps(report, allow_nan=False), encoding="utf-8")
-    top_k_seconds = window.measured_top_k_seconds()
-    proposals = {
-        "name": f"Top {QUERY_COUNT} proposals",
-        "avg_ms": float(np.mean(top_k_seconds) * 1000),
-        "p99_ms": percentile_ms(top_k_seconds, 99),
-    }
     context = {
         "core_version": pyneat.__version__,
         "num_samples": MEASURED_FRAMES,
@@ -264,13 +251,11 @@ def write_results(
             "queue_depth": QUEUE_DEPTH,
         },
         "components": {name: {"layer_stats": timings[name], "execution_plan": plans[name]} for name in models},
-        "cpu_stages": [proposals],
     }
     (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
     print(
         f"{fps:.1f} FPS over {window.frames} frames in {window.seconds:.1f} s; latency {report['latency_ms']:.2f} ms "
-        f"over {len(latencies)} frames; top {QUERY_COUNT} {proposals['avg_ms']:.2f} ms; "
-        f"power {report['avg_power_watts']:.2f} W"
+        f"over {len(latencies)} frames; power {report['avg_power_watts']:.2f} W"
     )
 
 

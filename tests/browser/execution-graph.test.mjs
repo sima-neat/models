@@ -58,7 +58,6 @@ test('reads the plan the performance script recorded and shows nothing for anoth
 test('reads a package result as one score with each component\'s layers and execution graph', () => {
   const result = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url), 'utf8'));
   const layers = [{name: 'MLA_0/conv2d_0', stage_index: 0, total_execution_time_us: 120.5}];
-  const cpuStage = {name: 'Top 300 proposals', avg_ms: 3.6, p99_ms: 7.6};
   const packaged = {
     ...result,
     benchmark_type: 'model.orchestration',
@@ -66,7 +65,6 @@ test('reads a package result as one score with each component\'s layers and exec
     execution_plan: null,
     benchmark_report: {...result.benchmark_report, layer_stats: []},
     components: ['backbone', 'decoder'].map((id) => ({component_id: id, layer_stats: layers, execution_plan: plan})),
-    cpu_stages: [cpuStage],
   };
   const benchmark = adaptBenchmarkResult(packaged).value;
   assert.equal(benchmark.packageId, 'default');
@@ -75,6 +73,5 @@ test('reads a package result as one score with each component\'s layers and exec
   assert.deepEqual(benchmark.components.map(({id}) => id), ['backbone', 'decoder']);
   assert.deepEqual(benchmark.components[0].executionGraph, executionGraph(plan));
   assert.equal(benchmark.components[1].layerAnalysis.layers.length, 1);
-  assert.deepEqual(benchmark.cpuStages, [cpuStage]);
   assert.equal(adaptBenchmarkResult(result).value.components, null);
 });

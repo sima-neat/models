@@ -357,7 +357,6 @@ def test_layer_timings_survive_import_unchanged(core_inputs, tmp_path):
 
 
 LAYERS = [{"name": "conv", "stage_index": 0, "total_execution_time_us": 161.95}]
-CPU_STAGE = {"name": "Top 300 proposals", "avg_ms": 1.2, "p99_ms": 2.0}
 
 
 def as_package(core_inputs):
@@ -385,7 +384,6 @@ def as_package(core_inputs):
     context["components"] = {
         component_id: {"layer_stats": LAYERS, "execution_plan": PLAN} for component_id in ("backbone", "decoder")
     }
-    context["cpu_stages"] = [CPU_STAGE]
     context_path.write_text(json.dumps(context))
 
 
@@ -401,7 +399,6 @@ def test_a_package_result_records_each_components_build_layers_and_plan(core_inp
         ("backbone", LAYERS, PLAN),
         ("decoder", LAYERS, PLAN),
     ]
-    assert result["cpu_stages"] == [CPU_STAGE]
     assert result["configuration"]["method"] == "model_orchestration"
 
 
