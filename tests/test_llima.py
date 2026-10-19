@@ -442,6 +442,64 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     }
 
 
+@pytest.mark.parametrize("future_mask, log_probe", [(True, True), (False, True), (True, False)])
+def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask, log_probe):
+    work = tmp_path / "source with spaces"
+    checkpoint = work / "whisper-small"
+    checkpoint.mkdir(parents=True)
+    output = tmp_path / "compiled output"
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    python = tools / "python3"
+    python.write_text(f"#!{sys.executable}\n" + '''import json, os, sys
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+model = Mock()
+model.from_hf_cache.return_value = model
+model.gen_files.side_effect = lambda *args, **kwargs: model.from_hf_cache.call_args.kwargs["sima_path"].mkdir(parents=True)
+modules = {
+    "afe.apis.error_handling_variables": Mock(),
+    "sima_lmm.model": Mock(WhisperModel=model, FileGenMode=Mock(ALL="all"),
+                          FileGenPrecision=Mock(A_BF16_W_INT8="a16w8")),
+}
+with patch.dict(sys.modules, modules):
+    sys.argv = sys.argv[1:]
+    exec(compile(sys.stdin.read(), "<whisper recipe>", "exec"))
+Path(os.environ["COMPILER_CALLS"]).write_text(json.dumps({
+    "source": model.from_hf_cache.call_args.kwargs,
+    "mode": model.gen_files.call_args.args[0],
+    "generation": model.gen_files.call_args.kwargs,
+}, default=str))
+''')
+    python.chmod(0o755)
+    captured = tmp_path / "calls.json"
+    env = {**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "COMPILER_CALLS": str(captured)}
+    options = [
+        f"--{'' if future_mask else 'no-'}use_future_token_mask",
+        f"--{'' if log_probe else 'no-'}enable_log_probe",
+    ]
+    recipe = ROOT / "models/whisper_small/scripts/compile.sh"
+    for script, arguments, destination in (
+        (recipe, [str(checkpoint), str(output), *options], output),
+        (output / "compile.sh", [], work / "whisper-small-a16w8"),
+    ):
+        subprocess.run(["bash", str(script), *arguments], cwd=work, env=env,
+                       check=True, capture_output=True, text=True)
+        calls = json.loads(captured.read_text())
+        assert (work / calls["source"]["hf_cache_path"]).resolve() == checkpoint
+        assert calls["source"]["model_name"] == "whisper-small"
+        assert (work / calls["source"]["sima_path"]).resolve() == destination / "sima_files"
+        assert calls["source"]["use_future_token_mask"] is future_mask
+        assert calls["source"]["enable_log_probe"] is log_probe
+        assert calls["mode"] == "all"
+        assert calls["generation"]["precision"] == {"all": {"precision": "a16w8"}}
+        assert calls["generation"]["num_processes"] == 20
+        assert calls["generation"]["part"] == "all"
+        assert calls["generation"]["resume"] is True
+    assert os.access(output / "compile.sh", os.X_OK)
+
+
 def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, monkeypatch):
     root = tmp_path / "repository"
     model_dir = root / "models/fixture_model"
