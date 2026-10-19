@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import queue
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -48,13 +48,6 @@ def select_top_proposals(scores: pyneat.Tensor, boxes: pyneat.Tensor) -> pyneat.
     return pyneat.Tensor.from_numpy(proposals, copy=True, memory=pyneat.TensorMemory.EV74)
 
 
-def pull(runner: pyneat.ModelRunner, name: str) -> list[pyneat.Tensor]:
-    tensors = runner.pull(TIMEOUT_MS).tensors
-    if not tensors:
-        raise RuntimeError(f"the {name} produced no output within {TIMEOUT_MS} ms")
-    return tensors
-
-
 def percentile_ms(seconds: list[float], percentile: float) -> float:
     return float(np.percentile(seconds, percentile) * 1000)
 
@@ -70,108 +63,170 @@ def layer_stats(mpk: Path) -> list[dict[str, object]]:
     ]
 
 
-def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
-    timings = {name: layer_stats(mpk) for name, mpk in mpks.items()}
+def synthetic_image() -> pyneat.Tensor:
+    """One random image, placed once in the memory the backbone reads, reused for every frame."""
+    pixels = np.random.default_rng(0).standard_normal((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+    return pyneat.Tensor.from_numpy(pixels, copy=True, memory=pyneat.TensorMemory.EV74)
+
+
+def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor) -> tuple[pyneat.ModelRunner, ...]:
+    """A runner for each model. The decoder's is built from one real backbone output."""
     run_options = pyneat.RunOptions()
     run_options.queue_depth = QUEUE_DEPTH
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
-    backbone = pyneat.Model(str(mpks["backbone"]), tensor_options())
-    decoder = pyneat.Model(str(mpks["decoder"]), tensor_options())
-    # One synthetic image, placed once in the memory the backbone reads, is reused for every frame.
-    pixels = np.random.default_rng(0).standard_normal((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-    image = pyneat.Tensor.from_numpy(pixels, copy=True, memory=pyneat.TensorMemory.EV74)
-    backbone_runner = backbone.build([image], run_options=run_options)
-    features, scores, boxes = backbone_runner.run([image], timeout_ms=TIMEOUT_MS)
-    decoder_runner = decoder.build([features, select_top_proposals(scores, boxes)], run_options=run_options)
-    del features, scores, boxes
-    plans = {"backbone": backbone.execution_plan(), "decoder": decoder.execution_plan()}
+    backbone = models["backbone"].build([image], run_options=run_options)
+    features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
+    decoder = models["decoder"].build([features, select_top_proposals(scores, boxes)], run_options=run_options)
+    return backbone, decoder
 
-    # Latency: one frame at a time through all three stages.
-    latencies = []
-    for frame in range(WARMUP_FRAMES + MEASURED_FRAMES):
+
+def infer_one(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> None:
+    features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
+    decoder.run([features, select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
+
+
+def measure_latency(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> list[float]:
+    """Seconds per frame through all three stages with nothing else in flight, after the warm-up."""
+    for _ in range(WARMUP_FRAMES):
+        infer_one(backbone, decoder, image)
+    seconds: list[float] = []
+    ends = time.perf_counter() + MIN_DURATION_S
+    while len(seconds) < MEASURED_FRAMES or time.perf_counter() < ends:
         started = time.perf_counter()
-        features, scores, boxes = backbone_runner.run([image], timeout_ms=TIMEOUT_MS)
-        decoder_runner.run([features, select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
-        if frame >= WARMUP_FRAMES:
-            latencies.append(time.perf_counter() - started)
-    del features, scores, boxes
+        infer_one(backbone, decoder, image)
+        seconds.append(time.perf_counter() - started)
+    return seconds
 
-    # Throughput: a feeder, a CPU bridge, and a collector keep both runners busy. Each blocks in Core
-    # with the GIL released while it waits, and the bridge drops the backbone outputs as soon as the
-    # decoder holds them, so the backbone's output buffers return to it.
-    # One entry per frame pushed into a runner, then None once its writer stops, so each reader pulls
-    # only frames that will arrive.
-    backbone_frames, decoder_frames = queue.SimpleQueue(), queue.SimpleQueue()
-    stop = threading.Event()
+
+class Window:
+    """The throughput measurement: it skips the warm-up outputs, then lasts at least MEASURED_FRAMES frames
+    and MIN_DURATION_S seconds, with one TelemetryMonitor sampling the board."""
+
+    def __init__(self) -> None:
+        self.monitor = pyneat.TelemetryMonitor()
+        self.outputs = 0
+        self.started = 0.0
+        self.done = False
+        self.frames = 0
+        self.seconds = 0.0
+        self.telemetry = None
+        # The top-proposal time of every frame, in the order the frames reach the decoder.
+        self.top_k_seconds: list[float] = []
+
+    def count_output(self) -> None:
+        self.outputs += 1
+        if self.outputs == WARMUP_FRAMES:
+            self.monitor.start()
+            self.started = time.perf_counter()
+        elif self.outputs > WARMUP_FRAMES and not self.done:
+            elapsed = time.perf_counter() - self.started
+            if self.outputs - WARMUP_FRAMES >= MEASURED_FRAMES and elapsed >= MIN_DURATION_S:
+                self.frames, self.seconds, self.telemetry = self.outputs - WARMUP_FRAMES, elapsed, self.monitor.stop()
+                self.done = True
+
+    def fps(self) -> float:
+        return self.frames / self.seconds
+
+    def measured_top_k_seconds(self) -> list[float]:
+        return self.top_k_seconds[WARMUP_FRAMES : WARMUP_FRAMES + self.frames]
+
+
+def push(runner: pyneat.ModelRunner, inputs: list[pyneat.Tensor], name: str) -> None:
+    if not runner.push(inputs):
+        raise RuntimeError(f"the {name} rejected a frame")
+
+
+def drain(runner: pyneat.ModelRunner, name: str, pushed: dict[str, int]) -> Iterator[list[pyneat.Tensor]]:
+    """Each output until the runner's end of stream. Fewer outputs than frames pushed means a stall.
+
+    Core's pull returns no tensors both at end of stream and on a timeout, so the count tells them apart.
+    """
+    pulled = 0
+    while tensors := runner.pull(TIMEOUT_MS).tensors:
+        pulled += 1
+        yield tensors
+        # Return the outputs to the runner before waiting for the next frame.
+        del tensors
+    if pulled != pushed[name]:
+        raise RuntimeError(f"the {name} stalled: {pulled} of {pushed[name]} frames came out within {TIMEOUT_MS} ms")
+
+
+def run_together(*stages: Callable[[], None], runners: tuple[pyneat.ModelRunner, ...]) -> None:
+    """Run each stage on its own thread. The first failure ends every runner's input, which unblocks a stage
+    waiting to push, and is raised once all stages stop. Each stage waits in Core with the GIL released."""
     errors: list[BaseException] = []
-    proposal_seconds: list[float] = []
-    window: dict[str, object] = {}
 
-    def feed() -> None:
-        while not stop.is_set():
-            if not backbone_runner.push([image]):
-                raise RuntimeError("the backbone rejected a frame")
-            backbone_frames.put(True)
+    def run(stage: Callable[[], None]) -> None:
+        try:
+            stage()
+        except BaseException as error:
+            errors.append(error)
+            for runner in runners:
+                runner.close_input()
 
-    def bridge() -> None:
-        for _ in iter(backbone_frames.get, None):
-            features, scores, boxes = pull(backbone_runner, "backbone")
-            started = time.perf_counter()
-            proposals = select_top_proposals(scores, boxes)
-            proposal_seconds.append(time.perf_counter() - started)
-            if not decoder_runner.push([features, proposals]):
-                raise RuntimeError("the decoder rejected a frame")
-            del features, scores, boxes, proposals
-            decoder_frames.put(True)
-
-    def collect() -> None:
-        monitor = pyneat.TelemetryMonitor()
-        outputs = 0
-        for _ in iter(decoder_frames.get, None):
-            pull(decoder_runner, "decoder")
-            outputs += 1
-            if outputs == WARMUP_FRAMES:
-                monitor.start()
-                window["started"] = time.perf_counter()
-            elif "frames" not in window and outputs - WARMUP_FRAMES >= MEASURED_FRAMES:
-                elapsed = time.perf_counter() - window["started"]
-                if elapsed >= MIN_DURATION_S:
-                    window.update(frames=outputs - WARMUP_FRAMES, seconds=elapsed, telemetry=monitor.stop())
-                    stop.set()
-
-    def stage(work, done: queue.SimpleQueue | None):
-        def run() -> None:
-            try:
-                work()
-            except BaseException as error:
-                errors.append(error)
-                stop.set()
-                # Ending both inputs unblocks a stage waiting to push.
-                backbone_runner.close_input()
-                decoder_runner.close_input()
-            finally:
-                if done is not None:
-                    done.put(None)
-
-        return threading.Thread(target=run, name=work.__name__)
-
-    threads = [stage(feed, backbone_frames), stage(bridge, decoder_frames), stage(collect, None)]
+    threads = [threading.Thread(target=run, args=(stage,), name=stage.__name__) for stage in stages]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    backbone_runner.close()
-    decoder_runner.close()
     if errors:
         raise errors[0]
-    if "frames" not in window:
-        raise RuntimeError("the pipeline stopped before the measurement window ended")
 
-    frames, seconds, telemetry = window["frames"], window["seconds"], window["telemetry"]
-    fps = frames / seconds
-    window_proposal_seconds = proposal_seconds[WARMUP_FRAMES : WARMUP_FRAMES + frames]
-    telemetry.save(output / "telemetry.json")
-    power = telemetry.power_som_watts
+
+def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> Window:
+    """Frames per second with every stage busy, each on a different frame."""
+    window = Window()
+    pushed = {"backbone": 0, "decoder": 0}
+
+    def push_inputs() -> None:
+        try:
+            while not window.done:
+                push(backbone, [image], "backbone")
+                pushed["backbone"] += 1
+        finally:
+            # End of stream follows the last frame through the backbone, then the decoder.
+            backbone.close_input()
+
+    def forward_proposals() -> None:
+        try:
+            for features, scores, boxes in drain(backbone, "backbone", pushed):
+                started = time.perf_counter()
+                proposals = select_top_proposals(scores, boxes)
+                window.top_k_seconds.append(time.perf_counter() - started)
+                push(decoder, [features, proposals], "decoder")
+                pushed["decoder"] += 1
+                # The decoder holds its inputs now, so the backbone gets its output buffers back.
+                del features, scores, boxes, proposals
+        finally:
+            decoder.close_input()
+
+    def pull_outputs() -> None:
+        for outputs in drain(decoder, "decoder", pushed):
+            # Return the decoder's output buffers before the next pull.
+            del outputs
+            window.count_output()
+        if not window.done:
+            raise RuntimeError("the pipeline stopped before the measurement window ended")
+
+    try:
+        run_together(push_inputs, forward_proposals, pull_outputs, runners=(backbone, decoder))
+    finally:
+        backbone.close()
+        decoder.close()
+    return window
+
+
+def write_results(
+    output: Path,
+    latencies: list[float],
+    window: Window,
+    models: dict[str, pyneat.Model],
+    timings: dict[str, list[dict[str, object]]],
+    plans: dict[str, dict[str, object]],
+) -> None:
+    fps = window.fps()
+    window.telemetry.save(output / "telemetry.json")
+    power = window.telemetry.power_som_watts
     report = {
         "latency_ms": float(np.mean(latencies) * 1000),
         "latency_p50_ms": percentile_ms(latencies, 50),
@@ -182,16 +237,17 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
         "peak_power_watts": power.maximum if power.samples else 0.0,
         # Core's convention: the energy of MEASURED_FRAMES frames at the measured rate and power.
         "energy_joules": power.mean * MEASURED_FRAMES / fps if power.samples else 0.0,
-        "throughput_duration_ms": seconds * 1000,
-        "throughput_samples": frames,
+        "throughput_duration_ms": window.seconds * 1000,
+        "throughput_samples": window.frames,
         "telemetry": json.loads((output / "telemetry.json").read_text(encoding="utf-8")),
         "layer_stats": [],
     }
     (output / "benchmark-report.json").write_text(json.dumps(report, allow_nan=False), encoding="utf-8")
+    top_k_seconds = window.measured_top_k_seconds()
     proposals = {
         "name": f"Top {QUERY_COUNT} proposals",
-        "avg_ms": float(np.mean(window_proposal_seconds) * 1000),
-        "p99_ms": percentile_ms(window_proposal_seconds, 99),
+        "avg_ms": float(np.mean(top_k_seconds) * 1000),
+        "p99_ms": percentile_ms(top_k_seconds, 99),
     }
     context = {
         "core_version": pyneat.__version__,
@@ -202,21 +258,31 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
         "workload": {
             "selection": f"Backbone, top {QUERY_COUNT} proposals on the CPU, decoder",
             "inputs": [{"shape": [IMAGE_SIZE, IMAGE_SIZE, 3], "dtype": "FLOAT32"}],
-            "preprocess": backbone.info().selection.preprocess_graph,
-            "postprocess": decoder.info().selection.selected_post_kind,
+            "preprocess": models["backbone"].info().selection.preprocess_graph,
+            "postprocess": models["decoder"].info().selection.selected_post_kind,
             "warmup_samples": WARMUP_FRAMES,
             "queue_depth": QUEUE_DEPTH,
         },
-        "components": {
-            name: {"layer_stats": timings[name], "execution_plan": json.loads(plans[name].to_json())} for name in mpks
-        },
+        "components": {name: {"layer_stats": timings[name], "execution_plan": plans[name]} for name in models},
         "cpu_stages": [proposals],
     }
     (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
     print(
-        f"{fps:.1f} FPS over {frames} frames in {seconds:.1f} s; latency {report['latency_ms']:.2f} ms; "
-        f"top {QUERY_COUNT} {proposals['avg_ms']:.2f} ms; power {report['avg_power_watts']:.2f} W"
+        f"{fps:.1f} FPS over {window.frames} frames in {window.seconds:.1f} s; latency {report['latency_ms']:.2f} ms "
+        f"over {len(latencies)} frames; top {QUERY_COUNT} {proposals['avg_ms']:.2f} ms; "
+        f"power {report['avg_power_watts']:.2f} W"
     )
+
+
+def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
+    timings = {name: layer_stats(mpk) for name, mpk in mpks.items()}
+    models = {name: pyneat.Model(str(mpk), tensor_options()) for name, mpk in mpks.items()}
+    image = synthetic_image()
+    backbone, decoder = build_runners(models, image)
+    plans = {name: json.loads(model.execution_plan().to_json()) for name, model in models.items()}
+    latencies = measure_latency(backbone, decoder, image)
+    window = measure_throughput(backbone, decoder, image)
+    write_results(output, latencies, window, models, timings, plans)
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:

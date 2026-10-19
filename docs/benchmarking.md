@@ -133,13 +133,15 @@ The script gets one `--mpk component=<archive>` per component:
 
 It first runs Core's benchmark on each MPK only for its layer timings, and
 records each Model's execution plan. It then runs each Model through its async
-runner (`Model.build`, `push`, `pull`): 1000 frames one at a time for latency,
-then one thread per stage so the backbone, the CPU step, and the decoder each
-work on a different frame. After 100 warm-up frames it measures at least 1000
-frames over at least 60 seconds, and one `pyneat.TelemetryMonitor` samples the
-board over that window. `benchmark-report.json` uses Core's report fields;
-`benchmark-context.json` adds each component's layer timings and execution
-plan and the CPU step's mean and p99 time.
+runner (`Model.build`, `push`, `pull`) in two passes, each measuring at least
+1000 frames over at least 60 seconds after 100 warm-up frames. The latency pass
+sends one frame at a time. The throughput pass runs one thread per stage, so
+the backbone, the CPU step, and the decoder each work on a different frame,
+and each stage ends the next one's input when it finishes. One
+`pyneat.TelemetryMonitor` samples the board over the throughput window.
+`benchmark-report.json` uses Core's report fields; `benchmark-context.json`
+adds each component's layer timings and execution plan and the CPU step's mean
+and p99 time.
 
 The result is a schema 6 `performance-result.json` with `benchmark_type`
 `model.orchestration`, `model.package_id`, a `components` list (each
