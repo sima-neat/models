@@ -1273,7 +1273,7 @@ def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     assert 'class="compare-tooltip"' in script
     assert 'class="compare-chart"' in script
     assert 'data-compare-toggle=' in script
-    assert 'LLM / VLM comparisons' in script
+    assert 'Model comparisons' in script
     assert 'class="compare-tbd">TBD' in script
     # The picks live in the link, so a comparison can be shared and survives reload and Back.
     assert 'params.getAll("build")' in script

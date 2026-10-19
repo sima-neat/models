@@ -73,7 +73,7 @@ Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
-preserves the task and selected variants. LLM/VLM comparison shows **TBD**.
+preserves the task and selected variants. LLM, VLM and audio comparisons show **TBD**.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
