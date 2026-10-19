@@ -649,6 +649,10 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert len(first["taxonomy_sha256"]) == 64
     assert "version" not in first["taxonomy"]
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
+    entries = {model["id"]: model for model in first["models"]}
+    assert entries["qwen3_5_0_8b"]["parameter_count_billion"] == 0.8
+    assert entries["gemma_4_e2b_it_textonly"]["parameter_count_billion"] == 5.1
+    assert "parameter_count_billion" not in entries["resnet_50"]
 
 
 def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:

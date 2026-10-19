@@ -1,6 +1,8 @@
 id: qwen3_5_0_8b
 build-on-demand: true
 display_name: Qwen3.5-0.8B
+# Published language-model size: https://huggingface.co/Qwen/Qwen3.5-0.8B#model-overview
+parameter_count_billion: 0.8
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
 tasks:
@@ -146,5 +148,15 @@ packages:
   composition: default
 fidelity: []
 accuracy: []
-benchmark: []
+benchmark:
+- id: generation
+  scope: {type: component, component: model}
+  build_profiles: [w4a16]
+  status: ready
+  metrics: [ttft_ms, prefill_tps, decode_tps, avg_power_watts, peak_power_watts,
+    avg_mla_power_watts, peak_mla_power_watts, avg_die_temperature_c, peak_die_temperature_c,
+    avg_board_temperature_c, peak_board_temperature_c, avg_cpu_usage_pct, peak_cpu_usage_pct,
+    avg_cpu_core_usage_pct, peak_cpu_core_usage_pct, mla_memory_avg_mib, mla_memory_peak_mib,
+    avg_cma_memory_mib, peak_cma_memory_mib, avg_linux_memory_mib, peak_linux_memory_mib]
+  required_metrics: [ttft_ms, decode_tps]
 maturity: experimental

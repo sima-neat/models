@@ -156,6 +156,10 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     core_report.add_argument("--output", type=Path, required=True)
     core_report.add_argument("--schema", type=Path, required=True)
 
+    genai_report = subcommands.add_parser("import-llima-benchmark", help="attach registry provenance to LLiMa timings")
+    for argument in ("manifest", "report", "output", "schema"):
+        genai_report.add_argument(f"--{argument}", type=Path, required=True)
+
     devkit_accuracy = subcommands.add_parser(
         "resolve-devkit-accuracy", help="resolve a build profile's DevKit accuracy entry and its cached dataset"
     )
@@ -400,6 +404,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--model-id", required=True)
     stage_registry.add_argument("--build-profile-id", required=True)
     stage_registry.add_argument("--compile-invocation-id", required=True)
+    stage_registry.add_argument("--compile-run-id", help="explicit compatible on-demand LLiMa compile run")
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
 
     if not author_safe:
@@ -432,6 +437,7 @@ def _validate_models(args: argparse.Namespace) -> int:
             repository / "models" / model_id,
             model["display_name"],
             repository=repository,
+            is_genai=any(component["interface"]["format"] == "huggingface" for component in model["components"]),
         )
     result = {"model_count": len(models), "model_ids": sorted(models), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid models: {len(models)}")
@@ -992,6 +998,7 @@ def _stage_registry_build(args: argparse.Namespace) -> int:
         model_id=args.model_id,
         build_profile_id=args.build_profile_id,
         compile_invocation_id=args.compile_invocation_id,
+        compile_run_id=args.compile_run_id,
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Staged {result['count']} registry MPK(s)")
     return 0
@@ -1049,6 +1056,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 args.manifest, args.report, args.context, args.output, schema_path=args.schema
             )
             print(json.dumps(result, sort_keys=True))
+            return 0
+        if args.command == "import-llima-benchmark":
+            from .llima_benchmark import import_benchmark
+            print(json.dumps(import_benchmark(args.manifest, args.report, args.output, args.schema), sort_keys=True))
             return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)

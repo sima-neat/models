@@ -83,6 +83,9 @@ def load_benchmark_result(result_path: str | Path, schema_path: str | Path | Non
         first = errors[0]
         location = ".".join(str(part) for part in first.absolute_path) or "result"
         raise ValidationError(f"benchmark result {location}: {first.message}")
+    if result["benchmark_type"] == "model.generative":
+        from .llima_benchmark import validate_report
+        validate_report(result)
     if result["identity"]["fingerprint"] is None:
         raise ValidationError("benchmark result does not have a publishable identity fingerprint")
     expected = canonical_sha256(benchmark_identity_document(result))
@@ -126,7 +129,11 @@ def validate_benchmark_set(
         config = load_component_performance_config(root, model_id, component_id, build_profile_id)
         measured = registry_metrics(result)
         for metric_name in config.get("required_metrics", ()):
-            if metric_name not in measured:
+            names = (
+                [f"{workload['id']}.{metric_name}" for workload in result["benchmark_report"]["workloads"]]
+                if result.get("benchmark_type") == "model.generative" else [metric_name]
+            )
+            if any(name not in measured for name in names):
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
     return {"count": len(validated), "results": validated}
@@ -175,7 +182,7 @@ def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
             "direction": metric["direction"],
             "sample_count": metric["sample_count"],
             "aggregation": metric["aggregation"],
-            "dimensions": dict(dimensions),
+            "dimensions": {**dimensions, **metric.get("details", {}).get("workload", {})},
         }
         for field, metric in registry_metrics(result).items()
     ]
@@ -287,7 +294,7 @@ def publish_benchmark_result(
             "input_type": "model-pack",
             "source_reference": result["model"]["uri"] or f"vulcan://runs/{parent_run_id}/artifacts/mpk",
             "sha256": result["model"]["sha256"],
-            "media_type": "application/gzip",
+            "media_type": "application/json" if result["benchmark_type"] == "model.generative" else "application/gzip",
             "metadata": {
                 "model_id": model_id,
                 "build_profile_id": build_profile_id,

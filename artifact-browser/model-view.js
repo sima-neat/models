@@ -146,6 +146,9 @@ const RAILS = {
 // and a depth when it is part of the row above it.
 const DETAIL_CARDS = [
   ["performance", "Performance", "gauge", [], [
+    ["Time to first token", ["ttft_ms"]],
+    ["Prefill", ["prefill_tps"]],
+    ["Decode", ["decode_tps"]],
     ["Throughput (async / sync)", ["throughput_fps", "sync_throughput_fps"], "Async: several inputs in flight.\nSync: one input at a time."],
     ["Latency (mean)", ["latency_avg_ms"], "Mean time for one inference."],
     ["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"], "p50: 50% of inferences are faster.\np95: 95% are faster.\np99: 99% are faster."],
@@ -556,6 +559,7 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
+  if (benchmark.workloads) return generativeBenchmark(benchmark, payload);
   const tiles = KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key])).join("");
   const details = benchmarkDetails(benchmark, payload);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
@@ -563,6 +567,42 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
     ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}
     ${layerAnalysisSection(benchmark.layerAnalysis, runId)}
     ${executionGraphSection(benchmark.executionGraph, runId)}`;
+}
+
+function generativeBenchmark(benchmark, payload) {
+  const label = (workload) => workload.kind === "text" ? `${workload.input_tokens} input tokens`
+    : `Image ${workload.image_size.join(" × ")} + text`;
+  const cells = (workload, keys) => keys.map((key) => {
+    const value = workload.metrics?.[key]?.value;
+    return `<td>${Number.isFinite(value) ? value.toFixed(1) : "—"}</td>`;
+  }).join("");
+  const rows = benchmark.workloads.filter((workload) => workload.kind === "text").map((workload) =>
+    `<tr><th scope="row">${escapeHtml(label(workload))}</th>${cells(workload, ["ttft_ms", "prefill_tps", "decode_tps"])}</tr>`).join("");
+  const images = benchmark.workloads.filter((workload) => workload.kind === "image_text").map((workload) =>
+    `<div class="benchmark-measurements image-performance"><h4>Image + text</h4>
+      <p class="benchmark-input">One ${escapeHtml(workload.image_size.join(" × "))} image ${workload.prompt
+        ? `with the prompt “${escapeHtml(workload.prompt)}”` : "with a text prompt."}</p>
+      <div class="benchmark-measurements-wrap"><table aria-label="Image and text performance"><thead><tr>
+        <th scope="col">TTFT (ms)</th><th scope="col">Decode (tokens/s)</th>
+      </tr></thead><tbody><tr>${cells(workload, ["ttft_ms", "decode_tps"])}</tr></tbody></table></div>
+    </div>`).join("");
+  const options = benchmark.workloads.map((workload) =>
+    `<option value="${escapeHtml(workload.id)}">${escapeHtml(label(workload))}</option>`).join("");
+  const panels = benchmark.workloads.map((workload, index) => {
+    const selected = adaptBenchmarkResult({...payload.result, benchmark_report: workload}).value;
+    selected.workload = label(workload);
+    selected.samples = benchmark.settings?.repetitions;
+    return `<div data-genai-details="${escapeHtml(workload.id)}"${index ? " hidden" : ""}>${benchmarkDetails(selected, payload).markup}</div>`;
+  }).join("");
+  const details = `<p>Board telemetry covers measured requests, excluding warmup and model loading.</p>
+    <label class="workload-picker">Workload <select data-genai-workload>${options}</select></label>${panels}
+    <p>Text: 256 decode steps after the first token, subject to EOS. Image: native EOS/context limit; decode throughput is the mean streamed TPS. Image TTFT includes server image processing and excludes client resizing, upload and model loading.</p>`;
+  return `<div data-generative-benchmark>${benchmark.synthetic ? '<p class="benchmark-context">Synthetic preview data — for visualization only.</p>' : ""}${rows ? `<div class="benchmark-measurements"><h4>Text</h4>
+    <div class="benchmark-measurements-wrap"><table aria-label="Text performance"><thead><tr>
+    <th scope="col">Workload</th><th scope="col">TTFT (ms)</th><th scope="col">Prefill (tokens/s)</th><th scope="col">Decode (tokens/s)</th>
+    </tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}${images}
+    <p class="benchmark-context">1 warmup · ${escapeHtml(benchmark.settings?.repetitions)} measured runs · empty cache</p>
+    ${disclosure("genai-method", "Measurement details", details, "Heat · CPU · Power · Memory")}</div>`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".

@@ -75,10 +75,13 @@ layer names include fused operations, nested reshapes, segmentation helpers,
 outputs and zero-time entries. Input placeholders are omitted, matching the
 benchmark API. These names do not describe the selected model's actual graph.
 Edit it to exercise other metric
-values or availability states. Keep one fixture per benchmark adapter, not
-per schema version: a new format that needs its own adapter adds its own
-fixture and tests, and the existing fixture keeps covering the older formats.
+values or availability states. Keep fixtures per benchmark backend, not per
+schema version. Core and LLiMa use the same result envelope and reader.
 Keep an adapter for every published schema version.
+`fixtures/genai-performance-result.json` is a display projection of the Qwen3.5-0.8B DevKit measurements, without raw token timing arrays.
+Use `preview.py --synthetic-genai` to add labeled illustrative text results for
+unmeasured LLMs/VLMs, such as Gemma. These reuse the workload shapes with synthetic
+speeds and omit board telemetry; they never change model definitions or publication.
 
 Benchmark adapters preserve every metric that follows the result contract.
 Known metrics receive curated labels, formatting, and a place in a benchmark

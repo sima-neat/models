@@ -43,6 +43,13 @@ The identity, taxonomy, ownership, license, `upstream`, and `maturity` fields
 are product metadata. `id` must match the model directory. See [Model taxonomy](model-taxonomy.md) for the
 sanctioned taxonomy values.
 
+Optional top-level `parameter_count_billion` records the source model's published
+parameter count in billions before quantization, for example `0.8` for 0.8B or
+`0.35` for 350M. The value must be positive. For LLMs/VLMs, use the published language-model
+count including embeddings and all MoE experts, rather than active or effective
+parameters. Published rounded counts are acceptable; cite the source in a YAML
+comment. This catalog metadata does not rerun compilation or measurement.
+
 `upstream` records human-reviewable provenance. Downloadable inputs belong in
 a `conversion`, component, or resource `source`, where exact bytes are pinned.
 

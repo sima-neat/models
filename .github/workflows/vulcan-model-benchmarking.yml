@@ -15,6 +15,11 @@ on:
         required: false
         default: ""
         type: string
+      compile_run_id:
+        description: Optional registered LLiMa compile-run UUID to benchmark without rebuilding or catalog approval
+        required: false
+        default: ""
+        type: string
       source_sha:
         description: Source revision used to compile the model
         required: true
@@ -80,6 +85,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          COMPILE_RUN_ID: ${{ inputs.compile_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           MODEL_ID: ${{ inputs.model_id }}
@@ -97,6 +103,8 @@ jobs:
           [[ ",$STAGES," != *",performance,"* || -n "$COMPONENT_IDS" ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ -z "$SOURCE_RUN_ID" || "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ -z "$COMPILE_RUN_ID" || "$COMPILE_RUN_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          [[ -z "$COMPILE_RUN_ID" || -z "$SOURCE_RUN_ID" ]]
           git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$BUILD_PROFILE_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
@@ -165,9 +173,14 @@ jobs:
         env:
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
+          COMPILE_RUN_ID: ${{ inputs.compile_run_id }}
         run: |
           set -euo pipefail
           : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
+          selection=()
+          if [[ -n "$COMPILE_RUN_ID" ]]; then
+            selection=(--compile-run-id "$COMPILE_RUN_ID")
+          fi
           model-registry stage-registry-build \
             --repository _source \
             --output-dir _compiled \
@@ -176,7 +189,7 @@ jobs:
             --catalog-revision "${{ inputs.source_sha }}" \
             --model-id "${{ inputs.model_id }}" \
             --build-profile-id "${{ inputs.build_profile_id }}" \
-            --compile-invocation-id "${{ inputs.compile_invocation_id }}"
+            --compile-invocation-id "${{ inputs.compile_invocation_id }}" "${selection[@]}"
 
       - name: Check whether the compilation is already registered
         id: publication
@@ -358,6 +371,14 @@ jobs:
           fi
           echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
+          backend="$("$REGISTRY_PYTHON" - "$MODEL_ID" <<'PY'
+          import sys
+          from model_registry.model import load_and_validate_model
+          model = load_and_validate_model(f"_source/models/{sys.argv[1]}")
+          print("llima" if any(c["interface"]["format"] == "huggingface" for c in model["components"]) else "core")
+          PY
+          )"
+          echo "BENCHMARK_BACKEND=$backend" >> "$GITHUB_ENV"
 
       - name: Install trusted dataset tooling
         if: env.MEASURE_ACCURACY == 'true'
@@ -392,7 +413,7 @@ jobs:
       - name: Install selected Neat Core
         id: core
         # A failed accuracy dataset step must not stop the performance stage.
-        if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.runtime.outcome == 'success' && env.BENCHMARK_BACKEND == 'core' }}
         run: |
           set -euo pipefail
           target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
@@ -400,9 +421,14 @@ jobs:
           "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
           dpkg-query -W '*neat*'
 
+      - name: Install selected LLiMa and MoLE
+        id: llima
+        if: ${{ !cancelled() && steps.runtime.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}
+        run: scripts/install_llima_benchmark_runtime.sh "$BENCHMARK_RUNTIME"
+
       - name: Measure performance on DevKit
         id: performance
-        if: ${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}
+        if: ${{ !cancelled() && (steps.core.outcome == 'success' || steps.llima.outcome == 'success') && env.MEASURE_PERFORMANCE == 'true' }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark "$COMPONENT_IDS"
 
       # Publication sends each recorded outcome with its result and then fails the run on a failed one.
@@ -443,7 +469,7 @@ jobs:
             _benchmark/*/benchmark-report.json
             _benchmark/*/benchmark-context.json
             _benchmark/*/performance-test.json
-            _benchmark/*/benchmark.log
+            _benchmark/*/*.log
             _benchmark/*/test-status.txt
           if-no-files-found: error
           retention-days: 14

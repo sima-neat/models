@@ -1,4 +1,4 @@
-"""Read the registry's benchmark metrics from a performance result's saved Core report."""
+"""Read registry metrics from saved Core and LLiMa benchmark reports."""
 
 from __future__ import annotations
 
@@ -47,6 +47,11 @@ REGISTRY_UNITS = {"C": "°C"}
 
 def measurement_name(metric: str) -> str:
     """The Vulcan measurement a registry metric is published as."""
+    if "." in metric:
+        from .llima_benchmark import GENAI_METRICS
+        metric = metric.rsplit(".", 1)[1]
+        if metric in GENAI_METRICS:
+            return GENAI_METRICS[metric][2]
     if metric == ENERGY_PER_INFERENCE:
         return "model.energy_per_inference"
     return REPORT_METRICS[metric][2] if metric in REPORT_METRICS else TELEMETRY_METRICS[metric][3]
@@ -55,18 +60,25 @@ def measurement_name(metric: str) -> str:
 def registry_metrics(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Each metric the result's Core report measured, by registry name. Core reports 0 for a headline
     value it did not measure, and 0 samples for a telemetry reading Sentinel did not provide."""
-    report = result["benchmark_report"]
+    if result.get("benchmark_type") == "model.generative":
+        from .llima_benchmark import registry_metrics as genai_metrics
+        return genai_metrics(result)
+    return report_metrics(result["benchmark_report"], result["configuration"])
+
+
+def report_metrics(report: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    """Read the same board metrics from a Core report or an LLiMa workload."""
     metrics = {}
     for name, (field, unit, _) in REPORT_METRICS.items():
-        if report[field] > 0:
+        if report.get(field, 0) > 0:
             metrics[name] = _metric(name, report[field], unit, "raw", 1)
-    if "energy_joules" in metrics:
-        inferences = result["configuration"]["samples"] * result["configuration"]["workload"]["batch_size"]
+    if "energy_joules" in metrics and configuration is not None:
+        inferences = configuration["samples"] * configuration["workload"]["batch_size"]
         energy = report["energy_joules"] / inferences
         metrics[ENERGY_PER_INFERENCE] = _metric(ENERGY_PER_INFERENCE, energy, "J/inference", "raw", 1)
-    telemetry = report["telemetry"]
+    telemetry = report.get("telemetry", {})
     for name, (field, statistic, unit, _, breakdown) in TELEMETRY_METRICS.items():
-        value = telemetry[field]
+        value = telemetry.get(field, [])
         entries = [entry for entry in (value if isinstance(value, list) else [value]) if entry["samples"]]
         if not entries:
             continue

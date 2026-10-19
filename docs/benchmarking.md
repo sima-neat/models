@@ -7,6 +7,63 @@ inputs, warmup, latency and throughput measurement, board telemetry, and runner
 lifetime. There is no shared benchmark executor and no model-specific timing
 loop.
 
+## LLM and VLM performance
+
+LLiMa models use the same DevKit performance stage with a deployed folder instead of an MPK.
+The workflow installs the LLiMa runtime and MoLE from the same LLiMa pin in `deps/manifest.json` for
+LLMs/VLMs. Core is only installed for ONNX benchmarks. Install LLiMa/MoLE with
+`scripts/install_llima_benchmark_runtime.sh` after setting
+`REGISTRY_PYTHON` and resolving the runtime JSON. `LLIMA_MOLE_PYTHON` can select an existing MoLE
+interpreter; its default is `~/sima-mole-venv/bin/python`.
+The installer also installs Sentinel independently of Core.
+
+Run the model script locally in that environment:
+
+```bash
+PYTHONPATH=tools ~/sima-mole-venv/bin/python models/qwen3_5_0_8b/scripts/performance.py \
+  --deployment /media/nvme/model-registry/Qwen3.5-0.8B --output /media/nvme/benchmark/qwen
+```
+
+Both LLMs and VLMs measure text buckets 128, 256, 512, 1024, and successive powers of two,
+plus a final `max_context - 1024` bucket. A 4K deployment measures 128/256/512/1024/2048/3072.
+MoLE uses a fixed local passage, the deployment's native tokenizer/template with thinking off,
+greedy decoding and native EOS. Each bucket has one warmup and five measured requests, with
+empty KV/state cache. The output budget is the first token plus 256 decode steps, subject to EOS.
+
+| Measurement | Definition |
+| --- | --- |
+| Text TTFT (ms) | Language prefill through the first generated token; excludes tokenization and input-buffer preparation |
+| Prefill (tokens/s) | Total measured input tokens divided by total TTFT |
+| Text decode (tokens/s) | Actual tokens after the first divided by their total duration; TTFT is excluded |
+| Image TTFT (ms) | Server image preprocessing, vision encoding and language prefill through the first token |
+| Image decode (tokens/s) | Mean streamed TPS per request, averaged across measured requests |
+
+VLMs also use the runtime's pinned airport image, resized to the compiled vision encoder input
+and encoded as JPEG (quality 90), with “Describe what you see in the image.” The image workload
+has one warmup and five measured requests, each with a fresh owned web server to avoid prefix
+reuse. Model loading, client resizing/encoding and HTTP upload are outside server TTFT. The image
+response ends at native EOS/context capacity; the current HTTP API does not enforce an output-token
+budget or expose exact token counts. Those counts remain unavailable, and image TPS is the agreed
+mean of streamed observations. Image source/encoded checksums and dimensions are recorded.
+
+Sentinel records power rails, die/board temperatures, overall and per-core CPU utilization,
+and MLA/CMA/Linux memory for each workload's measured requests. Warmup and model loading are
+excluded. Readings use the same units and statistics as vision benchmarks, including board-wide
+memory. The saved telemetry includes sample counts and trace IDs; unavailable readings retain
+their reason. Sentinel normally samples every two seconds, so very short requests may have none.
+
+`benchmark-report.json` retains per-request timings/counts and workload settings. The registry's
+`performance-result.json` uses the same schema and envelope as Core, retaining the tool's saved
+report under `benchmark_report` and adding compilation identity and runtime provenance. The browser
+shows each bucket and image workload in its own row.
+
+On-demand models are never measured by an ordinary push. Manually dispatch **Vulcan Model
+Benchmarking** with `stages=performance`, the model/profile/component, the current measured source
+revision, and either the current catalog build or `compile_run_id` for an existing compatible LLiMa
+candidate. Explicit selection verifies the source/compiler/graph fingerprint and does not approve
+or promote the candidate. A successful explicit compilation can also launch its declared benchmark.
+Measurement changes alter performance keys only; they do not recompile the model.
+
 ## Set up a DevKit
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and
@@ -162,8 +219,8 @@ Missing power stays unavailable. A `benchmark` entry's `required_metrics` must
 be present for publication; RF-DETR requires average power and energy per
 inference.
 
-`import-core-benchmark` maps the Sentinel telemetry to these metrics, each over
-the throughput pass:
+The benchmark importer maps Sentinel telemetry to these metrics, over Core's throughput pass
+or each LLiMa workload's measured requests:
 
 | Metric | Reading |
 | --- | --- |

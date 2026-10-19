@@ -404,20 +404,22 @@ def test_build_fingerprint_ignores_model_documentation_and_board_stage_scripts(m
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
 
-def test_build_fingerprint_ignores_display_name_and_description(model_repository: Path) -> None:
+def test_build_fingerprint_ignores_display_metadata(model_repository: Path) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"
     first = _fingerprint(model_repository, "alpha", "2.1.3")
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     model["display_name"] = "Renamed Fixture"
     model["description"] = "A rewritten one-line catalog description."
+    model["parameter_count_billion"] = 0.35
     manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
 
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
 
-def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
+def test_devkit_stage_keys_ignore_display_metadata() -> None:
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
-    renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description."}
+    renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description.",
+               "parameter_count_billion": 0.35}
     builds = {
         component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
         for component_id in ("backbone", "decoder")
@@ -617,6 +619,38 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
 
+@pytest.mark.parametrize("dependency", ["llima", "neat-core", "collector"])
+def test_benchmark_runtime_and_telemetry_changes_only_remeasure_their_backend(tmp_path, dependency):
+    repository = tmp_path / "repository"
+    for relative in ("schemas", "taxonomies", "deps", "scripts", "tools", ".github/workflows",
+                     "models/qwen3_5_0_8b", "models/resnet_50"):
+        shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
+
+    def keys():
+        values = []
+        for model_id, profile in (("qwen3_5_0_8b", "w4a16"), ("resnet_50", "w16a16")):
+            model = load_and_validate_model(repository / "models" / model_id)
+            values.append((compile_key(repository, model_id, profile, "model", "compiler"),
+                           performance_key(repository, model, profile, "model",
+                                           compile_run_id="run", artifact_sha256="a" * 64)))
+        return values
+
+    before = keys()
+    if dependency == "collector":
+        path = repository / "tools/model_registry/board_telemetry.py"
+        path.write_text(path.read_text() + "\n# Changed collector\n")
+    else:
+        path = repository / "deps/manifest.json"
+        manifest = json.loads(path.read_text())
+        product = "llima" if dependency == "llima" else "core"
+        manifest[dependency]["install_target"] = f"{product}@develop:{'a' * 12}"
+        path.write_text(json.dumps(manifest))
+    after = keys()
+    assert [key[0] for key in after] == [key[0] for key in before]
+    assert (before[0][1] != after[0][1]) == (dependency != "neat-core")
+    assert (before[1][1] != after[1][1]) == (dependency == "neat-core")
+
+
 @pytest.mark.parametrize(
     ("relative", "onnx_changed"),
     [
@@ -634,7 +668,7 @@ def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, onnx_changed):
     native = load_and_validate_model(ROOT / "models" / native_id)
     entry = build_matrix({native_id: native}, [native_id])["include"][0]
     assert entry["runner_script"] == "scripts/run_llima_compilation.sh"
-    assert entry["benchmark_component_ids"] == [] and entry["accuracy_id"] is None
+    assert entry["benchmark_component_ids"] == ["model"] and entry["accuracy_id"] is None
     repository = tmp_path / "repository"
     for folder in ("schemas", "taxonomies", "deps", "scripts", "tools"):
         shutil.copytree(ROOT / folder, repository / folder, ignore=shutil.ignore_patterns("__pycache__"))

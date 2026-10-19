@@ -261,6 +261,55 @@ def test_native_publication_rejects_changed_payload_before_creating_runs(compile
     assert registry.calls == []
 
 
+@pytest.mark.parametrize("mismatch", [None, "fingerprint", "model", "status"])
+def test_manual_benchmark_restores_only_a_compatible_registered_candidate(compiled, tmp_path, mismatch):
+    from model_registry.benchmark_manifest import make_benchmark_manifest, validate_benchmark_components
+
+    registry = Registry()
+    publish_candidate(repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
+                      model_id=MODEL, build_profile_id=PROFILE, **registry.args())
+    component = compiled / MODEL / PROFILE / "model"
+    run_id = json.loads((component / "registry-publication.json").read_text())["runs"][0]["run_id"]
+    run = {**registry.runs[run_id], "status": "completed"}
+    parameters = {"build_fingerprint": compile_key(ROOT, MODEL, PROFILE, "model",
+                                                  resolve_model_compiler(ROOT)["identity"])}
+    if mismatch == "fingerprint":
+        parameters["build_fingerprint"] = "0" * 64
+    if mismatch == "model":
+        run = {**run, "metadata": {**run["metadata"], "model_id": "another_model"}}
+    if mismatch == "status":
+        run["status"] = "running"
+
+    def read(url):
+        assert "/catalogs/" not in url  # Candidates need no catalog approval to be benchmarked.
+        path = url.removeprefix("https://registry.example.invalid")
+        if path.endswith("/provenance"):
+            return {"parameters": {"parameters": parameters}}
+        if path in registry.artifacts:
+            item = registry.artifacts[path]
+            return {"artifact": {**item, "download_url": item["s3_key"]}}
+        return {"run": run}
+
+    args = dict(repository=ROOT, output_dir=tmp_path / "restored", api_url="https://registry.example.invalid",
+                branch="feature/benchmark", catalog_revision="b" * 40, model_id=MODEL,
+                build_profile_id=PROFILE, compile_invocation_id="model", compile_run_id=run_id,
+                read_request=read, download_request=registry.objects.__getitem__)
+    if mismatch:
+        with pytest.raises(ValidationError, match="current model/compiler/graph"):
+            stage_catalog_build(**args)
+    else:
+        stage_catalog_build(**args)
+        validate_benchmark_components(ROOT, tmp_path / "restored", MODEL, PROFILE, "model", ["model"])
+        result = make_benchmark_manifest(repository=ROOT, compiled_dir=tmp_path / "restored",
+                                         output_path=tmp_path / "benchmark.json", branch="feature/benchmark",
+                                         git_sha="b" * 40, model_id=MODEL,
+                                         build_profile_id=PROFILE, component_id="model")
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        assert manifest["model"]["path"].endswith("deployment-manifest.json")
+        assert manifest["model"]["uri"].endswith("/artifacts/llima")
+        assert registry.candidate["state"] == "finalized"
+
+
 def test_native_publication_rejects_wrong_compiled_settings_before_creating_runs(compiled):
     component = compiled / MODEL / PROFILE / "model"
     path = component / "deployment/devkit/vlm_config.json"

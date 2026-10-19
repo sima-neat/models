@@ -19,6 +19,7 @@ COMPILED_DIR="$3"
 OUTPUT_DIR="$4"
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
+LLIMA_MOLE_PYTHON="${LLIMA_MOLE_PYTHON:-$HOME/sima-mole-venv/bin/python}"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
 MODEL_ID="$(basename "$MODEL_DIR")"
 SOURCE_SHA="${SOURCE_SHA:-$(git -C "$REPOSITORY" rev-parse HEAD)}"
@@ -85,6 +86,16 @@ for component in "${components[@]}"; do
     --component "$component" >/dev/null
   archive="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["path"])' \
     "$output/performance-test.json")"
+
+  if [[ "$(basename "$archive")" == deployment-manifest.json ]]; then
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPOSITORY/tools" "$LLIMA_MOLE_PYTHON" \
+      "$MODEL_DIR/scripts/performance.py" --deployment "$(dirname "$archive")/deployment" \
+      --output "$output" 2>&1 | tee "$output/benchmark.log"
+    "$REGISTRY_PYTHON" -m model_registry import-llima-benchmark \
+      --manifest "$output/performance-test.json" --report "$output/benchmark-report.json" \
+      --schema "$REPOSITORY/schemas/performance-result.schema.json" --output "$output/performance-result.json"
+    continue
+  fi
 
   PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     --mpk "$archive" --output "$output" 2>&1 | tee "$output/benchmark.log"

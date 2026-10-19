@@ -155,12 +155,12 @@ def test_portal_is_uploaded_only_after_its_checks_pass() -> None:
 
 
 @contextmanager
-def _preview(root: Path) -> Iterator[str]:
+def _preview(root: Path, *options: str) -> Iterator[str]:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     server = subprocess.Popen(
-        [sys.executable, str(BROWSER / "preview.py"), "--root", str(root), "--port", str(port)],
+        [sys.executable, str(BROWSER / "preview.py"), "--root", str(root), "--port", str(port), *options],
         stdout=subprocess.PIPE, text=True,
     )
     try:
@@ -189,11 +189,32 @@ def test_preview_serves_the_models_this_repository_declares(tmp_path: Path) -> N
         model = models[entry["model_id"]]
         assert entry["display_name"] == model["display_name"]
         assert entry["description"] == model["description"]
+        assert entry.get("parameter_count_billion") == model.get("parameter_count_billion")
         assert entry["builds"]
         assert entry["documentation"]["hero"]["alt_text"]
     assert sorted(model["id"] for model in catalog["catalog"]["document"]["models"]) == sorted(models)
     assert provenance["run"]["id"] == build["run_id"]
     assert provenance["run"]["metadata"]["build_profile_id"] == build["build_profile_id"]
+
+
+def test_preview_can_show_labeled_synthetic_genai_data_without_board_measurements(tmp_path: Path) -> None:
+    with _preview(tmp_path, "--synthetic-genai") as base:
+        entries = _get_json(f"{base}/v1/repositories/sima-neat/models/models")["models"]
+        models = {entry["model_id"]: entry for entry in entries}
+        results = {}
+        for model_id in ("qwen3_5_0_8b", "gemma_4_e2b_it_textonly"):
+            run_id = models[model_id]["builds"][0]["run_id"]
+            payload = _get_json(f"{base}/v1/runs/{run_id}/benchmarks/latest")
+            results[model_id] = payload["result"]
+            assert _get_json(f"{base}{payload['result_artifact_url']}") == payload["result"]
+    qwen, gemma = results["qwen3_5_0_8b"], results["gemma_4_e2b_it_textonly"]
+    assert not qwen.get("provenance", {}).get("synthetic")
+    assert gemma["provenance"]["synthetic"] is True
+    assert gemma["tool"]["version"] == "synthetic-preview"
+    workloads = gemma["benchmark_report"]["workloads"]
+    assert [workload["input_tokens"] for workload in workloads] == [128, 256, 512, 1024, 2048, 3072]
+    assert all(workload["kind"] == "text" and "telemetry" not in workload and "avg_power_watts" not in workload for workload in workloads)
+    assert workloads[0]["metrics"]["decode_tps"]["value"] != qwen["benchmark_report"]["workloads"][0]["metrics"]["decode_tps"]["value"]
 
 
 def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Path) -> None:
@@ -1273,8 +1294,13 @@ def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     assert 'class="compare-tooltip"' in script
     assert 'class="compare-chart"' in script
     assert 'data-compare-toggle=' in script
-    assert 'LLM / VLM comparisons' in script
-    assert 'class="compare-tbd">TBD' in script
+    assert 'Parameters & decode speed' in script
+    assert 'Model group' not in script
+    assert 'taxonomyLabel("tasks", id)' in script
+    assert 'compareGraph' not in script
+    assert 'compare-bucket-line' not in script
+    assert 'parameter_count_billion' in script
+    assert 'compare-tbd' not in script
     # The picks live in the link, so a comparison can be shared and survives reload and Back.
     assert 'params.getAll("build")' in script
     assert 'url.searchParams.set("view", "compare");' in script
@@ -1288,6 +1314,33 @@ def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     # Screen-reader labels are absolutely positioned; the table box must clip them on a phone.
     assert ".compare-table-wrap { position: relative; overflow-x: auto; }" in styles
     assert '.workspace:not([data-view="compare"]) .compare-pane { display: none; }' in styles
+
+
+def test_genai_comparison_uses_each_models_image_resolution() -> None:
+    script = _browser_source("compare-view.js")
+    workload = script[script.index("function comparisonWorkload("):script.index("function generativePlot(")]
+    components = [{"workloads": [
+        {"key": "text_128", "kind": "text"}, {"key": "text_256", "kind": "text"},
+        {"key": f"image_{size}x{size}", "kind": "image_text"},
+    ]} for size in (224, 448)]
+    probe = f"""
+const state = {{compareTask: 'visual_question_answering', compareWorkload: 'text_128'}};
+const components = {json.dumps(components)};
+const images = components.map(component => comparisonWorkload(component).key);
+state.compareTask = 'text_generation';
+state.compareWorkload = 'text_256';
+console.log(JSON.stringify({{
+  images,
+  text: components.map(component => comparisonWorkload(component).key),
+}}));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", workload + probe],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == {
+        "images": ["image_224x224", "image_448x448"], "text": ["text_256", "text_256"],
+    }
 
 
 def test_compare_bolds_a_value_only_against_the_same_component() -> None:

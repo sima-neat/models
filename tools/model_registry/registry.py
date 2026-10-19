@@ -600,6 +600,8 @@ def build_catalog_snapshot(
                 packages_by_model[model_id], key=lambda item: (item["build_profile_id"], item["package_id"])
             ),
         }
+        if "parameter_count_billion" in model:
+            entry["parameter_count_billion"] = model["parameter_count_billion"]
         if model.get("build-on-demand", False):
             entry["build_on_demand"] = True
             components = {item["id"]: item for item in model["components"]}
@@ -671,7 +673,10 @@ def publish_model_documentation(
     branch_identity = hashlib.sha256(branch.encode()).hexdigest()[:16]
     receipts: dict[str, JsonObject] = {}
     for model_id, model in sorted(models.items()):
-        documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root)
+        documentation = load_model_documentation(
+            root / "models" / model_id, model["display_name"], repository=root,
+            is_genai=any(component["interface"]["format"] == "huggingface" for component in model["components"]),
+        )
         on_demand = model.get("build-on-demand", False)
         digest = documentation["readme_sha256"]
         stored = store.ensure_native_sha256(
@@ -961,6 +966,7 @@ def stage_catalog_build(
     model_id: str,
     build_profile_id: str,
     compile_invocation_id: str,
+    compile_run_id: str | None = None,
     read_request: ReadRequest | None = None,
     download_request: DownloadRequest | None = None,
 ) -> JsonObject:
@@ -972,16 +978,18 @@ def stage_catalog_build(
     catalog_payload = read(
         f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
         f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
-    )
+    ) if compile_run_id is None else {}
     catalog_record = catalog_payload.get("catalog")
     document = catalog_record.get("document") if isinstance(catalog_record, dict) else None
-    if not isinstance(document, dict) or document.get("catalog_revision") != catalog_revision:
+    if compile_run_id is None and (
+        not isinstance(document, dict) or document.get("catalog_revision") != catalog_revision
+    ):
         raise ValidationError("current catalog does not match the requested catalog revision")
     catalog_model = next(
-        (item for item in document.get("models", []) if isinstance(item, dict) and item.get("id") == model_id),
+        (item for item in (document or {}).get("models", []) if isinstance(item, dict) and item.get("id") == model_id),
         None,
     )
-    if catalog_model is None:
+    if catalog_model is None and compile_run_id is None:
         raise ValidationError(f"model is absent from the current catalog: {model_id}")
     model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
     invocation = next(
@@ -995,11 +1003,31 @@ def stage_catalog_build(
         raise ValidationError(f"compile invocation is absent from the current model: {compile_invocation_id}")
     builds = {
         item["component_id"]: item
-        for item in catalog_model.get("builds", [])
+        for item in (catalog_model or {}).get("builds", [])
         if isinstance(item, dict)
         and item.get("build_profile_id") == build_profile_id
         and item.get("compile_invocation_id") == compile_invocation_id
     }
+    if compile_run_id is not None:
+        # A manual GenAI benchmark may measure a candidate before Develop approval. It must still
+        # match the current source/compiler/graph key; selecting a run never approves that candidate.
+        if (len(invocation["component_ids"]) != 1 or not model.get("build-on-demand")
+                or model["components"][0]["interface"]["format"] != "huggingface"):
+            raise ValidationError("explicit compile run selection requires a single-component on-demand LLiMa model")
+        run = read(f"{base_url}/v1/runs/{quote(compile_run_id, safe='')}").get("run", {})
+        provenance = read(f"{base_url}/v1/runs/{quote(compile_run_id, safe='')}/provenance")
+        parameters = provenance.get("parameters", {}).get("parameters", {})
+        component_id = invocation["component_ids"][0]
+        expected_key = compile_key(root, model_id, build_profile_id, compile_invocation_id,
+                                   resolve_model_compiler(root)["identity"])
+        if (run.get("status") != "completed" or run.get("run_type") != "model_compile"
+                or parameters.get("build_fingerprint") != expected_key
+                or any(run.get("metadata", {}).get(key) != value for key, value in {
+                    "model_id": model_id, "build_profile_id": build_profile_id, "component_id": component_id,
+                }.items())):
+            raise ValidationError("selected compile run does not match the current model/compiler/graph")
+        artifact = read(f"{base_url}/v1/runs/{compile_run_id}/artifacts/llima").get("artifact", {})
+        builds = {component_id: {"run_id": compile_run_id, "artifact_sha256": artifact.get("sha256")}}
     if set(builds) != set(invocation["component_ids"]):
         raise ValidationError("current catalog does not link every component in the compile invocation")
 

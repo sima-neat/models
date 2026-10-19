@@ -85,7 +85,7 @@ this table. Modules marked CI only are removed from the author package by
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
-| `benchmark_metrics.py` | reading registry metrics from the saved Core report |
+| `benchmark_metrics.py` | reading registry metrics from saved Core and LLiMa reports |
 | `core_benchmark.py` | packaging the saved Core report for publication |
 | `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
 | `published_metrics.py` | the accuracy metric vocabulary, validating each model's `published_metrics`, and the published scores the portal ships |
@@ -94,6 +94,8 @@ this table. Modules marked CI only are removed from the author package by
 | `artifact_metadata.py` | publication metadata validation |
 | `package.py` | assembling model packages from component MPKs or a complete native deployment folder |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
+| `llima_benchmark.py` | MoLE text buckets, encoder-sized HTTP image measurements, and GenAI result import |
+| `board_telemetry.py` | Sentinel traces and board telemetry summaries for measured LLiMa requests |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |

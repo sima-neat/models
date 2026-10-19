@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.stage_keys import ACCURACY_TOOLING, PERFORMANCE_TOOLING
+from model_registry.stage_keys import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
@@ -40,6 +40,7 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert set(inputs) == {
         "environment",
         "source_run_id",
+        "compile_run_id",
         "source_sha",
         "source_branch",
         "model_id",
@@ -48,7 +49,7 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
         "component_ids",
         "stages",
     }
-    optional = {"source_run_id", "component_ids", "stages"}
+    optional = {"source_run_id", "compile_run_id", "component_ids", "stages"}
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["component_ids"]["default"] == ""
@@ -205,7 +206,8 @@ def test_devkit_stages_run_only_when_requested() -> None:
     assert benchmark["env"]["MEASURE_ACCURACY"] == MEASURE_ACCURACY
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}"
+        "${{ !cancelled() && (steps.core.outcome == 'success' || steps.llima.outcome == 'success') "
+        "&& env.MEASURE_PERFORMANCE == 'true' }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark '
@@ -243,7 +245,7 @@ def test_each_devkit_stage_runs_and_publishes_on_its_own_outcome() -> None:
     }
     # Shared setup gates both stages; a failed accuracy dataset step does not skip performance.
     assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
-        "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
+        "${{ !cancelled() && steps.runtime.outcome == 'success' && env.BENCHMARK_BACKEND == 'core' }}"
     )
     assert "needs.benchmark-dispatched-model.result" not in publish["if"]
     assert "needs.benchmark-dispatched-model.outputs.performance == 'success' ||" in publish["if"]
@@ -502,7 +504,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path) -> None:
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
     assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
     source = tmp_path / "_source"
-    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING}:
+    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING}:
         (source / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, source / relative)
     python_bin = tmp_path / "bin"

@@ -70,7 +70,10 @@ def _repository() -> dict[str, Any]:
     compiler = resolve_model_compiler(ROOT)
     matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
     documentation = {
-        model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
+        model_id: load_model_documentation(
+            ROOT / "models" / model_id, model["display_name"], repository=ROOT,
+            is_genai=any(component["interface"]["format"] == "huggingface" for component in model["components"]),
+        )
         for model_id, model in models.items()
     }
     revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
@@ -241,6 +244,7 @@ def _models_list(document: dict, runs: dict[str, dict], compiler: str) -> list[d
             **_model_fields(model),
             "documentation": model["documentation"],
             **({"build_on_demand": True} if model.get("build_on_demand") else {}),
+            **({"parameter_count_billion": model["parameter_count_billion"]} if "parameter_count_billion" in model else {}),
             "catalog_revision": document["catalog_revision"],
             "taxonomy_sha256": document["taxonomy_sha256"],
             "builds": builds,
@@ -293,9 +297,10 @@ def _provenance(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
 
 
 @cache
-def _benchmark_template() -> dict[str, Any]:
+def _benchmark_template(native: bool = False) -> dict[str, Any]:
     # A ResNet-50 result imported from a DevKit Core benchmark, so board telemetry keeps real proportions.
-    return json.loads((BROWSER / "fixtures" / "performance-result.json").read_text(encoding="utf-8"))
+    filename = "genai-performance-result.json" if native else "performance-result.json"
+    return json.loads((BROWSER / "fixtures" / filename).read_text(encoding="utf-8"))
 
 
 # Synthetic compiler-style names cover the ten recognized families in one profiling panel.
@@ -329,12 +334,34 @@ _PREVIEW_LAYER_NAMES = (
 )
 
 
-def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
-    result = copy.deepcopy(_benchmark_template())
+def _benchmark_result(model: dict, build: dict, compiler: dict, *, synthetic: bool = False) -> dict[str, Any]:
+    component = next(item for item in model["components"] if item["id"] == build["component_id"])
+    native = component["interface"]["format"] == "huggingface"
+    result = copy.deepcopy(_benchmark_template(native))
     key = (model["id"], build["build_profile_id"], build["component_id"])
     result["model"].update({
         "id": model["id"], "build_profile_id": key[1], "component_id": key[2], "sha256": build["artifact_sha256"],
     })
+    if native:
+        if synthetic:
+            # Illustrative curves for unmeasured models; never publication or hardware evidence.
+            scale = 2 + _fraction("genai-preview", *key) * 0.5
+            result["provenance"] = {"synthetic": True}
+            result["tool"]["version"] = "synthetic-preview"
+            result["model"].update({"path": "synthetic-preview", "uri": None})
+            result["environment"] = {}
+            result["compatibility"].update({"actual_platform_version": None, "actual_neat_version": None})
+            workloads = result["benchmark_report"]["workloads"]
+            if "image" not in model["modalities"]["inputs"]:
+                workloads = [workload for workload in workloads if workload["kind"] == "text"]
+                result["configuration"]["image_size"] = None
+            for workload in workloads:
+                for name, metric in workload["metrics"].items():
+                    metric["value"] = round(metric["value"] * scale if name == "ttft_ms" else metric["value"] / scale, 2)
+                for field in ("telemetry", "avg_power_watts", "throughput_duration_ms"):
+                    workload.pop(field, None)
+            result["benchmark_report"]["workloads"] = workloads
+        return result
     result["compatibility"]["actual_platform_version"] = compiler["version"]
     report = result["benchmark_report"]
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
@@ -644,6 +671,11 @@ class PreviewHandler(SimpleHTTPRequestHandler):
     def _compile_run_api(self, run_id: str, rest: list[str], model: dict, build: dict, compiler: dict) -> None:
         run = _index()["runs"][run_id]
         native = run["metadata"].get("artifact_kind") == "llima"
+        benchmark_declared = any(
+            entry["scope"] == {"type": "component", "component": build["component_id"]}
+            and build["build_profile_id"] in entry["build_profiles"]
+            for entry in model["benchmark"]
+        )
         if not rest:
             artifact = {
                 "name": "llima" if native else "mpk",
@@ -667,11 +699,17 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({"run_id": run_id, "measurements": [
                 {"name": "compile.duration", "numeric_value": round(180.0 + _fraction("compile", run_id) * 900.0, 1)},
             ]})
-        elif rest == ["benchmarks", "latest"] and build.get("benchmark_fingerprint"):
+        elif rest in (["benchmarks", "latest"], ["benchmarks", "latest", "result"]) and (
+            benchmark_declared or (native and self.server.synthetic_genai)
+        ):
+            result = _benchmark_result(model, build, compiler, synthetic=not benchmark_declared)
+            if rest[-1] == "result":
+                self._json(result)
+                return
             self._json({
                 "benchmark_run": {"id": _id("benchmark", run_id)},
-                "result": _benchmark_result(model, build, compiler),
-                "result_artifact_url": "/fixtures/performance-result.json",
+                "result": result,
+                "result_artifact_url": f"/v1/runs/{run_id}/benchmarks/latest/result",
             })
         elif rest == ["benchmarks", "latest"]:
             self._not_found("benchmark_not_found")
@@ -722,10 +760,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--root", type=Path, default=BROWSER, help="directory to serve, such as website/portal-build")
+    parser.add_argument("--synthetic-genai", action="store_true", help="show illustrative performance for unmeasured LLMs/VLMs")
     args = parser.parse_args()
     run_id = first_variant_run_id()
     os.chdir(args.root)
     server = ThreadingHTTPServer((args.host, args.port), PreviewHandler)
+    server.synthetic_genai = args.synthetic_genai
     print(f"Model browser preview: http://{args.host}:{args.port}/?run={run_id}", flush=True)
     server.serve_forever()
 

@@ -63,6 +63,11 @@ PERFORMANCE_TOOLING = (
     "tools/model_registry/benchmark_manifest.py",
     PERFORMANCE_RESULT_SCHEMA,
 )
+LLIMA_PERFORMANCE_TOOLING = (
+    "tools/model_registry/llima_benchmark.py",
+    "tools/model_registry/board_telemetry.py",
+    "scripts/install_llima_benchmark_runtime.sh",
+)
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
     "scripts/install_dataset_registry.sh",
@@ -268,6 +273,10 @@ def performance_key(
     )
     if not entries:
         raise ValidationError(f"no benchmark entry applies to {model_id}/{build_profile_id}/{component_id}")
+    component = next(component for component in model["components"] if component["id"] == component_id)
+    native = component["interface"]["format"] == "huggingface"
+    runtime = resolve_benchmark_runtime(root)
+    runtime.pop("neat_core" if native else "llima", None)
     return _key({
         "stage": "performance",
         "model_id": model_id,
@@ -276,8 +285,9 @@ def performance_key(
         "compile_run_id": compile_run_id,
         "artifact_sha256": artifact_sha256,
         "benchmark": entries,
-        "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING]),
-        "runtime": resolve_benchmark_runtime(root),
+        "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING,
+                                      *(LLIMA_PERFORMANCE_TOOLING if native else ())]),
+        "runtime": runtime,
     })
 
 
@@ -301,6 +311,8 @@ def accuracy_key(
     if missing:
         raise ValidationError(f"accuracy {entry['id']!r} needs compiled component {missing[0]!r}")
     model_dir = f"models/{model_id}"
+    runtime = resolve_benchmark_runtime(root)
+    runtime.pop("llima", None)
     return _key({
         "stage": "accuracy",
         "model_id": model_id,
@@ -316,5 +328,5 @@ def accuracy_key(
         "files": _file_digests(
             root, [f"{model_dir}/{ACCURACY_SCRIPT}", *ACCURACY_TOOLING], [f"{model_dir}/{ACCURACY_REQUIREMENTS}"]
         ),
-        "runtime": resolve_benchmark_runtime(root),
+        "runtime": runtime,
     })

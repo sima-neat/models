@@ -26,7 +26,7 @@ function finite(value) {
   return Number.isFinite(value) ? value : null;
 }
 
-// Formats 1-5 stored each metric already converted. Format 6 stores the report Core saved, so its
+// Formats 1-5 stored each metric already converted. Format 6 stores the tool's saved report, so its
 // metrics are read here, under the names and from the fields tools/model_registry/benchmark_metrics.py uses.
 const REPORT_METRICS = {
   latency_avg_ms: ["latency_ms", "ms"],
@@ -68,6 +68,9 @@ function measured(value, unit, aggregation, sampleCount) {
 export function reportMetrics(result) {
   const report = result.benchmark_report || {};
   const metrics = {};
+  for (const [key, metric] of Object.entries(report.metrics || {})) {
+    metrics[key] = {...metric, status: "measured"};
+  }
   for (const [key, [field, unit]] of Object.entries(REPORT_METRICS)) {
     if (report[field] > 0) metrics[key] = measured(report[field], unit, "raw", 1);
   }
@@ -99,12 +102,16 @@ function common(result) {
     .filter(([, metric]) => metric));
   return {
     schemaVersion: result.schema_version,
+    synthetic: result.provenance?.synthetic === true,
     workload: result.schema_version >= 5
       ? `${result.configuration?.workload?.selection === "mpk_default" ? "Core default MPK" : result.configuration?.workload?.selection || "Unknown workload"} · ${result.configuration?.workload?.preprocess || "unknown"} preprocessing · ${result.configuration?.workload?.postprocess || "unknown"} postprocessing`
       : "Historical benchmark configuration",
     status: result.status,
     tool: [result.tool?.name, result.tool?.version].filter((part) => typeof part === "string" && part).join(" "),
     timestamp: result.timestamp_utc,
+    workloads: report?.workloads,
+    settings: result.configuration,
+    timing: report?.timing,
     measurements,
     samples: result.configuration?.samples,
     platformVersion: result.compatibility?.actual_platform_version,
@@ -175,7 +182,7 @@ function adaptResult(result) {
   return { ...common(result), orchestration: result.orchestration || null };
 }
 
-// Every published format stays readable; formats 1-6 share one reader.
+// Core and LLiMa use the same result envelope and reader.
 export const benchmarkAdapters = new Map([1, 2, 3, 4, 5, 6].map((version) => [version, adaptResult]));
 
 export function adaptBenchmarkResult(result) {
@@ -183,4 +190,16 @@ export function adaptBenchmarkResult(result) {
   const adapter = benchmarkAdapters.get(result.schema_version);
   if (!adapter) return { kind: "unsupported", schemaVersion: result.schema_version };
   return { kind: "supported", value: adapter(result) };
+}
+
+export function generativeWorkloads(result) {
+  const adapted = adaptBenchmarkResult(result);
+  if (adapted.kind !== "supported" || !Array.isArray(adapted.value.workloads)) return [];
+  return adapted.value.workloads.map((workload) => ({
+    ...adaptBenchmarkResult({...result, benchmark_report: workload}).value,
+    key: workload.kind === "text" ? `text_${workload.input_tokens}` : `image_${workload.image_size.join("x")}`,
+    kind: workload.kind,
+    inputTokens: workload.input_tokens,
+    label: workload.kind === "text" ? `${workload.input_tokens} input tokens` : `Image ${workload.image_size.join(" × ")} + text`,
+  })).sort((a, b) => (a.inputTokens ?? Infinity) - (b.inputTokens ?? Infinity) || a.key.localeCompare(b.key));
 }

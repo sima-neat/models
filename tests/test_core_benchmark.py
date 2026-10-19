@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from model_registry import core_benchmark
 from model_registry.benchmark_metrics import registry_metrics
 from model_registry.benchmark_publication import load_benchmark_result
@@ -13,6 +14,10 @@ from model_registry.stage_keys import PERFORMANCE_FINGERPRINT_VERSION
 
 PLAN = {"schema": "sima.neat.execution_plan", "schema_version": 1, "model": {"name": "resnet_50", "batch": 4},
         "nodes": [{"id": "p0", "kind": "Input", "runs_on": "A65"}], "edges": []}
+
+CORE_SCRIPTS = [script for script in sorted(Path(__file__).resolve().parents[1].glob("models/*/scripts/performance.py"))
+                if all(c["interface"]["format"] != "huggingface" for c in
+                       yaml.safe_load((script.parent.parent / "model.yaml").read_text())["components"])]
 
 
 @pytest.fixture
@@ -226,7 +231,7 @@ def test_rejects_a_benchmark_without_the_execution_plan_the_browser_draws(core_i
 
 
 def test_every_performance_script_records_the_execution_plan_of_the_model_it_benchmarks():
-    scripts = sorted((Path(__file__).resolve().parents[1] / "models").glob("*/scripts/performance.py"))
+    scripts = CORE_SCRIPTS
     assert scripts
     for script in scripts:
         assert '"execution_plan": json.loads(model.execution_plan().to_json()),' in script.read_text(), script
@@ -321,7 +326,7 @@ def test_rejects_telemetry_in_a_unit_the_metric_does_not_carry(core_inputs, tmp_
 
 
 def test_every_performance_script_saves_the_core_report():
-    scripts = sorted((Path(__file__).resolve().parents[1] / "models").glob("*/scripts/performance.py"))
+    scripts = CORE_SCRIPTS
     assert scripts
     for script in scripts:
         source = script.read_text()
@@ -369,7 +374,7 @@ def test_does_not_silently_publish_a_requested_but_missing_profile(core_inputs, 
         package(core_inputs, tmp_path)
 
 
-@pytest.mark.parametrize("script", sorted(Path(__file__).resolve().parents[1].glob("models/*/scripts/performance.py")),
+@pytest.mark.parametrize("script", CORE_SCRIPTS,
                          ids=lambda path: path.parent.parent.name)
 def test_every_model_requests_and_saves_layer_stats(script, monkeypatch, tmp_path):
     import runpy

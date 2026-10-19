@@ -272,7 +272,7 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 | --- | --- |
 | compile (ONNX) | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
+| performance | the compile run and compiled artifact digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling (including the LLiMa runner and Sentinel collector for native deployments), and the selected Core or LLiMa/MoLE runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
 A new compile run changes the performance and accuracy keys too, so a
@@ -280,7 +280,7 @@ recompiled build is always remeasured.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `published_metrics`, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata (including `parameter_count_billion`), `published_metrics`, `convert.py`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
@@ -451,6 +451,8 @@ the application computes on the CPU and which tensors it passes on.>
 Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
 For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).
 ````
+
+For LLiMa deployments (`interface.format: huggingface`), use [Neat GenAI Model API](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model) in the Building applications paragraph instead of Neat Model API. Validation requires the paragraph matching the deployment backend.
 
 Start from a README of the same kind:
 [`yolo26n`](https://github.com/sima-neat/models/blob/develop/models/yolo26n/README.md)

@@ -5,7 +5,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .artifact import validate_compile_outputs
+from .artifact import compile_output_fields, validate_compile_outputs, verify_artifact
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
@@ -60,15 +60,18 @@ def validate_benchmark_components(
         if not isinstance(outputs, list) or staged_components != set(invocation["component_ids"]):
             raise ValidationError("registry staging manifest must cover the complete invocation")
         for item in outputs:
-            if not isinstance(item, dict) or set(item) != {"component_id", "mpk_path", "mpk_sha256", "run_id"}:
+            path_field, sha_field = compile_output_fields(item)
+            if not isinstance(item, dict) or set(item) != {"component_id", path_field, sha_field, "run_id"}:
                 raise ValidationError("registry staging output fields are invalid")
-            relative = PurePosixPath(str(item["mpk_path"]))
+            relative = PurePosixPath(str(item[path_field]))
             if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
                 raise ValidationError("registry staging manifest contains an unsafe MPK path")
             archive = output_root.joinpath(*relative.parts)
             digest, _ = sha256_file(archive)
-            if digest != item["mpk_sha256"]:
+            if digest != item[sha_field]:
                 raise ValidationError(f"registry-staged MPK SHA-256 does not match: {item['component_id']}")
+            if path_field == "artifact_path":
+                verify_artifact(archive.parent)
     else:
         validate_compile_outputs(
             output_root / "compile-outputs.json",
@@ -137,7 +140,8 @@ def make_benchmark_manifest(
     ):
         raise ValidationError("registry publication build unit does not match the requested benchmark")
 
-    archive = compile_result.get("archive")
+    native = compile_result.get("format") == "llima"
+    archive = compile_result.get("manifest" if native else "archive")
     sha256 = compile_result.get("sha256")
     compile_run_id = published.get("run_id")
     if not isinstance(archive, str) or not archive:
@@ -162,7 +166,8 @@ def make_benchmark_manifest(
             "component_id": component_id,
             "path": str((component_dir / archive).resolve()),
             "sha256": sha256,
-            "uri": f"vulcan://runs/{compile_run_id}/artifacts/mpk",
+            "uri": (f"vulcan://runs/{compile_run_id}/artifacts/"
+                    + ("llima" if native else "mpk")),
         },
         "compatibility": {
             "platform_version": runtime["devkit"]["platform_version"],

@@ -30,6 +30,21 @@ def test_valid_fixture_passes() -> None:
     assert model["id"] == "fixture_model"
 
 
+@pytest.mark.parametrize("count", [0.35, 0.8, 5.1, 8])
+def test_parameter_count_billion_accepts_positive_numbers(count: float) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["parameter_count_billion"] = count
+    validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
+@pytest.mark.parametrize("count", [0, -1, "0.8B", True])
+def test_parameter_count_billion_rejects_invalid_values(count: object) -> None:
+    model = load_model(FIXTURES / "fixture_model")
+    model["parameter_count_billion"] = count
+    with pytest.raises(ValidationError, match="parameter_count_billion"):
+        validate_model(FIXTURES / "fixture_model", model, SCHEMA)
+
+
 def test_invalid_fixture_reports_field_paths() -> None:
     with pytest.raises(ValidationError) as error:
         load_and_validate_model(FIXTURES / "invalid_model", SCHEMA)

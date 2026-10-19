@@ -1,5 +1,5 @@
 // Explore all variants of one task; inspect up to three measured builds side by side.
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { adaptBenchmarkResult, generativeWorkloads } from "./benchmark-adapters.js";
 import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
 import { escapeHtml, variantLabel } from "./ui.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
@@ -27,7 +27,12 @@ export function writePicksToUrl(url) {
   if (state.compareTask) url.searchParams.set("compare_task", state.compareTask);
   else url.searchParams.delete("compare_task");
   url.searchParams.delete("compare_precision");
+  url.searchParams.delete("compare_graph");
+  if (state.compareTask === "text_generation" && state.compareWorkload) url.searchParams.set("compare_workload", state.compareWorkload);
+  else url.searchParams.delete("compare_workload");
 }
+
+const GENERATIVE_TASKS = ["text_generation", "visual_question_answering"];
 
 const PERFORMANCE_ROWS = [
   ["throughput_fps", "Throughput"],
@@ -35,6 +40,15 @@ const PERFORMANCE_ROWS = [
   ["avg_power_watts", "SoM power"],
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
+];
+const GENERATIVE_ROWS = [
+  ["ttft_ms", "TTFT"],
+  ["prefill_tps", "Prefill"],
+  ["decode_tps", "Decode"],
+  ["avg_power_watts", "SoM power"],
+  ["mla_memory_peak_mib", "Peak MLA memory"],
+  ["avg_cpu_usage_pct", "CPU utilization"],
+  ["peak_die_temperature_c", "Peak SoC temperature"],
 ];
 
 function catalogVariants() {
@@ -59,6 +73,7 @@ function componentMeasurements(variant) {
     const adapted = detail.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : null;
     return {
       component: variant.details.length > 1 ? detail.summary.run.metadata?.component_id || "model" : "model",
+      workloads: generativeWorkloads(detail.benchmark?.result),
       measurements: adapted?.kind === "supported" ? adapted.value.measurements : {},
     };
   });
@@ -99,7 +114,8 @@ function comparisonTable(columns) {
   const group = (title) => `<tr class="compare-group"><th scope="rowgroup" colspan="${columns.length + 1}">${escapeHtml(title)}</th></tr>`;
   const row = (label, cells) => `<tr><th scope="row">${escapeHtml(label)}</th>${cells.join("")}</tr>`;
   const text = (value) => `<td>${escapeHtml(value || "—")}</td>`;
-  const performance = PERFORMANCE_ROWS.map(([key, label]) => {
+  const rows = generative ? GENERATIVE_ROWS.filter(([key]) => key !== "prefill_tps" || state.compareTask !== "visual_question_answering") : PERFORMANCE_ROWS;
+  const performance = rows.map(([key, label]) => {
     const best = bestValues(columns, key);
     return row(label, columns.map((column) => performanceCell(column, key, best)));
   }).join("");
@@ -109,11 +125,12 @@ function comparisonTable(columns) {
       ${group("Model")}
       ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}
       ${row("Components", columns.map(({ variant }) => text(variant ? String(variant.details.length) : "")))}
+      ${generative ? row("Parameters", columns.map(({option}) => text(parameterText(option.model)))) : ""}
       ${group("Performance on Modalix")}
       ${performance}
-      ${group("Accuracy")}
+      ${generative ? "" : `${group("Accuracy")}
       ${row("Headline metric", columns.map(({ accuracy }) => text(accuracy && `${accuracy.label} ${accuracy.value}`)))}
-      ${row("Published", columns.map(({ accuracy }) => text(accuracy?.published)))}
+      ${row("Published", columns.map(({ accuracy }) => text(accuracy?.published)))}`}
     </tbody>
   </table></div>`;
 }
@@ -125,6 +142,7 @@ async function loadPickedVariant(option) {
 
 let compareRequestId = 0;
 let loadedColumns = [];
+let generative = false;
 
 function selectControl(label, key, choices, selected) {
   return `<label><span>${escapeHtml(label)}</span><select data-compare-control="${key}">${choices.map(([id, name]) =>
@@ -139,7 +157,48 @@ function datasetLabel(dataset) {
   return [dataset.id, dataset.variant, dataset.split].filter(Boolean).join(" / ");
 }
 
+function parameterText(model) {
+  const count = model.parameter_count_billion;
+  return Number.isFinite(count) && count > 0 ? `${count} B` : "";
+}
+
+function workloadMeasurements(column) {
+  return {...column, components: column.components.map(component => ({...component,
+    measurements: comparisonWorkload(component)?.measurements || {},
+  }))};
+}
+
+function comparisonWorkload(component) {
+  return component?.workloads.find(workload => state.compareTask === "visual_question_answering"
+    ? workload.kind === "image_text" : workload.key === state.compareWorkload);
+}
+
+function generativePlot(columns) {
+  const image = state.compareTask === "visual_question_answering";
+  const workloads = [...new Map(columns.flatMap(column => column.components.flatMap(component => component.workloads))
+    .filter(workload => workload.kind === "text").map(workload => [workload.key, workload])).values()]
+    .sort((a, b) => a.inputTokens - b.inputTokens);
+  if (image) state.compareWorkload = "";
+  else if (!workloads.some(workload => workload.key === state.compareWorkload)) state.compareWorkload = workloads[0]?.key || "";
+  const plotted = columns.flatMap(column => {
+    const workload = comparisonWorkload(column.components[0]);
+    const decode = measuredText(workload?.measurements.decode_tps, "decode_tps");
+    const x = column.option.model.parameter_count_billion;
+    if (!Number.isFinite(x) || x <= 0 || !decode) return [];
+    const label = `${column.option.model.display_name} · ${variantLabel(column.option.profile)} · ${workload.label}: ${parameterText(column.option.model)}, ${decode.text}`;
+    return [{column, x, y: decode.number, label}];
+  });
+  return measurementChart(columns, plotted, {
+    title: "Parameters & decode speed", xLabel: "Parameters (billions)", yLabel: "Decode (tokens/s)",
+    subtitle: image ? "One image at each model’s encoder resolution + text." : workloads.find(workload => workload.key === state.compareWorkload)?.label,
+    controls: !image && workloads.length ? selectControl("Input tokens", "workload", workloads.map(workload => [workload.key, String(workload.inputTokens)]), state.compareWorkload) : "",
+    note: "Variants without matching measurements remain available in Add model.",
+    empty: "No matching measurements yet. Use Add model to inspect a variant.",
+  });
+}
+
 function comparisonPlot(columns) {
+  if (generative) return generativePlot(columns);
   const points = columns.flatMap(column => {
     const readings = column.components[0]?.measurements;
     const throughput = measuredText(readings?.throughput_fps, "throughput_fps");
@@ -160,21 +219,32 @@ function comparisonPlot(columns) {
   });
   const accuracy = plotted[0]?.column.accuracy;
   const yLabel = `${accuracy?.label || "Accuracy"}${accuracy?.unit ? ` (${accuracy.unit})` : ""}`;
-  const maxX = Math.max(1, ...plotted.map(point => point.x)) * 1.12;
+  return measurementChart(columns, plotted.map(point => ({...point,
+    label: `${point.column.option.model.display_name || point.column.option.model.model_id} · ${variantLabel(point.column.option.profile)}: ${point.x} inferences/s, accuracy ${point.column.accuracy.value}`,
+  })), {
+    title: "Accuracy & speed", xLabel: "Throughput (inferences/s)", yLabel,
+    subtitle: accuracy?.dataset ? `Dataset: ${datasetLabel(accuracy.dataset)}` : "",
+    controls: axes.length > 1 ? selectControl("Dataset & metric", "axis", axes, state.compareAxis) : "",
+    note: "Accuracy points share a dataset and metric. Use Add model for variants without matching measurements.",
+    empty: "No matching measurements yet. Use Add model to inspect a variant.",
+  });
+}
+
+function measurementChart(columns, plotted, {title, xLabel, yLabel, subtitle = "", controls = "", note, empty}) {
+  const maxX = Math.max(.01, ...plotted.map(point => point.x)) * 1.12;
   const maxY = Math.max(1, ...plotted.map(point => point.y));
   const minY = Math.max(0, Math.min(maxY, ...plotted.map(point => point.y)) - (maxY * .08));
   const upperY = maxY * 1.05;
   const x = value => 88 + value / maxX * 830;
   const y = value => 335 - (value - minY) / (upperY - minY) * 285;
-  const tick = value => Number(value.toFixed(1)).toLocaleString();
+  const tick = (value, digits = 1) => Number(value.toFixed(digits)).toLocaleString();
   const grid = Array.from({length: 5}, (_, i) => {
     const horizontal = minY + (upperY - minY) * i / 4;
     const vertical = maxX * i / 4;
     return `<line x1="88" x2="918" y1="${y(horizontal)}" y2="${y(horizontal)}"/><text x="73" y="${y(horizontal) + 4}" text-anchor="end">${tick(horizontal)}</text>
-      <line x1="${x(vertical)}" x2="${x(vertical)}" y1="50" y2="335"/><text x="${x(vertical)}" y="360" text-anchor="middle">${tick(vertical)}</text>`;
+      <line x1="${x(vertical)}" x2="${x(vertical)}" y1="50" y2="335"/><text x="${x(vertical)}" y="360" text-anchor="middle">${tick(vertical, generative ? 2 : 1)}</text>`;
   }).join("");
-  const dots = plotted.map(({column, x: px, y: py}) => {
-    const label = `${column.option.model.display_name || column.option.model.model_id} · ${variantLabel(column.option.profile)}: ${tick(px)} inferences/s, accuracy ${column.accuracy?.value || "not measured"}`;
+  const dots = plotted.map(({column, label, x: px, y: py}) => {
     return `<g class="compare-point" data-compare-toggle="${escapeHtml(column.option.key)}" data-color="${selectionColor(column.option.key)}" role="button" tabindex="0" aria-pressed="${selectionColor(column.option.key) >= 0}" aria-disabled="${selectionColor(column.option.key) < 0 && state.comparePicks.filter(Boolean).length >= MAX_COMPARED_BUILDS}" aria-label="${escapeHtml(label)}">
       <circle class="compare-point-hit" cx="${x(px)}" cy="${y(py)}" r="16"/><circle class="compare-point-dot" cx="${x(px)}" cy="${y(py)}" r="7"/></g>`;
   }).join("");
@@ -183,15 +253,15 @@ function comparisonPlot(columns) {
     return `<button type="button" data-compare-toggle="${escapeHtml(option.key)}" data-color="${selectionColor(option.key)}" aria-label="Remove ${escapeHtml(option.model.display_name)} ${escapeHtml(variantLabel(option.profile))} from comparison"><span class="compare-column-marker" aria-hidden="true"></span>${escapeHtml(option.model.display_name)} · ${escapeHtml(variantLabel(option.profile))}<span aria-hidden="true">×</span></button>`;
   }).join("");
   return `<section class="compare-chart-panel" aria-labelledby="compare-chart-title">
-    <div class="compare-chart-header"><div><h3 id="compare-chart-title">Accuracy &amp; speed</h3>
-      ${accuracy?.dataset ? `<p class="compare-chart-dataset">Dataset: ${escapeHtml(datasetLabel(accuracy.dataset))}</p>` : ""}
+    <div class="compare-chart-header"><div><h3 id="compare-chart-title">${escapeHtml(title)}</h3>
+      ${subtitle ? `<p class="compare-chart-dataset">${escapeHtml(subtitle)}</p>` : ""}
       <p>${plotted.length} of ${columns.length} variants shown · Select up to three to inspect below.</p></div>
-      ${axes.length > 1 ? `<div class="compare-chart-controls">${selectControl("Dataset & metric", "axis", axes, state.compareAxis)}</div>` : ""}</div>
+      ${controls ? `<div class="compare-chart-controls">${controls}</div>` : ""}</div>
     <div class="compare-legend">${legend}</div>
-    ${plotted.length ? `<div class="compare-chart-scroll" role="region" aria-label="Model measurement chart" tabindex="0"><svg class="compare-chart" viewBox="0 0 960 410" role="group" aria-label="Model measurements: throughput versus ${escapeHtml(yLabel)}">
-      <g class="compare-chart-grid">${grid}</g><text class="compare-axis-title" x="503" y="398" text-anchor="middle">Throughput (inferences/s)</text>
-      <text class="compare-axis-title" transform="translate(23 195) rotate(-90)" text-anchor="middle">${escapeHtml(yLabel)}</text>${dots}</svg></div>` : '<p class="compare-empty">No matching measurements yet. Use Add model to inspect a variant.</p>'}
-    <p class="compare-chart-note">Accuracy points share a dataset and metric. Use Add model for variants without matching measurements.</p>
+    ${plotted.length ? `<div class="compare-chart-scroll" role="region" aria-label="Model measurement chart" tabindex="0"><svg class="compare-chart" viewBox="0 0 960 410" role="group" aria-label="Model measurements: ${escapeHtml(xLabel)} versus ${escapeHtml(yLabel)}">
+      <g class="compare-chart-grid">${grid}</g><text class="compare-axis-title" x="503" y="398" text-anchor="middle">${escapeHtml(xLabel)}</text>
+      <text class="compare-axis-title" transform="translate(23 195) rotate(-90)" text-anchor="middle">${escapeHtml(yLabel)}</text>${dots}</svg></div>` : `<p class="compare-empty">${escapeHtml(empty)}</p>`}
+    <p class="compare-chart-note">${escapeHtml(note)}${plotted.some(({column}) => column.synthetic) ? " Includes synthetic preview data for visualization only." : ""}</p>
     <div class="compare-tooltip" id="compare-point-tooltip" role="tooltip" hidden></div>
   </section>`;
 }
@@ -206,8 +276,9 @@ function modelPicker(columns) {
 function renderMeasurements() {
   hideComparisonTooltip();
   const results = elements["compare-pane"].querySelector(".compare-results");
+  const chart = comparisonPlot(loadedColumns);
   const selected = state.comparePicks.filter(Boolean).map(key => loadedColumns.find(column => column.option.key === key)).filter(Boolean);
-  results.innerHTML = `${comparisonPlot(loadedColumns)}${modelPicker(loadedColumns)}${selected.length ? `<section class="compare-selected" aria-labelledby="compare-selected-title"><div class="compare-section-heading"><h3 id="compare-selected-title">Selected models</h3><span>${selected.length} / ${MAX_COMPARED_BUILDS}</span></div>${comparisonTable(selected)}<p class="compare-chart-note">Bold marks the best value among matching components. Each component is measured separately.</p></section>` : ""}`;
+  results.innerHTML = `${chart}${modelPicker(loadedColumns)}${selected.length ? `<section class="compare-selected" aria-labelledby="compare-selected-title"><div class="compare-section-heading"><h3 id="compare-selected-title">Selected models</h3><span>${selected.length} / ${MAX_COMPARED_BUILDS}</span></div>${comparisonTable(generative ? selected.map(workloadMeasurements) : selected)}<p class="compare-chart-note">Bold marks the best value among matching components. Each component is measured separately.</p></section>` : ""}`;
 }
 
 export function toggleComparison(key) {
@@ -237,13 +308,21 @@ export function showComparisonTooltip(point) {
   const column = loadedColumns.find(column => column.option.key === point.dataset.compareToggle);
   if (!tooltip || !column) return;
   hideComparisonTooltip();
-  const readings = column.components[0]?.measurements;
+  const workload = generative ? comparisonWorkload(column.components[0]) : null;
+  const readings = workload?.measurements || column.components[0]?.measurements;
   const throughput = measuredText(readings?.throughput_fps, "throughput_fps");
   const field = (label, value) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`;
   tooltip.innerHTML = `<strong>${escapeHtml(column.option.model.display_name || column.option.model.model_id)}</strong><dl>
     ${field("Variant", variantLabel(column.option.profile))}
-    ${field("Throughput", throughput?.text || "Not measured")}
-    ${field("Accuracy", column.accuracy ? `${column.accuracy.value} · ${column.accuracy.label}` : "Not measured")}</dl>`;
+    ${column.synthetic ? field("Source", "Synthetic preview data") : ""}
+    ${generative ? field("Parameters", parameterText(column.option.model) || "Not recorded")
+      + field("Workload", workload?.label || "Not measured")
+      + ["ttft_ms", "prefill_tps", "decode_tps"].flatMap(key => {
+        const metric = measuredText(readings?.[key], key);
+        return metric ? [field(key === "ttft_ms" ? "TTFT" : key === "prefill_tps" ? "Prefill" : "Decode", metric.text)] : [];
+      }).join("")
+      : field("Throughput", throughput?.text || "Not measured")
+        + field("Accuracy", column.accuracy ? `${column.accuracy.value} · ${column.accuracy.label}` : "Not measured")}</dl>`;
   tooltip.hidden = false;
   tooltipPoint = point;
   point.setAttribute("aria-describedby", tooltip.id);
@@ -268,20 +347,25 @@ export async function renderComparison() {
   }
   const all = catalogVariants();
   const tasks = [...new Set(all.flatMap(option => option.model.tasks || []))].sort((a, b) => taxonomyLabel("tasks", a).localeCompare(taxonomyLabel("tasks", b)));
-  if (!tasks.includes(state.compareTask)) state.compareTask = all.find(option => state.comparePicks.includes(option.key))?.model.tasks?.[0] || tasks[0] || "";
+  if (!tasks.includes(state.compareTask)) {
+    const selected = all.find(option => state.comparePicks.includes(option.key));
+    state.compareTask = selected?.model.tasks?.[0] || tasks[0] || "";
+  }
   const taskOptions = all.filter(option => option.model.tasks?.includes(state.compareTask));
   const options = taskOptions;
   state.comparePicks = state.comparePicks.map(key => options.some(option => option.key === key) ? key : "");
-  const pending = options.some(option => option.model.model_type !== "vision");
   elements["compare-pane"].innerHTML = `${intro}<div class="compare-filters">${selectControl("Task", "task", tasks.map(id => [id, taxonomyLabel("tasks", id)]), state.compareTask)}</div>
-    <div class="compare-results" aria-live="polite">${pending ? '<div class="compare-empty"><span class="compare-tbd">TBD</span><h3>LLM / VLM comparisons</h3></div>' : options.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading measurements…</p>' : '<p class="compare-empty">No models available for this task.</p>'}</div>`;
-  if (pending || !options.length) return;
+    <div class="compare-results" aria-live="polite">${options.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading measurements…</p>' : '<p class="compare-empty">No models available for this task.</p>'}</div>`;
+  if (!options.length) return;
   const columns = await mapWithConcurrency(options, 3, async option => {
     if (requestId !== compareRequestId) return null;
     const variant = await loadPickedVariant(option).catch(() => null);
-    return {option, variant, failed: !variant, components: variant ? componentMeasurements(variant) : [], accuracy: variant ? accuracyHeadline(variant) : null};
+    return {option, variant, failed: !variant,
+      synthetic: variant?.details.some(detail => detail.benchmark?.result.provenance?.synthetic === true),
+      components: variant ? componentMeasurements(variant) : [], accuracy: variant ? accuracyHeadline(variant) : null};
   });
   if (requestId !== compareRequestId) return;
   loadedColumns = columns.filter(Boolean);
+  generative = GENERATIVE_TASKS.includes(state.compareTask);
   renderMeasurements();
 }

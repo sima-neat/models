@@ -73,7 +73,14 @@ Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
-preserves the task and selected variants. LLM/VLM comparison shows **TBD**.
+preserves the task and selected variants.
+
+**Text Generation** plots parameters versus decode TPS for one selected input length,
+including text-only results from VLMs. **Visual Question Answering** uses each model's
+single image-plus-text result at its encoder resolution, with no workload selector.
+Parameters use billions (350M is 0.35B). Select models to show their TTFT, prefill,
+decode and board measurements in the table. Models without measurements remain
+selectable in **Add model**.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
@@ -108,7 +115,9 @@ in this order:
    during compilation. The **Inputs and outputs** and **Building applications**
    sections appear inline from the
    rest of the README after its checksum is verified, so the title, hero, and
-   overview are never shown twice. The README follows the
+   overview are never shown twice. LLiMa model cards link to the
+   [Neat GenAI Model API](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model).
+   The README follows the
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 2. **Performance.** For each component, four tiles with one number each:
    throughput, average latency, average SoM power, and energy per inference.
@@ -257,3 +266,10 @@ selections, including inherited compilation runs and their matching package.
 Newer unselected runs do not replace an explicitly selected deployment.
 Feature branches show finalized on-demand candidates before promotion; metadata
 and unselected runs do not create a card. Develop and Main show approved deployments.
+
+LLM/VLM performance shows text input buckets and an encoder-sized image workload in separate tables.
+The image table follows a short description of the image dimensions and prompt, and shows only TTFT and decode throughput. Text results show
+TTFT in milliseconds and prefill/decode throughput in tokens per second. Image decode throughput
+is the mean streamed TPS; exact image token counts remain unavailable. **Measurement details**
+selects a workload and shows the same Heat, CPU, Power and Memory cards as vision benchmarks,
+including power rails and average/peak CPU utilization per core.

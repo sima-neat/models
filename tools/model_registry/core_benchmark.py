@@ -33,11 +33,11 @@ def _require_internals_runtime(installed: dict[str, str]) -> None:
     raise ValidationError("could not establish installed Neat Internals version")
 
 
-def runner_environment() -> dict[str, Any]:
+def runner_environment(*, package_pattern: str = "*neat*", require_internals: bool = True) -> dict[str, Any]:
     """Record installation identity, without taking performance measurements."""
     buildinfo = Path("/etc/buildinfo").read_text(encoding="utf-8")
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", package_pattern],
         capture_output=True,
         text=True,
         check=True,
@@ -47,7 +47,8 @@ def runner_environment() -> dict[str, Any]:
         fields = line.split("\t", 2)
         if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
             installed[fields[1]] = fields[2]
-    _require_internals_runtime(installed)
+    if require_internals:
+        _require_internals_runtime(installed)
     return {
         "buildinfo": buildinfo,
         "packages": installed,
