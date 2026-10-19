@@ -863,7 +863,8 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
         json.dumps(result, sort_keys=True)
         if args.json_output
         else f"Published benchmark {result['result_fingerprint']} for "
-        f"{result['model_id']}/{result['build_profile_id']}/{result['component_id']}"
+        # A package result names its package, a component result its component.
+        f"{result['model_id']}/{result['build_profile_id']}/{result.get('package_id') or result['component_id']}"
     )
     print(message)
     return 0

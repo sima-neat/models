@@ -374,14 +374,14 @@ PUBLISH_MEASUREMENT_FUNCTIONS = {
 }
 
 
-def publish_measurement(monkeypatch, command: str, *extra: str) -> list[dict]:
+def publish_measurement(monkeypatch, command: str, *extra: str, subject: dict | None = None) -> list[dict]:
     calls = []
 
     def publish(**kwargs):
         calls.append(kwargs)
         return {
             "result_fingerprint": "f", "accuracy_key": "k", "model_id": "m", "build_profile_id": "p",
-            "component_id": "c",
+            **(subject or {"component_id": "c"}),
         }  # fmt: skip
 
     monkeypatch.setattr(f"model_registry.benchmark_publication.{PUBLISH_MEASUREMENT_FUNCTIONS[command]}", publish)
@@ -399,6 +399,12 @@ def test_publishing_a_measurement_sends_its_test_status(monkeypatch, command: st
     calls = publish_measurement(monkeypatch, command, "--test-status", status)
 
     assert [call["test_status"] for call in calls] == [status]
+
+
+def test_publishing_a_package_benchmark_names_its_package(monkeypatch, capsys) -> None:
+    publish_measurement(monkeypatch, "publish-benchmark", "--test-status", "passed", subject={"package_id": "default"})
+
+    assert capsys.readouterr().out == "Published benchmark f for m/p/default\n"
 
 
 @pytest.mark.parametrize("command", PUBLISH_MEASUREMENT_ARGS)
