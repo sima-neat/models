@@ -451,30 +451,46 @@ def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask
     tools = tmp_path / "bin"
     tools.mkdir()
     python = tools / "python3"
-    python.write_text(f"#!{sys.executable}\n" + '''import json, os, sys
-from pathlib import Path
-from unittest.mock import Mock, patch
-
-model = Mock()
-model.from_hf_cache.return_value = model
-model.gen_files.side_effect = lambda *args, **kwargs: model.from_hf_cache.call_args.kwargs["sima_path"].mkdir(parents=True)
-modules = {
-    "afe.apis.error_handling_variables": Mock(),
-    "sima_lmm.model": Mock(WhisperModel=model, FileGenMode=Mock(ALL="all"),
-                          FileGenPrecision=Mock(A_BF16_W_INT8="a16w8")),
-}
-with patch.dict(sys.modules, modules):
-    sys.argv = sys.argv[1:]
-    exec(compile(sys.stdin.read(), "<whisper recipe>", "exec"))
-Path(os.environ["COMPILER_CALLS"]).write_text(json.dumps({
-    "source": model.from_hf_cache.call_args.kwargs,
-    "mode": model.gen_files.call_args.args[0],
-    "generation": model.gen_files.call_args.kwargs,
-}, default=str))
-''')
+    python.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                      "os.execv(sys.executable, [sys.executable, '-S', *sys.argv[1:]])\n")
     python.chmod(0o755)
+    modules = {
+        "afe/__init__.py": "",
+        "afe/apis/__init__.py": "",
+        "afe/apis/error_handling_variables.py": "def enable_verbose_error_messages(): pass\n",
+        "sima_lmm/__init__.py": "",
+        "sima_lmm/model.py": '''import json, os
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
+from pathlib import Path
+from types import SimpleNamespace
+
+FileGenMode = SimpleNamespace(ALL="all")
+FileGenPrecision = SimpleNamespace(A_BF16_W_INT8="a16w8")
+
+class WhisperModel:
+    @classmethod
+    def from_hf_cache(cls, **kwargs):
+        model = cls()
+        model.source = kwargs
+        return model
+
+    def gen_files(self, mode, **kwargs):
+        with ProcessPoolExecutor(1, mp_context=get_context("spawn")) as pool:
+            assert pool.submit(abs, -7).result() == 7
+        self.source["sima_path"].mkdir(parents=True)
+        Path(os.environ["COMPILER_CALLS"]).write_text(json.dumps({
+            "source": self.source, "mode": mode, "generation": kwargs,
+        }, default=str))
+''',
+    }
+    for name, code in modules.items():
+        path = tools / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(code)
     captured = tmp_path / "calls.json"
-    env = {**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "COMPILER_CALLS": str(captured)}
+    env = {**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "PYTHONPATH": str(tools),
+           "COMPILER_CALLS": str(captured)}
     options = [
         f"--{'' if future_mask else 'no-'}use_future_token_mask",
         f"--{'' if log_probe else 'no-'}enable_log_probe",

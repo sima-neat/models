@@ -42,15 +42,16 @@ model.gen_files(
 )
 PY
 )"
-python3 - "$checkpoint" "$output" "${arguments[@]}" <<< "$compiler"
+python3 -c "$compiler" "$checkpoint" "$output" "${arguments[@]}"
 
 # Save a self-contained recipe with the executed options alongside the deployment.
 {
   printf '#!/usr/bin/env bash\nset -euo pipefail\n\n'
   printf 'MODEL_PATH=%q\nOUTPUT_PATH=%q\n\n' "$(basename "$checkpoint")" whisper-small-a16w8
   printf '# hf download openai/whisper-small --revision 973afd24965f72e36ca33b3055d56a652f456b4d --local-dir "${MODEL_PATH}"\n\n'
-  printf 'python3 - "${MODEL_PATH}" "${OUTPUT_PATH}"'
+  printf '%s\n' "compiler=\$(cat <<'PY'" "$compiler" 'PY' ')' ''
+  printf 'python3 -c "$compiler" "${MODEL_PATH}" "${OUTPUT_PATH}"'
   printf ' %q' "${arguments[@]}"
-  printf " <<'PY'\n%s\nPY\n" "$compiler"
+  printf '\n'
 } > "$output/compile.sh"
 chmod +x "$output/compile.sh"
