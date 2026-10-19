@@ -21,6 +21,7 @@ from .model import (
     CONVERSION_FILES,
     PERFORMANCE_SCRIPT,
     SCRIPTS_DIR,
+    build_profile_for,
     compile_invocations_for,
     load_and_validate_model,
 )
@@ -268,6 +269,7 @@ def performance_key(
     )
     if not entries:
         raise ValidationError(f"no benchmark entry applies to {model_id}/{build_profile_id}/{component_id}")
+    baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline")
     return _key({
         "stage": "performance",
         "model_id": model_id,
@@ -276,6 +278,7 @@ def performance_key(
         "compile_run_id": compile_run_id,
         "artifact_sha256": artifact_sha256,
         "benchmark": entries,
+        **({"benchmark_baseline": baseline} if baseline else {}),
         "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING]),
         "runtime": resolve_benchmark_runtime(root),
     })

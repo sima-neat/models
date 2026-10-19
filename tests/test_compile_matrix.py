@@ -597,6 +597,7 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
 
     _declare_benchmark(manifest, "revised metric profile")
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    model["build_profiles"][0]["benchmark_baseline"] = {"model_id": "bravo", "build_profile": "fixture"}
     model["accuracy"] = [{
         "id": "devkit_accuracy",
         "scope": {"type": "component", "component": "model"},
@@ -696,3 +697,34 @@ def test_llima_compile_key_tracks_source_compiler_and_graph_settings(tmp_path, s
     manifest.write_text(yaml.safe_dump(model, sort_keys=False))
 
     assert compile_key(tmp_path, model_id, "w4a16", "model", compiler) != before
+
+
+def test_speculative_compile_key_tracks_weights_not_benchmark_baseline(tmp_path):
+    model_id = "gemma_4_e2b_it_textonly_mtp"
+    for folder in ("schemas", "taxonomies", f"models/{model_id}", "models/gemma_4_e2b_it_textonly"):
+        shutil.copytree(ROOT / folder, tmp_path / folder, ignore=shutil.ignore_patterns("__pycache__"))
+    manifest = tmp_path / "models" / model_id / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    compiler = "3.0.0+develop.000000000000"
+    before = compile_key(tmp_path, model_id, "w4a16", "model", compiler)
+    model["build_profiles"][0].pop("benchmark_baseline")
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False))
+    assert compile_key(tmp_path, model_id, "w4a16", "model", compiler) == before
+    draft = model["build_profiles"][0]["components"][0]["parameters"]["draft_model_path"]
+    weights = next(item for item in model["components"][0]["source"]["files"]
+                   if item["path"] == f"{draft}/model.safetensors")
+    weights["sha256"] = "0" * 64
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False))
+    assert compile_key(tmp_path, model_id, "w4a16", "model", compiler) != before
+
+
+def test_benchmark_baseline_changes_only_its_profiles_performance_key():
+    model = load_and_validate_model(ROOT / "models/rf_detr_small")
+    arguments = dict(compile_run_id="run", artifact_sha256="a" * 64)
+    before = performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments)
+    other = performance_key(ROOT, model, "w8a16_w16a16", "backbone", **arguments)
+    model["build_profiles"][0]["benchmark_baseline"] = {"model_id": "resnet_50", "build_profile": "w16a16"}
+    assert performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments) != before
+    assert performance_key(ROOT, model, "w8a16_w16a16", "backbone", **arguments) == other
+    model["build_profiles"][0].pop("benchmark_baseline")
+    assert performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments) == before

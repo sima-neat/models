@@ -209,6 +209,19 @@ while `sima-cli models download --variant` takes the lowercase ID.
 Each binding's `parameters.precision` is that component's precision token,
 such as `w8a8`, and the recipe maps it to compiler settings.
 
+A profile may link to an existing model/profile for performance comparisons:
+
+```yaml
+benchmark_baseline:
+  model_id: gemma_4_e2b_it_textonly
+  build_profile: w4a16
+```
+
+Both references are validated. The link affects the profile's performance key,
+never its compile key. It does not schedule a baseline build or execute a
+comparison; comparison runners must verify matching target weights and
+context/image settings.
+
 This avoids a Cartesian product of unrelated component configurations. Each
 supported binding is its own compile invocation, named after its component,
 unless the profile declares `compile_invocations`:
@@ -444,6 +457,10 @@ A Hugging Face component uses `interface.format: huggingface` and `recipe: scrip
 Its source is a verified `file_set` with `config.json` as the entrypoint. Public inputs and
 outputs describe the generation API rather than individual accelerator graphs. A complete
 LLiMa deployment is one component, including its vision encoder when present.
+For speculative decoding, that file set includes both checkpoints under named
+subfolders. Its entrypoint selects the target's `config.json`, and the binding's
+`parameters.draft_model_path` selects the draft directory. The deployment keeps
+both names, each containing its own `devkit/` and `elf_files/` folders.
 
 The compiled component contains `deployment/` and a sibling
 `deployment-manifest.json`. `compile-outputs.json` carries `artifact_path`
@@ -451,6 +468,9 @@ The compiled component contains `deployment/` and a sibling
 `artifact_sha256`, the SHA-256 of that JSON index. `compile-result.json`
 marks `format: llima` and `layout: directory`; its `size_bytes` is the sum
 of deployment file sizes.
+Its `compiled_parameters` records the target's actual context, group size,
+image dimensions and speculative method when available, independently of the
+deployment's layout.
 
 A native full package is a deployment folder with `manifest.json` at its
 root. Its component uses `format: llima`, `path: .`, and the compile index's

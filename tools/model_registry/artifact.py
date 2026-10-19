@@ -296,9 +296,44 @@ def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict
             digest, size = sha256_file(path)
             files.append({"path": relative, "artifact": deployment_artifact_name(relative),
                           "sha256": digest, "size_bytes": size})
-    if not any(item["path"].startswith("elf_files/") and item["path"].endswith(".elf") for item in files):
+    if not any("elf_files" in PurePosixPath(item["path"]).parts[:-1] and item["path"].endswith(".elf")
+               for item in files):
         raise ValidationError(f"{deployment}: LLiMa deployment contains no ELF files")
     return deployment_files({"files": files})
+
+
+def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:
+    """Read target settings from a single deployment or a speculative pair."""
+    paths = [deployment / "devkit/vlm_config.json", *sorted(deployment.glob("*/devkit/vlm_config.json"))]
+    targets = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if not ((config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}).get("is_draft"):
+            targets.append(config)
+    if not targets:
+        return {}
+    if len(targets) != 1:
+        raise ValidationError(f"{deployment}: expected one target configuration")
+    config = targets[0]
+    pipeline = config["pipeline_cfg"]
+    parameters = {
+        name: pipeline[field]
+        for name, field in (("max_num_tokens", "max_num_tokens"),
+                            ("language_group_size", "input_token_group_size"))
+        if field in pipeline
+    }
+    image_size = (config.get("vm_cfg") or {}).get("image_size")
+    if type(image_size) is int and image_size > 0:
+        image_size = [image_size, image_size]
+    if (isinstance(image_size, list) and len(image_size) == 2
+            and all(type(value) is int and value > 0 for value in image_size)):
+        parameters.update(input_height=image_size[0], input_width=image_size[1])
+    speculative = (config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}
+    if speculative.get("method"):
+        parameters["speculative_method"] = speculative["method"]
+    return parameters
 
 
 def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
@@ -320,7 +355,8 @@ def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
     digest = hashlib.sha256(payload).hexdigest()
     result = {"manifest": manifest.name, "format": "llima", "layout": "directory",
               "built_at": datetime.now(timezone.utc).isoformat(), "provenance": provenance or {},
-              "sha256": digest, "size_bytes": sum(item["size_bytes"] for item in files), "status": "success"}
+              "sha256": digest, "size_bytes": sum(item["size_bytes"] for item in files), "status": "success",
+              "compiled_parameters": llima_compiled_parameters(deployment)}
     if write_manifest:
         (directory / "compile-result.json").write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"

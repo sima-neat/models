@@ -372,7 +372,7 @@ def validate_model(
         if interface["format"] == "huggingface":
             if (component["recipe"] != "scripts/compile.sh"
                     or component["source"]["type"] != "file_set"
-                    or component["source"]["entrypoint"] != "config.json"):
+                    or Path(component["source"]["entrypoint"]).name != "config.json"):
                 raise ValidationError(
                     f"{directory}: Hugging Face components require scripts/compile.sh "
                     "and a checkpoint file set with config.json as its entrypoint"
@@ -434,6 +434,17 @@ def validate_model(
         visit(component_id, ())
 
     for profile_id, profile in profiles.items():
+        baseline = profile.get("benchmark_baseline")
+        if baseline:
+            if (baseline["model_id"], baseline["build_profile"]) == (model_id, profile_id):
+                raise ValidationError(f"{directory}: benchmark_baseline cannot reference its own build profile")
+            try:
+                baseline_model = model if baseline["model_id"] == model_id else load_model(
+                    directory.parent / baseline["model_id"]
+                )
+                build_profile_for(baseline_model, baseline["build_profile"])
+            except ValidationError as exc:
+                raise ValidationError(f"{directory}: build profile {profile_id!r} benchmark_baseline: {exc}") from exc
         bindings = _by_id(profile["components"], f"component binding in build profile {profile_id}")
         unknown_components = set(bindings) - set(components)
         if unknown_components:
@@ -442,6 +453,15 @@ def validate_model(
                 f"{', '.join(sorted(unknown_components))}"
             )
         for component_id, binding in bindings.items():
+            component = components[component_id]
+            draft = binding["parameters"].get("draft_model_path")
+            if component["interface"]["format"] == "huggingface" and draft is not None:
+                source = component["source"]
+                if (not isinstance(draft, str) or f"{draft}/config.json" == source["entrypoint"]
+                        or f"{draft}/config.json" not in {item["path"] for item in source["files"]}):
+                    raise ValidationError(
+                        f"{directory}: draft_model_path must name a separate checkpoint in the source file set"
+                    )
             calibration_id = binding.get("calibration")
             if calibration_id is not None and calibration_id not in calibrations:
                 raise ValidationError(

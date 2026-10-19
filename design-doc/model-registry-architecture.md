@@ -120,7 +120,8 @@ version. The LLiMa key covers checkpoint content, target, declared graph
 parameters and pinned compiler identity; scripts and registry helpers are not
 compile inputs. The performance and accuracy keys cover the compile runs and MPK
 digests they measure, their `model.yaml` entries and model script, the shared
-tooling of that stage, and the DevKit runtime pin. A recompiled build gets new
+tooling of that stage, and the DevKit runtime pin. Performance keys also include
+the profile's optional `benchmark_baseline` reference. A recompiled build gets new
 DevKit keys and is therefore remeasured. No key reads a model's `tests/`, so a
 changed test applies the next time its stage runs. The contributor guide lists
 every input in [what a change
@@ -317,6 +318,10 @@ the complete arguments it used. The runner then runs
 writes `deployment-manifest.json` beside the folder. Compile outputs point to
 that index and its SHA-256. ONNX builds retain their runner and compile-key
 inputs.
+Speculative pairs use one file set with named target and draft directories;
+the runner preserves both names through compilation and deployment. The verifier
+records actual target settings in `compile-result.json`, so publication does not
+require a root-level configuration file.
 
 Publication registers deployment files as `model-file` artifacts and the
 compile index as the `llima` `model-pack` artifact. A native full package is

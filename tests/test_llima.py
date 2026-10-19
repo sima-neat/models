@@ -41,6 +41,7 @@ from model_registry.stage_keys import COMPILE_TOOLING, compile_key
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_0_8b"
+MTP_MODEL = "gemma_4_e2b_it_textonly_mtp"
 PROFILE = "w4a16"
 
 
@@ -173,8 +174,14 @@ def compiled(tmp_path):
     return dist
 
 
-def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path):
+@pytest.mark.parametrize("legacy_result", [False, True])
+def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path, legacy_result):
     component = compiled / MODEL / PROFILE / "model"
+    if legacy_result:
+        path = component / "compile-result.json"
+        result = json.loads(path.read_text())
+        result.pop("compiled_parameters")
+        path.write_text(json.dumps(result))
     source = component / "deployment"
     manifest = validate_compile_outputs(
         component.parent / "compile-outputs.json", component.parent,
@@ -338,12 +345,16 @@ def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypa
     assert receipt["s3_version_id"] == "original"
 
 
-@pytest.mark.parametrize("image_input, group_size", [(True, 64), (False, 128)])
-def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input, group_size):
+@pytest.mark.parametrize("model_id, image_input, group_size", [
+    (MODEL, True, 64), (MODEL, False, 128), (MTP_MODEL, False, 128),
+])
+def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, image_input, group_size):
     root = tmp_path / "repository"
-    for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{MODEL}"):
+    for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{model_id}"):
         shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns("__pycache__"))
-    model_dir = root / "models" / MODEL
+    if model_id == MTP_MODEL:
+        shutil.copytree(ROOT / "models/gemma_4_e2b_it_textonly", root / "models/gemma_4_e2b_it_textonly")
+    model_dir = root / "models" / model_id
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
     parameters = model["build_profiles"][0]["components"][0]["parameters"]
@@ -351,18 +362,42 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, image_input, 
     if image_input:
         parameters.update(input_height=512, input_width=640)
     else:
-        parameters.pop("input_height")
-        parameters.pop("input_width")
+        parameters.pop("input_height", None)
+        parameters.pop("input_width", None)
+    if model_id == MTP_MODEL:
+        model["upstream"]["revision"] = "a" * 40
+        for member in model["components"][0]["source"]["files"]:
+            repository, revision_path = member["uri"].split("@", 1)
+            revision = "b" * 40 if member["path"].startswith(parameters["draft_model_path"] + "/") else "a" * 40
+            member["uri"] = f"{repository}@{revision}/{revision_path.split('/', 1)[1]}"
     path.write_text(yaml.safe_dump(model, sort_keys=False))
     source = deployment(tmp_path / "deployment")
     config_path = source / "devkit/vlm_config.json"
     config = json.loads(config_path.read_text())
     config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=group_size)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
+    if model_id == MTP_MODEL:
+        config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": False, "method": "gemma4_mtp"}
     config_path.write_text(json.dumps(config))
     checkpoint = tmp_path / "source-sets/9f" / ("9f" + "a" * 62)
-    checkpoint.mkdir(parents=True)
-    (checkpoint / "config.json").write_text("{}")
+    checkpoint_config = checkpoint / model["components"][0]["source"]["entrypoint"]
+    checkpoint_config.parent.mkdir(parents=True)
+    checkpoint_config.write_text("{}")
+    checkpoint = checkpoint_config.parent
+    if model_id == MTP_MODEL:
+        target_name = Path(model["upstream"]["repository"]).name
+        target = source / target_name
+        target.mkdir()
+        for child in list(source.iterdir()):
+            if child != target:
+                child.rename(target / child.name)
+        draft_name = parameters["draft_model_path"]
+        draft = deployment(source / draft_name)
+        draft_config = json.loads((draft / "devkit/vlm_config.json").read_text())
+        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": "gemma4_mtp"}
+        (draft / "devkit/vlm_config.json").write_text(json.dumps(draft_config))
+        (checkpoint.parent / draft_name).mkdir()
+        (checkpoint.parent / draft_name / "config.json").write_text("{}")
     tools = tmp_path / "bin"
     tools.mkdir()
     programs = {
@@ -372,12 +407,19 @@ if sys.argv[1:4] == ["-m", "model_registry", "fetch"]:
 else:
     os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 ''',
-        "llima-compile": '''import json, os, sys
+        "llima-compile": '''import json, os, runpy, sys
 from pathlib import Path
 checkpoint = Path(sys.argv[1])
 assert checkpoint.is_symlink()
-assert checkpoint.name == "Qwen3.5-0.8B-Autoround-Safetensors"
+assert checkpoint.name == os.environ["CHECKPOINT_NAME"]
 assert checkpoint.resolve() == Path(os.environ["CHECKPOINT_CONFIG"]).parent
+if "--draft_model_path" in sys.argv:
+    draft = Path(sys.argv[sys.argv.index("--draft_model_path") + 1])
+    assert draft.is_symlink()
+    assert draft.resolve() == Path(os.environ["CHECKPOINT_CONFIG"]).parent.parent / draft.name
+    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])["get_layer_configuration"]
+    assert configure({"is_draft_model": False}, {}) == {"precision": "BF16"}
+    assert configure({"is_draft_model": True}, {}) == {"precision": "A_BF16_W_INT8"}
 Path(os.environ["COMPILE_ARGUMENTS"]).write_text(json.dumps(sys.argv[1:]))
 Path(sys.argv[sys.argv.index("-o") + 1]).mkdir()
 ''',
@@ -396,6 +438,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     ], check=True, capture_output=True, text=True, env={
         **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "PYTHONPATH": str(root / "tools"),
         "MODEL_COMPILER_PYTHON": str(tools / "registry-python"), "CHECKPOINT_CONFIG": str(checkpoint / "config.json"),
+        "CHECKPOINT_NAME": Path(model["upstream"]["repository"]).name,
         "DEPLOYMENT_SOURCE": str(source), "COMPILE_ARGUMENTS": str(captured),
     })
     arguments = json.loads(captured.read_text())
@@ -412,34 +455,87 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         assert arguments[arguments.index("--input_height") + 1] == "512"
         assert arguments[arguments.index("--input_width") + 1] == "640"
     output = tmp_path / "output"
-    replay = output / MODEL / PROFILE / "model/deployment/compile.sh"
+    replay = output / model_id / PROFILE / "model/deployment/compile.sh"
     replay_arguments = tmp_path / "replay-arguments.json"
     executable = tools / "llima-compile"
-    executable.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+    executable.write_text(f"#!{sys.executable}\nimport json, os, runpy, sys\n"
+                          'if "-c" in sys.argv:\n'
+                          '    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])["get_layer_configuration"]\n'
+                          '    assert configure({"is_draft_model": True}, {}) == {"precision": "A_BF16_W_INT8"}\n'
                           'open(os.environ["COMPILE_ARGUMENTS"], "w").write(json.dumps(sys.argv[1:]))\n')
     subprocess.run(["bash", str(replay)], cwd=tmp_path, check=True, env={
         **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "COMPILE_ARGUMENTS": str(replay_arguments),
     })
     recorded = json.loads(replay_arguments.read_text())
-    assert recorded[0] == "Qwen3.5-0.8B-Autoround-Safetensors"
-    assert recorded[1:3] == ["-o", "Qwen3.5-0.8B-Autoround-compiled"]
+    checkpoint_name = Path(model["upstream"]["repository"]).name
+    assert recorded[0] == checkpoint_name
+    assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") +
+                           ("-MTP-compiled" if model_id == MTP_MODEL else "-compiled")]
+    if model_id == MTP_MODEL:
+        recipe = replay.read_text()
+        for variable, config in (("MODEL_PATH", model["components"][0]["source"]["entrypoint"]),
+                                 ("DRAFT_PATH", parameters["draft_model_path"] + "/config.json")):
+            uri = next(item["uri"] for item in model["components"][0]["source"]["files"] if item["path"] == config)
+            repository, revision_path = uri.removeprefix("hf://models/").split("@", 1)
+            revision = revision_path.split("/", 1)[0]
+            assert f'# hf download {repository} --revision {revision} --local-dir "${{{variable}}}"' in recipe
+        assert recorded[recorded.index("--draft_model_path") + 1] == parameters["draft_model_path"]
+        arguments[arguments.index("--draft_model_path") + 1] = parameters["draft_model_path"]
+        for values in (recorded, arguments):
+            index = values.index("-c")
+            del values[index:index + 2]
     assert recorded[3:] == arguments[3:]
     assert recorded[recorded.index("--jobs") + 1] == "20"
     manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
     assert "compile.sh" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
-    verify_artifact(output / MODEL / PROFILE / "model", write_manifest=True, provenance={
-        "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
+    verify_artifact(output / model_id / PROFILE / "model", write_manifest=True, provenance={
+        "model_id": model_id, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
         "source_sha256": source_identity(model["components"][0]["source"]),
         "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
-        "build_fingerprint": compile_key(root, MODEL, PROFILE, "model", compiler["identity"]),
+        "build_fingerprint": compile_key(root, model_id, PROFILE, "model", compiler["identity"]),
     })
     prepared = _preflight_compilations(root, output, load_models(root), environment="staging", git_sha="a" * 40)
     assert prepared[0]["compiled_parameters"] == {
         "max_num_tokens": 8192, "language_group_size": group_size,
         "input_height": 512 if image_input else 448, "input_width": 640 if image_input else 448,
+        **({"speculative_method": "gemma4_mtp"} if model_id == MTP_MODEL else {}),
     }
+    if model_id == MTP_MODEL:
+        registry = Registry()
+        candidate = publish_candidate(repository=root, dist_dir=output, output_dir=tmp_path / "candidate",
+                                      model_id=model_id, build_profile_id=PROFILE, **registry.args())
+        assert candidate["state"] == "finalized"
+        package_dir = tmp_path / "candidate/packages" / model_id / PROFILE / "packages/default"
+        package = json.loads((package_dir / "package-result.json").read_text())
+        assert {item["path"] for item in package["manifest"]["files"]} == {
+            item["path"] for item in manifest["files"]
+        }
+
+
+@pytest.mark.parametrize("precision", ["a16w4", "a16w16"])
+def test_mtp_recipe_rejects_unsupported_draft_precision(tmp_path, precision):
+    model_dir = tmp_path / MTP_MODEL
+    shutil.copytree(ROOT / "models" / MTP_MODEL, model_dir)
+    path = model_dir / "model.yaml"
+    model = yaml.safe_load(path.read_text())
+    model["build_profiles"][0]["components"][0]["parameters"]["draft_precision"] = precision
+    path.write_text(yaml.safe_dump(model, sort_keys=False))
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    compiler = tools / "llima-compile"
+    compiler.write_text("#!/usr/bin/env bash\nexit 91\n")
+    compiler.chmod(0o755)
+    result = subprocess.run([
+        "bash", str(model_dir / "scripts/compile.sh"), str(tmp_path / "target"), str(tmp_path / "output"),
+        "--draft_model_path", str(tmp_path / "draft"),
+    ], capture_output=True, text=True, env={
+        **os.environ, "PATH": f"{tools}:{os.environ['PATH']}",
+        "MODEL_COMPILER_PYTHON": sys.executable, "BUILD_PROFILE_ID": PROFILE,
+    })
+    assert result.returncode == 1
+    assert "requires draft_precision: a16w8" in result.stderr
 
 
 @pytest.mark.parametrize("future_mask, log_probe", [(True, True), (False, True), (True, False)])
@@ -597,6 +693,27 @@ def test_native_deployment_rejects_links(tmp_path):
     (source / "link").symlink_to(source / "devkit/tokenizer.json")
     with pytest.raises(ValidationError, match="unsafe"):
         verify_llima(source)
+
+
+def test_speculative_deployment_manifest_preserves_nested_models(tmp_path):
+    source = tmp_path / "deployment"
+    for name in ("target-model", "draft-model"):
+        deployment(source / name)
+    config_path = source / "draft-model/devkit/vlm_config.json"
+    config = json.loads(config_path.read_text())
+    config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True}
+    config_path.write_text(json.dumps(config))
+    (source / "compile.sh").write_text('#!/usr/bin/env bash\nllima-compile "$@"\n')
+    result = verify_artifact(tmp_path, write_manifest=True)
+    files = json.loads((tmp_path / "deployment-manifest.json").read_text())["files"]
+    assert {item["path"] for item in files} == {
+        path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()
+    }
+    assert len({item["artifact"] for item in files}) == len(files)
+    assert verify_artifact(tmp_path)["sha256"] == result["sha256"]
+    (source / "draft-model/elf_files/language.elf").write_bytes(b"modified draft")
+    with pytest.raises(ValidationError, match="do not match the manifest"):
+        verify_artifact(tmp_path)
 
 
 def test_registry_download_streams_and_replaces_only_verified_files(tmp_path, monkeypatch):

@@ -48,6 +48,11 @@ individually registered files; native builds never create a deployment ZIP.
 Do not enumerate generated layers as components or nest model archives in packages.
 Only declared performance and accuracy stages run; leave their lists empty until
 implemented. See [LLiMa model definitions](docs/adding-a-model.md#llima-language-and-vision-language-models).
+Speculative pairs stay one component: pin both checkpoints in named file-set
+subfolders, use the target's `config.json` as entrypoint, and declare the draft
+subfolder in `parameters.draft_model_path`. Deploy and publish the complete pair.
+An optional profile-level `benchmark_baseline` links to a normal-decoding model
+and build profile; it affects performance keys, never compilation.
 
 Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
 `language_group_size` in its component parameters. Image dimensions are optional

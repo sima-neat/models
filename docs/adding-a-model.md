@@ -160,6 +160,9 @@ with a repeated token written once, such as `w8a8`, `w16a16`, or
 `yolo26n_w8a8_mpk.tar.gz`. See [Build profiles](metadata-schema.md#build-profiles)
 for the full rules.
 
+Speculative models can declare a profile's `benchmark_baseline` using the normal
+decoding model ID and build profile; see [Build profiles](metadata-schema.md#build-profiles).
+
 By default each supported binding is its own compile invocation, named after
 its component. Components that share preparation or intermediate data compile
 together in one declared invocation:
@@ -272,7 +275,7 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 | --- | --- |
 | compile (ONNX) | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest, the component's `benchmark` entries, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
+| performance | the compile run and MPK digest, the component's `benchmark` entries, the profile's optional `benchmark_baseline`, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
 A new compile run changes the performance and accuracy keys too, so a
@@ -284,6 +287,7 @@ recompiled build is always remeasured.
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | `performance.py` or a `benchmark` entry | that model's performance |
+| a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
 | a source model or graph parameter | that model's affected builds, then their DevKit stages |
@@ -503,6 +507,15 @@ Declare a complete language model as one component, with `interface.format: hugg
 each file retains its revision, byte size and SHA-256. The existing verified downloader
 assembles the checkpoint directory. Do not list LLiMa's generated layers as components.
 
+For a speculative pair, put both pinned checkpoints in named subfolders of that
+file set. Set the entrypoint to `<target-name>/config.json` and the profile's
+`draft_model_path` to the draft subfolder. Both checkpoints remain one component;
+the runner passes their named directories to the recipe and deploys them together.
+Declare the method and draft precision in `parameters` when the recipe selects
+them, so changes invalidate the compile key.
+The Gemma 4 MTP recipe supports `draft_precision: a16w8` and rejects other
+values. Its saved download commands use the file set's repository revisions.
+
 A build profile names one compiled configuration. Start with one profile per
 model and set `max_num_tokens: 4096` explicitly in its component `parameters`,
 alongside `language_group_size`. Add `input_height` and `input_width` only for
@@ -534,6 +547,9 @@ This folder contains `devkit/`, `elf_files/`, any `npy_files/`, and the standalo
 `model-registry verify-artifact <component-output> --write-manifest` to check
 the deployment and write `deployment-manifest.json` beside it. The verifier
 checksums every file and rejects folders without ELFs, unsafe paths, and links.
+ELF directories may be nested beneath target and draft model folders.
+The compile result records the target's actual context, group size and image
+dimensions; publication compares these with the declared settings.
 
 `compile-outputs.json` uses `artifact_path: model/deployment-manifest.json`
 for Qwen's `model` component and `artifact_sha256` for that index file's hash.

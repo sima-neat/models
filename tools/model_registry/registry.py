@@ -22,7 +22,10 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .accuracy_config import find_devkit_accuracy_config
-from .artifact import compile_output_fields, deployment_files, validate_compile_outputs, verify_artifact, verify_llima
+from .artifact import (
+    compile_output_fields, deployment_files, llima_compiled_parameters,
+    validate_compile_outputs, verify_artifact, verify_llima,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
@@ -1339,23 +1342,11 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
         compiled_parameters = {}
-        if native and any(name in binding["parameters"] for name in (
-            "max_num_tokens", "language_group_size", "input_height", "input_width"
-        )):
-            config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
-            compiled_parameters = {
-                name: config["pipeline_cfg"][field]
-                for name, field in (("max_num_tokens", "max_num_tokens"),
-                                    ("language_group_size", "input_token_group_size"))
-                if field in config["pipeline_cfg"]
-            }
-            image_size = (config.get("vm_cfg") or {}).get("image_size")
-            if type(image_size) is int and image_size > 0:
-                image_size = [image_size, image_size]
-            if (isinstance(image_size, list) and len(image_size) == 2
-                    and all(type(value) is int and value > 0 for value in image_size)):
-                compiled_parameters.update(input_height=image_size[0], input_width=image_size[1])
-            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+        if native:
+            compiled_parameters = result.get("compiled_parameters")
+            if compiled_parameters is None:  # Compile results written before settings were recorded.
+                compiled_parameters = llima_compiled_parameters(archive.parent / "deployment")
+            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width", "speculative_method"):
                 if name in binding["parameters"] and compiled_parameters.get(name) != binding["parameters"][name]:
                     raise ValidationError(f"{result_path}: compiled {name} does not match model.yaml")
 

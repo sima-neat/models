@@ -33,8 +33,7 @@ fi
 checkpoint="$("$PYTHON" -m model_registry fetch "$MODEL_DIR" --component "$component_id" \
   "${cache_args[@]}" --json | "$PYTHON" -c '
 import json, sys
-from pathlib import Path
-print(Path(json.load(sys.stdin)["path"]).parent)
+print(json.load(sys.stdin)["path"])
 ')"
 
 rm -rf "$PROFILE_OUTPUT_DIR"
@@ -55,17 +54,26 @@ model = load_and_validate_model(model_dir)
 # LLiMa derives artifact names from the checkpoint directory's basename.
 named_checkpoint = Path(output).parent / "source" / Path(urlsplit(model["upstream"]["repository"]).path).name
 named_checkpoint.parent.mkdir()
-named_checkpoint.symlink_to(Path(checkpoint).resolve(), target_is_directory=True)
+named_checkpoint.symlink_to(Path(checkpoint).parent.resolve(), target_is_directory=True)
 profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
 parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
 arguments = []
 for name, value in parameters.items():
-    if name == "precision" or (name == "language_group_size" and value == 128):
+    if name in {"precision", "speculative_method", "draft_precision", "draft_model_path"} or (
+        name == "language_group_size" and value == 128
+    ):
         continue
     if isinstance(value, bool):
         arguments.append(f"--{'' if value else 'no-'}{name}")
     else:
         arguments.extend([f"--{name}", str(value)])
+if "draft_model_path" in parameters:
+    component = next(item for item in model["components"] if item["id"] == component_id)
+    source_root = Path(checkpoint).parents[len(Path(component["source"]["entrypoint"]).parts) - 1]
+    draft = Path(parameters["draft_model_path"])
+    named_draft = named_checkpoint.parent / draft.name
+    named_draft.symlink_to((source_root / draft).resolve(), target_is_directory=True)
+    arguments.extend(["--draft_model_path", str(named_draft)])
 subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), str(named_checkpoint), output, *arguments], check=True)
 PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
