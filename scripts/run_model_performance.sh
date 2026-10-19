@@ -5,8 +5,8 @@
 #
 # <compiled_dir> holds <model_id>/<build_profile>/<component>/ with the MPK, compile-result.json and
 # registry-publication.json. [components] is comma-separated and defaults to every component the build
-# profile benchmarks. Each component's results land in <output_dir>/<component>/, and the package pipeline a
-# component reports in <output_dir>/<component>/pipeline/.
+# profile benchmarks. Each component's results land in <output_dir>/<component>/; a package benchmark runs
+# under, and lands in the folder of, its last component.
 
 set -euo pipefail
 
@@ -84,11 +84,20 @@ for component in "${components[@]}"; do
     --model "$MODEL_ID" \
     --build-profile "$BUILD_PROFILE_ID" \
     --component "$component" >/dev/null
-  archive="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["path"])' \
-    "$output/performance-test.json")"
+  # A component's benchmark gets its MPK; a package's gets each component's as <component>=<path>, in
+  # pipeline order.
+  mpks=()
+  while IFS= read -r mpk; do mpks+=("--mpk=$mpk"); done < <("$REGISTRY_PYTHON" -c '
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+for item in manifest.get("components", []):
+    print(item["component_id"] + "=" + item["path"])
+if "components" not in manifest:
+    print(manifest["model"]["path"])
+' "$output/performance-test.json")
 
   PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-    --mpk "$archive" --output "$output" 2>&1 | tee "$output/benchmark.log"
+    "${mpks[@]}" --output "$output" 2>&1 | tee "$output/benchmark.log"
 
   # Record the workload Core benchmarked beside its saved report. A script that configures the model
   # reports its selection and postprocessing in its context; otherwise the MPK default applies. The
@@ -103,7 +112,8 @@ import pyneat
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text())
 context = json.loads(Path(sys.argv[2]).read_text())
-model = pyneat.Model(manifest["model"]["path"])
+# A package's workload enters at its first component.
+model = pyneat.Model(manifest["model"]["path"] or manifest["components"][0]["path"])
 options = pyneat.BenchmarkOptions()
 info = model.info()
 manifest["configuration"] = {
@@ -130,37 +140,4 @@ PY
     --context "$output/benchmark-context.json" \
     --schema "$REPOSITORY/schemas/performance-result.schema.json" \
     --output "$output/performance-result.json"
-
-  # A component that reports its package pipeline also measures the package's MPKs running as one pipeline,
-  # into <component>/pipeline/. A failed pipeline leaves no pipeline-result.json and publishes as a failed
-  # pipeline test; the component's own result still publishes.
-  pipeline="$output/pipeline"
-  manifest="$("$REGISTRY_PYTHON" -m model_registry make-benchmark-manifest \
-    --repository "$REPOSITORY" \
-    --compiled-dir "$COMPILED_DIR" \
-    --output "$pipeline/pipeline-test.json" \
-    --branch "$SOURCE_BRANCH" \
-    --git-sha "$SOURCE_SHA" \
-    --model "$MODEL_ID" \
-    --build-profile "$BUILD_PROFILE_ID" \
-    --component "$component" \
-    --pipeline)"
-  [[ -n "$manifest" ]] || continue
-  mpks=()
-  while IFS= read -r mpk; do mpks+=("--mpk=$mpk"); done < <("$REGISTRY_PYTHON" -c '
-import json, sys
-for item in json.load(open(sys.argv[1]))["model"]["components"]:
-    print(f"{item[\"component_id\"]}={item[\"path\"]}")
-' "$manifest")
-  if ! { PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-           "${mpks[@]}" --output "$pipeline" 2>&1 | tee "$pipeline/benchmark.log" &&
-         "$REGISTRY_PYTHON" -m model_registry import-core-benchmark --pipeline \
-           --manifest "$manifest" \
-           --report "$pipeline/benchmark-report.json" \
-           --context "$pipeline/benchmark-context.json" \
-           --schema "$REPOSITORY/schemas/pipeline-performance-result.schema.json" \
-           --output "$pipeline/pipeline-result.json"; }; then
-    rm -f "$pipeline/pipeline-result.json"
-    echo "The $MODEL_ID $BUILD_PROFILE_ID pipeline benchmark failed; see $pipeline/benchmark.log." >&2
-  fi
 done

@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import DEVKIT_ACCURACY_ENGINE
+from .accuracy_config import DEVKIT_ACCURACY_ENGINE, accuracy_components
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
 from .published_metrics import load_accuracy_metrics, validate_published_metrics
@@ -102,6 +102,21 @@ def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
         for binding in profile["components"]
         if binding.get("status", "supported") == "supported"
     ]
+
+
+def benchmark_entry(model: dict[str, Any], component_id: str, build_profile_id: str) -> dict[str, Any] | None:
+    """The benchmark a component's build runs in a build profile: the component's own, or that of a package whose
+    last component it is. Vulcan links a benchmark run to one compile run, so a package's runs under its last
+    component's."""
+    return next(
+        (
+            entry
+            for entry in model["benchmark"]
+            if build_profile_id in entry["build_profiles"]
+            and accuracy_components(model, entry)[-1] == component_id
+        ),
+        None,
+    )
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
@@ -693,8 +708,20 @@ def validate_model(
                 f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
                 f"{', '.join(sorted(missing))}"
             )
-        if entry["scope"]["type"] == "package":
-            _validate_pipeline_benchmark(entry, model["benchmark"], packages, directory)
+    # A benchmark measures one component, or a package's components running as one pipeline.
+    for profile_id in profiles:
+        measured = [
+            component_id
+            for entry in model["benchmark"]
+            if profile_id in entry["build_profiles"]
+            for component_id in accuracy_components(model, entry)
+        ]
+        repeated = sorted({component_id for component_id in measured if measured.count(component_id) > 1})
+        if repeated:
+            raise ValidationError(
+                f"{directory}: more than one benchmark measures component {repeated[0]!r} "
+                f"in build profile {profile_id!r}"
+            )
 
     validate_model_tests(directory, model, schema_file.parent / TESTS_SCHEMA)
 
@@ -727,43 +754,6 @@ def _validate_devkit_accuracy(
             f"{label}: more than one {DEVKIT_ACCURACY_ENGINE} entry covers build profile {sorted(repeated)[0]!r}"
         )
     seen_profiles.update(entry["build_profiles"])
-
-
-def _validate_pipeline_benchmark(
-    entry: dict[str, Any],
-    benchmarks: list[dict[str, Any]],
-    packages: dict[str, dict[str, Any]],
-    directory: Path,
-) -> None:
-    """A package benchmark runs within its result component's benchmark, so that component needs one in every
-    build profile the package benchmark covers, and reports at most one package benchmark per build profile."""
-    label = f"{directory}: benchmark {entry['id']!r}"
-    result_component = entry["result_component"]
-    if result_component not in packages[entry["scope"]["package"]]["components"]:
-        raise ValidationError(f"{label}: result_component {result_component!r} is not in its package")
-    benchmarked = {
-        profile_id
-        for item in benchmarks
-        if item["scope"] == {"type": "component", "component": result_component}
-        for profile_id in item["build_profiles"]
-    }
-    unmeasured = sorted(set(entry["build_profiles"]) - benchmarked)
-    if unmeasured:
-        raise ValidationError(
-            f"{label}: result_component {result_component!r} has no benchmark in build profile {unmeasured[0]!r}"
-        )
-    reported = {
-        profile_id
-        for item in benchmarks
-        if item is not entry and item.get("result_component") == result_component
-        for profile_id in item["build_profiles"]
-    }
-    repeated = sorted(reported & set(entry["build_profiles"]))
-    if repeated:
-        raise ValidationError(
-            f"{label}: result_component {result_component!r} reports another package benchmark in build profile "
-            f"{repeated[0]!r}"
-        )
 
 
 def _only_python_caches(path: Path) -> bool:

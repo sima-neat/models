@@ -1,5 +1,5 @@
 // Explore all variants of one task; inspect up to three measured builds side by side.
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { adaptBenchmarkResult, packageBenchmark } from "./benchmark-adapters.js";
 import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
 import { escapeHtml, variantLabel } from "./ui.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
@@ -52,9 +52,11 @@ function measuredText(metric, key) {
   return { number: Number(display.value.toFixed(display.digits)), text: `${display.value.toFixed(display.digits)} ${display.unit.replace("/inference", "")}`, direction: definition.direction };
 }
 
-// Each component is measured on its own and the CPU stage between components is not, so a build lists
-// one value per component and never adds them up.
+// A package result scores the whole model. Otherwise each component is measured on its own and the CPU
+// stage between components is not, so a build lists one value per component and never adds them up.
 function componentMeasurements(variant) {
+  const measuredPackage = packageBenchmark(variant.details);
+  if (measuredPackage) return [{ component: "model", measurements: measuredPackage.result.measurements }];
   return variant.details.map((detail) => {
     const adapted = detail.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : null;
     return {

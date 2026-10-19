@@ -5,7 +5,7 @@ import {
 } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
 import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { adaptBenchmarkResult, packageBenchmark } from "./benchmark-adapters.js";
 import { accuracyHeadline } from "./model-view.js";
 import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog, buildProfileId, componentId,
@@ -303,18 +303,24 @@ function catalogMetric(measurements, key) {
   return reading ? `${reading.value.toFixed(1)} ${reading.unit}` : null;
 }
 
+function catalogReading(measurements, component) {
+  const rate = catalogMetric(measurements, "throughput_fps");
+  const latency = catalogMetric(measurements, "latency_avg_ms");
+  return `<span class="catalog-reading">${component ? `<small>${escapeHtml(component)}</small>` : ""}
+    <span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
+}
+
+// A package result scores the whole model; otherwise each component shows its own reading.
 function tablePerformance(variant) {
+  const measuredPackage = packageBenchmark(variant.details);
+  if (measuredPackage) return catalogReading(measuredPackage.result.measurements, "");
   return variant.details.map((detail) => {
     const component = variant.details.length > 1 ? detail.summary.run.metadata?.component_id : "";
     if (detail.benchmark?.result?.benchmark_report?.workloads) {
       return `<span class="catalog-reading">See model page for workload results</span>`;
     }
     const adapted = detail.benchmark && adaptBenchmarkResult(detail.benchmark.result);
-    const measurements = adapted?.kind === "supported" ? adapted.value.measurements : {};
-    const rate = catalogMetric(measurements, "throughput_fps");
-    const latency = catalogMetric(measurements, "latency_avg_ms");
-    return `<span class="catalog-reading">${component ? `<small>${escapeHtml(component)}</small>` : ""}
-      <span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
+    return catalogReading(adapted?.kind === "supported" ? adapted.value.measurements : {}, component);
   }).join("");
 }
 

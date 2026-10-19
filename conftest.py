@@ -1,6 +1,6 @@
 """Fixtures for each model's tests under models/<id>/tests/.
 
-A test that takes `converted`, `compiled`, `accuracy`, `performance` or `pipeline` checks that real stage output and
+A test that takes `converted`, `compiled`, `accuracy` or `performance` checks that real stage output and
 runs only where it exists: scripts/run_model_tests.sh passes its path with the option of the same name.
 Without the option pytest deselects the test, so a plain run checks only what needs no stage output.
 """
@@ -25,7 +25,6 @@ STAGE_OUTPUTS = {
     "compiled": "one build's compile output directory, <root>/<model>/<build profile>",
     "accuracy": "accuracy-result.json the accuracy tests check",
     "performance": "one component's performance-result.json the performance tests check",
-    "pipeline": "one package pipeline's pipeline-result.json the performance tests check",
 }
 # Compiler and DevKit modules the model scripts import but the tests never call. Where one is not
 # installed, a loaded script gets a stand-in for it.
@@ -170,20 +169,12 @@ def performance(request: pytest.FixtureRequest) -> dict[str, Any]:
 
 
 @pytest.fixture
-def pipeline(request: pytest.FixtureRequest) -> dict[str, Any]:
-    """One package pipeline's DevKit performance result (schemas/pipeline-performance-result.schema.json)."""
-    return json.loads(_given(request, "pipeline").read_text(encoding="utf-8"))
-
-
-@pytest.fixture
 def build_profile(request: pytest.FixtureRequest) -> str:
     """The build profile the given compile output or DevKit result belongs to."""
-    for name in ("accuracy", "performance", "pipeline"):
+    for name in ("accuracy", "performance"):
         if request.config.getoption(name):
             return request.getfixturevalue(name)["model"]["build_profile_id"]
     if request.config.getoption("compiled"):
         outputs = json.loads((_given(request, "compiled") / "compile-outputs.json").read_text(encoding="utf-8"))
         return outputs["build_profile_id"]
-    raise pytest.UsageError(
-        f"build_profile needs --compiled, --accuracy, --performance or --pipeline: {request.node.nodeid}"
-    )
+    raise pytest.UsageError(f"build_profile needs --compiled, --accuracy or --performance: {request.node.nodeid}")

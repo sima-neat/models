@@ -248,13 +248,14 @@ def test_measured_shortfalls_take_the_performance_component(tmp_path: Path) -> N
     ]
 
 
-def test_measured_shortfalls_take_the_package_of_a_pipeline_result(tmp_path: Path) -> None:
+
+def test_measured_shortfalls_take_the_package_of_a_package_result(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "tests.yaml").write_text(
         PERFORMANCE_EXPECTED + "      default:\n        throughput_fps: 50.0\n", encoding="utf-8"
     )
-    result = json.loads((ROOT / "artifact-browser/fixtures/pipeline-result.json").read_text(encoding="utf-8"))
-    result["model"].update(build_profile_id="w8a8", component_id="model", package_id="default")
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text(encoding="utf-8"))
+    result["model"].update(build_profile_id="w8a8", component_id=None, package_id="default")
 
     def measured(fps: float) -> dict:
         return {**result, "benchmark_report": {**result["benchmark_report"], "fps": fps}}
@@ -263,16 +264,3 @@ def test_measured_shortfalls_take_the_package_of_a_pipeline_result(tmp_path: Pat
     assert measured_shortfalls(tmp_path, "performance", measured(44)) == [
         "throughput_fps 44 is below 50 by more than 10%"
     ]
-
-
-def test_stage_runner_checks_a_pipeline_result_with_the_performance_tests(model_dir: Path, tmp_path: Path) -> None:
-    tests = model_dir / "tests" / "measure" / "test_performance.py"
-    tests.write_text(
-        PERFORMANCE_TESTS + "\n\ndef test_pipeline_runs(pipeline) -> None:\n"
-        "    assert pipeline['benchmark_report']['fps'] >= 50\n",
-        encoding="utf-8",
-    )
-
-    for fps, outcome in ((60, "passed"), (40, "failed")):
-        result = run_model_tests("pipeline", model_dir, performance_result(tmp_path, fps))
-        assert result.stdout == f"{outcome}\n", result.stderr

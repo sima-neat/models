@@ -191,13 +191,13 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
-   When the build has a [package pipeline](benchmarking.md#package-pipeline)
-   result, the four tiles, context line, and **Benchmark details** are that
-   result, for every component and CPU step running together, and the CPU step
-   shows its measured mean time. **Runtime Layer Analysis** and
-   **Execution graph** each switch between the components.
-   A pipeline that did not complete says so in place of the tiles.
-   Without a pipeline result, each component's measurements appear under its number.
+   When the build has a [package benchmark](benchmarking.md#package-benchmark)
+   result, the tiles, context line, and **Benchmark details** are that result,
+   for the components and CPU step running together, and the CPU step shows its
+   measured mean time. **Runtime Layer Analysis** and **Execution graph** each
+   switch between the components. The catalog and Compare show the package
+   result as the model's one value. Otherwise, each component's measurements
+   appear under its number.
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
    In the developer UI, **Evaluation details** explains the status and coverage and lists
@@ -217,8 +217,8 @@ in this order:
 
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out. Components are measured on their own, so the latencies of a
-multi-component model do not add up to end-to-end latency. Without a pipeline
-result, the page says so. The page never adds component numbers together.
+multi-component model do not add up to end-to-end latency; without a package
+result, the page says so.
 
 ## Preview your model locally
 

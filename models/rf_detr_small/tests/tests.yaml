@@ -35,16 +35,8 @@ performance:
   run_tests: true
   expected:
     w8a8_w16a16:
-      backbone:
-        throughput_fps: 143.1
-      decoder:
-        throughput_fps: 543.7
       default:
         throughput_fps: 113.3
     w8a16_w16a16:
-      backbone:
-        throughput_fps: 89.1
-      decoder:
-        throughput_fps: 546.8
       default:
         throughput_fps: 76.6

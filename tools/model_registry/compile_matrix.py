@@ -7,7 +7,7 @@ from typing import Any
 
 from .accuracy_config import find_devkit_accuracy_config
 from .errors import ValidationError
-from .model import compile_invocations_for, effective_runner_class
+from .model import benchmark_entry, compile_invocations_for, effective_runner_class
 from .stage_keys import compile_key
 
 
@@ -64,14 +64,11 @@ def build_matrix(
                     "build_profile_id": profile["id"],
                     "requested_runner_class": effective_runner_class(profile, bindings[first_component_id]),
                     "target": profile["target"],
+                    # A package's benchmark runs under its last component, which the invocation also compiles.
                     "benchmark_component_ids": [
                         component_id
                         for component_id in invocation_component_ids
-                        if any(
-                            case["scope"] == {"type": "component", "component": component_id}
-                            and profile["id"] in case["build_profiles"]
-                            for case in model["benchmark"]
-                        )
+                        if benchmark_entry(model, component_id, profile["id"]) is not None
                     ],
                     # Model validation keeps an accuracy entry's components in one invocation.
                     "accuracy_id": (

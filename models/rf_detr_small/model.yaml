@@ -265,28 +265,12 @@ published_metrics:
   conditions: 512x512
   metrics: {coco_map: 0.530, coco_ap50: 0.721}
 benchmark:
-- id: backbone_modalix
-  scope: {type: component, component: backbone}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
-  status: pending
-  target: modalix
-  reason: Establish a Core API baseline for the default MPK workload.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
-  required_metrics: [avg_power_watts, energy_per_inference_joules]
-- id: decoder_modalix
-  scope: {type: component, component: decoder}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
-  status: pending
-  target: modalix
-  reason: Establish a Core API baseline for the default MPK workload.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
-  required_metrics: [avg_power_watts, energy_per_inference_joules]
-- id: pipeline_modalix
+- id: orchestration
   scope: {type: package, package: default}
-  result_component: decoder
   build_profiles: [w8a8_w16a16, w8a16_w16a16]
   status: pending
   target: modalix
-  reason: Measure the backbone, the top-300 proposal selection and the decoder running as one pipeline.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_per_inference_joules]
+  reason: Measure the package's components running as one pipeline.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
 maturity: experimental

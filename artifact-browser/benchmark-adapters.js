@@ -92,10 +92,8 @@ export function reportMetrics(result) {
 }
 
 function common(result) {
-  // Format 6 and every pipeline result store the report Core's field names describe.
-  const saved = result.schema_version >= 6 || result.benchmark_type === "model.pipeline";
-  const report = saved ? result.benchmark_report : result.core_report;
-  const stored = saved ? reportMetrics(result) : result.metrics || {};
+  const report = result.schema_version >= 6 ? result.benchmark_report : result.core_report;
+  const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};
   const measurements = Object.fromEntries(Object.entries(stored)
     .map(([key, metric]) => [key, measurement(key, metric)])
     .filter(([, metric]) => metric));
@@ -116,6 +114,7 @@ function common(result) {
     modelId: result.model?.id,
     buildProfileId: result.model?.build_profile_id,
     componentId: result.model?.component_id,
+    packageId: result.model?.package_id,
     cpuCount: result.environment?.cpu_count,
     batchSize: result.configuration?.workload?.batch_size,
     executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan),
@@ -173,8 +172,24 @@ export function executionGraph(plan) {
   return { steps, tensors };
 }
 
+// A package result measures its components running as one pipeline and records each component's
+// layer timings and execution plan, plus the CPU steps between them.
+function packageComponents(result) {
+  if (!Array.isArray(result.components)) return null;
+  return result.components.map((component) => ({
+    id: component.component_id,
+    layerAnalysis: analyzeLayers(component.layer_stats),
+    executionGraph: executionGraph(component.execution_plan),
+  }));
+}
+
 function adaptResult(result) {
-  return { ...common(result), orchestration: result.orchestration || null };
+  return {
+    ...common(result),
+    components: packageComponents(result),
+    cpuStages: Array.isArray(result.cpu_stages) ? result.cpu_stages : [],
+    orchestration: result.orchestration || null,
+  };
 }
 
 // Every published format stays readable; formats 1-6 share one reader.
@@ -187,20 +202,14 @@ export function adaptBenchmarkResult(result) {
   return { kind: "supported", value: adapter(result) };
 }
 
-// A package pipeline result: a component's benchmark run reports it as its model-pipeline test result.
-export function adaptPipelineResult(result) {
-  if (!result || typeof result !== "object") return { kind: "missing" };
-  if (result.schema_version !== 1) return { kind: "unsupported", schemaVersion: result.schema_version };
-  const report = result.benchmark_report || {};
-  return {
-    kind: "supported",
-    value: {
-      ...common(result),
-      workload: `${(result.model?.components || []).length} MPKs and the CPU stage between them, run concurrently after ${result.configuration?.warmup_samples ?? 0} warm-up frames`,
-      // Every frame in the window, not the fewest the window needed.
-      samples: Number.isInteger(report.throughput_samples) ? report.throughput_samples : null,
-      componentId: "pipeline",
-      cpuStage: Number.isFinite(result.cpu_stage?.avg_ms) ? result.cpu_stage : null,
-    },
-  };
+// The package result a multi-component build carries: its components measured running as one
+// pipeline. It lives on the benchmark of the package's last component and scores the whole model.
+export function packageBenchmark(details) {
+  for (const detail of details) {
+    const adapted = adaptBenchmarkResult(detail.benchmark?.result);
+    if (adapted.kind === "supported" && adapted.value.components) {
+      return { run: detail.benchmarkRun, payload: detail.benchmark, result: adapted.value };
+    }
+  }
+  return null;
 }

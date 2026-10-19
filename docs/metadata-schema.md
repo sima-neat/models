@@ -370,7 +370,9 @@ runs it.
 ### `benchmark`
 
 Measured by `scripts/performance.py` in the performance stage, once for each
-covered component:
+covered component, or once for a package with all its components running as
+one pipeline ([package benchmark](benchmarking.md#package-benchmark)). A
+component is measured by at most one entry per build profile.
 
 | Field | Meaning |
 | --- | --- |

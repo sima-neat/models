@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import accuracy_components, find_devkit_accuracy_config, find_pipeline_benchmark
+from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .accuracy_result import (
     ACCURACY_RESULT_SCHEMA,
     check_accuracy_result,
@@ -18,12 +18,11 @@ from .accuracy_result import (
     load_accuracy_result,
     publish_accuracy_result,
 )
-from .benchmark_manifest import load_component_performance_config
 from .benchmark_metrics import measurement_name, registry_metrics
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
-from .model import load_and_validate_model
+from .model import benchmark_entry, load_and_validate_model
 from .model_tests import require_test_outcome
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 from .stage_keys import (
@@ -32,7 +31,6 @@ from .stage_keys import (
     PERFORMANCE_FINGERPRINT_VERSION,
     PERFORMANCE_RESULT_SCHEMA,
     PERFORMANCE_RUN_TYPE,
-    PIPELINE_RESULT_SCHEMA,
     accuracy_key,
     performance_key,
 )
@@ -41,24 +39,19 @@ JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 
 PERFORMANCE_RESULT_FILE = "performance-result.json"
-# A component that reports its package pipeline measures it into pipeline/ beside its own result.
-PIPELINE_MANIFEST_FILE = "pipeline-test.json"
-PIPELINE_RESULT_FILE = "pipeline-result.json"
 
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
     model = result["model"]
-    identity = {key: model[key] for key in ("id", "build_profile_id", "component_id")}
-    if "components" in model:
-        # A pipeline result measured every MPK of its package.
-        identity["package_id"] = model["package_id"]
-        identity["components"] = {item["component_id"]: item["sha256"] for item in model["components"]}
-    else:
-        identity["sha256"] = model["sha256"]
-    return {
+    document = {
         "schema_version": result["schema_version"],
         "benchmark_type": result["benchmark_type"],
-        "model": identity,
+        "model": {
+            "id": model["id"],
+            "build_profile_id": model["build_profile_id"],
+            "component_id": model["component_id"],
+            "sha256": model["sha256"],
+        },
         "compatibility": {
             "platform_version": result["compatibility"]["expected_platform_version"],
             "neat_version": result["compatibility"]["expected_neat_version"],
@@ -67,6 +60,12 @@ def benchmark_identity_document(result: JsonObject) -> JsonObject:
         "environment_fingerprint": result["environment"]["fingerprint"],
         "tool": result["tool"],
     }
+    if "components" in result:
+        document["model"]["package_id"] = model["package_id"]
+        document["components"] = [
+            {"component_id": item["component_id"], "sha256": item["sha256"]} for item in result["components"]
+        ]
+    return document
 
 
 def load_benchmark_result(result_path: str | Path, schema_path: str | Path | None = None) -> JsonObject:
@@ -122,25 +121,44 @@ def validate_benchmark_set(
         result = load_benchmark_result(path, root / PERFORMANCE_RESULT_SCHEMA)
         model = result["model"]
         expected = (model_id, build_profile_id, component_id)
-        actual = (model["id"], model["build_profile_id"], model["component_id"])
+        actual = (model["id"], model["build_profile_id"], _host_component(result))
         if actual != expected:
             raise ValidationError(f"{path}: benchmark identity does not match {expected}")
         provenance = result["provenance"]
         if provenance.get("models_commit") != commit_sha:
             raise ValidationError(f"{path}: benchmark models_commit does not match the source revision")
         _require_compile_run_id(result, None)
-        config = load_component_performance_config(root, model_id, component_id, build_profile_id)
+        definition = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+        entry = benchmark_entry(definition, component_id, build_profile_id)
+        if entry is None:
+            raise ValidationError(f"{path}: no benchmark entry applies to {expected}")
         measured = registry_metrics(result)
-        for metric_name in config.get("required_metrics", ()):
+        for metric_name in entry.get("required_metrics", ()):
             if metric_name not in measured:
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
     return {"count": len(validated), "results": validated}
 
 
-def _build_identity(result: JsonObject) -> tuple[str, str]:
+def _subject(result: JsonObject) -> JsonObject:
+    """What a result measured: a component, or a package's components running as one pipeline."""
     model = result["model"]
-    return model["build_profile_id"], model["component_id"]
+    return {"package_id": model["package_id"]} if "components" in result else {"component_id": model["component_id"]}
+
+
+def _host_component(result: JsonObject) -> str:
+    """The component whose build the result's run is under: its own, or its package's last."""
+    return result["components"][-1]["component_id"] if "components" in result else result["model"]["component_id"]
+
+
+def _builds(result: JsonObject, compile_run_id: str) -> dict[str, JsonObject]:
+    """Each component build the result measured, by component ID, with its compile run and MPK digest."""
+    if "components" in result:
+        return {
+            item["component_id"]: {"run_id": item["compile_run_id"], "artifact_sha256": item["sha256"]}
+            for item in result["components"]
+        }
+    return {result["model"]["component_id"]: {"run_id": compile_run_id, "artifact_sha256": result["model"]["sha256"]}}
 
 
 def _require_compile_run_id(result: JsonObject, declared: str | None) -> str:
@@ -165,11 +183,10 @@ def _require_git_sha(value: str) -> str:
 
 
 def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
-    build_profile_id, component_id = _build_identity(result)
     dimensions = {
         "model_id": result["model"]["id"],
-        "build_profile_id": build_profile_id,
-        "component_id": component_id,
+        "build_profile_id": result["model"]["build_profile_id"],
+        **_subject(result),
         "benchmark_type": result["benchmark_type"],
     }
     return [
@@ -203,19 +220,15 @@ def publish_benchmark_result(
     schema_path: str | Path | None = None,
     repository: str | Path,
     test_status: str,
-    pipeline_dir: str | Path | None = None,
-    pipeline_test_status: str | None = None,
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
-    """Publish one component's DevKit performance result as a ``model_benchmark`` run under its compile run.
+    """Publish a DevKit performance result as a ``model_benchmark`` run under its compile run: a component's
+    under its own, a package's under its last component's.
 
-    The run fingerprint is the component's performance key, read from ``repository`` at the measured revision.
+    The run fingerprint is the performance key, read from ``repository`` at the measured revision.
     A passed result's test result carries ``test_status``, the outcome of the model's performance tests on it;
     the run still completes when they fail, so the stage is not measured again.
-
-    A component that reports a package pipeline also publishes ``pipeline_dir``: the pipeline manifest, and
-    the pipeline result unless the pipeline failed, as a second test result carrying ``pipeline_test_status``.
     """
     test_status = require_test_outcome(test_status)
     root = Path(repository).expanduser().resolve()
@@ -229,18 +242,13 @@ def publish_benchmark_result(
 
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
-    build_profile_id, component_id = _build_identity(result)
+    build_profile_id = result["model"]["build_profile_id"]
+    subject = _subject(result)
+    builds = _builds(result, parent_run_id)
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
     model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    builds = {component_id: {"run_id": parent_run_id, "artifact_sha256": result["model"]["sha256"]}}
-    pipeline = None
-    if find_pipeline_benchmark(model, component_id, build_profile_id) is not None:
-        if pipeline_dir is None or pipeline_test_status is None:
-            raise ValidationError(f"{model_id}/{build_profile_id}/{component_id} reports a pipeline; publish it too")
-        pipeline = _load_pipeline(root, Path(pipeline_dir).expanduser().resolve(), result, pipeline_test_status)
-        builds.update(pipeline["builds"])
-    stage_key = performance_key(root, model, build_profile_id, component_id, builds)
+    stage_key = performance_key(root, model, build_profile_id, _host_component(result), builds)
     stable_digest = hashlib.sha256(
         f"{parent_run_id}:{stage_key}:{fingerprint}:{execution_digest}".encode()
     ).hexdigest()
@@ -275,7 +283,7 @@ def publish_benchmark_result(
         "metadata": {
             "model_id": model_id,
             "build_profile_id": build_profile_id,
-            "component_id": component_id,
+            **subject,
             "benchmark_type": result["benchmark_type"],
             "compile_run_id": parent_run_id,
             "benchmark_execution_digest": execution_digest,
@@ -291,23 +299,26 @@ def publish_benchmark_result(
     except ValueError as exc:
         raise ValidationError("Vulcan did not return a valid benchmark run ID") from exc
 
-    client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/inputs/compiled-model",
-        {
-            "input_type": "model-pack",
-            "source_reference": result["model"]["uri"] or f"vulcan://runs/{parent_run_id}/artifacts/mpk",
-            "sha256": result["model"]["sha256"],
-            "media_type": "application/gzip",
-            "metadata": {
-                "model_id": model_id,
-                "build_profile_id": build_profile_id,
-                "component_id": component_id,
-                "compile_run_id": parent_run_id,
+    # A package's run records every build its pipeline ran, as an accuracy run does.
+    for component_id, build in builds.items():
+        name = f"compiled-model-{component_id.replace('_', '-')}" if "package_id" in subject else "compiled-model"
+        client.request(
+            "PUT",
+            f"/v1/runs/{run_id}/inputs/{name}",
+            {
+                "input_type": "model-pack",
+                "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/mpk",
+                "sha256": build["artifact_sha256"],
+                "media_type": "application/gzip",
+                "metadata": {
+                    "model_id": model_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component_id,
+                    "compile_run_id": build["run_id"],
+                },
             },
-        },
-        f"{stable_key}-input",
-    )
+            f"{stable_key}-{name}",
+        )
     parameters = benchmark_identity_document(result)
     client.request(
         "PUT",
@@ -322,7 +333,8 @@ def publish_benchmark_result(
 
     result_sha, _ = sha256_file(path)
     result_prefix = (
-        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/{component_id}/"
+        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/"
+        f"{result['model'].get('package_id', result['model']['component_id'])}/"
         f"benchmarks/{fingerprint}/{execution_digest}"
     )
     object_key = f"{result_prefix}/{PERFORMANCE_RESULT_FILE}"
@@ -342,7 +354,7 @@ def publish_benchmark_result(
             "metadata": {
                 "model_id": model_id,
                 "build_profile_id": build_profile_id,
-                "component_id": component_id,
+                **subject,
                 "result_fingerprint": fingerprint,
                 "benchmark_execution_digest": execution_digest,
             },
@@ -372,11 +384,7 @@ def publish_benchmark_result(
                 "size_bytes": log_stored.size_bytes,
                 "media_type": "text/plain",
                 "retention_class": "branch",
-                "metadata": {
-                    "model_id": model_id,
-                    "build_profile_id": build_profile_id,
-                    "component_id": component_id,
-                },
+                "metadata": {"model_id": model_id, "build_profile_id": build_profile_id, **subject},
             },
             f"{stable_key}-log-artifact",
         )
@@ -390,8 +398,6 @@ def publish_benchmark_result(
         test_body,
         f"{stable_key}-test-result",
     )
-    if pipeline is not None:
-        _publish_pipeline(client, store, run_id, pipeline, bucket, f"{result_prefix}/pipeline", stable_key)
     if measurements:
         client.request(
             "POST",
@@ -410,99 +416,13 @@ def publish_benchmark_result(
         "compile_run_id": parent_run_id,
         "model_id": model_id,
         "build_profile_id": build_profile_id,
-        "component_id": component_id,
+        **subject,
         "result_fingerprint": fingerprint,
         "performance_key": stage_key,
         "execution_digest": execution_digest,
         "s3_key": stored.key,
         "log_s3_key": log_stored.key if log_stored is not None else None,
     }
-
-
-def _load_pipeline(root: Path, directory: Path, result: JsonObject, test_status: str) -> JsonObject:
-    """The pipeline the component's benchmark run measured: the builds it ran and, unless it failed, its result."""
-    manifest = json.loads((directory / PIPELINE_MANIFEST_FILE).read_text(encoding="utf-8"))
-    identity = ("id", "build_profile_id", "component_id")
-    if any(manifest["model"][key] != result["model"][key] for key in identity):
-        raise ValidationError("pipeline manifest does not belong to the component's benchmark")
-    builds = {
-        item["component_id"]: {"run_id": item["compile_run_id"], "artifact_sha256": item["sha256"]}
-        for item in manifest["model"]["components"]
-    }
-    own = builds[result["model"]["component_id"]]
-    if own != {"run_id": result["provenance"]["compile_run_id"], "artifact_sha256": result["model"]["sha256"]}:
-        raise ValidationError("pipeline manifest does not name the benchmarked component's build")
-    path = directory / PIPELINE_RESULT_FILE
-    pipeline_result = None
-    if path.is_file():
-        pipeline_result = load_benchmark_result(path, root / PIPELINE_RESULT_SCHEMA)
-        if {
-            item["component_id"]: item["sha256"] for item in pipeline_result["model"]["components"]
-        } != {component: build["artifact_sha256"] for component, build in builds.items()}:
-            raise ValidationError("pipeline result did not measure the builds its manifest names")
-    return {
-        "builds": builds,
-        "path": path if pipeline_result is not None else None,
-        "result": pipeline_result,
-        "test_status": require_test_outcome(test_status),
-        "model": manifest["model"],
-    }
-
-
-def _publish_pipeline(
-    client: SigV4RegistryClient,
-    store: S3ArtifactStore,
-    run_id: str,
-    pipeline: JsonObject,
-    bucket: str,
-    prefix: str,
-    stable_key: str,
-) -> None:
-    """Attach the pipeline result to the component's benchmark run; a pipeline that failed is an errored test."""
-    result = pipeline["result"]
-    if result is None:
-        model = pipeline["model"]
-        summary = {
-            "status": "error",
-            "benchmark_type": "model.pipeline",
-            "model": {key: model[key] for key in ("id", "build_profile_id", "package_id", "component_id")},
-        }
-        test_body: JsonObject = {"status": "error", "version": "1", "summary": summary}
-    else:
-        sha, _ = sha256_file(pipeline["path"])
-        stored = store.ensure_native_sha256(
-            pipeline["path"], f"{prefix}/{PIPELINE_RESULT_FILE}", sha, media_type="application/json"
-        )
-        artifact = client.request(
-            "PUT",
-            f"/v1/runs/{run_id}/artifacts/pipeline-result",
-            {
-                "artifact_type": "benchmark-result",
-                "s3_bucket": bucket,
-                "s3_key": stored.key,
-                "s3_version_id": stored.version_id,
-                "sha256": stored.sha256,
-                "size_bytes": stored.size_bytes,
-                "media_type": "application/json",
-                "retention_class": "branch",
-                "metadata": {
-                    "model_id": result["model"]["id"],
-                    "build_profile_id": result["model"]["build_profile_id"],
-                    "package_id": result["model"]["package_id"],
-                    "result_fingerprint": result["identity"]["fingerprint"],
-                },
-            },
-            f"{stable_key}-pipeline-artifact",
-        )
-        test_body = {"status": pipeline["test_status"], "version": str(result["schema_version"]), "summary": result}
-        if artifact.get("artifact_id"):
-            test_body["report_artifact_id"] = artifact["artifact_id"]
-    client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/test-results/performance/model-pipeline",
-        test_body,
-        f"{stable_key}-pipeline-test-result",
-    )
 
 
 def _compile_run_id(compiled_dir: Path, model_id: str, build_profile_id: str, component_id: str) -> str:

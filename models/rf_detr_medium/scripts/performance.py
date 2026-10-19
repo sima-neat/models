@@ -1,8 +1,8 @@
 """Benchmark RF-DETR Medium with Neat Core and save its report.
 
-With one --mpk, Core's Model.benchmark measures that MPK. With --mpk backbone=<path> --mpk decoder=<path>,
-the script measures the whole model as it runs: the backbone, the top 300 proposals on the CPU, and the
-decoder, each stage working on a different frame at the same time.
+Given --mpk backbone=<path> --mpk decoder=<path>, the script measures the whole model as it runs: the
+backbone, the top 300 proposals on the CPU, and the decoder, each stage working on a different frame at the
+same time. It also records each MPK's layer timings and execution plan.
 """
 
 from __future__ import annotations
@@ -25,25 +25,6 @@ MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
 # Frames each runner may queue; deeper queues add latency without adding throughput.
 QUEUE_DEPTH = 4
-
-
-def benchmark_mpk(mpk: str, output: Path) -> None:
-    model = pyneat.Model(mpk)
-    # Request 1000 samples and a 60 s minimum measurement duration.
-    benchmark_options = pyneat.BenchmarkOptions()
-    benchmark_options.num_samples = 1000
-    benchmark_options.min_duration_ms = 60000
-    benchmark_options.include_layer_stats = True
-    model.benchmark(benchmark_options).save(output / "benchmark-report.json")
-    # What the report does not record: the Core release, the requested run, and the graph that ran.
-    context = {
-        "core_version": pyneat.__version__,
-        "num_samples": benchmark_options.num_samples,
-        "min_duration_ms": benchmark_options.min_duration_ms,
-        "include_layer_stats": benchmark_options.include_layer_stats,
-        "execution_plan": json.loads(model.execution_plan().to_json()),
-    }
-    (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
 
 
 def tensor_options() -> pyneat.ModelOptions:
@@ -78,7 +59,19 @@ def percentile_ms(seconds: list[float], percentile: float) -> float:
     return float(np.percentile(seconds, percentile) * 1000)
 
 
+def layer_stats(mpk: Path) -> list[dict[str, object]]:
+    """Core's MLA layer timings for one MPK. Its throughput is not the model's, so Core's default run serves."""
+    options = pyneat.BenchmarkOptions()
+    options.include_layer_stats = True
+    report = pyneat.Model(str(mpk)).benchmark(options)
+    return [
+        {"name": layer.name, "stage_index": layer.stage_index, "total_execution_time_us": layer.total_execution_time_us}
+        for layer in report.layer_stats
+    ]
+
+
 def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
+    timings = {name: layer_stats(mpk) for name, mpk in mpks.items()}
     run_options = pyneat.RunOptions()
     run_options.queue_depth = QUEUE_DEPTH
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
@@ -91,6 +84,7 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
     features, scores, boxes = backbone_runner.run([image], timeout_ms=TIMEOUT_MS)
     decoder_runner = decoder.build([features, select_top_proposals(scores, boxes)], run_options=run_options)
     del features, scores, boxes
+    plans = {"backbone": backbone.execution_plan(), "decoder": decoder.execution_plan()}
 
     # Latency: one frame at a time through all three stages.
     latencies = []
@@ -194,46 +188,54 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
         "layer_stats": [],
     }
     (output / "benchmark-report.json").write_text(json.dumps(report, allow_nan=False), encoding="utf-8")
+    proposals = {
+        "name": f"Top {QUERY_COUNT} proposals",
+        "avg_ms": float(np.mean(window_proposal_seconds) * 1000),
+        "p99_ms": percentile_ms(window_proposal_seconds, 99),
+    }
     context = {
         "core_version": pyneat.__version__,
         "num_samples": MEASURED_FRAMES,
         "min_duration_ms": MIN_DURATION_S * 1000,
+        # The pipeline's report has no layer timings; each component's are below.
         "include_layer_stats": False,
-        "warmup_frames": WARMUP_FRAMES,
-        "queue_depth": QUEUE_DEPTH,
-        "cpu_stage": {
-            "name": f"Top {QUERY_COUNT} proposals",
-            "avg_ms": float(np.mean(window_proposal_seconds) * 1000),
-            "p99_ms": percentile_ms(window_proposal_seconds, 99),
+        "workload": {
+            "selection": f"Backbone, top {QUERY_COUNT} proposals on the CPU, decoder",
+            "inputs": [{"shape": [IMAGE_SIZE, IMAGE_SIZE, 3], "dtype": "FLOAT32"}],
+            "preprocess": backbone.info().selection.preprocess_graph,
+            "postprocess": decoder.info().selection.selected_post_kind,
+            "warmup_samples": WARMUP_FRAMES,
+            "queue_depth": QUEUE_DEPTH,
         },
+        "components": {
+            name: {"layer_stats": timings[name], "execution_plan": json.loads(plans[name].to_json())} for name in mpks
+        },
+        "cpu_stages": [proposals],
     }
     (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
     print(
         f"{fps:.1f} FPS over {frames} frames in {seconds:.1f} s; latency {report['latency_ms']:.2f} ms; "
-        f"top {QUERY_COUNT} {context['cpu_stage']['avg_ms']:.2f} ms; power {report['avg_power_watts']:.2f} W"
+        f"top {QUERY_COUNT} {proposals['avg_ms']:.2f} ms; power {report['avg_power_watts']:.2f} W"
     )
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
-    mpks = dict(value.split("=", 1) for value in values)
-    if set(mpks) != {"backbone", "decoder"}:
-        raise SystemExit("--mpk must name one MPK, or exactly backbone=<path> and decoder=<path>")
+    mpks = dict(value.split("=", 1) for value in values if "=" in value)
+    if len(mpks) != len(values) or set(mpks) != {"backbone", "decoder"}:
+        raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mpk", action="append", required=True, help="an MPK, or component=path for both")
+    parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
     parser.add_argument(
         "--output", required=True, help="directory for benchmark-report.json and benchmark-context.json"
     )
     args = parser.parse_args()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    if len(args.mpk) == 1 and "=" not in args.mpk[0]:
-        benchmark_mpk(args.mpk[0], output)
-    else:
-        benchmark_pipeline(parse_mpks(args.mpk), output)
+    benchmark_pipeline(parse_mpks(args.mpk), output)
 
 
 if __name__ == "__main__":

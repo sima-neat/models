@@ -423,13 +423,29 @@ def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
         for component_id in ("backbone", "decoder")
     }
 
-    for component_id in ("backbone", "decoder"):
-        assert performance_key(ROOT, renamed, "w8a8_w16a16", component_id, builds) == performance_key(
-            ROOT, model, "w8a8_w16a16", component_id, builds
-        )
+    assert performance_key(ROOT, renamed, "w8a8_w16a16", "decoder", builds) == performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
+    )
     assert accuracy_key(ROOT, renamed, "w8a8_w16a16", builds) == accuracy_key(
         ROOT, model, "w8a8_w16a16", builds
     )
+
+
+def test_a_package_benchmark_runs_under_its_last_component_and_covers_every_build() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    matrix = build_matrix({"rf_detr_small": model}, ["rf_detr_small"], ["w8a8_w16a16"])
+    builds = {
+        component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
+        for component_id in ("backbone", "decoder")
+    }
+    rebuilt = {**builds, "backbone": {"run_id": "run-backbone-2", "artifact_sha256": "b" * 64}}
+
+    assert [entry["benchmark_component_ids"] for entry in matrix["include"]] == [["decoder"]]
+    assert performance_key(ROOT, model, "w8a8_w16a16", "decoder", rebuilt) != performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
+    )
+    with pytest.raises(ValidationError, match="no benchmark entry applies"):
+        performance_key(ROOT, model, "w8a8_w16a16", "backbone", builds)
 
 
 def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
@@ -447,10 +463,7 @@ def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
         model = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
         return [
             compile_key(repository, "rf_detr_small", "w8a8_w16a16", "rf_detr", COMPILER_VERSION),
-            *(
-                performance_key(repository, model, "w8a8_w16a16", component_id, builds)
-                for component_id in components
-            ),
+            performance_key(repository, model, "w8a8_w16a16", "decoder", builds),
             accuracy_key(repository, model, "w8a8_w16a16", builds),
         ]
 

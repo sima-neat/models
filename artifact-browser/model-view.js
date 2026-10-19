@@ -1,7 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
-import { adaptBenchmarkResult, adaptPipelineResult } from "./benchmark-adapters.js";
+import { adaptBenchmarkResult, packageBenchmark } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
@@ -527,13 +527,13 @@ function layerAnalysisPanel({ sources, selected, view }) {
 
 // The execution graph of one component, or of a pipeline's components with a switch between them.
 function executionGraphSection(components, key) {
-  const graphed = components.filter(({ benchmark }) => benchmark?.executionGraph);
+  const graphed = components.filter(({ graph }) => graph);
   if (!graphed.length) return "";
-  const panels = graphed.map(({ id, benchmark }, index) => `<div data-graph-panel="${index}"${index ? " hidden" : ""}>${executionGraphDiagram(benchmark.executionGraph, id)}</div>`).join("");
+  const panels = graphed.map(({ id, graph }, index) => `<div data-graph-panel="${index}"${index ? " hidden" : ""}>${executionGraphDiagram(graph, id)}</div>`).join("");
   const switcher = graphed.length > 1 ? componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component") : "";
   const meta = graphed.length > 1
     ? graphed.map(({ label }) => label).join(" · ")
-    : graphed[0].benchmark.executionGraph.steps.filter((step) => step.runsOn).map((step) => step.runsOn).join(" · ");
+    : graphed[0].graph.steps.filter((step) => step.runsOn).map((step) => step.runsOn).join(" · ");
   return disclosure(`graphs:${key}`, "Execution graph", `<div data-execution-graphs>${switcher}${panels}</div>`, meta);
 }
 
@@ -612,7 +612,7 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   const benchmark = adapted.value;
   return `${benchmarkSummary(benchmark, payload, runId, benchmarkRun, modelId)}
     ${layerAnalysisSection([{ analysis: benchmark.layerAnalysis }], runId)}
-    ${executionGraphSection([{ id: runId, benchmark }], runId)}`;
+    ${executionGraphSection([{ id: runId, graph: benchmark.executionGraph }], runId)}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
@@ -630,41 +630,28 @@ function pipelineOrder(variant) {
 }
 
 // One line from input to output: numbered component chips, with any CPU step between them as a dashed chip.
-// The CPU step the pipeline benchmark timed shows its mean time.
-function pipelineStrip(pipeline, cpuStage) {
+// A CPU step the package benchmark timed shows its mean time.
+function pipelineStrip(pipeline, cpuStages = []) {
   let number = 0;
-  const cpuTime = (name) => (cpuStage?.name === name ? `<span class="pipeline-time">${escapeHtml(cpuStage.avg_ms.toFixed(1))} ms</span>` : "");
+  const cpuTime = (name) => {
+    const timed = cpuStages.find((stage) => stage.name === name);
+    return timed ? `<span class="pipeline-time">${escapeHtml(timed.avg_ms.toFixed(1))} ms</span>` : "";
+  };
   const stages = pipeline.map((stage) => ("component" in stage
     ? `<li><span class="pipeline-chip"><span class="component-number">${++number}</span>${escapeHtml(humanize(stage.component))}</span></li>`
     : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}${cpuTime(stage.cpu)}</span></li>`));
   return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
 }
 
-// The test result a component's benchmark run carries for its package's MPKs run as one pipeline.
-function pipelineTest(details) {
-  const found = details.map((detail) => ({
-    run: detail.benchmarkRun,
-    test: (detail.benchmarkTests?.test_results || []).find((item) => item.suite === "performance" && item.name === "model-pipeline"),
-  })).find(({ test }) => test);
-  if (!found) return null;
-  const adapted = adaptPipelineResult(found.test.summary);
-  return { run: found.run, result: found.test.status !== "error" && adapted.kind === "supported" ? adapted.value : null };
-}
-
 // The model's numbers when its components run together, with each component's layer analysis and
-// execution graph from its own benchmark.
-function pipelinePerformance({ run, result }, details, modelId) {
-  const components = details.map((detail) => ({
-    id: detail.summary.run.id,
-    label: humanize(detail.summary.run.metadata?.component_id || "model"),
-    benchmark: adaptBenchmarkResult(detail.benchmark?.result).value,
-  }));
+// execution graph.
+function packagePerformance({ run, payload, result }, modelId) {
+  const key = `${run?.id}:package`;
+  const components = result.components.map((component) => ({ ...component, label: humanize(component.id) }));
   return `<div class="component-performance">
-    ${result
-      ? benchmarkSummary(result, {}, `${run?.id}:pipeline`, run, modelId)
-      : `<p class="muted-message">The pipeline benchmark did not complete for this build.</p>`}
-    ${layerAnalysisSection(components.map(({ label, benchmark }) => ({ label, analysis: benchmark?.layerAnalysis })), `${run?.id}:pipeline`)}
-    ${executionGraphSection(components, `${run?.id}:pipeline`)}
+    ${benchmarkSummary(result, payload, key, run, modelId)}
+    ${layerAnalysisSection(components.map(({ label, layerAnalysis }) => ({ label, analysis: layerAnalysis })), key)}
+    ${executionGraphSection(components.map(({ id, label, executionGraph }) => ({ id: `${key}:${id}`, label, graph: executionGraph })), key)}
   </div>`;
 }
 
@@ -1079,7 +1066,7 @@ export function renderDetail(variant) {
   const performanceDetails = order
     ? [...details].sort((a, b) => order.indexOf(a.summary.run.metadata?.component_id) - order.indexOf(b.summary.run.metadata?.component_id))
     : details;
-  const pipelineRun = singleComponent ? null : pipelineTest(details);
+  const measuredPackage = singleComponent ? null : packageBenchmark(details);
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`
@@ -1113,12 +1100,12 @@ export function renderDetail(variant) {
     ${overviewMarkup}
 
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
-      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components${pipelineRun ? ", measured running together." : ", each measured on its own."}</p>`}
-      ${order ? pipelineStrip(variant.pipeline, pipelineRun?.result?.cpuStage) : ""}
-      ${pipelineRun
-        ? pipelinePerformance(pipelineRun, performanceDetails, model)
+      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components${measuredPackage ? ", measured running together." : ", each measured on its own."}</p>`}
+      ${order ? pipelineStrip(variant.pipeline, measuredPackage?.result.cpuStages) : ""}
+      ${measuredPackage
+        ? packagePerformance(measuredPackage, model)
         : performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1, model)).join("")}
-      ${singleComponent || pipelineRun ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
+      ${singleComponent || measuredPackage ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
     </section>
 
     ${accuracyMarkup}

@@ -417,10 +417,6 @@
       "properties": {
         "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
         "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
-        "result_component": {
-          "description": "For a package scope: the component whose benchmark run also measures the package's MPKs as one pipeline.",
-          "$ref": "#/$defs/id"
-        },
         "status": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
         "reason": {"type": "string", "minLength": 1},
         "target": {"type": "string", "minLength": 1},
@@ -443,11 +439,6 @@
         {
           "if": {"properties": {"status": {"pattern": "^pending"}}, "required": ["status"]},
           "then": {"anyOf": [{"required": ["reason"]}, {"required": ["note"]}]}
-        },
-        {
-          "if": {"properties": {"scope": {"properties": {"type": {"const": "package"}}}}},
-          "then": {"required": ["result_component"]},
-          "else": {"not": {"required": ["result_component"]}}
         }
       ]
     }

@@ -75,7 +75,7 @@ def measured_shortfalls(model_dir: str | Path, stage: str, result: dict[str, Any
     drop = ACCURACY_ALLOWED_DROP if stage == "accuracy" else PERFORMANCE_ALLOWED_DROP
     build = [result["model"]["build_profile_id"]]
     if stage == "performance":
-        # A pipeline result is expected of its package, a component's result of its component.
+        # A package result is expected by its package ID, a component result by its component ID.
         build.append(result["model"].get("package_id", result["model"]["component_id"]))
     expected = load_model_tests(model_dir)[stage]["expected"]
     for key in build:

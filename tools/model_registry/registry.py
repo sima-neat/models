@@ -521,7 +521,7 @@ def build_catalog_snapshot(
                 }
             )
         by_component = {build["component_id"]: build for build in invocation_builds}
-        # A component's performance key covers the builds of the package pipeline it reports.
+        # A package's performance key lives on its last component's build and covers every build it measures.
         for component_id in invocation["benchmark_component_ids"]:
             by_component[component_id]["benchmark_fingerprint"] = performance_key(
                 root, model, invocation["build_profile_id"], component_id, by_component
