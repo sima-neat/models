@@ -516,19 +516,18 @@ def build_catalog_snapshot(
                     "compile_fingerprint": invocation["build_fingerprint"],
                     "artifact_sha256": artifact_sha256,
                     "validation_fingerprint": None,
-                    "benchmark_fingerprint": (
-                        performance_key(
-                            root, model, key[1], key[2], compile_run_id=run_id, artifact_sha256=artifact_sha256
-                        )
-                        if key[2] in invocation["benchmark_component_ids"]
-                        else None
-                    ),
+                    "benchmark_fingerprint": None,
                     "run_id": run_id,
                 }
             )
+        by_component = {build["component_id"]: build for build in invocation_builds}
+        # A component's performance key covers the builds of the package pipeline it reports.
+        for component_id in invocation["benchmark_component_ids"]:
+            by_component[component_id]["benchmark_fingerprint"] = performance_key(
+                root, model, invocation["build_profile_id"], component_id, by_component
+            )
         if invocation["accuracy_id"]:
             # The accuracy key lives on the build that reports the result; the field name predates it.
-            by_component = {build["component_id"]: build for build in invocation_builds}
             result_component = find_devkit_accuracy_config(model, invocation["build_profile_id"])["result_component"]
             by_component[result_component]["validation_fingerprint"] = accuracy_key(
                 root, model, invocation["build_profile_id"], by_component

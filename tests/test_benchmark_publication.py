@@ -241,7 +241,11 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert create["parent_run_id"] == COMPILE_RUN_ID
     model = load_and_validate_model(ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json")
     expected_key = performance_key(
-        ROOT, model, "w16a16", "model", compile_run_id=COMPILE_RUN_ID, artifact_sha256=result["model"]["sha256"]
+        ROOT,
+        model,
+        "w16a16",
+        "model",
+        {"model": {"run_id": COMPILE_RUN_ID, "artifact_sha256": result["model"]["sha256"]}},
     )
     assert create["run_fingerprint"] == expected_key
     assert create["run_fingerprint"] != published["result_fingerprint"]
@@ -704,3 +708,126 @@ def test_latency_percentiles_and_busiest_core_are_published():
     cores = result["benchmark_report"]["telemetry"]["cpu_cores_usage_pct"]
     assert measurements["board.cpu_core_usage.avg"]["value"] == max(core["mean"] for core in cores)
     assert measurements["board.cpu_core_usage.peak"]["value"] == max(core["maximum"] for core in cores)
+
+
+def rf_detr_pipeline(tmp_path: Path, decoder_result: Path) -> Path:
+    """The decoder's pipeline/ directory: its manifest and the browser fixture's result, measuring this decoder."""
+    decoder = json.loads(decoder_result.read_text(encoding="utf-8"))
+    components = [
+        {"component_id": "backbone", "sha256": "b" * 64, "uri": "vulcan://backbone",
+         "compile_run_id": RF_DETR_COMPILE_RUN_IDS["backbone"]},
+        {"component_id": "decoder", "sha256": decoder["model"]["sha256"], "uri": "vulcan://decoder",
+         "compile_run_id": decoder["provenance"]["compile_run_id"]},
+    ]
+    model = {
+        "id": "rf_detr_small", "build_profile_id": "w8a8_w16a16", "component_id": "decoder", "package_id": "default"
+    }
+    directory = tmp_path / "pipeline"
+    directory.mkdir()
+    (directory / "pipeline-test.json").write_text(json.dumps({"model": {**model, "components": components}}))
+    result = json.loads((ROOT / "artifact-browser/fixtures/pipeline-result.json").read_text())
+    result["model"] = {**model, "components": [{key: item[key] for key in ("component_id", "sha256", "uri")}
+                                               for item in components]}
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    (directory / "pipeline-result.json").write_text(json.dumps(result))
+    return directory
+
+
+def publish_rf_detr_decoder(tmp_path: Path, pipeline: Path | None, calls: list) -> dict:
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        if endpoint == "/v1/runs":
+            return {"run_id": BENCHMARK_RUN_ID}
+        if endpoint.endswith("/artifacts/pipeline-result"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000004"}
+        return {"ok": True}
+
+    return publish_benchmark_result(
+        result_path=tmp_path.parent / "decoder" / "performance-result.json",
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        repository=ROOT,
+        test_status=TEST_STATUS,
+        pipeline_dir=pipeline,
+        pipeline_test_status=None if pipeline is None else "failed",
+        request=request,
+        artifact_store=FakeStore(),
+    )
+
+
+def test_publishes_the_pipeline_on_its_result_components_benchmark_run(tmp_path: Path) -> None:
+    pipeline = rf_detr_pipeline(tmp_path, rf_detr_result(tmp_path, "decoder"))
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    published = publish_rf_detr_decoder(tmp_path, pipeline, calls)
+
+    endpoints = [endpoint for _, endpoint, _, _ in calls]
+    assert endpoints[3:] == [
+        f"/v1/runs/{BENCHMARK_RUN_ID}/artifacts/performance-result",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/performance/model-synthetic",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/artifacts/pipeline-result",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/performance/model-pipeline",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/measurements/batch",
+        f"/v1/runs/{BENCHMARK_RUN_ID}/finalize",
+    ]
+    test_result = calls[6][2]
+    assert test_result["status"] == "failed"
+    assert test_result["summary"] == json.loads((pipeline / "pipeline-result.json").read_text())
+    assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000004"
+    # The pipeline adds no measurement to the decoder's own.
+    decoder = json.loads((tmp_path.parent / "decoder" / "performance-result.json").read_text())
+    assert calls[7][2]["measurements"] == _measurements(decoder, decoder["identity"]["fingerprint"])
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    decoder_sha256 = test_result["summary"]["model"]["components"][1]["sha256"]
+    builds = {"backbone": {"run_id": RF_DETR_COMPILE_RUN_IDS["backbone"], "artifact_sha256": "b" * 64},
+              "decoder": {"run_id": COMPILE_RUN_ID, "artifact_sha256": decoder_sha256}}
+    assert published["performance_key"] == performance_key(ROOT, model, "w8a8_w16a16", "decoder", builds)
+
+
+def test_a_failed_pipeline_publishes_an_errored_test_beside_the_component_result(tmp_path: Path) -> None:
+    pipeline = rf_detr_pipeline(tmp_path, rf_detr_result(tmp_path, "decoder"))
+    (pipeline / "pipeline-result.json").unlink()
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    publish_rf_detr_decoder(tmp_path, pipeline, calls)
+
+    tests = {endpoint.rsplit("/", 1)[1]: body for _, endpoint, body, _ in calls if "/test-results/" in endpoint}
+    assert tests["model-synthetic"]["status"] == "passed"
+    assert tests["model-pipeline"]["status"] == "error"
+    assert tests["model-pipeline"]["summary"]["model"]["package_id"] == "default"
+    assert not any(endpoint.endswith("/artifacts/pipeline-result") for _, endpoint, _, _ in calls)
+    assert calls[-1][2] == {"status": "completed"}
+
+
+def test_rejects_a_result_component_published_without_its_pipeline(tmp_path: Path) -> None:
+    rf_detr_result(tmp_path, "decoder")
+    with pytest.raises(ValidationError, match="reports a pipeline; publish it too"):
+        publish_rf_detr_decoder(tmp_path, None, [])
+
+
+def test_rejects_a_pipeline_that_measured_other_mpks(tmp_path: Path) -> None:
+    pipeline = rf_detr_pipeline(tmp_path, rf_detr_result(tmp_path, "decoder"))
+    manifest = json.loads((pipeline / "pipeline-test.json").read_text())
+    manifest["model"]["components"][0]["sha256"] = "c" * 64
+    (pipeline / "pipeline-test.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValidationError, match="did not measure the builds its manifest names"):
+        publish_rf_detr_decoder(tmp_path, pipeline, [])
+
+
+def test_the_result_components_performance_key_covers_every_build_the_pipeline_runs() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    backbone = {"run_id": RF_DETR_COMPILE_RUN_IDS["backbone"], "artifact_sha256": "b" * 64}
+    decoder = {"run_id": RF_DETR_COMPILE_RUN_IDS["decoder"], "artifact_sha256": "d" * 64}
+
+    key = performance_key(ROOT, model, "w8a8_w16a16", "decoder", {"backbone": backbone, "decoder": decoder})
+    rebuilt = {"backbone": {**backbone, "artifact_sha256": "c" * 64}, "decoder": decoder}
+
+    assert performance_key(ROOT, model, "w8a8_w16a16", "decoder", rebuilt) != key
+    # The backbone reports no pipeline, so the decoder's build does not touch its key.
+    assert performance_key(ROOT, model, "w8a8_w16a16", "backbone", {"backbone": backbone})
+    with pytest.raises(ValidationError, match="needs compiled component 'backbone'"):
+        performance_key(ROOT, model, "w8a8_w16a16", "decoder", {"decoder": decoder})

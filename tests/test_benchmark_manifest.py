@@ -130,3 +130,38 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert "build" not in manifest["runtime"]["devkit"]
     assert "benchmark" not in manifest
     assert "model_options" not in manifest
+
+
+def compiled_component(compiled: Path, component_id: str, run_id: str) -> None:
+    directory = compiled / "rf_detr_small" / "w8a8_w16a16" / component_id
+    directory.mkdir(parents=True)
+    archive = directory / f"{component_id}_mpk.tar.gz"
+    archive.write_bytes(component_id.encode())
+    (directory / "compile-result.json").write_text(json.dumps({
+        "archive": archive.name, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "provenance": {"compiler_version": "2.1.3"}}))
+    (directory / "registry-publication.json").write_text(json.dumps({"runs": [{
+        "model_id": "rf_detr_small", "build_profile_id": "w8a8_w16a16", "component_id": component_id,
+        "run_id": run_id}]}))
+
+
+def test_the_result_component_gets_a_manifest_of_every_mpk_in_its_package(tmp_path: Path) -> None:
+    compiled = tmp_path / "compiled"
+    compiled_component(compiled, "backbone", "00000000-0000-4000-8000-000000000011")
+    compiled_component(compiled, "decoder", "00000000-0000-4000-8000-000000000012")
+
+    def manifest(component_id: str) -> dict:
+        return make_benchmark_manifest(
+            repository=ROOT, compiled_dir=compiled, output_path=tmp_path / component_id / "pipeline-test.json",
+            branch="develop", git_sha="b" * 40, model_id="rf_detr_small", build_profile_id="w8a8_w16a16",
+            component_id=component_id, pipeline=True,
+        )
+
+    assert manifest("backbone")["manifest"] is None
+    model = json.loads(Path(manifest("decoder")["manifest"]).read_text())["model"]
+    assert (model["component_id"], model["package_id"]) == ("decoder", "default")
+    assert [(item["component_id"], item["compile_run_id"]) for item in model["components"]] == [
+        ("backbone", "00000000-0000-4000-8000-000000000011"),
+        ("decoder", "00000000-0000-4000-8000-000000000012"),
+    ]
+    assert Path(model["components"][0]["path"]).read_bytes() == b"backbone"

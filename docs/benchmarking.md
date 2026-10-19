@@ -1,6 +1,7 @@
 # DevKit performance
 
-The performance stage measures each compiled component on a Modalix DevKit.
+The performance stage measures each compiled component on a Modalix DevKit,
+and, for a model that declares it, the whole package running as one pipeline.
 Each model owns `scripts/performance.py`, which loads one MPK with
 `pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
 inputs, warmup, latency and throughput measurement, board telemetry, and runner
@@ -105,7 +106,55 @@ successful benchmark. Keep archives and results outside Git.
 
 The script runs once for each component that a `benchmark` entry covers in the
 build profile. RF-DETR's backbone and decoder therefore produce separate
-results; their numbers are not a measured combined pipeline.
+results, and their numbers do not add up to the model's.
+
+## Package pipeline
+
+A multi-component model can also measure its package end to end: every MPK
+and the CPU work between them, running as one pipeline. RF-DETR declares this
+as a package-scope `benchmark` entry:
+
+```yaml
+- id: pipeline_modalix
+  scope: {type: package, package: default}
+  result_component: decoder
+  build_profiles: [w8a8_w16a16, w8a16_w16a16]
+  status: pending
+  target: modalix
+  reason: Measure the backbone, the top-300 proposal selection and the decoder running as one pipeline.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_per_inference_joules]
+```
+
+`result_component` names the component whose benchmark run reports the
+pipeline. That component needs its own component-scope entry in every build
+profile the pipeline covers.
+
+Given one `--mpk component=<archive>` per component, the model's
+`performance.py` runs the pipeline instead of one MPK:
+
+```bash
+~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py \
+  --mpk backbone=/workspace/backbone_mpk.tar.gz \
+  --mpk decoder=/workspace/decoder_mpk.tar.gz --output /workspace/pipeline
+```
+
+The script builds one `pyneat.Model` per MPK and runs each through its async
+runner (`Model.build`, `push`, `pull`). It first sends one frame at a time
+through the whole pipeline: 100 warm-up frames, then 1000 timed frames for the
+latency percentiles. For throughput, one thread feeds the backbone, one moves
+each backbone output through the CPU stage into the decoder, and one collects
+the decoder outputs, so every stage works on a different frame at the same time.
+After 100 warm-up frames it measures a window of at least 1000 frames and at
+least 60 seconds, and `pyneat.TelemetryMonitor` samples the board over that
+window. It writes `benchmark-report.json` with Core's report
+field names, `telemetry.json`, and `benchmark-context.json`, which adds the
+warm-up frames, the queue depth, and the CPU stage's mean and p99 time.
+
+The pipeline cannot run faster than its slowest stage allows. With every stage
+busy, throughput approaches `1 / (1 / backbone_fps + 1 / decoder_fps)` for
+component throughputs measured on the same board, because the MLA runs one MPK
+at a time. A result well below that rate points at the pipeline, not the
+model.
 
 ## Per-layer profiling
 
@@ -220,6 +269,14 @@ clocks, then handles each component:
    (`schema_version` 6). It records the compilation identity, the script
    digest, the source revision, the actual Core and platform versions, and
    the MLA and CPU clocks. It never runs or times a model.
+5. For the `result_component` of a package benchmark,
+   `make-benchmark-manifest --pipeline` writes `pipeline/pipeline-test.json`
+   naming every MPK in the package, `performance.py` measures the pipeline, and
+   `import-core-benchmark --pipeline` writes `pipeline/pipeline-result.json`,
+   following
+   [`pipeline-performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/pipeline-performance-result.schema.json)
+   (`schema_version` 1). A failed pipeline leaves no result and does not stop
+   the component's own result.
 
 `scripts/run_model_tests.sh` then runs the model's
 `tests/measure/test_performance.py` on each component's result, which
@@ -227,12 +284,19 @@ compares its throughput with the expected value in `tests/tests.yaml`, checks
 that the result records the execution plan the model browser draws, and
 records `passed`, `failed`, or `skipped` ([set up
 `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)).
+A pipeline result is checked the same way against the expected throughput
+`tests/tests.yaml` keys by its package ID.
 
 A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
 performance stage key and carries a `performance-result` artifact, the
 benchmark log, a `performance/model-synthetic` test result whose status is the
-test outcome, and the measurements. A failed test still publishes the result
+test outcome, and the measurements. The result component's run also carries a
+`pipeline-result` artifact and a `performance/model-pipeline` test result, or an
+errored `model-pipeline` test when the pipeline failed. The pipeline adds no
+measurements, so the component's own measurements stay comparable. Its stage
+key covers the build of every package component, so rebuilding the backbone
+remeasures the decoder's run and its pipeline. A failed test still publishes the result
 and completes its run, then fails the workflow run. The model browser reads
 performance results with `schema_version` 1 through 6, shows measured values
 with their units, and marks absent metrics unavailable. Its Speed card shows the

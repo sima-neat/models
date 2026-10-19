@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .accuracy_config import accuracy_components, find_devkit_accuracy_config
+from .accuracy_config import accuracy_components, find_devkit_accuracy_config, find_pipeline_benchmark
 from .accuracy_result import ACCURACY_RESULT_SCHEMA
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
@@ -45,6 +45,7 @@ _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
 NON_COMPILE_SCRIPTS = {PERFORMANCE_SCRIPT, ACCURACY_SCRIPT, *CONVERSION_FILES}
 
 PERFORMANCE_RESULT_SCHEMA = "schemas/performance-result.schema.json"
+PIPELINE_RESULT_SCHEMA = "schemas/pipeline-performance-result.schema.json"
 PERFORMANCE_RUN_TYPE = "model_benchmark"
 ACCURACY_RUN_TYPE = "model_accuracy"
 # Vulcan stores a run's fingerprint version from its environment and resolves version 1 by default.
@@ -62,6 +63,7 @@ PERFORMANCE_TOOLING = (
     "tools/model_registry/benchmark_metrics.py",
     "tools/model_registry/benchmark_manifest.py",
     PERFORMANCE_RESULT_SCHEMA,
+    PIPELINE_RESULT_SCHEMA,
 )
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
@@ -250,32 +252,38 @@ def performance_key(
     model: dict[str, Any],
     build_profile_id: str,
     component_id: str,
-    *,
-    compile_run_id: str,
-    artifact_sha256: str,
+    builds: dict[str, dict[str, Any]],
 ) -> str:
-    """Identity of one component's DevKit performance measurement."""
+    """Identity of one component's DevKit performance measurement, with the package pipeline it reports.
+
+    ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``; the key covers the
+    component's build and, when the component reports a package benchmark, the builds of every package component.
+    """
     root = Path(repository).expanduser().resolve()
     model_id = str(model["id"])
-    entries = sorted(
-        (
-            entry
-            for entry in model["benchmark"]
-            if entry["scope"] == {"type": "component", "component": component_id}
-            and build_profile_id in entry["build_profiles"]
-        ),
-        key=lambda item: item["id"],
-    )
+    entries = [
+        entry
+        for entry in model["benchmark"]
+        if entry["scope"] == {"type": "component", "component": component_id}
+        and build_profile_id in entry["build_profiles"]
+    ]
     if not entries:
         raise ValidationError(f"no benchmark entry applies to {model_id}/{build_profile_id}/{component_id}")
+    pipeline = find_pipeline_benchmark(model, component_id, build_profile_id)
+    measured = accuracy_components(model, pipeline) if pipeline else [component_id]
+    missing = [item for item in measured if item not in builds]
+    if missing:
+        raise ValidationError(f"performance of {component_id!r} needs compiled component {missing[0]!r}")
     return _key({
         "stage": "performance",
         "model_id": model_id,
         "build_profile_id": build_profile_id,
         "component_id": component_id,
-        "compile_run_id": compile_run_id,
-        "artifact_sha256": artifact_sha256,
-        "benchmark": entries,
+        "builds": {
+            item: {"compile_run_id": builds[item]["run_id"], "artifact_sha256": builds[item]["artifact_sha256"]}
+            for item in sorted(measured)
+        },
+        "benchmark": sorted([*entries, *([pipeline] if pipeline else [])], key=lambda item: item["id"]),
         "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING]),
         "runtime": resolve_benchmark_runtime(root),
     })

@@ -5,6 +5,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .accuracy_config import accuracy_components, find_pipeline_benchmark
 from .artifact import validate_compile_outputs
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime
@@ -100,29 +101,8 @@ def load_component_performance_config(
     return entries[0]
 
 
-def make_benchmark_manifest(
-    *,
-    repository: str | Path,
-    compiled_dir: str | Path,
-    output_path: str | Path,
-    branch: str,
-    git_sha: str,
-    model_id: str,
-    build_profile_id: str,
-    component_id: str,
-) -> dict[str, Any]:
-    root = Path(repository).expanduser().resolve()
-    compiled = Path(compiled_dir).expanduser().resolve()
-    output = Path(output_path).expanduser().resolve()
-    if IDENTIFIER.fullmatch(model_id) is None:
-        raise ValidationError(f"invalid benchmark model id: {model_id}")
-    if IDENTIFIER.fullmatch(build_profile_id) is None:
-        raise ValidationError(f"invalid benchmark build profile id: {build_profile_id}")
-    if IDENTIFIER.fullmatch(component_id) is None:
-        raise ValidationError(f"invalid benchmark component id: {component_id}")
-    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
-        raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
-
+def _compiled_build(compiled: Path, model_id: str, build_profile_id: str, component_id: str) -> dict[str, Any]:
+    """One component's verified MPK and the compile run that registered it."""
     component_dir = compiled / model_id / build_profile_id / component_id
     compile_result = _load_json(component_dir / "compile-result.json", "compile result")
     publication = _load_json(component_dir / "registry-publication.json", "registry publication")
@@ -146,37 +126,79 @@ def make_benchmark_manifest(
         raise ValidationError("compile result sha256 must be a lowercase SHA-256 digest")
     if not isinstance(compile_run_id, str) or not compile_run_id:
         raise ValidationError("registry publication run_id must be a non-empty string")
+    actual_sha256, _ = sha256_file(component_dir / archive)
+    if actual_sha256 != sha256:
+        raise ValidationError("compiled artifact digest does not match the benchmark input")
+    return {
+        "component_id": component_id,
+        "path": str((component_dir / archive).resolve()),
+        "sha256": sha256,
+        "uri": f"vulcan://runs/{compile_run_id}/artifacts/mpk",
+        "compile_run_id": compile_run_id,
+        "compiler_version": compile_result.get("provenance", {}).get("compiler_version"),
+    }
+
+
+def make_benchmark_manifest(
+    *,
+    repository: str | Path,
+    compiled_dir: str | Path,
+    output_path: str | Path,
+    branch: str,
+    git_sha: str,
+    model_id: str,
+    build_profile_id: str,
+    component_id: str,
+    pipeline: bool = False,
+) -> dict[str, Any]:
+    """Write the manifest of one component's benchmark or, with ``pipeline``, of the package pipeline that
+    component's benchmark run also measures. A component that reports no pipeline gets no pipeline manifest."""
+    root = Path(repository).expanduser().resolve()
+    compiled = Path(compiled_dir).expanduser().resolve()
+    output = Path(output_path).expanduser().resolve()
+    if IDENTIFIER.fullmatch(model_id) is None:
+        raise ValidationError(f"invalid benchmark model id: {model_id}")
+    if IDENTIFIER.fullmatch(build_profile_id) is None:
+        raise ValidationError(f"invalid benchmark build profile id: {build_profile_id}")
+    if IDENTIFIER.fullmatch(component_id) is None:
+        raise ValidationError(f"invalid benchmark component id: {component_id}")
+    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
+        raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
 
     runtime = resolve_benchmark_runtime(root)
     load_component_performance_config(root, model_id, component_id, build_profile_id)
     script = root / "models" / model_id / SCRIPTS_DIR / "performance.py"
     if not script.is_file():
         raise ValidationError(f"model performance script is missing: {script}")
-    actual_sha256, _ = sha256_file(component_dir / archive)
-    if actual_sha256 != sha256:
-        raise ValidationError("compiled artifact digest does not match the benchmark input")
+    build = _compiled_build(compiled, model_id, build_profile_id, component_id)
+    model: dict[str, Any] = {"id": model_id, "build_profile_id": build_profile_id, "component_id": component_id}
+    if pipeline:
+        definition = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+        entry = find_pipeline_benchmark(definition, component_id, build_profile_id)
+        if entry is None:
+            return {"manifest": None, "compile_run_id": build["compile_run_id"], "model_path": None}
+        model["package_id"] = entry["scope"]["package"]
+        model["components"] = [
+            build if item_id == component_id else _compiled_build(compiled, model_id, build_profile_id, item_id)
+            for item_id in accuracy_components(definition, entry)
+        ]
+    else:
+        model.update(path=build["path"], sha256=build["sha256"], uri=build["uri"])
     manifest = {
-        "model": {
-            "id": model_id,
-            "build_profile_id": build_profile_id,
-            "component_id": component_id,
-            "path": str((component_dir / archive).resolve()),
-            "sha256": sha256,
-            "uri": f"vulcan://runs/{compile_run_id}/artifacts/mpk",
-        },
+        "model": model,
         "compatibility": {
             "platform_version": runtime["devkit"]["platform_version"],
         },
         "script": str(script),
         "runtime": runtime,
         "provenance": {
-            "compile_run_id": compile_run_id,
+            "compile_run_id": build["compile_run_id"],
             "models_commit": git_sha.lower(),
             "models_branch": branch,
-            "compiler_version": compile_result.get("provenance", {}).get("compiler_version"),
+            "compiler_version": build["compiler_version"],
             "execution_provider": "github-actions-devkit-runner",
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"manifest": str(output), "compile_run_id": compile_run_id, "model_path": manifest["model"]["path"]}
+    return {"manifest": str(output), "compile_run_id": build["compile_run_id"], "model_path": model.get("path")}

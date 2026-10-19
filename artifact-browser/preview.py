@@ -27,7 +27,11 @@ ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
 sys.path.insert(0, str(ROOT / "tools"))
 
-from model_registry.accuracy_config import find_devkit_accuracy_config  # noqa: E402
+from model_registry.accuracy_config import (  # noqa: E402
+    accuracy_components,
+    find_devkit_accuracy_config,
+    find_pipeline_benchmark,
+)
 from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.dependencies import resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
@@ -360,6 +364,46 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     return result
 
 
+@cache
+def _pipeline_template() -> dict[str, Any]:
+    # RF-DETR Nano's MPKs measured as one pipeline on a DevKit, so the CPU stage and telemetry keep real proportions.
+    return json.loads((BROWSER / "fixtures" / "pipeline-result.json").read_text(encoding="utf-8"))
+
+
+def _pipeline_result(model: dict, build: dict, builds: list[dict], compiler: dict) -> dict[str, Any] | None:
+    """The package pipeline the build's benchmark run reports, or None when the build reports none.
+
+    ``builds`` are the model's builds in the same catalog revision. The pipeline runs at 98% of the rate its
+    components' preview results allow, as a measured pipeline does.
+    """
+    entry = find_pipeline_benchmark(model, build["component_id"], build["build_profile_id"])
+    if entry is None:
+        return None
+    members = [
+        next(item for item in builds if item["build_profile_id"] == build["build_profile_id"]
+             and item["component_id"] == component_id)
+        for component_id in accuracy_components(model, entry)
+    ]
+    result = copy.deepcopy(_pipeline_template())
+    result["model"].update({
+        "id": model["id"], "build_profile_id": build["build_profile_id"], "component_id": build["component_id"],
+        "package_id": entry["scope"]["package"],
+        "components": [{"component_id": item["component_id"], "sha256": item["artifact_sha256"],
+                        "uri": f"vulcan://runs/{item['run_id']}/artifacts/mpk"} for item in members],
+    })
+    result["compatibility"]["actual_platform_version"] = compiler["version"]
+    report = result["benchmark_report"]
+    rates = [_benchmark_result(model, item, compiler)["benchmark_report"]["fps"] for item in members]
+    fps = round(0.98 / sum(1 / rate for rate in rates), 1)
+    scale = report["fps"] / fps
+    report["fps"] = fps
+    for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+        report[field] = round(report[field] * scale, 3)
+    report["throughput_samples"] = round(fps * report["throughput_duration_ms"] / 1000)
+    report["energy_joules"] = round(report["avg_power_watts"] * result["configuration"]["samples"] / fps, 2)
+    return result
+
+
 def _accuracy_result(model: dict, build: dict) -> dict[str, Any]:
     """A DevKit accuracy result for the metrics and dataset the model's accuracy entry declares.
 
@@ -440,13 +484,14 @@ def _index() -> dict[str, Any]:
     """Lookups from every identifier the API serves to what it describes."""
     repository = _repository()
     runs = {run["id"]: run for run in repository["runs"]}
-    builds, packages, documentation, accuracy = {}, {}, {}, {}
+    builds, revision_builds, packages, documentation, accuracy = {}, {}, {}, {}, {}
     for revision in repository["revisions"]:
         for model in revision["document"]["models"]:
             source = repository["models"][model["id"]]
             documentation[model["documentation"]["run_id"]] = model["id"]
             for build in model["builds"]:
                 builds[build["run_id"]] = (source, build)
+                revision_builds[build["run_id"]] = model["builds"]
                 if build.get("validation_fingerprint"):
                     accuracy[build["validation_fingerprint"]] = (source, build)
             for package in model["packages"]:
@@ -454,6 +499,7 @@ def _index() -> dict[str, Any]:
     return {
         "runs": runs,
         "builds": builds,
+        "revision_builds": revision_builds,
         "packages": packages,
         "documentation": documentation,
         "accuracy": accuracy,
@@ -598,8 +644,13 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             _, build = index["accuracy"][index["accuracy_runs"][run_id]]
             self._json({"run": _measurement_run(run_id, "model_accuracy", build["run_id"]), "artifacts": []})
         elif run_id in index["benchmarks"] and rest == ["test-results"]:
+            build_run_id = index["benchmarks"][run_id]
+            model, build = index["builds"][build_run_id]
+            pipeline = _pipeline_result(model, build, index["revision_builds"][build_run_id], compiler)
             self._json({"run_id": run_id, "test_results": [
                 {"suite": "performance", "name": "model-synthetic", "status": "passed"},
+                *([{"suite": "performance", "name": "model-pipeline", "status": "passed", "version": "1",
+                    "summary": pipeline}] if pipeline else []),
             ]})
         elif run_id in index["accuracy_runs"] and rest == ["accuracy", "latest"]:
             model, build = index["accuracy"][index["accuracy_runs"][run_id]]

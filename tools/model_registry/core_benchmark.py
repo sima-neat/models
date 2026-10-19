@@ -75,6 +75,66 @@ def _reject_nonfinite(value: str) -> None:
     raise ValidationError(f"benchmark report contains non-finite JSON number: {value}")
 
 
+def _load_report(report_path: Path, context_path: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
+    report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite)
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not isinstance(context, dict):
+        raise ValidationError("benchmark report and context must be objects")
+    actual_core = context.get("core_version", "")
+    if not isinstance(actual_core, str) or not actual_core:
+        raise ValidationError("benchmark context must identify the Core version")
+    for field in ("latency_ms", "fps"):
+        value = report.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValidationError(f"benchmark did not measure {field}")
+    return report, context, actual_core
+
+
+def _require_mpk(path: str, sha256: str) -> None:
+    digest, _ = sha256_file(Path(path))
+    if digest != sha256:
+        raise ValidationError("benchmark input digest does not match the compilation")
+
+
+def _board(
+    manifest: dict[str, Any], actual_core: str, environment: dict[str, Any] | None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The runner environment, checked against the required platform, and the compatibility it establishes."""
+    expected = manifest["compatibility"]
+    environment = dict(runner_environment() if environment is None else environment)
+    found = re.search(r"^\s*DISTRO_VERSION\s*=\s*(\S+)", environment["buildinfo"], re.MULTILINE)
+    actual_platform = found.group(1) if found else None
+    if actual_platform != expected["platform_version"]:
+        raise ValidationError("benchmark environment does not match the required platform")
+    environment["core_version"] = actual_core
+    environment["fingerprint"] = canonical_sha256(environment)
+    compatibility = {
+        "expected_platform_version": expected["platform_version"],
+        "actual_platform_version": actual_platform,
+        "expected_neat_version": None,
+        "actual_neat_version": actual_core,
+    }
+    return environment, compatibility
+
+
+def _orchestration() -> dict[str, Any]:
+    return {
+        "provider": "github-actions-devkit-runner" if os.environ.get("GITHUB_ACTIONS") else "manual",
+        "session_id": os.environ.get("GITHUB_RUN_ID"),
+        "task_id": os.environ.get("GITHUB_JOB"),
+        "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+        "target_correlation_id": os.environ.get("RUNNER_NAME"),
+    }
+
+
+def _write(result: dict[str, Any], output_path: Path, schema_path: Path) -> dict[str, Any]:
+    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    load_benchmark_result(output_path, schema_path)
+    return {"result": str(output_path), "fingerprint": result["identity"]["fingerprint"]}
+
+
 def import_core_benchmark(
     manifest_path: Path,
     report_path: Path,
@@ -87,10 +147,7 @@ def import_core_benchmark(
     """Publish the report BenchmarkReport.save() wrote, unchanged, with the script's context and the
     registry identity, provenance, and runner environment around it."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite)
-    context = json.loads(context_path.read_text(encoding="utf-8"))
-    if not isinstance(report, dict) or not isinstance(context, dict):
-        raise ValidationError("benchmark report and context must be objects")
+    report, context, actual_core = _load_report(report_path, context_path)
     configuration = manifest.get("configuration", {})
     workload = manifest.get("workload", {})
     if (
@@ -102,30 +159,13 @@ def import_core_benchmark(
         or workload["batch_size"] <= 0
     ):
         raise ValidationError("benchmark manifest is missing configuration or inspected workload")
-    actual_core = context.get("core_version", "")
-    if not isinstance(actual_core, str) or not actual_core:
-        raise ValidationError("benchmark context must identify the Core version")
     include_layer_stats = context.get("include_layer_stats", False)
     if type(include_layer_stats) is not bool:
         raise ValidationError("benchmark context include_layer_stats must be a boolean")
     if include_layer_stats and not report.get("layer_stats"):
         raise ValidationError("benchmark requested layer stats but the report contains none")
-    expected = manifest["compatibility"]
-    digest, _ = sha256_file(Path(manifest["model"]["path"]))
-    if digest != manifest["model"]["sha256"]:
-        raise ValidationError("benchmark input digest does not match the compilation")
-    environment = dict(runner_environment() if environment is None else environment)
-    buildinfo = environment["buildinfo"]
-    found = re.search(r"^\s*DISTRO_VERSION\s*=\s*(\S+)", buildinfo, re.MULTILINE)
-    actual_platform = found.group(1) if found else None
-    if actual_platform != expected["platform_version"]:
-        raise ValidationError("benchmark environment does not match the required platform")
-    environment["core_version"] = actual_core
-    environment["fingerprint"] = canonical_sha256(environment)
-    for field in ("latency_ms", "fps"):
-        value = report.get(field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise ValidationError(f"benchmark did not measure {field}")
+    _require_mpk(manifest["model"]["path"], manifest["model"]["sha256"])
+    environment, compatibility = _board(manifest, actual_core, environment)
     result = {
         "schema_version": 6,
         "status": "passed",
@@ -134,12 +174,7 @@ def import_core_benchmark(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "identity": {"algorithm": "sha256", "canonicalization_version": 5, "fingerprint": None},
         "model": {**manifest["model"], "contract": None},
-        "compatibility": {
-            "expected_platform_version": expected["platform_version"],
-            "actual_platform_version": actual_platform,
-            "expected_neat_version": None,
-            "actual_neat_version": actual_core,
-        },
+        "compatibility": compatibility,
         "configuration": {
             **configuration,
             "include_layer_stats": include_layer_stats,
@@ -150,17 +185,59 @@ def import_core_benchmark(
         "environment": environment,
         "benchmark_report": report,
         "execution_plan": context.get("execution_plan"),
-        "orchestration": {
-            "provider": "github-actions-devkit-runner" if os.environ.get("GITHUB_ACTIONS") else "manual",
-            "session_id": os.environ.get("GITHUB_RUN_ID"),
-            "task_id": os.environ.get("GITHUB_JOB"),
-            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
-            "target_correlation_id": os.environ.get("RUNNER_NAME"),
-        },
+        "orchestration": _orchestration(),
         "provenance": manifest["provenance"],
     }
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    load_benchmark_result(output_path, schema_path)
-    return {"result": str(output_path), "fingerprint": result["identity"]["fingerprint"]}
+    return _write(result, output_path, schema_path)
+
+
+def import_pipeline_benchmark(
+    manifest_path: Path,
+    report_path: Path,
+    context_path: Path,
+    output_path: Path,
+    *,
+    schema_path: Path,
+    environment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Publish the report scripts/performance.py wrote for a package's MPKs run as one pipeline, with the
+    registry identity, provenance, and runner environment around it."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    report, context, actual_core = _load_report(report_path, context_path)
+    model = manifest["model"]
+    if not model.get("components"):
+        raise ValidationError("pipeline benchmark manifest must name the package's components")
+    for component in model["components"]:
+        _require_mpk(component["path"], component["sha256"])
+    environment, compatibility = _board(manifest, actual_core, environment)
+    result = {
+        "schema_version": 1,
+        "status": "passed",
+        "benchmark_type": "model.pipeline",
+        "tool": {"name": "scripts/performance.py", "version": actual_core},
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "identity": {"algorithm": "sha256", "canonicalization_version": 1, "fingerprint": None},
+        "model": {
+            **model,
+            "components": [
+                {key: item[key] for key in ("component_id", "sha256", "uri")} for item in model["components"]
+            ],
+        },
+        "compatibility": compatibility,
+        "configuration": {
+            "samples": context["num_samples"],
+            "min_duration_ms": context["min_duration_ms"],
+            "warmup_samples": context["warmup_frames"],
+            "queue_depth": context["queue_depth"],
+            # Each sample is one frame through every component.
+            "workload": {"kind": "model.pipeline", "batch_size": 1},
+            "method": "model_pipeline",
+            "script_sha256": sha256_file(Path(manifest["script"]))[0],
+        },
+        "cpu_stage": context["cpu_stage"],
+        "environment": environment,
+        "benchmark_report": report,
+        "orchestration": _orchestration(),
+        "provenance": manifest["provenance"],
+    }
+    return _write(result, output_path, schema_path)

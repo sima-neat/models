@@ -17,6 +17,18 @@ def find_devkit_accuracy_config(model: dict[str, Any], build_profile_id: str) ->
     )
 
 
+def find_pipeline_benchmark(model: dict[str, Any], component_id: str, build_profile_id: str) -> dict[str, Any] | None:
+    """The package benchmark the component's benchmark run also measures; model validation allows at most one."""
+    return next(
+        (
+            entry
+            for entry in model["benchmark"]
+            if entry.get("result_component") == component_id and build_profile_id in entry["build_profiles"]
+        ),
+        None,
+    )
+
+
 def accuracy_components(model: dict[str, Any], entry: dict[str, Any]) -> list[str]:
     """Components whose compiled MPKs an accuracy entry runs."""
     scope = entry["scope"]

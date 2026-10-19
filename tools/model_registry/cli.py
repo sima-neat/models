@@ -155,6 +155,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     core_report.add_argument("--context", type=Path, required=True, help="the performance script's context")
     core_report.add_argument("--output", type=Path, required=True)
     core_report.add_argument("--schema", type=Path, required=True)
+    core_report.add_argument(
+        "--pipeline", action="store_true", help="the report is a package pipeline's, from a --pipeline manifest"
+    )
 
     devkit_accuracy = subcommands.add_parser(
         "resolve-devkit-accuracy", help="resolve a build profile's DevKit accuracy entry and its cached dataset"
@@ -188,6 +191,9 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     benchmark_manifest.add_argument("--model", required=True)
     benchmark_manifest.add_argument("--build-profile", required=True)
     benchmark_manifest.add_argument("--component", required=True)
+    benchmark_manifest.add_argument(
+        "--pipeline", action="store_true", help="the package pipeline the component's benchmark run also measures"
+    )
     benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
 
     mpk = subcommands.add_parser(
@@ -326,6 +332,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     publish_benchmark.add_argument(
         "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's performance tests"
+    )
+    publish_benchmark.add_argument(
+        "--pipeline", type=Path, help="the package pipeline the component's run measured: its pipeline/ folder"
+    )
+    publish_benchmark.add_argument(
+        "--pipeline-test-status", choices=TEST_OUTCOMES, help="outcome of the model's tests on the pipeline result"
     )
     publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
 
@@ -687,8 +699,9 @@ def _make_benchmark_manifest(args: argparse.Namespace) -> int:
         model_id=args.model,
         build_profile_id=args.build_profile,
         component_id=args.component,
+        pipeline=args.pipeline,
     )
-    print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"])
+    print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"] or "")
     return 0
 
 
@@ -858,6 +871,8 @@ def _publish_benchmark(args: argparse.Namespace) -> int:
         compile_run_id=args.compile_run_id,
         repository=args.repository,
         test_status=args.test_status,
+        pipeline_dir=args.pipeline,
+        pipeline_test_status=args.pipeline_test_status,
     )
     message = (
         json.dumps(result, sort_keys=True)
@@ -1043,11 +1058,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
         if args.command == "import-core-benchmark":
-            from .core_benchmark import import_core_benchmark
+            from .core_benchmark import import_core_benchmark, import_pipeline_benchmark
 
-            result = import_core_benchmark(
-                args.manifest, args.report, args.context, args.output, schema_path=args.schema
-            )
+            importer = import_pipeline_benchmark if args.pipeline else import_core_benchmark
+            result = importer(args.manifest, args.report, args.context, args.output, schema_path=args.schema)
             print(json.dumps(result, sort_keys=True))
             return 0
         if args.command == "resolve-devkit-accuracy":

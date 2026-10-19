@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/pipeline-performance-result.schema.json",
+  "title": "SiMa Neat package pipeline performance result",
+  "description": "A package's MPKs measured as one concurrent pipeline by the model's scripts/performance.py. Each frame runs every component, with the model's CPU stages between them; preprocessing and postprocessing are excluded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "status", "benchmark_type", "tool", "identity", "timestamp_utc", "model",
+    "compatibility", "configuration", "cpu_stage", "environment", "benchmark_report", "orchestration", "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"const": "passed"},
+    "benchmark_type": {"const": "model.pipeline"},
+    "tool": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version"],
+      "properties": {"name": {"const": "scripts/performance.py"}, "version": {"type": "string", "minLength": 1}}
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "canonicalization_version", "fingerprint"],
+      "properties": {
+        "algorithm": {"const": "sha256"},
+        "canonicalization_version": {"const": 1},
+        "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "timestamp_utc": {"type": "string", "format": "date-time"},
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "build_profile_id", "package_id", "component_id", "components"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "build_profile_id": {"type": "string", "minLength": 1},
+        "package_id": {"type": "string", "minLength": 1},
+        "component_id": {"description": "The component whose benchmark run reports the pipeline.", "type": "string", "minLength": 1},
+        "components": {
+          "type": "array", "minItems": 2,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["component_id", "sha256", "uri"],
+            "properties": {
+              "component_id": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "uri": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expected_platform_version", "actual_platform_version", "expected_neat_version", "actual_neat_version"],
+      "properties": {
+        "expected_platform_version": {"type": ["string", "null"]},
+        "actual_platform_version": {"type": ["string", "null"]},
+        "expected_neat_version": {"type": ["string", "null"]},
+        "actual_neat_version": {"type": ["string", "null"]}
+      }
+    },
+    "configuration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["samples", "min_duration_ms", "warmup_samples", "queue_depth", "workload", "method", "script_sha256"],
+      "properties": {
+        "samples": {"description": "Fewest frames the window measures.", "type": "integer", "minimum": 1},
+        "min_duration_ms": {"type": "integer", "minimum": 0},
+        "warmup_samples": {"description": "Frames through the running pipeline before the window starts.", "type": "integer", "minimum": 0},
+        "queue_depth": {"description": "Frames each MPK's runner may queue.", "type": "integer", "minimum": 1},
+        "workload": {
+          "type": "object", "additionalProperties": false, "required": ["kind", "batch_size"],
+          "properties": {"kind": {"const": "model.pipeline"}, "batch_size": {"const": 1}}
+        },
+        "method": {"const": "model_pipeline"},
+        "script_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "cpu_stage": {
+      "description": "The CPU work between the MPKs, timed per frame in the window.",
+      "type": "object", "additionalProperties": false, "required": ["name", "avg_ms", "p99_ms"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "avg_ms": {"type": "number", "minimum": 0},
+        "p99_ms": {"type": "number", "minimum": 0}
+      }
+    },
+    "environment": {
+      "type": "object", "required": ["fingerprint", "fingerprint_version"],
+      "properties": {
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fingerprint_version": {"const": 2},
+        "mla_frequency_hz": {"type": ["integer", "null"], "minimum": 1},
+        "cpu_frequency_khz": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "benchmark_report": {
+      "description": "Core BenchmarkReport field names: latency from one frame at a time, fps and telemetry over the window.",
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "fps", "avg_power_watts",
+        "energy_joules", "peak_power_watts", "throughput_duration_ms", "throughput_samples", "telemetry",
+        "layer_stats"
+      ],
+      "properties": {
+        "latency_ms": {"$ref": "#/$defs/reportNumber"},
+        "latency_p50_ms": {"$ref": "#/$defs/reportNumber"},
+        "latency_p95_ms": {"$ref": "#/$defs/reportNumber"},
+        "latency_p99_ms": {"$ref": "#/$defs/reportNumber"},
+        "fps": {"$ref": "#/$defs/reportNumber"},
+        "avg_power_watts": {"$ref": "#/$defs/reportNumber"},
+        "energy_joules": {"$ref": "#/$defs/reportNumber"},
+        "peak_power_watts": {"$ref": "#/$defs/reportNumber"},
+        "throughput_duration_ms": {"$ref": "#/$defs/reportNumber"},
+        "throughput_samples": {"type": "integer", "minimum": 0},
+        "telemetry": {
+          "description": "Telemetry.save() over the window.",
+          "type": "object",
+          "required": [
+            "status", "samples", "power_som_watts", "power_mla_watts", "power_rails_watts",
+            "die_temperature_max_c", "board_temperatures_c", "cpu_usage_pct", "cpu_cores_usage_pct",
+            "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"
+          ]
+        },
+        "layer_stats": {"type": "array", "maxItems": 0}
+      }
+    },
+    "orchestration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "session_id", "task_id", "attempt", "target_correlation_id"],
+      "properties": {
+        "provider": {"enum": ["github-actions-devkit-runner", "manual"]},
+        "session_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "attempt": {"type": ["integer", "null"], "minimum": 1},
+        "target_correlation_id": {"type": ["string", "null"]}
+      }
+    },
+    "provenance": {"type": "object"}
+  },
+  "$defs": {
+    "reportNumber": {"type": "number", "minimum": 0}
+  }
+}

@@ -7,7 +7,7 @@ import pytest
 from model_registry import core_benchmark
 from model_registry.benchmark_metrics import registry_metrics
 from model_registry.benchmark_publication import load_benchmark_result
-from model_registry.core_benchmark import _require_internals_runtime, import_core_benchmark
+from model_registry.core_benchmark import _require_internals_runtime, import_core_benchmark, import_pipeline_benchmark
 from model_registry.errors import ValidationError
 from model_registry.stage_keys import PERFORMANCE_FINGERPRINT_VERSION
 
@@ -412,3 +412,63 @@ def test_every_model_requests_and_saves_layer_stats(script, monkeypatch, tmp_pat
     context = json.loads((tmp_path / "benchmark-context.json").read_text())
     assert context["include_layer_stats"] is True
     assert context["execution_plan"] == PLAN
+
+
+def pipeline_inputs(tmp_path):
+    """What run_model_performance.sh hands the importer for RF-DETR's backbone → top-k → decoder pipeline."""
+    components = []
+    for component in ("backbone", "decoder"):
+        archive = tmp_path / f"{component}.tar.gz"
+        archive.write_bytes(component.encode())
+        components.append({"component_id": component, "path": str(archive), "uri": f"vulcan://{component}",
+                           "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "compile_run_id": "run"})
+    script = tmp_path / "performance.py"
+    script.write_text("benchmark_pipeline()")
+    manifest = {
+        "model": {"id": "rf_detr_nano", "build_profile_id": "w8a8_w16a16", "component_id": "decoder",
+                  "package_id": "default", "components": components},
+        "script": str(script),
+        "compatibility": {"platform_version": "3.0.0"},
+        "provenance": {"compile_run_id": "run", "models_commit": "a" * 40},
+    }
+    context = {"core_version": "0.6.0+test", "num_samples": 1000, "min_duration_ms": 60000, "warmup_frames": 100,
+               "queue_depth": 4, "cpu_stage": {"name": "Top 300 proposals", "avg_ms": 3.6, "p99_ms": 7.6}}
+    paths = [tmp_path / name for name in ("pipeline-test.json", "benchmark-report.json", "benchmark-context.json")]
+    for path, document in zip(paths, (manifest, saved_report(telemetry=sentinel_telemetry()), context)):
+        path.write_text(json.dumps(document))
+    return paths
+
+
+def import_pipeline(tmp_path, inputs):
+    output = tmp_path / "pipeline-result.json"
+    import_pipeline_benchmark(
+        *inputs,
+        output,
+        schema_path=Path(__file__).resolve().parents[1] / "schemas/pipeline-performance-result.schema.json",
+        environment={"buildinfo": "DISTRO_VERSION = 3.0.0\n", "fingerprint_version": 2},
+    )
+    return json.loads(output.read_text())
+
+
+def test_publishes_the_pipeline_report_with_the_mpks_and_cpu_stage_it_measured(tmp_path):
+    inputs = pipeline_inputs(tmp_path)
+
+    result = import_pipeline(tmp_path, inputs)
+
+    assert result["benchmark_report"] == json.loads(inputs[1].read_text())
+    assert result["cpu_stage"] == {"name": "Top 300 proposals", "avg_ms": 3.6, "p99_ms": 7.6}
+    assert [item["component_id"] for item in result["model"]["components"]] == ["backbone", "decoder"]
+    # Local paths and compile runs stay in the manifest; the result names each MPK by digest and URI.
+    assert set(result["model"]["components"][0]) == {"component_id", "sha256", "uri"}
+    assert result["configuration"] == {
+        "samples": 1000, "min_duration_ms": 60000, "warmup_samples": 100, "queue_depth": 4,
+        "workload": {"kind": "model.pipeline", "batch_size": 1}, "method": "model_pipeline",
+        "script_sha256": hashlib.sha256(b"benchmark_pipeline()").hexdigest(),
+    }
+
+
+def test_rejects_a_pipeline_that_ran_another_mpk(tmp_path):
+    inputs = pipeline_inputs(tmp_path)
+    (tmp_path / "backbone.tar.gz").write_bytes(b"rebuilt")
+    with pytest.raises(ValidationError, match="digest does not match"):
+        import_pipeline(tmp_path, inputs)

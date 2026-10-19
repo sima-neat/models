@@ -1,7 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, publishedScores } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { adaptBenchmarkResult, adaptPipelineResult } from "./benchmark-adapters.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel, precisionLabel, showToast, disclosure } from "./ui.js";
@@ -458,7 +458,7 @@ export function showExecutionTooltip(stage) {
 }
 
 // Each step of the benchmarked Model and the processor it ran on. Details opens its tensor table.
-function executionGraphSection(graph, runId) {
+function executionGraphDiagram(graph, runId) {
   if (!graph) return "";
   const steps = graph.steps.map((step) => step.runsOn
     ? `<li><button type="button" class="execution-step" data-execution-stage data-runs-on="${escapeHtml(step.runsOn)}">${escapeHtml(step.name)}<small>${escapeHtml(step.runsOn)}</small><template>${executionStageInfo(step)}</template></button></li>`
@@ -470,7 +470,7 @@ function executionGraphSection(graph, runId) {
   const details = graph.tensors.length
     ? `<button type="button" class="execution-details" data-details="${escapeHtml(key)}" aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>`
     : "";
-  return `<section class="execution-graph" aria-label="Execution graph"><h5>Execution graph</h5><div class="execution-graph-row"><ol>${steps}</ol>${details}</div>
+  return `<section class="execution-graph" aria-label="Execution graph"><div class="execution-graph-row"><ol>${steps}</ol>${details}</div>
     ${graph.tensors.length ? `<div id="${escapeHtml(key)}"${open ? "" : " hidden"}>${table}</div>` : ""}</section>`;
 }
 
@@ -514,22 +514,67 @@ function layerAnalysisBody(analysis, view) {
   <div data-layer-results>${layerAnalysisResults(analysis, view)}</div>`;
 }
 
-function layerAnalysisSection(analysis, runId) {
-  if (!analysis) return "";
-  const view = state.layerViews.get(runId)?.view || { query: "", minUs: 0, order: "time" };
-  state.layerViews.set(runId, { analysis, view });
-  return disclosure(`layers:${runId}`, "Runtime Layer Analysis",
-    `<div data-layer-analysis="${escapeHtml(runId)}">${layerAnalysisBody(analysis, view)}</div>`,
-    `${analysis.layers.length.toLocaleString()} layers · ${layerTime(analysis.totalUs)} µs MLA`);
+// Buttons that pick one of a pipeline's components; `attribute` names the control for its handler.
+function componentSwitch(labels, selected, attribute) {
+  return `<div class="layer-order-toggle component-switch" role="group" aria-label="Component">${labels.map((label, index) => `<button type="button" ${attribute} value="${index}" aria-pressed="${index === selected}">${escapeHtml(label)}</button>`).join("")}</div>`;
+}
+
+// The layer analysis of one component, or of a pipeline's components with a switch between them.
+function layerAnalysisPanel({ sources, selected, view }) {
+  const switcher = sources.length > 1 ? componentSwitch(sources.map(({ label }) => label), selected, 'data-layer-filter="component"') : "";
+  return `${switcher}${layerAnalysisBody(sources[selected].analysis, view)}`;
+}
+
+// The execution graph of one component, or of a pipeline's components with a switch between them.
+function executionGraphSection(components, key) {
+  const graphed = components.filter(({ benchmark }) => benchmark?.executionGraph);
+  if (!graphed.length) return "";
+  const panels = graphed.map(({ id, benchmark }, index) => `<div data-graph-panel="${index}"${index ? " hidden" : ""}>${executionGraphDiagram(benchmark.executionGraph, id)}</div>`).join("");
+  const switcher = graphed.length > 1 ? componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component") : "";
+  const meta = graphed.length > 1
+    ? graphed.map(({ label }) => label).join(" · ")
+    : graphed[0].benchmark.executionGraph.steps.filter((step) => step.runsOn).map((step) => step.runsOn).join(" · ");
+  return disclosure(`graphs:${key}`, "Execution graph", `<div data-execution-graphs>${switcher}${panels}</div>`, meta);
+}
+
+export function selectExecutionGraph(event) {
+  const button = event.target.closest("[data-graph-component]");
+  if (!button) return;
+  const panel = button.closest("[data-execution-graphs]");
+  panel.querySelectorAll("[data-graph-component]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+  panel.querySelectorAll("[data-graph-panel]").forEach((item) => { item.hidden = item.dataset.graphPanel !== button.value; });
+}
+
+function layerAnalysisSection(sources, key) {
+  const analyzed = sources.filter(({ analysis }) => analysis);
+  if (!analyzed.length) return "";
+  const previous = state.layerViews.get(key);
+  const entry = { sources: analyzed, selected: previous?.selected || 0, view: previous?.view || { query: "", minUs: 0, order: "time" } };
+  state.layerViews.set(key, entry);
+  const { analysis } = analyzed[0];
+  const meta = analyzed.length > 1
+    ? analyzed.map(({ label }) => label).join(" · ")
+    : `${analysis.layers.length.toLocaleString()} layers · ${layerTime(analysis.totalUs)} µs MLA`;
+  return disclosure(`layers:${key}`, "Runtime Layer Analysis",
+    `<div data-layer-analysis="${escapeHtml(key)}">${layerAnalysisPanel(entry)}</div>`, meta);
 }
 
 export function updateLayerAnalysis(event) {
   const control = event.target.closest("[data-layer-filter]");
   if (!control) return;
   const field = control.dataset.layerFilter;
-  if (event.type !== (field === "order" ? "click" : "input")) return;
+  if (event.type !== (["order", "component"].includes(field) ? "click" : "input")) return;
   const panel = control.closest("[data-layer-analysis]");
-  const { analysis, view } = state.layerViews.get(panel.dataset.layerAnalysis);
+  const entry = state.layerViews.get(panel.dataset.layerAnalysis);
+  if (field === "component") {
+    // Components have different time scales, so the minimum time starts over.
+    entry.selected = Number(control.value);
+    entry.view.minUs = 0;
+    panel.innerHTML = layerAnalysisPanel(entry);
+    return;
+  }
+  const { view } = entry;
+  const { analysis } = entry.sources[entry.selected];
   view[field] = field === "minUs" ? Number(control.value) : control.value;
   panel.querySelector("[data-layer-results]").innerHTML = layerAnalysisResults(analysis, view);
   panel.querySelector("[data-layer-threshold-value]").textContent = `${layerTime(view.minUs)} µs`;
@@ -548,6 +593,15 @@ export function highlightLayerLegend(event) {
   });
 }
 
+// The KPI tiles, the context line, and Benchmark details of one benchmark result.
+function benchmarkSummary(benchmark, payload, key, run, modelId) {
+  const tiles = KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key])).join("");
+  const details = benchmarkDetails(benchmark, payload);
+  return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
+    <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}${measurementSource(run, modelId)}</p>
+    ${disclosure(`benchmark:${key}`, "Benchmark details", details.markup, details.titles.join(" · "))}`;
+}
+
 function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   if (!payload) return `<p class="muted-message">No completed benchmark is linked to this component yet.</p>`;
   const adapted = adaptBenchmarkResult(payload.result);
@@ -556,13 +610,9 @@ function componentBenchmark(payload, runId, benchmarkRun, modelId) {
   }
   if (adapted.kind !== "supported") return "";
   const benchmark = adapted.value;
-  const tiles = KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key])).join("");
-  const details = benchmarkDetails(benchmark, payload);
-  return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
-    <p class="benchmark-context">${escapeHtml(benchmarkContext(benchmark))}${measurementSource(benchmarkRun, modelId)}</p>
-    ${disclosure(`benchmark:${runId}`, "Benchmark details", details.markup, details.titles.join(" · "))}
-    ${layerAnalysisSection(benchmark.layerAnalysis, runId)}
-    ${executionGraphSection(benchmark.executionGraph, runId)}`;
+  return `${benchmarkSummary(benchmark, payload, runId, benchmarkRun, modelId)}
+    ${layerAnalysisSection([{ analysis: benchmark.layerAnalysis }], runId)}
+    ${executionGraphSection([{ id: runId, benchmark }], runId)}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
@@ -580,12 +630,42 @@ function pipelineOrder(variant) {
 }
 
 // One line from input to output: numbered component chips, with any CPU step between them as a dashed chip.
-function pipelineStrip(pipeline) {
+// The CPU step the pipeline benchmark timed shows its mean time.
+function pipelineStrip(pipeline, cpuStage) {
   let number = 0;
+  const cpuTime = (name) => (cpuStage?.name === name ? `<span class="pipeline-time">${escapeHtml(cpuStage.avg_ms.toFixed(1))} ms</span>` : "");
   const stages = pipeline.map((stage) => ("component" in stage
     ? `<li><span class="pipeline-chip"><span class="component-number">${++number}</span>${escapeHtml(humanize(stage.component))}</span></li>`
-    : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}</span></li>`));
+    : `<li><span class="pipeline-chip cpu"><span class="pipeline-cpu">CPU</span>${escapeHtml(stage.cpu)}${cpuTime(stage.cpu)}</span></li>`));
   return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
+}
+
+// The test result a component's benchmark run carries for its package's MPKs run as one pipeline.
+function pipelineTest(details) {
+  const found = details.map((detail) => ({
+    run: detail.benchmarkRun,
+    test: (detail.benchmarkTests?.test_results || []).find((item) => item.suite === "performance" && item.name === "model-pipeline"),
+  })).find(({ test }) => test);
+  if (!found) return null;
+  const adapted = adaptPipelineResult(found.test.summary);
+  return { run: found.run, result: found.test.status !== "error" && adapted.kind === "supported" ? adapted.value : null };
+}
+
+// The model's numbers when its components run together, with each component's layer analysis and
+// execution graph from its own benchmark.
+function pipelinePerformance({ run, result }, details, modelId) {
+  const components = details.map((detail) => ({
+    id: detail.summary.run.id,
+    label: humanize(detail.summary.run.metadata?.component_id || "model"),
+    benchmark: adaptBenchmarkResult(detail.benchmark?.result).value,
+  }));
+  return `<div class="component-performance">
+    ${result
+      ? benchmarkSummary(result, {}, `${run?.id}:pipeline`, run, modelId)
+      : `<p class="muted-message">The pipeline benchmark did not complete for this build.</p>`}
+    ${layerAnalysisSection(components.map(({ label, benchmark }) => ({ label, analysis: benchmark?.layerAnalysis })), `${run?.id}:pipeline`)}
+    ${executionGraphSection(components, `${run?.id}:pipeline`)}
+  </div>`;
 }
 
 // A multi-component model shows each component's numbers under its name; they are never combined.
@@ -999,6 +1079,7 @@ export function renderDetail(variant) {
   const performanceDetails = order
     ? [...details].sort((a, b) => order.indexOf(a.summary.run.metadata?.component_id) - order.indexOf(b.summary.run.metadata?.component_id))
     : details;
+  const pipelineRun = singleComponent ? null : pipelineTest(details);
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`
@@ -1032,10 +1113,12 @@ export function renderDetail(variant) {
     ${overviewMarkup}
 
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
-      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, each measured on its own.</p>`}
-      ${order ? pipelineStrip(variant.pipeline) : ""}
-      ${performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1, model)).join("")}
-      ${singleComponent ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
+      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components${pipelineRun ? ", measured running together." : ", each measured on its own."}</p>`}
+      ${order ? pipelineStrip(variant.pipeline, pipelineRun?.result?.cpuStage) : ""}
+      ${pipelineRun
+        ? pipelinePerformance(pipelineRun, performanceDetails, model)
+        : performanceDetails.map((detail, index) => componentPerformance(detail, !singleComponent, order && index + 1, model)).join("")}
+      ${singleComponent || pipelineRun ? "" : `<p class="section-note">Each component is measured on its own. The CPU stage between components is not measured, so component latencies do not add up to end-to-end latency.</p>`}
     </section>
 
     ${accuracyMarkup}

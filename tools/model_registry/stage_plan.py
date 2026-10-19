@@ -311,14 +311,7 @@ def plan_stages(
                 read,
                 read_api_url,
                 PERFORMANCE_RUN_TYPE,
-                performance_key(
-                    root,
-                    model,
-                    profile_id,
-                    component_id,
-                    compile_run_id=prior[component_id]["run_id"],
-                    artifact_sha256=prior[component_id]["artifact_sha256"],
-                ),
+                performance_key(root, model, profile_id, component_id, prior),
                 PERFORMANCE_FINGERPRINT_VERSION,
             )
         ]

@@ -39,8 +39,12 @@ performance:
         throughput_fps: 103.1
       decoder:
         throughput_fps: 411.2
+      default:
+        throughput_fps: 82.4
     w8a16_w16a16:
       backbone:
         throughput_fps: 65.5
       decoder:
         throughput_fps: 407.0
+      default:
+        throughput_fps: 56.4

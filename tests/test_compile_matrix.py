@@ -424,10 +424,8 @@ def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
     }
 
     for component_id in ("backbone", "decoder"):
-        assert performance_key(
-            ROOT, renamed, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
-        ) == performance_key(
-            ROOT, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
+        assert performance_key(ROOT, renamed, "w8a8_w16a16", component_id, builds) == performance_key(
+            ROOT, model, "w8a8_w16a16", component_id, builds
         )
     assert accuracy_key(ROOT, renamed, "w8a8_w16a16", builds) == accuracy_key(
         ROOT, model, "w8a8_w16a16", builds
@@ -450,9 +448,7 @@ def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
         return [
             compile_key(repository, "rf_detr_small", "w8a8_w16a16", "rf_detr", COMPILER_VERSION),
             *(
-                performance_key(
-                    repository, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
-                )
+                performance_key(repository, model, "w8a8_w16a16", component_id, builds)
                 for component_id in components
             ),
             accuracy_key(repository, model, "w8a8_w16a16", builds),

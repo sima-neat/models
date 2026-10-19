@@ -295,6 +295,7 @@ async function checkExecutionTooltips(browser, url) {
     const page = await browser.newPage({viewport: {width, height: 1000}, hasTouch: width === 390});
     try {
       await page.goto(url.href);
+      await page.locator('[data-disclosure^="graphs:"] > summary').first().click();
       const stage = page.locator('.execution-step[data-runs-on="MLA"]').first();
       await stage.scrollIntoViewIfNeeded();
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);

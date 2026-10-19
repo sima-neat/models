@@ -729,3 +729,48 @@ def test_category_fields_are_required() -> None:
         model.pop(field)
     with pytest.raises(ValidationError, match="'model_type' is a required property"):
         validate_model(FIXTURES / "fixture_model", model, SCHEMA, TAXONOMY)
+
+
+def _rf_detr_pipeline_benchmark() -> tuple[Path, dict, dict]:
+    directory = ROOT / "models" / "rf_detr_small"
+    model = load_model(directory)
+    return directory, model, next(item for item in model["benchmark"] if item["scope"]["type"] == "package")
+
+
+def test_a_package_benchmark_reports_through_a_benchmarked_component() -> None:
+    directory, model, pipeline = _rf_detr_pipeline_benchmark()
+    validate_model(directory, model, SCHEMA)
+
+    del pipeline["result_component"]
+    with pytest.raises(ValidationError, match="result_component"):
+        validate_model(directory, model, SCHEMA)
+    pipeline["result_component"] = "classifier"
+    with pytest.raises(ValidationError, match="'classifier' is not in its package"):
+        validate_model(directory, model, SCHEMA)
+    pipeline["result_component"] = "decoder"
+    decoder = next(item for item in model["benchmark"] if item["scope"].get("component") == "decoder")
+    decoder["build_profiles"] = ["w8a8_w16a16"]
+    with pytest.raises(ValidationError, match="'decoder' has no benchmark in build profile 'w8a16_w16a16'"):
+        validate_model(directory, model, SCHEMA)
+
+
+def test_a_component_reports_one_package_benchmark_per_build_profile() -> None:
+    directory, model, pipeline = _rf_detr_pipeline_benchmark()
+    model["packages"].append({**model["packages"][0], "id": "again", "default": False})
+    model["benchmark"].append(
+        {
+            **pipeline,
+            "id": "pipeline_again",
+            "scope": {"type": "package", "package": "again"},
+            "build_profiles": ["w8a16_w16a16"],
+        }
+    )
+    with pytest.raises(ValidationError, match="reports another package benchmark in build profile 'w8a16_w16a16'"):
+        validate_model(directory, model, SCHEMA)
+
+
+def test_a_component_benchmark_names_no_result_component() -> None:
+    directory, model, _ = _rf_detr_pipeline_benchmark()
+    model["benchmark"][0]["result_component"] = "decoder"
+    with pytest.raises(ValidationError, match="result_component"):
+        validate_model(directory, model, SCHEMA)

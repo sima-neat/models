@@ -1,0 +1,515 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "benchmark_type": "model.pipeline",
+  "tool": {
+    "name": "scripts/performance.py",
+    "version": "0.6.0+develop.0fbe72665c2a"
+  },
+  "timestamp_utc": "2026-10-19T17:59:45.240475+00:00",
+  "identity": {
+    "algorithm": "sha256",
+    "canonicalization_version": 1,
+    "fingerprint": "1578d8565c6107b7bfc8b51bf148adb586f2b2597fcd3ff4c3b6344f9cc86af4"
+  },
+  "model": {
+    "build_profile_id": "w8a8_w16a16",
+    "component_id": "decoder",
+    "components": [
+      {
+        "component_id": "backbone",
+        "sha256": "b477d208397f0146f1b0b194a9e295b2f4097ec5872ec2a3f527567d6bba7d53",
+        "uri": "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/mpk"
+      },
+      {
+        "component_id": "decoder",
+        "sha256": "64b9cf7f89d5bb705bfe6b14e49e936a4dbd615ec597ecda6f2226847adbbe2d",
+        "uri": "vulcan://runs/00000000-0000-4000-8000-000000000002/artifacts/mpk"
+      }
+    ],
+    "id": "rf_detr_nano",
+    "package_id": "default"
+  },
+  "compatibility": {
+    "expected_platform_version": "3.0.0",
+    "actual_platform_version": "3.0.0",
+    "expected_neat_version": null,
+    "actual_neat_version": "0.6.0+develop.0fbe72665c2a"
+  },
+  "configuration": {
+    "samples": 1000,
+    "min_duration_ms": 60000,
+    "warmup_samples": 100,
+    "queue_depth": 4,
+    "workload": {
+      "kind": "model.pipeline",
+      "batch_size": 1
+    },
+    "method": "model_pipeline",
+    "script_sha256": "20da71eb47dcdea125dcda1e7c56127142c25ce3230051a40ab0ff2a83ff12b6"
+  },
+  "cpu_stage": {
+    "name": "Top 300 proposals",
+    "avg_ms": 3.6066469279291393,
+    "p99_ms": 7.647694629267784
+  },
+  "environment": {
+    "buildinfo": "DISTRO_VERSION = 3.0.0\nBUILD = preview\n",
+    "packages": {
+      "neat-runtime": "0.6.0+feat-benchmark-sentinel-telemetry.82d758ef18ee"
+    },
+    "runner": "preview",
+    "fingerprint_version": 2,
+    "kernel_release": "preview",
+    "cpu_count": 8,
+    "cpu_governor": null,
+    "board_model": "Modalix",
+    "machine": "aarch64",
+    "mla_frequency_hz": 600000000,
+    "cpu_frequency_khz": 1400000,
+    "core_version": "0.6.0+develop.0fbe72665c2a",
+    "fingerprint": "a417b19df9d8c8d5f07215309f33fb9f346b7c77e3c01bb05fa9488cbc6b14d3"
+  },
+  "benchmark_report": {
+    "latency_ms": 15.592600443924312,
+    "latency_p50_ms": 15.293811004085,
+    "latency_p95_ms": 16.99759310286026,
+    "latency_p99_ms": 19.681223449879326,
+    "fps": 138.26906612963174,
+    "avg_power_watts": 10.995833333333332,
+    "peak_power_watts": 11.625,
+    "energy_joules": 79.52489765877482,
+    "throughput_duration_ms": 60006.19106099475,
+    "throughput_samples": 8297,
+    "telemetry": {
+      "status": "ok",
+      "sentinel_version": "main:881fbb23af5f",
+      "sample_interval_ms": 2000,
+      "samples": 30,
+      "duration_ms": 60191.584349,
+      "power_som_watts": {
+        "key": "power_current_watts",
+        "label": "Current board power",
+        "unit": "W",
+        "samples": 30,
+        "mean": 10.995833333333332,
+        "minimum": 10.53125,
+        "maximum": 11.625,
+        "last": 11.625
+      },
+      "power_mla_watts": {
+        "key": "power_rail_mla_watts",
+        "label": "MLA 0.68V",
+        "unit": "W",
+        "samples": 30,
+        "mean": 2.4,
+        "minimum": 2.25,
+        "maximum": 2.5,
+        "last": 2.5
+      },
+      "power_rails_watts": [
+        {
+          "key": "power_rail_soc_ddr_vdd_watts",
+          "label": "SoC and DDR VDD",
+          "unit": "W",
+          "samples": 30,
+          "mean": 3.2666666666666666,
+          "minimum": 3.0,
+          "maximum": 3.75,
+          "last": 3.75
+        },
+        {
+          "key": "power_rail_hdmi_watts",
+          "label": "HDMI 1.2V",
+          "unit": "W",
+          "samples": 30,
+          "mean": 0.59375,
+          "minimum": 0.59375,
+          "maximum": 0.59375,
+          "last": 0.59375
+        },
+        {
+          "key": "power_rail_soc_ddr_vddq_watts",
+          "label": "SoC and DDR VDDQ",
+          "unit": "W",
+          "samples": 30,
+          "mean": 0.05520833333333332,
+          "minimum": 0.03125,
+          "maximum": 0.0625,
+          "last": 0.0625
+        },
+        {
+          "key": "power_rail_soc_ddr_vdd2h_watts",
+          "label": "SoC and DDR VDD2H",
+          "unit": "W",
+          "samples": 30,
+          "mean": 0.9958333333333332,
+          "minimum": 0.9375,
+          "maximum": 1.0625,
+          "last": 1.03125
+        },
+        {
+          "key": "power_rail_mla_watts",
+          "label": "MLA 0.68V",
+          "unit": "W",
+          "samples": 30,
+          "mean": 2.4,
+          "minimum": 2.25,
+          "maximum": 2.5,
+          "last": 2.5
+        },
+        {
+          "key": "power_rail_pcie_eth_watts",
+          "label": "PCIe and ETH VP",
+          "unit": "W",
+          "samples": 30,
+          "mean": 0.6572916666666667,
+          "minimum": 0.65625,
+          "maximum": 0.6875,
+          "last": 0.65625
+        },
+        {
+          "key": "power_rail_platform_1v8_watts",
+          "label": "SOM Platform 1.8V",
+          "unit": "W",
+          "samples": 30,
+          "mean": 1.3395833333333336,
+          "minimum": 1.3125,
+          "maximum": 1.46875,
+          "last": 1.34375
+        },
+        {
+          "key": "power_rail_platform_3v3_watts",
+          "label": "SOM Platform 3.3V",
+          "unit": "W",
+          "samples": 30,
+          "mean": 1.6875,
+          "minimum": 1.6875,
+          "maximum": 1.6875,
+          "last": 1.6875
+        }
+      ],
+      "die_temperatures_c": [
+        {
+          "key": "rtsn_0",
+          "label": "MLA RTSN-0",
+          "unit": "C",
+          "samples": 30,
+          "mean": 51.15266666666666,
+          "minimum": 50.46,
+          "maximum": 51.84,
+          "last": 51.42
+        },
+        {
+          "key": "rtsn_1",
+          "label": "MLA RTSN-1",
+          "unit": "C",
+          "samples": 30,
+          "mean": 51.38333333333333,
+          "minimum": 50.73,
+          "maximum": 51.98,
+          "last": 51.84
+        },
+        {
+          "key": "rtsn_2",
+          "label": "MLA RTSN-2",
+          "unit": "C",
+          "samples": 30,
+          "mean": 50.827000000000005,
+          "minimum": 49.77,
+          "maximum": 51.42,
+          "last": 51.15
+        },
+        {
+          "key": "rtsn_3",
+          "label": "MLA RTSN-3",
+          "unit": "C",
+          "samples": 30,
+          "mean": 50.844666666666654,
+          "minimum": 50.18,
+          "maximum": 51.42,
+          "last": 51.01
+        },
+        {
+          "key": "rtsn_4",
+          "label": "APU RTSN-4",
+          "unit": "C",
+          "samples": 30,
+          "mean": 50.73799999999999,
+          "minimum": 50.18,
+          "maximum": 51.15,
+          "last": 51.01
+        },
+        {
+          "key": "rtsn_5",
+          "label": "CVU RTSN-5",
+          "unit": "C",
+          "samples": 30,
+          "mean": 49.58,
+          "minimum": 48.94,
+          "maximum": 50.18,
+          "last": 50.18
+        },
+        {
+          "key": "rtsn_6",
+          "label": "TOP RTSN-6",
+          "unit": "C",
+          "samples": 30,
+          "mean": 51.36433333333334,
+          "minimum": 50.87,
+          "maximum": 51.7,
+          "last": 51.7
+        }
+      ],
+      "die_temperature_max_c": {
+        "key": "die_max",
+        "label": "Die max",
+        "unit": "C",
+        "samples": 30,
+        "mean": 51.44333333333333,
+        "minimum": 50.87,
+        "maximum": 51.98,
+        "last": 51.84
+      },
+      "board_temperatures_c": [
+        {
+          "key": "lm96163_temp1",
+          "label": "LM96163 temp1",
+          "unit": "C",
+          "samples": 30,
+          "mean": 49.36666666666667,
+          "minimum": 49.0,
+          "maximum": 50.0,
+          "last": 50.0
+        },
+        {
+          "key": "lm96163_temp2",
+          "label": "LM96163 temp2",
+          "unit": "C",
+          "samples": 30,
+          "mean": 52.6875,
+          "minimum": 51.875,
+          "maximum": 53.125,
+          "last": 53.125
+        }
+      ],
+      "cpu_usage_pct": {
+        "key": "cpu_usage_pct",
+        "label": "CPU usage",
+        "unit": "%",
+        "samples": 30,
+        "mean": 9.388460576681807,
+        "minimum": 8.383233532934131,
+        "maximum": 15.334166146158646,
+        "last": 9.18527838943064
+      },
+      "cpu_cores_usage_pct": [
+        {
+          "key": "cpu_core_0_usage_pct",
+          "label": "CPU core 0 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 10.099944109196876,
+          "minimum": 5.58375634517766,
+          "maximum": 15.34653465346535,
+          "last": 10.447761194029848
+        },
+        {
+          "key": "cpu_core_1_usage_pct",
+          "label": "CPU core 1 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 9.934589027707156,
+          "minimum": 0.5102040816326481,
+          "maximum": 65.48223350253808,
+          "last": 1.9900497512437831
+        },
+        {
+          "key": "cpu_core_2_usage_pct",
+          "label": "CPU core 2 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 12.179433726199322,
+          "minimum": 4.5685279187817285,
+          "maximum": 39.30348258706468,
+          "last": 11.734693877551017
+        },
+        {
+          "key": "cpu_core_3_usage_pct",
+          "label": "CPU core 3 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 13.53985729595306,
+          "minimum": 1.0101010101010055,
+          "maximum": 52.736318407960205,
+          "last": 6.965174129353235
+        },
+        {
+          "key": "cpu_core_4_usage_pct",
+          "label": "CPU core 4 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 8.993926959230128,
+          "minimum": 2.5252525252525304,
+          "maximum": 49.0,
+          "last": 9.743589743589745
+        },
+        {
+          "key": "cpu_core_5_usage_pct",
+          "label": "CPU core 5 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 5.955658783742234,
+          "minimum": 0.0,
+          "maximum": 45.27363184079603,
+          "last": 7.425742574257422
+        },
+        {
+          "key": "cpu_core_6_usage_pct",
+          "label": "CPU core 6 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 9.787567374623471,
+          "minimum": 4.545454545454541,
+          "maximum": 33.673469387755105,
+          "last": 33.673469387755105
+        },
+        {
+          "key": "cpu_core_7_usage_pct",
+          "label": "CPU core 7 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 6.687214594660451,
+          "minimum": 2.030456852791873,
+          "maximum": 14.70588235294118,
+          "last": 8.20512820512821
+        },
+        {
+          "key": "cpu_core_8_usage_pct",
+          "label": "CPU core 8 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 11.825029824702472,
+          "minimum": 5.076142131979699,
+          "maximum": 50.5050505050505,
+          "last": 7.0351758793969825
+        },
+        {
+          "key": "cpu_core_9_usage_pct",
+          "label": "CPU core 9 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 5.565238023163798,
+          "minimum": 1.0000000000000009,
+          "maximum": 29.648241206030143,
+          "last": 3.0000000000000027
+        },
+        {
+          "key": "cpu_core_10_usage_pct",
+          "label": "CPU core 10 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 13.058040485686224,
+          "minimum": 4.591836734693877,
+          "maximum": 51.0,
+          "last": 4.591836734693877
+        },
+        {
+          "key": "cpu_core_11_usage_pct",
+          "label": "CPU core 11 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 4.339200233756183,
+          "minimum": 1.0000000000000009,
+          "maximum": 40.29850746268657,
+          "last": 3.500000000000003
+        },
+        {
+          "key": "cpu_core_12_usage_pct",
+          "label": "CPU core 12 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 11.439171138582887,
+          "minimum": 5.641025641025643,
+          "maximum": 24.24242424242424,
+          "last": 11.764705882352944
+        },
+        {
+          "key": "cpu_core_13_usage_pct",
+          "label": "CPU core 13 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 12.56694147524044,
+          "minimum": 1.500000000000001,
+          "maximum": 51.02040816326531,
+          "last": 1.500000000000001
+        },
+        {
+          "key": "cpu_core_14_usage_pct",
+          "label": "CPU core 14 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 11.431686550755323,
+          "minimum": 5.128205128205132,
+          "maximum": 28.500000000000004,
+          "last": 21.42857142857143
+        },
+        {
+          "key": "cpu_core_15_usage_pct",
+          "label": "CPU core 15 usage",
+          "unit": "%",
+          "samples": 30,
+          "mean": 2.9278463873620546,
+          "minimum": 0.5025125628140725,
+          "maximum": 30.15075376884422,
+          "last": 4.5000000000000036
+        }
+      ],
+      "mla_memory_mib": {
+        "key": "mla_mem_allocated_mb",
+        "label": "MLA memory allocated",
+        "unit": "MiB",
+        "samples": 30,
+        "mean": 98.30078125,
+        "minimum": 98.30078125,
+        "maximum": 98.30078125,
+        "last": 98.30078125
+      },
+      "cma_memory_mib": {
+        "key": "ev74_cma_used_mb",
+        "label": "EV74 CMA used",
+        "unit": "MiB",
+        "samples": 30,
+        "mean": 3424.9492187499995,
+        "minimum": 3391.25390625,
+        "maximum": 3451.359375,
+        "last": 3451.359375
+      },
+      "linux_memory_used_mib": {
+        "key": "linux_mem_used_mb",
+        "label": "Linux memory used MB",
+        "unit": "MiB",
+        "samples": 30,
+        "mean": 841.512890625,
+        "minimum": 828.65234375,
+        "maximum": 858.87890625,
+        "last": 844.66796875
+      }
+    },
+    "layer_stats": []
+  },
+  "orchestration": {
+    "provider": "manual",
+    "session_id": null,
+    "task_id": null,
+    "attempt": 1,
+    "target_correlation_id": null
+  },
+  "provenance": {
+    "compile_run_id": "00000000-0000-4000-8000-000000000002",
+    "compiler_version": "2.0.0",
+    "execution_provider": "github-actions-devkit-runner",
+    "models_branch": "develop",
+    "models_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

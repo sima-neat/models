@@ -678,7 +678,7 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
     builds = snapshot("00000000-0000-4000-8000")
     for profile_id, build in builds.items():
         assert build["benchmark_fingerprint"] == performance_key(
-            ROOT, model, profile_id, "model", compile_run_id=build["run_id"], artifact_sha256="e" * 64,
+            ROOT, model, profile_id, "model", {"model": {"run_id": build["run_id"], "artifact_sha256": "e" * 64}}
         )
     # Only the profile with DevKit accuracy records an accuracy key, on its result component.
     assert builds["w16a16"]["validation_fingerprint"] is None

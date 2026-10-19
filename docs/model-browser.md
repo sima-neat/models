@@ -178,11 +178,11 @@ in this order:
    every metric, every SoM rail, every CPU core, and all compiled layer timings.
    A metric the browser does not place in the tiles or the cards appears under **Other measurements**,
    so a new metric shows up without a browser change.
-   Runtime Layer Analysis sits below Benchmark details, followed by an **Execution graph** that
+   Runtime Layer Analysis sits below Benchmark details, followed by an **Execution graph** disclosure that
    draws the steps the component runs, from input to output, each tagged with the
-   processor it runs on; the step on the MLA is the **Compiled Model**. The diagram
-   uses the available width, with equal-width Input and Output boxes and **Details**
-   beside it. Its heading matches Benchmark details in size and aligns with the diagram. This button opens a
+   processor it runs on; the step on the MLA is the **Compiled Model**. Its summary
+   lists those processors. The diagram uses the available width, with equal-width
+   Input and Output boxes and **Details** beside it. This button opens a
    table of the tensors passed between steps with their data type, shape,
    scale, and zero point. Hover, focus or tap a processing stage for a short explanation of
    what it does, with its processor named in a badge at the bottom. The top accent
@@ -191,7 +191,13 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
-   Each component's measurements then appear under the same number.
+   When the build has a [package pipeline](benchmarking.md#package-pipeline)
+   result, the four tiles, context line, and **Benchmark details** are that
+   result, for every component and CPU step running together, and the CPU step
+   shows its measured mean time. **Runtime Layer Analysis** and
+   **Execution graph** each switch between the components.
+   A pipeline that did not complete says so in place of the tiles.
+   Without a pipeline result, each component's measurements appear under its number.
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
    In the developer UI, **Evaluation details** explains the status and coverage and lists
@@ -211,7 +217,8 @@ in this order:
 
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out. Components are measured on their own, so the latencies of a
-multi-component model do not add up to end-to-end latency; the page says so.
+multi-component model do not add up to end-to-end latency. Without a pipeline
+result, the page says so. The page never adds component numbers together.
 
 ## Preview your model locally
 

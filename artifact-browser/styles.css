@@ -364,6 +364,7 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .pipeline-chip { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 18px 0 8px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 16px; font-weight: 500; white-space: nowrap; }
 .pipeline-chip.cpu { gap: 8px; padding: 0 16px; border: 1px dashed var(--line-strong); background: transparent; color: var(--ink-soft); font-size: 15px; font-weight: 400; }
 .pipeline-cpu { font-size: 12px; font-weight: 500; letter-spacing: .04em; }
+.pipeline-time { color: var(--ink); font: 500 13px var(--font-mono); }
 /* The order never wraps partway: it is one row when it fits and one column when it does not. */
 @container (max-width: 800px) {
   .component-pipeline { flex-direction: column; }
@@ -376,9 +377,7 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .measurement-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .measurement-link svg { width: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 /* The steps a component ran, in order, each tagged with the processor it ran on. */
-.execution-graph { margin-top: 24px; }
 .execution-graph-row { display: flex; align-items: center; gap: 20px; margin-top: 12px; }
-.execution-graph h5 { margin: 0; font-size: 15px; font-weight: 600; }
 .execution-details { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 8px 4px 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--ink-soft); font: inherit; font-size: 13px; cursor: pointer; transition: background 140ms ease, color 140ms ease; }
 .execution-details:hover, .execution-details[aria-expanded="true"] { background: var(--surface); color: var(--ink); }
 .execution-details:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
@@ -842,4 +841,5 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-threshold input { width: 100%; height: 42px; margin: 0; accent-color: var(--green); }
 .layer-order-toggle { display: flex; align-items: center; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .layer-order-toggle button { min-height: 36px; padding: 8px 14px; border: 0; border-radius: 4px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 14px; cursor: pointer; }
+.component-switch { width: fit-content; margin-bottom: 16px; }
 .layer-order-toggle button[aria-pressed="true"] { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px #0002; font-weight: 600; }

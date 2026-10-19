@@ -92,8 +92,10 @@ export function reportMetrics(result) {
 }
 
 function common(result) {
-  const report = result.schema_version >= 6 ? result.benchmark_report : result.core_report;
-  const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};
+  // Format 6 and every pipeline result store the report Core's field names describe.
+  const saved = result.schema_version >= 6 || result.benchmark_type === "model.pipeline";
+  const report = saved ? result.benchmark_report : result.core_report;
+  const stored = saved ? reportMetrics(result) : result.metrics || {};
   const measurements = Object.fromEntries(Object.entries(stored)
     .map(([key, metric]) => [key, measurement(key, metric)])
     .filter(([, metric]) => metric));
@@ -183,4 +185,22 @@ export function adaptBenchmarkResult(result) {
   const adapter = benchmarkAdapters.get(result.schema_version);
   if (!adapter) return { kind: "unsupported", schemaVersion: result.schema_version };
   return { kind: "supported", value: adapter(result) };
+}
+
+// A package pipeline result: a component's benchmark run reports it as its model-pipeline test result.
+export function adaptPipelineResult(result) {
+  if (!result || typeof result !== "object") return { kind: "missing" };
+  if (result.schema_version !== 1) return { kind: "unsupported", schemaVersion: result.schema_version };
+  const report = result.benchmark_report || {};
+  return {
+    kind: "supported",
+    value: {
+      ...common(result),
+      workload: `${(result.model?.components || []).length} MPKs and the CPU stage between them, run concurrently after ${result.configuration?.warmup_samples ?? 0} warm-up frames`,
+      // Every frame in the window, not the fewest the window needed.
+      samples: Number.isInteger(report.throughput_samples) ? report.throughput_samples : null,
+      componentId: "pipeline",
+      cpuStage: Number.isFinite(result.cpu_stage?.avg_ms) ? result.cpu_stage : null,
+    },
+  };
 }
