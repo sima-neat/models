@@ -296,12 +296,6 @@ def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict
             digest, size = sha256_file(path)
             files.append({"path": relative, "artifact": deployment_artifact_name(relative),
                           "sha256": digest, "size_bytes": size})
-    try:
-        cfg = json.loads((deployment / "devkit/vlm_config.json").read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict) or not {"lm_cfg", "pipeline_cfg"} <= cfg.keys():
-            raise ValueError("missing lm_cfg or pipeline_cfg")
-    except (OSError, ValueError) as exc:
-        raise ValidationError(f"{deployment}: invalid LLiMa deployment: {exc}") from exc
     if not any(item["path"].startswith("elf_files/") and item["path"].endswith(".elf") for item in files):
         raise ValidationError(f"{deployment}: LLiMa deployment contains no ELF files")
     return deployment_files({"files": files})

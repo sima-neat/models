@@ -518,14 +518,10 @@ def test_deployment_manifest_rejects_aliases_and_overlapping_paths():
             deployment_files({"files": files})
 
 
-def test_native_deployment_rejects_links_and_incomplete_configuration(tmp_path):
+def test_native_deployment_rejects_links(tmp_path):
     source = deployment(tmp_path / "deployed")
     (source / "link").symlink_to(source / "devkit/tokenizer.json")
     with pytest.raises(ValidationError, match="unsafe"):
-        verify_llima(source)
-    (source / "link").unlink()
-    (source / "devkit/vlm_config.json").unlink()
-    with pytest.raises(ValidationError, match="invalid LLiMa deployment"):
         verify_llima(source)
 
 

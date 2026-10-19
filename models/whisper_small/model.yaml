@@ -1,0 +1,127 @@
+id: whisper_small
+build-on-demand: true
+display_name: Whisper Small
+description: Transcribes spoken audio into text with optional automatic language detection.
+model_type: audio
+tasks:
+- automatic_speech_recognition
+modalities:
+  inputs:
+  - audio
+  outputs:
+  - text
+architecture:
+  id: whisper
+owners:
+- '@sima-neat/models'
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from openai/whisper-small under Apache-2.0.
+upstream:
+  repository: https://huggingface.co/openai/whisper-small
+  revision: 973afd24965f72e36ca33b3055d56a652f456b4d
+  model_card: https://huggingface.co/openai/whisper-small
+components:
+- id: model
+  role: inference
+  source:
+    type: file_set
+    entrypoint: config.json
+    files:
+    - path: added_tokens.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/added_tokens.json
+      sha256: 9715fd2243b6f06a5858b5e32950d2853f73dd5bc201aafcf76f5082a2d8acd1
+      size_bytes: 34604
+    - path: config.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/config.json
+      sha256: e6a2b489da1b5aed65a8eb8d1e7466fa867ad5643a8bc138ba708bd56b2875c4
+      size_bytes: 1967
+    - path: generation_config.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/generation_config.json
+      sha256: 71565b8ef50d0bf7a1193ed4bbed195b94e70c18894d81bba2f1233dcec3ab53
+      size_bytes: 3868
+    - path: merges.txt
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/merges.txt
+      sha256: 2df2990a395e35e8dfbc7511e08c12d56018d8d04691e0133e5d63b21e154dc6
+      size_bytes: 493869
+    - path: model.safetensors
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/model.safetensors
+      sha256: 1d7734884874f1a1513ed9aa760a4f8e97aaa02fd6d93a3a85d27b2ae9ca596b
+      size_bytes: 966995080
+    - path: normalizer.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/normalizer.json
+      sha256: bf1c507dc8724ca9cf9903640dacfb69dae2f00edee4f21ceba106a7392f26dd
+      size_bytes: 52666
+    - path: preprocessor_config.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/preprocessor_config.json
+      sha256: 9b5cd03a36fbb8a627c64d98a5b5b126ead95a77720723944487311f0110b666
+      size_bytes: 184990
+    - path: special_tokens_map.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/special_tokens_map.json
+      sha256: e67ae3a0aaa99abcd9f187138e12db1f65c16a14761c50ef10eef2c174a7a691
+      size_bytes: 2194
+    - path: tokenizer.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/tokenizer.json
+      sha256: 27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566
+      size_bytes: 2480466
+    - path: tokenizer_config.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/tokenizer_config.json
+      sha256: 2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce
+      size_bytes: 282683
+    - path: vocab.json
+      uri: hf://models/openai/whisper-small@973afd24965f72e36ca33b3055d56a652f456b4d/vocab.json
+      sha256: 8f680bba319e01a653d2e8a5dbc17a9157179e0576e6ce74ce0c06356c6e24f9
+      size_bytes: 835550
+  interface:
+    format: huggingface
+    entrypoints:
+    - id: transcribe
+      inputs:
+      - name: audio
+        dtype: float32
+        shape:
+        - samples
+        description: Mono waveform at 16 kHz, up to 30 seconds, with samples in [-1, 1].
+      outputs:
+      - name: text
+        dtype: string
+        shape: []
+    shape_profiles: []
+  preprocessing:
+    pipeline: []
+  postprocessing:
+    pipeline: []
+  surgery:
+    type: none
+  recipe: scripts/compile.sh
+resources: []
+calibrations: []
+build_profiles:
+- id: w8a16
+  target: modalix
+  runner_class: expensive
+  components:
+  - id: model
+    parameters:
+      precision: a16w8
+      use_future_token_mask: true
+      enable_log_probe: true
+compositions:
+- id: default
+  type: single
+  component: model
+  entrypoint: transcribe
+packages:
+- id: default
+  default: true
+  components:
+  - model
+  resources: []
+  build_profiles:
+  - w8a16
+  composition: default
+fidelity: []
+accuracy: []
+benchmark: []
+maturity: experimental

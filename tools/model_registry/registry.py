@@ -1339,7 +1339,9 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
         compiled_parameters = {}
-        if native:
+        if native and any(name in binding["parameters"] for name in (
+            "max_num_tokens", "language_group_size", "input_height", "input_width"
+        )):
             config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
             compiled_parameters = {
                 name: config["pipeline_cfg"][field]

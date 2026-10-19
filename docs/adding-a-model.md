@@ -533,7 +533,7 @@ This folder contains `devkit/`, `elf_files/`, any `npy_files/`, and the standalo
 `compile.sh` with the selected context, image dimensions and other flags. Run
 `model-registry verify-artifact <component-output> --write-manifest` to check
 the deployment and write `deployment-manifest.json` beside it. The verifier
-rejects incomplete configurations, missing executables, unsafe paths, and links.
+checksums every file and rejects folders without ELFs, unsafe paths, and links.
 
 `compile-outputs.json` uses `artifact_path: model/deployment-manifest.json`
 for Qwen's `model` component and `artifact_sha256` for that index file's hash.
@@ -543,6 +543,11 @@ the deployment folder with `manifest.json` at its root; its component uses
 `format: llima`, `path: .`. Retrieval preserves the folder and verifies each
 file. See the [manifest and metadata contract](metadata-schema.md#llima-checkpoint-and-deployment-formats).
 No native stage creates a deployment ZIP.
+
+Whisper uses this same workflow with a model-specific recipe calling
+`WhisperModel` directly instead of `llima-compile`. Its profile selects A16W8
+and the Whisper mask and log-probe options, without LLM context or image settings.
+The runner forwards boolean parameters as `--name` or `--no-name`.
 
 The native compile key covers checkpoint content, the target, graph parameters
 and the pinned compiler identity. Declare graph-changing options in component

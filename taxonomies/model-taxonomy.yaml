@@ -1,5 +1,7 @@
 
 model_types:
+  audio:
+    display_name: Audio
   vision:
     display_name: Vision
   llm:
@@ -87,12 +89,19 @@ architectures:
     display_name: SSD-MobileNet
     paradigm: cnn
     allowed_model_types: [vision]
+  whisper:
+    display_name: Whisper
+    paradigm: transformer
+    allowed_model_types: [audio]
   yolo:
     display_name: YOLO
     paradigm: cnn
     allowed_model_types: [vision]
 
 tasks:
+  automatic_speech_recognition:
+    display_name: Automatic Speech Recognition
+    allowed_model_types: [audio]
   anomaly_detection:
     display_name: Anomaly Detection
     allowed_model_types: [vision]

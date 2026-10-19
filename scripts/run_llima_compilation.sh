@@ -59,9 +59,13 @@ named_checkpoint.symlink_to(Path(checkpoint).resolve(), target_is_directory=True
 profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
 parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
 arguments = []
-for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
-    if name in parameters and not (name == "language_group_size" and parameters[name] == 128):
-        arguments.extend([f"--{name}", str(parameters[name])])
+for name, value in parameters.items():
+    if name == "precision" or (name == "language_group_size" and value == 128):
+        continue
+    if isinstance(value, bool):
+        arguments.append(f"--{'' if value else 'no-'}{name}")
+    else:
+        arguments.extend([f"--{name}", str(value)])
 subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), str(named_checkpoint), output, *arguments], check=True)
 PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"

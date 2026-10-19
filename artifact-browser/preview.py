@@ -629,7 +629,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "component_run_ids": package["component_run_ids"],
                 },
             }
-            artifacts = _deployment_artifacts(artifact, run_id) if model["model_type"] in {"llm", "vlm"} else [artifact]
+            artifacts = _deployment_artifacts(artifact, run_id) if media_type == "application/json" else [artifact]
             self._json({"run": index["runs"][run_id], "artifacts": artifacts})
         elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
             model, package = index["packages"][run_id]
@@ -704,7 +704,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
 def _package_file(model: dict, package: dict) -> tuple[str, str]:
     """The published path and media type of a native folder index, lone MPK, or ZIP."""
-    if model["model_type"] in {"llm", "vlm"}:
+    if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
         return "deployment/manifest.json", "application/json"
     declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
     if len(declaration["components"]) == 1 and not declaration["resources"]:
