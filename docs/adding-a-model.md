@@ -548,6 +548,7 @@ This folder contains `devkit/`, `elf_files/`, any `npy_files/`, and the standalo
 the deployment and write `deployment-manifest.json` beside it. The verifier
 checksums every file and rejects folders without ELFs, unsafe paths, and links.
 ELF directories may be nested beneath target and draft model folders.
+Speculative deployments require one target and one draft configuration, with ELFs in both folders.
 The compile result records the target's actual context, group size and image
 dimensions; publication compares these with the declared settings.
 

@@ -306,17 +306,28 @@ def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:
     """Read target settings from a single deployment or a speculative pair."""
     paths = [deployment / "devkit/vlm_config.json", *sorted(deployment.glob("*/devkit/vlm_config.json"))]
     targets = []
+    drafts = []
     for path in paths:
         if not path.is_file():
             continue
         config = json.loads(path.read_text(encoding="utf-8"))
-        if not ((config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}).get("is_draft"):
-            targets.append(config)
-    if not targets:
+        if ((config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}).get("is_draft"):
+            drafts.append(path)
+        else:
+            targets.append((path, config))
+    if not targets and not drafts:
         return {}
     if len(targets) != 1:
         raise ValidationError(f"{deployment}: expected one target configuration")
-    config = targets[0]
+    path, config = targets[0]
+    speculative = (config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}
+    if speculative.get("method") or drafts:
+        if len(drafts) != 1:
+            raise ValidationError(f"{deployment}: expected one draft configuration for speculative decoding")
+        for config_path in (path, *drafts):
+            model = config_path.parent.parent
+            if not any(item.is_file() for item in (model / "elf_files").rglob("*.elf")):
+                raise ValidationError(f"{model}: speculative deployment contains no ELF files")
     pipeline = config["pipeline_cfg"]
     parameters = {
         name: pipeline[field]
@@ -330,7 +341,6 @@ def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:
     if (isinstance(image_size, list) and len(image_size) == 2
             and all(type(value) is int and value > 0 for value in image_size)):
         parameters.update(input_height=image_size[0], input_width=image_size[1])
-    speculative = (config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}
     if speculative.get("method"):
         parameters["speculative_method"] = speculative["method"]
     return parameters
@@ -346,6 +356,7 @@ def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
     if list(directory.glob("*_mpk.tar.gz")):
         raise ValidationError(f"{directory}: expected one compiled artifact")
     files = verify_llima(deployment)
+    compiled_parameters = llima_compiled_parameters(deployment)
     payload = json.dumps({"format": "llima", "files": files}, indent=2, sort_keys=True).encode() + b"\n"
     manifest = directory / "deployment-manifest.json"
     if write_manifest:
@@ -356,7 +367,7 @@ def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
     result = {"manifest": manifest.name, "format": "llima", "layout": "directory",
               "built_at": datetime.now(timezone.utc).isoformat(), "provenance": provenance or {},
               "sha256": digest, "size_bytes": sum(item["size_bytes"] for item in files), "status": "success",
-              "compiled_parameters": llima_compiled_parameters(deployment)}
+              "compiled_parameters": compiled_parameters}
     if write_manifest:
         (directory / "compile-result.json").write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"

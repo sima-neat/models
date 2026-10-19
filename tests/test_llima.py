@@ -716,6 +716,28 @@ def test_speculative_deployment_manifest_preserves_nested_models(tmp_path):
         verify_artifact(tmp_path)
 
 
+@pytest.mark.parametrize("model", ["target-model", "draft-model"])
+@pytest.mark.parametrize("missing", ["configuration", "deployment", "elf_files"])
+def test_speculative_deployment_rejects_incomplete_pairs(tmp_path, model, missing):
+    source = tmp_path / "deployment"
+    for name in ("target-model", "draft-model"):
+        folder = deployment(source / name)
+        path = folder / "devkit/vlm_config.json"
+        config = json.loads(path.read_text())
+        config["lm_cfg"]["speculative_decoding_cfg"] = {
+            "method": "gemma4_mtp", "is_draft": name == "draft-model",
+        }
+        path.write_text(json.dumps(config))
+    folder = source / model
+    if missing == "configuration":
+        (folder / "devkit/vlm_config.json").unlink()
+    else:
+        shutil.rmtree(folder if missing == "deployment" else folder / "elf_files")
+    with pytest.raises(ValidationError, match="expected one .* configuration|contains no ELF files"):
+        verify_artifact(tmp_path, write_manifest=True)
+    assert not (tmp_path / "deployment-manifest.json").exists()
+
+
 def test_registry_download_streams_and_replaces_only_verified_files(tmp_path, monkeypatch):
     payload = b"deployment-payload" * (200 * 1024)
     destination = tmp_path / "weights.npy"
