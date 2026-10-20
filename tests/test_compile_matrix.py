@@ -448,6 +448,20 @@ def test_a_package_benchmark_runs_under_its_last_component_and_covers_every_buil
         performance_key(ROOT, model, "w8a8_w16a16", "backbone", builds)
 
 
+def test_a_package_benchmark_key_covers_the_component_order() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    reordered = copy.deepcopy(model)
+    reordered["packages"][0]["components"] = ["decoder", "backbone"]
+    builds = {
+        component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
+        for component_id in ("backbone", "decoder")
+    }
+
+    assert performance_key(ROOT, reordered, "w8a8_w16a16", "backbone", builds) != performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
+    )
+
+
 def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
     """A changed test applies the next time its stage runs; it reruns no stage by itself."""
     repository = tmp_path / "repository"

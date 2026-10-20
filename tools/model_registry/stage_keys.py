@@ -271,6 +271,7 @@ def performance_key(
         "stage": "performance",
         "model_id": model_id,
         "build_profile_id": build_profile_id,
+        "components": measured,
         "builds": {
             item: {"compile_run_id": builds[item]["run_id"], "artifact_sha256": builds[item]["artifact_sha256"]}
             for item in measured

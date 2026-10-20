@@ -361,7 +361,7 @@ LAYERS = [{"name": "conv", "stage_index": 0, "total_execution_time_us": 161.95}]
 
 def as_package(core_inputs):
     """Make the inputs a two-component package's: the manifest lists both builds, and the context gives each
-    one's layer timings and execution plan, and the CPU stage between them."""
+    one's layer timings and execution plan."""
     manifest_path, _, context_path = core_inputs
     manifest = json.loads(manifest_path.read_text())
     manifest["components"] = [
@@ -410,6 +410,20 @@ def test_a_package_result_needs_every_components_layers_and_plan(core_inputs, tm
 
     with pytest.raises(ValidationError, match="each package component"):
         package(core_inputs, tmp_path)
+
+
+def test_a_package_components_build_comes_from_the_manifest_not_the_context(core_inputs, tmp_path):
+    as_package(core_inputs)
+    context = json.loads(core_inputs[2].read_text())
+    context["components"]["decoder"].update(sha256="f" * 64, compile_run_id="forged")
+    core_inputs[2].write_text(json.dumps(context))
+    result = package(core_inputs, tmp_path)
+
+    decoder = result["components"][1]
+    assert (decoder["sha256"], decoder["compile_run_id"]) == (
+        json.loads(core_inputs[0].read_text())["components"][1]["sha256"],
+        "00000000-0000-4000-8000-000000000012",
+    )
 
 
 @pytest.mark.parametrize("layer", [

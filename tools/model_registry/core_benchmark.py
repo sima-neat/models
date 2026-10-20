@@ -169,7 +169,12 @@ def import_core_benchmark(
     }
     if package:
         result["components"] = [
-            {**build, **context["components"][build["component_id"]]} for build in manifest["components"]
+            {
+                **build,
+                "layer_stats": context["components"][build["component_id"]]["layer_stats"],
+                "execution_plan": context["components"][build["component_id"]]["execution_plan"],
+            }
+            for build in manifest["components"]
         ]
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     output_path.parent.mkdir(parents=True, exist_ok=True)
