@@ -326,8 +326,9 @@ function benchmarkDetails(benchmark, payload) {
   };
 }
 
-// The CSV download: every reading of one component as one table. Context comes first, then each
-// card's metrics, every SoM rail, every CPU core, and the remaining measurements.
+// The CSV download: every reading of one component or package as one table. Context comes first, then
+// each card's metrics, every SoM rail, every CPU core, the remaining measurements, and the MLA layers of
+// each component measured.
 const CSV_EXTRA_METRICS = { power: ["energy_per_inference_joules", "energy_joules"] };
 
 function benchmarkCsv(benchmark, readings) {
@@ -337,7 +338,7 @@ function benchmarkCsv(benchmark, readings) {
   const seconds = (milliseconds) => Number.isFinite(milliseconds) && (milliseconds / 1000).toFixed(1);
   [
     ["Model", benchmark.modelId], ["Build", benchmark.buildProfileId], ["Component", benchmark.componentId],
-    ["Workload", benchmark.workload], ["Platform", benchmark.platformVersion], ["Neat", benchmark.neatVersion],
+    ["Package", benchmark.packageId], ["Workload", benchmark.workload], ["Platform", benchmark.platformVersion], ["Neat", benchmark.neatVersion],
     ["MLA clock", Number.isFinite(benchmark.mlaFrequencyHz) && benchmark.mlaFrequencyHz / 1e6, "MHz"],
     ["CPU clock", Number.isFinite(benchmark.cpuFrequencyKhz) && benchmark.cpuFrequencyKhz / 1e3, "MHz"],
     ["CPU cores", benchmark.cpuCount], ["Batch size", benchmark.batchSize], ["Samples per trial", benchmark.samples],
@@ -367,10 +368,12 @@ function benchmarkCsv(benchmark, readings) {
     if (Number.isFinite(core.maximum)) add("CPU cores", `Core ${index}, peak`, core.maximum.toFixed(1), "%");
   });
   Object.keys(benchmark.measurements).filter((key) => !placed.has(key)).sort().forEach((key) => metric("Other", key));
-  benchmark.layerAnalysis?.layers.forEach((layer) => add(
-    "MLA layers", layer.name, layer.timeUs, "µs", `stage:${layer.stage}/layer:${layer.order}`,
-    "Separate profiling pass; compiler order",
-  ));
+  (benchmark.components || [{ layerAnalysis: benchmark.layerAnalysis }]).forEach(({ id, layerAnalysis }) => {
+    layerAnalysis?.layers.forEach((layer) => add(
+      id ? `${humanize(id)} MLA layers` : "MLA layers", layer.name, layer.timeUs, "µs",
+      `stage:${layer.stage}/layer:${layer.order}`, "Separate profiling pass; compiler order",
+    ));
+  });
   const cell = (value) => (/[",\r\n]/.test(String(value)) ? `"${String(value).replaceAll('"', '""')}"` : String(value));
   return rows.map((row) => row.map(cell).join(",")).join("\r\n");
 }
@@ -381,7 +384,7 @@ function csvDataUrl(csv) {
 }
 
 function csvFileName(benchmark) {
-  const name = [benchmark.modelId, benchmark.buildProfileId, benchmark.componentId].filter(Boolean).join("-") || "model";
+  const name = [benchmark.modelId, benchmark.buildProfileId, benchmark.componentId ?? benchmark.packageId].filter(Boolean).join("-") || "model";
   return `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}-benchmark.csv`;
 }
 
@@ -1061,7 +1064,7 @@ export function renderDetail(variant) {
   const performanceDetails = order
     ? [...details].sort((a, b) => order.indexOf(a.summary.run.metadata?.component_id) - order.indexOf(b.summary.run.metadata?.component_id))
     : details;
-  const measuredPackage = singleComponent ? null : packageBenchmark(details);
+  const measuredPackage = packageBenchmark(details);
   const backLabel = elements["result-title"].textContent || "Models";
   const downloadAction = fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`

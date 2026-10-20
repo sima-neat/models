@@ -369,9 +369,9 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
 def _package_result(model: dict, build: dict, builds: list[dict], compiler: dict) -> dict[str, Any] | None:
     """The package result a build's benchmark reports when a package benchmark runs under it, else None.
 
-    ``builds`` are the model's builds in the same catalog revision. The package runs at 98% of the rate its
-    components' preview results allow, as a measured pipeline does, and keeps each component's preview layers and
-    the template's execution plan.
+    ``builds`` are the model's builds in the same catalog revision. The package runs at 98% of the rate and
+    takes 2% longer than its components' preview results allow, as a measured pipeline does, names the model's
+    pipeline as its workload, and keeps each component's preview layers and the template's execution plan.
     """
     entry = benchmark_entry(model, build["component_id"], build["build_profile_id"])
     if entry is None or entry["scope"]["type"] != "package":
@@ -386,11 +386,9 @@ def _package_result(model: dict, build: dict, builds: list[dict], compiler: dict
     result.update({"benchmark_type": "model.orchestration", "execution_plan": None})
     result["tool"]["name"] = "pyneat.ModelRunner"
     result["configuration"]["method"] = "model_orchestration"
-    # The workload RF-DETR Nano's package benchmark recorded on a DevKit.
-    result["configuration"]["workload"].update({
-        "selection": "Backbone, top 300 proposals on the CPU, decoder", "batch_size": 1,
-        "preprocess": "quant", "postprocess": "cast", "warmup_samples": 100, "queue_depth": 4,
-    })
+    pipeline = model.get("pipeline") or [{"component": item["component_id"]} for item in members]
+    selection = ", ".join(stage.get("component") or f"{stage['cpu']} on the CPU" for stage in pipeline)
+    result["configuration"]["workload"]["selection"] = selection[:1].upper() + selection[1:]
     result["model"].update({"component_id": None, "package_id": entry["scope"]["package"],
                             "path": None, "sha256": None, "uri": None})
     result["components"] = [{
@@ -401,7 +399,7 @@ def _package_result(model: dict, build: dict, builds: list[dict], compiler: dict
     } for item, component in zip(members, results)]
     report = result["benchmark_report"]
     fps = round(0.98 / sum(1 / item["benchmark_report"]["fps"] for item in results), 1)
-    latency = round(sum(item["benchmark_report"]["latency_ms"] for item in results) + 3.607, 3)
+    latency = round(sum(item["benchmark_report"]["latency_ms"] for item in results) / 0.98, 3)
     scale = latency / report["latency_ms"]
     report["fps"] = fps
     for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):

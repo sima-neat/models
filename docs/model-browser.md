@@ -194,9 +194,10 @@ in this order:
    When the build has a [package benchmark](benchmarking.md#package-benchmark)
    result, the tiles, context line, and **Benchmark details** are that result,
    for the components and CPU step running together. **Runtime Layer Analysis** and **Execution graph** each
-   switch between the components. The catalog and Compare show the package
-   result as the model's one value. Otherwise, each component's measurements
-   appear under its number.
+   switch between the components, and **Download CSV** names the package and
+   lists each component's layer timings. The catalog shows the package result as
+   the model's one value. Otherwise, each component's measurements appear under
+   its number.
 3. **Accuracy.** The status, the first four metrics, the evaluated sample
    count, and the commit and GitHub workflow of the run that measured them.
    In the developer UI, **Evaluation details** explains the status and coverage and lists

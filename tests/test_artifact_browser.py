@@ -243,6 +243,7 @@ def test_preview_reports_a_package_result_on_its_last_components_build(tmp_path:
     assert result["model"]["package_id"] == "default"
     assert [item["component_id"] for item in result["components"]] == ["backbone", "decoder"]
     assert [item["sha256"] for item in result["components"]] == [build["artifact_sha256"] for build in builds]
+    assert result["configuration"]["workload"]["selection"] == "Backbone, Top 300 proposals on the CPU, decoder"
 
 
 def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
@@ -1314,8 +1315,7 @@ def test_compare_bolds_a_value_only_against_the_same_component() -> None:
     metrics = _browser_source("metrics.js").replace("export ", "")
     script = _browser_source("compare-view.js")
     # measuredText and bestValues, without the benchmark adapter between them.
-    end = script.index("// A package result scores the whole model. Otherwise")
-    measured = script[script.index("function measuredText("):end]
+    measured = script[script.index("function measuredText("):script.index("// Each component is measured on its own")]
     best = script[script.index("// A single-component build competes"):script.index("function performanceCell(")]
 
     def build(**latencies: float | None) -> dict:

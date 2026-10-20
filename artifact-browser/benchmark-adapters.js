@@ -201,8 +201,8 @@ export function adaptBenchmarkResult(result) {
   return { kind: "supported", value: adapter(result) };
 }
 
-// The package result a multi-component build carries: its components measured running as one
-// pipeline. It lives on the benchmark of the package's last component and scores the whole model.
+// The package result a build carries: its components measured running as one pipeline, however many
+// there are. It lives on the benchmark of the package's last component and scores the whole model.
 export function packageBenchmark(details) {
   for (const detail of details) {
     const adapted = adaptBenchmarkResult(detail.benchmark?.result);
