@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -98,30 +99,16 @@ def measure_latency(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, i
     return seconds
 
 
-class Window:
-    """The throughput measurement: it skips the warm-up outputs, then lasts at least MEASURED_FRAMES frames
-    and MIN_DURATION_S seconds, with one TelemetryMonitor sampling the board."""
+@dataclass(frozen=True)
+class Throughput:
+    """The measured span of the throughput pass: the frames the decoder output, how long they took, and the
+    board telemetry sampled over the same span."""
 
-    def __init__(self) -> None:
-        self.monitor = pyneat.TelemetryMonitor()
-        self.outputs = 0
-        self.started = 0.0
-        self.done = False
-        self.frames = 0
-        self.seconds = 0.0
-        self.telemetry = None
+    frames: int
+    seconds: float
+    telemetry: pyneat.Telemetry
 
-    def count_output(self) -> None:
-        self.outputs += 1
-        if self.outputs == WARMUP_FRAMES:
-            self.monitor.start()
-            self.started = time.perf_counter()
-        elif self.outputs > WARMUP_FRAMES and not self.done:
-            elapsed = time.perf_counter() - self.started
-            if self.outputs - WARMUP_FRAMES >= MEASURED_FRAMES and elapsed >= MIN_DURATION_S:
-                self.frames, self.seconds, self.telemetry = self.outputs - WARMUP_FRAMES, elapsed, self.monitor.stop()
-                self.done = True
-
+    @property
     def fps(self) -> float:
         return self.frames / self.seconds
 
@@ -168,14 +155,17 @@ def run_together(*stages: Callable[[], None], runners: tuple[pyneat.ModelRunner,
         raise errors[0]
 
 
-def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> Window:
-    """Frames per second with every stage busy, each on a different frame."""
-    window = Window()
+def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> Throughput:
+    """Frames per second and board telemetry with every stage busy, each on a different frame. The measured span
+    starts after WARMUP_FRAMES outputs and lasts at least MEASURED_FRAMES frames and MIN_DURATION_S seconds."""
+    monitor = pyneat.TelemetryMonitor()
+    measured = threading.Event()
+    throughput: Throughput | None = None
     pushed = {"backbone": 0, "decoder": 0}
 
     def push_inputs() -> None:
         try:
-            while not window.done:
+            while not measured.is_set():
                 push(backbone, [image], "backbone")
                 pushed["backbone"] += 1
         finally:
@@ -194,32 +184,45 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
             decoder.close_input()
 
     def pull_outputs() -> None:
-        for outputs in drain(decoder, "decoder", pushed):
+        nonlocal throughput
+        outputs, started = 0, 0.0
+        for tensors in drain(decoder, "decoder", pushed):
             # Return the decoder's output buffers before the next pull.
-            del outputs
-            window.count_output()
-        if not window.done:
-            raise RuntimeError("the pipeline stopped before the measurement window ended")
+            del tensors
+            outputs += 1
+            if outputs == WARMUP_FRAMES:
+                monitor.start()
+                started = time.perf_counter()
+            elif outputs > WARMUP_FRAMES and not measured.is_set():
+                frames, seconds = outputs - WARMUP_FRAMES, time.perf_counter() - started
+                if frames >= MEASURED_FRAMES and seconds >= MIN_DURATION_S:
+                    throughput = Throughput(frames, seconds, monitor.stop())
+                    measured.set()
+        if throughput is None:
+            raise RuntimeError("the pipeline stopped before the measured span ended")
 
     try:
         run_together(push_inputs, forward_proposals, pull_outputs, runners=(backbone, decoder))
     finally:
+        # A failure inside the measured span leaves the monitor running.
+        if monitor.running():
+            monitor.stop()
         backbone.close()
         decoder.close()
-    return window
+    return throughput
 
 
 def write_results(
     output: Path,
     latencies: list[float],
-    window: Window,
+    throughput: Throughput,
     models: dict[str, pyneat.Model],
     timings: dict[str, list[dict[str, object]]],
     plans: dict[str, dict[str, object]],
 ) -> None:
-    fps = window.fps()
-    window.telemetry.save(output / "telemetry.json")
-    power = window.telemetry.power_som_watts
+    fps = throughput.fps
+    throughput.telemetry.save(output / "telemetry.json")
+    power = throughput.telemetry.power_som_watts
     report = {
         "latency_ms": float(np.mean(latencies) * 1000),
         "latency_p50_ms": percentile_ms(latencies, 50),
@@ -230,8 +233,8 @@ def write_results(
         "peak_power_watts": power.maximum if power.samples else 0.0,
         # Core's convention: the energy of MEASURED_FRAMES frames at the measured rate and power.
         "energy_joules": power.mean * MEASURED_FRAMES / fps if power.samples else 0.0,
-        "throughput_duration_ms": window.seconds * 1000,
-        "throughput_samples": window.frames,
+        "throughput_duration_ms": throughput.seconds * 1000,
+        "throughput_samples": throughput.frames,
         "telemetry": json.loads((output / "telemetry.json").read_text(encoding="utf-8")),
         "layer_stats": [],
     }
@@ -254,8 +257,8 @@ def write_results(
     }
     (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
     print(
-        f"{fps:.1f} FPS over {window.frames} frames in {window.seconds:.1f} s; latency {report['latency_ms']:.2f} ms "
-        f"over {len(latencies)} frames; power {report['avg_power_watts']:.2f} W"
+        f"{fps:.1f} FPS over {throughput.frames} frames in {throughput.seconds:.1f} s; "
+        f"latency {report['latency_ms']:.2f} ms over {len(latencies)} frames; power {report['avg_power_watts']:.2f} W"
     )
 
 
@@ -266,8 +269,8 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
     backbone, decoder = build_runners(models, image)
     plans = {name: json.loads(model.execution_plan().to_json()) for name, model in models.items()}
     latencies = measure_latency(backbone, decoder, image)
-    window = measure_throughput(backbone, decoder, image)
-    write_results(output, latencies, window, models, timings, plans)
+    throughput = measure_throughput(backbone, decoder, image)
+    write_results(output, latencies, throughput, models, timings, plans)
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
