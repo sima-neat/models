@@ -275,7 +275,7 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 | --- | --- |
 | compile (ONNX) | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest, the component's `benchmark` entries, the profile's optional `benchmark_baseline`, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of each component the `benchmark` entry measures, that entry, the profile's optional `benchmark_baseline`, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
 | accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
 
 A new compile run changes the performance and accuracy keys too, so a
@@ -344,7 +344,8 @@ A running `accuracy` or `performance` entry also states what the model must
 deliver on a DevKit in `expected`: the latest published value of every
 measured build. For accuracy, that is every metric the accuracy entry
 declares, per build profile; for performance, `throughput_fps`, per build
-profile and component. Take the values from the model browser's latest
+profile and component, or package for a [package
+benchmark](benchmarking.md#package-benchmark). Take the values from the model browser's latest
 `develop` results, rounded to 4 decimal places for accuracy and 1 for
 throughput.
 

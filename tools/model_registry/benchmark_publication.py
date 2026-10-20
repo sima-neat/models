@@ -18,12 +18,11 @@ from .accuracy_result import (
     load_accuracy_result,
     publish_accuracy_result,
 )
-from .benchmark_manifest import load_component_performance_config
 from .benchmark_metrics import measurement_name, registry_metrics
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
-from .model import load_and_validate_model
+from .model import benchmark_entry, load_and_validate_model
 from .model_tests import require_test_outcome
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 from .stage_keys import (
@@ -44,7 +43,7 @@ PERFORMANCE_RESULT_FILE = "performance-result.json"
 
 def benchmark_identity_document(result: JsonObject) -> JsonObject:
     model = result["model"]
-    return {
+    document = {
         "schema_version": result["schema_version"],
         "benchmark_type": result["benchmark_type"],
         "model": {
@@ -61,6 +60,12 @@ def benchmark_identity_document(result: JsonObject) -> JsonObject:
         "environment_fingerprint": result["environment"]["fingerprint"],
         "tool": result["tool"],
     }
+    if "components" in result:
+        document["model"]["package_id"] = model["package_id"]
+        document["components"] = [
+            {"component_id": item["component_id"], "sha256": item["sha256"]} for item in result["components"]
+        ]
+    return document
 
 
 def load_benchmark_result(result_path: str | Path, schema_path: str | Path | None = None) -> JsonObject:
@@ -116,25 +121,44 @@ def validate_benchmark_set(
         result = load_benchmark_result(path, root / PERFORMANCE_RESULT_SCHEMA)
         model = result["model"]
         expected = (model_id, build_profile_id, component_id)
-        actual = (model["id"], model["build_profile_id"], model["component_id"])
+        actual = (model["id"], model["build_profile_id"], _host_component(result))
         if actual != expected:
             raise ValidationError(f"{path}: benchmark identity does not match {expected}")
         provenance = result["provenance"]
         if provenance.get("models_commit") != commit_sha:
             raise ValidationError(f"{path}: benchmark models_commit does not match the source revision")
         _require_compile_run_id(result, None)
-        config = load_component_performance_config(root, model_id, component_id, build_profile_id)
+        definition = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
+        entry = benchmark_entry(definition, component_id, build_profile_id)
+        if entry is None:
+            raise ValidationError(f"{path}: no benchmark entry applies to {expected}")
         measured = registry_metrics(result)
-        for metric_name in config.get("required_metrics", ()):
+        for metric_name in entry.get("required_metrics", ()):
             if metric_name not in measured:
                 raise ValidationError(f"{path}: required benchmark metric {metric_name!r} was not measured")
         validated.append(str(path.resolve()))
     return {"count": len(validated), "results": validated}
 
 
-def _build_identity(result: JsonObject) -> tuple[str, str]:
+def _subject(result: JsonObject) -> JsonObject:
+    """What a result measured: a component, or a package's components running as one pipeline."""
     model = result["model"]
-    return model["build_profile_id"], model["component_id"]
+    return {"package_id": model["package_id"]} if "components" in result else {"component_id": model["component_id"]}
+
+
+def _host_component(result: JsonObject) -> str:
+    """The component whose build the result's run is under: its own, or its package's last."""
+    return result["components"][-1]["component_id"] if "components" in result else result["model"]["component_id"]
+
+
+def _builds(result: JsonObject, compile_run_id: str) -> dict[str, JsonObject]:
+    """Each component build the result measured, by component ID, with its compile run and MPK digest."""
+    if "components" in result:
+        return {
+            item["component_id"]: {"run_id": item["compile_run_id"], "artifact_sha256": item["sha256"]}
+            for item in result["components"]
+        }
+    return {result["model"]["component_id"]: {"run_id": compile_run_id, "artifact_sha256": result["model"]["sha256"]}}
 
 
 def _require_compile_run_id(result: JsonObject, declared: str | None) -> str:
@@ -159,11 +183,10 @@ def _require_git_sha(value: str) -> str:
 
 
 def _measurements(result: JsonObject, fingerprint: str) -> list[JsonObject]:
-    build_profile_id, component_id = _build_identity(result)
     dimensions = {
         "model_id": result["model"]["id"],
-        "build_profile_id": build_profile_id,
-        "component_id": component_id,
+        "build_profile_id": result["model"]["build_profile_id"],
+        **_subject(result),
         "benchmark_type": result["benchmark_type"],
     }
     return [
@@ -200,9 +223,10 @@ def publish_benchmark_result(
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
-    """Publish one component's DevKit performance result as a ``model_benchmark`` run under its compile run.
+    """Publish a DevKit performance result as a ``model_benchmark`` run under its compile run: a component's
+    under its own, a package's under its last component's.
 
-    The run fingerprint is the component's performance key, read from ``repository`` at the measured revision.
+    The run fingerprint is the performance key, read from ``repository`` at the measured revision.
     A passed result's test result carries ``test_status``, the outcome of the model's performance tests on it;
     the run still completes when they fail, so the stage is not measured again.
     """
@@ -218,18 +242,13 @@ def publish_benchmark_result(
 
     fingerprint = result["identity"]["fingerprint"]
     model_id = result["model"]["id"]
-    build_profile_id, component_id = _build_identity(result)
+    build_profile_id = result["model"]["build_profile_id"]
+    subject = _subject(result)
+    builds = _builds(result, parent_run_id)
     measurements = _measurements(result, fingerprint)
     execution_digest = canonical_sha256(result)
     model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
-    stage_key = performance_key(
-        root,
-        model,
-        build_profile_id,
-        component_id,
-        compile_run_id=parent_run_id,
-        artifact_sha256=result["model"]["sha256"],
-    )
+    stage_key = performance_key(root, model, build_profile_id, _host_component(result), builds)
     stable_digest = hashlib.sha256(
         f"{parent_run_id}:{stage_key}:{fingerprint}:{execution_digest}".encode()
     ).hexdigest()
@@ -264,7 +283,7 @@ def publish_benchmark_result(
         "metadata": {
             "model_id": model_id,
             "build_profile_id": build_profile_id,
-            "component_id": component_id,
+            **subject,
             "benchmark_type": result["benchmark_type"],
             "compile_run_id": parent_run_id,
             "benchmark_execution_digest": execution_digest,
@@ -280,23 +299,26 @@ def publish_benchmark_result(
     except ValueError as exc:
         raise ValidationError("Vulcan did not return a valid benchmark run ID") from exc
 
-    client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/inputs/compiled-model",
-        {
-            "input_type": "model-pack",
-            "source_reference": result["model"]["uri"] or f"vulcan://runs/{parent_run_id}/artifacts/mpk",
-            "sha256": result["model"]["sha256"],
-            "media_type": "application/gzip",
-            "metadata": {
-                "model_id": model_id,
-                "build_profile_id": build_profile_id,
-                "component_id": component_id,
-                "compile_run_id": parent_run_id,
+    # A package's run records every build its pipeline ran, as an accuracy run does.
+    for component_id, build in builds.items():
+        name = f"compiled-model-{component_id.replace('_', '-')}" if "package_id" in subject else "compiled-model"
+        client.request(
+            "PUT",
+            f"/v1/runs/{run_id}/inputs/{name}",
+            {
+                "input_type": "model-pack",
+                "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/mpk",
+                "sha256": build["artifact_sha256"],
+                "media_type": "application/gzip",
+                "metadata": {
+                    "model_id": model_id,
+                    "build_profile_id": build_profile_id,
+                    "component_id": component_id,
+                    "compile_run_id": build["run_id"],
+                },
             },
-        },
-        f"{stable_key}-input",
-    )
+            f"{stable_key}-{name}",
+        )
     parameters = benchmark_identity_document(result)
     client.request(
         "PUT",
@@ -311,7 +333,8 @@ def publish_benchmark_result(
 
     result_sha, _ = sha256_file(path)
     result_prefix = (
-        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/{component_id}/"
+        f"models/{quote(branch, safe='')}/{commit_sha[:12]}/{model_id}/{build_profile_id}/"
+        f"{result['model'].get('package_id', result['model']['component_id'])}/"
         f"benchmarks/{fingerprint}/{execution_digest}"
     )
     object_key = f"{result_prefix}/{PERFORMANCE_RESULT_FILE}"
@@ -331,7 +354,7 @@ def publish_benchmark_result(
             "metadata": {
                 "model_id": model_id,
                 "build_profile_id": build_profile_id,
-                "component_id": component_id,
+                **subject,
                 "result_fingerprint": fingerprint,
                 "benchmark_execution_digest": execution_digest,
             },
@@ -361,11 +384,7 @@ def publish_benchmark_result(
                 "size_bytes": log_stored.size_bytes,
                 "media_type": "text/plain",
                 "retention_class": "branch",
-                "metadata": {
-                    "model_id": model_id,
-                    "build_profile_id": build_profile_id,
-                    "component_id": component_id,
-                },
+                "metadata": {"model_id": model_id, "build_profile_id": build_profile_id, **subject},
             },
             f"{stable_key}-log-artifact",
         )
@@ -397,7 +416,7 @@ def publish_benchmark_result(
         "compile_run_id": parent_run_id,
         "model_id": model_id,
         "build_profile_id": build_profile_id,
-        "component_id": component_id,
+        **subject,
         "result_fingerprint": fingerprint,
         "performance_key": stage_key,
         "execution_digest": execution_digest,

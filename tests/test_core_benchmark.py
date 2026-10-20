@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from model_registry import core_benchmark
 from model_registry.benchmark_metrics import registry_metrics
 from model_registry.benchmark_publication import load_benchmark_result
@@ -13,6 +14,20 @@ from model_registry.stage_keys import PERFORMANCE_FINGERPRINT_VERSION
 
 PLAN = {"schema": "sima.neat.execution_plan", "schema_version": 1, "model": {"name": "resnet_50", "batch": 4},
         "nodes": [{"id": "p0", "kind": "Input", "runs_on": "A65"}], "edges": []}
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def component_benchmark_scripts():
+    """The performance script of every model that benchmarks single components with Core's Model.benchmark. A
+    package's script runs its own pipeline; its model's tests check what that records."""
+    return [
+        script
+        for script in sorted(ROOT.glob("models/*/scripts/performance.py"))
+        if all(
+            entry["scope"]["type"] == "component"
+            for entry in yaml.safe_load((script.parents[1] / "model.yaml").read_text())["benchmark"]
+        )
+    ]
 
 
 @pytest.fixture
@@ -226,7 +241,7 @@ def test_rejects_a_benchmark_without_the_execution_plan_the_browser_draws(core_i
 
 
 def test_every_performance_script_records_the_execution_plan_of_the_model_it_benchmarks():
-    scripts = sorted((Path(__file__).resolve().parents[1] / "models").glob("*/scripts/performance.py"))
+    scripts = component_benchmark_scripts()
     assert scripts
     for script in scripts:
         assert '"execution_plan": json.loads(model.execution_plan().to_json()),' in script.read_text(), script
@@ -321,7 +336,7 @@ def test_rejects_telemetry_in_a_unit_the_metric_does_not_carry(core_inputs, tmp_
 
 
 def test_every_performance_script_saves_the_core_report():
-    scripts = sorted((Path(__file__).resolve().parents[1] / "models").glob("*/scripts/performance.py"))
+    scripts = component_benchmark_scripts()
     assert scripts
     for script in scripts:
         source = script.read_text()
@@ -339,6 +354,76 @@ def test_layer_timings_survive_import_unchanged(core_inputs, tmp_path):
     result = package(core_inputs, tmp_path)
     assert result["benchmark_report"] == json.loads(core_inputs[1].read_text())
     assert result["configuration"]["include_layer_stats"] is True
+
+
+LAYERS = [{"name": "conv", "stage_index": 0, "total_execution_time_us": 161.95}]
+
+
+def as_package(core_inputs):
+    """Make the inputs a two-component package's: the manifest lists both builds, and the context gives each
+    one's layer timings and execution plan."""
+    manifest_path, _, context_path = core_inputs
+    manifest = json.loads(manifest_path.read_text())
+    manifest["components"] = [
+        {
+            "component_id": component_id,
+            "path": manifest["model"]["path"],
+            "sha256": manifest["model"]["sha256"],
+            "uri": f"vulcan://runs/{run_id}/artifacts/mpk",
+            "compile_run_id": run_id,
+        }
+        for component_id, run_id in (
+            ("backbone", "00000000-0000-4000-8000-000000000011"),
+            ("decoder", "00000000-0000-4000-8000-000000000012"),
+        )
+    ]
+    manifest["model"].update(component_id=None, package_id="default", path=None, sha256=None, uri=None)
+    manifest_path.write_text(json.dumps(manifest))
+    context = json.loads(context_path.read_text())
+    del context["execution_plan"]
+    context["components"] = {
+        component_id: {"layer_stats": LAYERS, "execution_plan": PLAN} for component_id in ("backbone", "decoder")
+    }
+    context_path.write_text(json.dumps(context))
+
+
+def test_a_package_result_records_each_components_build_layers_and_plan(core_inputs, tmp_path):
+    as_package(core_inputs)
+    result = package(core_inputs, tmp_path)
+
+    assert (result["benchmark_type"], result["tool"]["name"]) == ("model.orchestration", "pyneat.ModelRunner")
+    assert (result["model"]["package_id"], result["model"]["component_id"]) == ("default", None)
+    assert result["benchmark_report"] == json.loads(core_inputs[1].read_text())
+    assert result["execution_plan"] is None
+    assert [(item["component_id"], item["layer_stats"], item["execution_plan"]) for item in result["components"]] == [
+        ("backbone", LAYERS, PLAN),
+        ("decoder", LAYERS, PLAN),
+    ]
+    assert result["configuration"]["method"] == "model_orchestration"
+
+
+def test_a_package_result_needs_every_components_layers_and_plan(core_inputs, tmp_path):
+    as_package(core_inputs)
+    context = json.loads(core_inputs[2].read_text())
+    del context["components"]["decoder"]
+    core_inputs[2].write_text(json.dumps(context))
+
+    with pytest.raises(ValidationError, match="each package component"):
+        package(core_inputs, tmp_path)
+
+
+def test_a_package_components_build_comes_from_the_manifest_not_the_context(core_inputs, tmp_path):
+    as_package(core_inputs)
+    context = json.loads(core_inputs[2].read_text())
+    context["components"]["decoder"].update(sha256="f" * 64, compile_run_id="forged")
+    core_inputs[2].write_text(json.dumps(context))
+    result = package(core_inputs, tmp_path)
+
+    decoder = result["components"][1]
+    assert (decoder["sha256"], decoder["compile_run_id"]) == (
+        json.loads(core_inputs[0].read_text())["components"][1]["sha256"],
+        "00000000-0000-4000-8000-000000000012",
+    )
 
 
 @pytest.mark.parametrize("layer", [
@@ -369,8 +454,7 @@ def test_does_not_silently_publish_a_requested_but_missing_profile(core_inputs, 
         package(core_inputs, tmp_path)
 
 
-@pytest.mark.parametrize("script", sorted(Path(__file__).resolve().parents[1].glob("models/*/scripts/performance.py")),
-                         ids=lambda path: path.parent.parent.name)
+@pytest.mark.parametrize("script", component_benchmark_scripts(), ids=lambda path: path.parent.parent.name)
 def test_every_model_requests_and_saves_layer_stats(script, monkeypatch, tmp_path):
     import runpy
     import sys

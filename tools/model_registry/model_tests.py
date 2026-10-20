@@ -75,7 +75,8 @@ def measured_shortfalls(model_dir: str | Path, stage: str, result: dict[str, Any
     drop = ACCURACY_ALLOWED_DROP if stage == "accuracy" else PERFORMANCE_ALLOWED_DROP
     build = [result["model"]["build_profile_id"]]
     if stage == "performance":
-        build.append(result["model"]["component_id"])
+        # A package result is expected by its package ID, a component result by its component ID.
+        build.append(result["model"].get("package_id", result["model"]["component_id"]))
     expected = load_model_tests(model_dir)[stage]["expected"]
     for key in build:
         expected = expected.get(key, {})
@@ -152,7 +153,7 @@ def _devkit_accuracy(model: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _measured_builds(model: dict[str, Any], stage: str) -> dict[tuple[str, ...], list[str]]:
     """Each build the stage measures, with the metrics expected of it: accuracy per build profile, every
-    declared metric; performance per build profile and component, its throughput."""
+    declared metric; performance per build profile and benchmarked component or package, its throughput."""
     if stage == "accuracy":
         return {
             (profile,): list(entry["metrics"])
@@ -160,9 +161,8 @@ def _measured_builds(model: dict[str, Any], stage: str) -> dict[tuple[str, ...],
             for profile in entry["build_profiles"]
         }
     return {
-        (profile, case["scope"]["component"]): ["throughput_fps"]
+        (profile, case["scope"][case["scope"]["type"]]): ["throughput_fps"]
         for case in model["benchmark"]
-        if case["scope"]["type"] == "component"
         for profile in case["build_profiles"]
     }
 

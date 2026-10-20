@@ -246,3 +246,21 @@ def test_measured_shortfalls_take_the_performance_component(tmp_path: Path) -> N
     assert measured_shortfalls(tmp_path, "performance", measured(89)) == [
         "throughput_fps 89 is below 100 by more than 10%"
     ]
+
+
+
+def test_measured_shortfalls_take_the_package_of_a_package_result(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "tests.yaml").write_text(
+        PERFORMANCE_EXPECTED + "      default:\n        throughput_fps: 50.0\n", encoding="utf-8"
+    )
+    result = json.loads((ROOT / "artifact-browser/fixtures/performance-result.json").read_text(encoding="utf-8"))
+    result["model"].update(build_profile_id="w8a8", component_id=None, package_id="default")
+
+    def measured(fps: float) -> dict:
+        return {**result, "benchmark_report": {**result["benchmark_report"], "fps": fps}}
+
+    assert measured_shortfalls(tmp_path, "performance", measured(45)) == []
+    assert measured_shortfalls(tmp_path, "performance", measured(44)) == [
+        "throughput_fps 44 is below 50 by more than 10%"
+    ]

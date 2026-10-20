@@ -336,6 +336,16 @@ def test_required_benchmark_metrics_must_be_declared() -> None:
         validate_model(FIXTURES / "fixture_model", model, SCHEMA)
 
 
+def test_a_component_is_benchmarked_once_per_build_profile() -> None:
+    directory = ROOT / "models" / "rf_detr_small"
+    model = load_model(directory)
+    # The package benchmark already measures the backbone in every build profile.
+    backbone = {"type": "component", "component": "backbone"}
+    model["benchmark"].append({**model["benchmark"][0], "id": "backbone", "scope": backbone})
+    with pytest.raises(ValidationError, match="more than one benchmark measures component 'backbone'"):
+        validate_model(directory, model, SCHEMA)
+
+
 def test_recorded_accuracy_entry_needs_no_engine() -> None:
     model = load_model(FIXTURES / "fixture_model")
     model["accuracy"] = [

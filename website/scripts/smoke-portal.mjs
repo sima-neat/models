@@ -245,8 +245,9 @@ async function checkCatalogLayouts(browser, url) {
         await page.waitForFunction(() => document.querySelectorAll('.catalog-model-link').length === 4);
         if (await page.locator('.catalog-task-group').count() !== 1 || await page.locator('.catalog-task-group h3').innerText() !== 'Object Detection') throw new Error('filtered task grouping is incorrect');
         await settled();
-        const componentText = await page.locator('[data-catalog-entry="rf_detr_nano"] [data-table-performance]').innerText();
-        if (!componentText.includes('backbone') || !componentText.includes('decoder')) throw new Error('component measurements were lost');
+        // A package result is the model's one reading; its components are not listed or added up.
+        const packageText = await page.locator('[data-catalog-entry="rf_detr_nano"] [data-table-performance]').innerText();
+        if (!packageText.includes('inferences/s') || /backbone|decoder/.test(packageText)) throw new Error('package measurement is not the model\'s one reading');
         await page.getByRole('button', {name: 'Cards', exact: true}).click();
         if (await page.locator('.model-card').count() !== 4) throw new Error('switching lost the search filter');
         await tableButton.click();
@@ -295,6 +296,7 @@ async function checkExecutionTooltips(browser, url) {
     const page = await browser.newPage({viewport: {width, height: 1000}, hasTouch: width === 390});
     try {
       await page.goto(url.href);
+      await page.locator('[data-disclosure^="graphs:"] > summary').first().click();
       const stage = page.locator('.execution-step[data-runs-on="MLA"]').first();
       await stage.scrollIntoViewIfNeeded();
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);

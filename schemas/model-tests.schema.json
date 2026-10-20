@@ -25,7 +25,7 @@
       "unevaluatedProperties": false,
       "properties": {
         "expected": {
-          "description": "Per build profile and component, the throughput its performance result reports.",
+          "description": "Per build profile and benchmarked component or package, the throughput its performance result reports.",
           "type": "object",
           "additionalProperties": {
             "type": "object",

@@ -5,7 +5,8 @@
 #
 # <compiled_dir> holds <model_id>/<build_profile>/<component>/ with the MPK, compile-result.json and
 # registry-publication.json. [components] is comma-separated and defaults to every component the build
-# profile benchmarks. Each component's results land in <output_dir>/<component>/.
+# profile benchmarks. Each component's results land in <output_dir>/<component>/; a package benchmark runs
+# under, and lands in the folder of, its last component.
 
 set -euo pipefail
 
@@ -83,11 +84,20 @@ for component in "${components[@]}"; do
     --model "$MODEL_ID" \
     --build-profile "$BUILD_PROFILE_ID" \
     --component "$component" >/dev/null
-  archive="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["path"])' \
-    "$output/performance-test.json")"
+  # A component's benchmark gets its MPK; a package's gets each component's as <component>=<path>, in
+  # pipeline order.
+  mpks=()
+  while IFS= read -r mpk; do mpks+=("--mpk=$mpk"); done < <("$REGISTRY_PYTHON" -c '
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+for item in manifest.get("components", []):
+    print(item["component_id"] + "=" + item["path"])
+if "components" not in manifest:
+    print(manifest["model"]["path"])
+' "$output/performance-test.json")
 
   PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-    --mpk "$archive" --output "$output" 2>&1 | tee "$output/benchmark.log"
+    "${mpks[@]}" --output "$output" 2>&1 | tee "$output/benchmark.log"
 
   # Record the workload Core benchmarked beside its saved report. A script that configures the model
   # reports its selection and postprocessing in its context; otherwise the MPK default applies. The
@@ -102,7 +112,8 @@ import pyneat
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text())
 context = json.loads(Path(sys.argv[2]).read_text())
-model = pyneat.Model(manifest["model"]["path"])
+# A package's workload enters at its first component.
+model = pyneat.Model(manifest["model"]["path"] or manifest["components"][0]["path"])
 options = pyneat.BenchmarkOptions()
 info = model.info()
 manifest["configuration"] = {

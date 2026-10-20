@@ -85,65 +85,82 @@ def valid_result(tmp_path: Path) -> Path:
     return path
 
 
-def rf_detr_result(tmp_path: Path, component_id: str, *, include_power: bool = True) -> Path:
+def rf_detr_result(tmp_path: Path, *, include_power: bool = True) -> Path:
+    """RF-DETR Small's package result, in the folder of the decoder, whose build its run is under."""
     path = valid_result(tmp_path)
     result = json.loads(path.read_text(encoding="utf-8"))
-    result["model"].update(
-        {
-            "id": "rf_detr_small",
-            "build_profile_id": "w8a8_w16a16",
-            "component_id": component_id,
-        }
+    plan, layers = result["execution_plan"], result["benchmark_report"]["layer_stats"]
+    result.update(
+        benchmark_type="model.orchestration",
+        tool={"name": "pyneat.ModelRunner", "version": "3.0.0"},
+        execution_plan=None,
+        components=[
+            {
+                "component_id": component_id,
+                "path": f"{component_id}_mpk.tar.gz",
+                "sha256": component_id[0] * 64,
+                "uri": f"vulcan://runs/{run_id}/artifacts/mpk",
+                "compile_run_id": run_id,
+                "layer_stats": layers,
+                "execution_plan": plan,
+            }
+            for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items()
+        ],
     )
-    result["provenance"]["models_commit"] = "a" * 40
+    result["benchmark_report"]["layer_stats"] = []
+    result["model"].update(
+        id="rf_detr_small",
+        build_profile_id="w8a8_w16a16",
+        component_id=None,
+        package_id="default",
+        path=None,
+        sha256=None,
+        uri=None,
+    )
+    result["provenance"].update(models_commit="a" * 40, compile_run_id=RF_DETR_COMPILE_RUN_IDS["decoder"])
     if include_power:
         result["benchmark_report"].update(avg_power_watts=8.5, energy_joules=30.0)
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    destination = tmp_path.parent / component_id / "performance-result.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = tmp_path / "results" / "decoder" / "performance-result.json"
+    destination.parent.mkdir(parents=True)
     destination.write_text(json.dumps(result), encoding="utf-8")
     return destination
 
 
-def rf_detr_result_set(tmp_path: Path) -> Path:
-    results = tmp_path / "results"
-    for component_id in ("backbone", "decoder"):
-        component_tmp = tmp_path / f"tmp-{component_id}"
-        component_tmp.mkdir()
-        generated = rf_detr_result(component_tmp, component_id)
-        destination = results / component_id / generated.name
-        destination.parent.mkdir(parents=True)
-        generated.replace(destination)
-    return results
-
-
-def test_validates_complete_rf_detr_benchmark_set_and_required_power(tmp_path: Path) -> None:
+def test_validates_rf_detr_package_result_and_required_power(tmp_path: Path) -> None:
     validated = validate_benchmark_set(
         repository=ROOT,
-        result_root=rf_detr_result_set(tmp_path),
+        result_root=rf_detr_result(tmp_path).parents[1],
         model_id="rf_detr_small",
         build_profile_id="w8a8_w16a16",
-        component_ids=["backbone", "decoder"],
+        component_ids=["decoder"],
         git_sha="a" * 40,
     )
 
-    assert validated["count"] == 2
+    assert validated["count"] == 1
     assert "accuracy" not in validated
 
 
 def test_rejects_rf_detr_benchmark_without_required_power(tmp_path: Path) -> None:
-    component_tmp = tmp_path / "tmp-backbone"
-    component_tmp.mkdir()
-    generated = rf_detr_result(component_tmp, "backbone", include_power=False)
-    results = tmp_path / "results"
-    destination = results / "backbone" / generated.name
-    destination.parent.mkdir(parents=True)
-    generated.replace(destination)
-
     with pytest.raises(ValidationError, match="avg_power_watts.*was not measured"):
         validate_benchmark_set(
             repository=ROOT,
-            result_root=results,
+            result_root=rf_detr_result(tmp_path, include_power=False).parents[1],
+            model_id="rf_detr_small",
+            build_profile_id="w8a8_w16a16",
+            component_ids=["decoder"],
+            git_sha="a" * 40,
+        )
+
+
+def test_rejects_a_package_result_outside_its_last_components_folder(tmp_path: Path) -> None:
+    path = rf_detr_result(tmp_path)
+    path.parent.rename(path.parents[1] / "backbone")
+
+    with pytest.raises(ValidationError, match="does not match"):
+        validate_benchmark_set(
+            repository=ROOT,
+            result_root=path.parents[1],
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
             component_ids=["backbone"],
@@ -240,9 +257,8 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert create["run_type"] == "model_benchmark"
     assert create["parent_run_id"] == COMPILE_RUN_ID
     model = load_and_validate_model(ROOT / "models" / "resnet_50", ROOT / "schemas" / "model.schema.json")
-    expected_key = performance_key(
-        ROOT, model, "w16a16", "model", compile_run_id=COMPILE_RUN_ID, artifact_sha256=result["model"]["sha256"]
-    )
+    build = {"run_id": COMPILE_RUN_ID, "artifact_sha256": result["model"]["sha256"]}
+    expected_key = performance_key(ROOT, model, "w16a16", "model", {"model": build})
     assert create["run_fingerprint"] == expected_key
     assert create["run_fingerprint"] != published["result_fingerprint"]
     assert re.fullmatch(r"[0-9a-f]{64}", create["run_fingerprint"])
@@ -265,6 +281,53 @@ def test_publishes_linked_benchmark_run_idempotently(tmp_path: Path) -> None:
     assert store.objects[0][3] == "application/json"
     assert store.objects[0][2] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert store.objects[0][1].endswith(f"/{published['execution_digest']}/performance-result.json")
+
+
+def test_publishes_a_package_result_under_its_last_components_compile_run(tmp_path: Path) -> None:
+    path = rf_detr_result(tmp_path)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, endpoint: str, body: dict | None, key: str) -> dict:
+        calls.append((method, endpoint, body, key))
+        return {"run_id": BENCHMARK_RUN_ID} if endpoint == "/v1/runs" else {"ok": True}
+
+    store = FakeStore()
+    published = publish_benchmark_result(
+        result_path=path,
+        api_url="https://registry.example.invalid",
+        aws_region="us-west-2",
+        bucket="artifacts",
+        environment="staging",
+        branch="feature/benchmark",
+        git_sha="a" * 40,
+        repository=ROOT,
+        test_status=TEST_STATUS,
+        request=request,
+        artifact_store=store,
+    )
+
+    create = calls[0][2]
+    assert create is not None
+    assert create["parent_run_id"] == RF_DETR_COMPILE_RUN_IDS["decoder"]
+    assert create["metadata"]["package_id"] == "default"
+    assert "component_id" not in create["metadata"]
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    builds = {
+        component_id: {"run_id": run_id, "artifact_sha256": component_id[0] * 64}
+        for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items()
+    }
+    assert create["run_fingerprint"] == performance_key(ROOT, model, "w8a8_w16a16", "decoder", builds)
+    inputs = {endpoint.rsplit("/", 1)[1]: body for _, endpoint, body, _ in calls if "/inputs/" in endpoint}
+    assert {name: body["source_reference"] for name, body in inputs.items()} == {
+        f"compiled-model-{component_id}": f"vulcan://runs/{run_id}/artifacts/mpk"
+        for component_id, run_id in RF_DETR_COMPILE_RUN_IDS.items()
+    }
+    assert f"/v1/runs/{BENCHMARK_RUN_ID}/test-results/performance/model-synthetic" in [call[1] for call in calls]
+    assert published["package_id"] == "default"
+    assert "/rf_detr_small/w8a8_w16a16/default/benchmarks/" in store.objects[0][1]
+    measurements = next(body for _, endpoint, body, _ in calls if endpoint.endswith("/measurements/batch"))
+    assert measurements is not None
+    assert all(item["dimensions"]["package_id"] == "default" for item in measurements["measurements"])
 
 
 @pytest.mark.parametrize(

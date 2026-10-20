@@ -27,12 +27,18 @@ ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
 sys.path.insert(0, str(ROOT / "tools"))
 
-from model_registry.accuracy_config import find_devkit_accuracy_config  # noqa: E402
+from model_registry.accuracy_config import accuracy_components, find_devkit_accuracy_config  # noqa: E402
 from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.dependencies import resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fidelity_config import find_fidelity_config  # noqa: E402
-from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
+from model_registry.model import (  # noqa: E402
+    benchmark_entry,
+    component_pipelines,
+    load_models,
+    mpk_filename,
+    profile_component_for,
+)
 from model_registry.published_metrics import published_metrics_by_model  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
@@ -360,6 +366,50 @@ def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any
     return result
 
 
+def _package_result(model: dict, build: dict, builds: list[dict], compiler: dict) -> dict[str, Any] | None:
+    """The package result a build's benchmark reports when a package benchmark runs under it, else None.
+
+    ``builds`` are the model's builds in the same catalog revision. The package runs at 98% of the rate and
+    takes 2% longer than its components' preview results allow, as a measured pipeline does, names the model's
+    pipeline as its workload, and keeps each component's preview layers and the template's execution plan.
+    """
+    entry = benchmark_entry(model, build["component_id"], build["build_profile_id"])
+    if entry is None or entry["scope"]["type"] != "package":
+        return None
+    members = [
+        next(item for item in builds if item["build_profile_id"] == build["build_profile_id"]
+             and item["component_id"] == component_id)
+        for component_id in accuracy_components(model, entry)
+    ]
+    results = [_benchmark_result(model, item, compiler) for item in members]
+    result = copy.deepcopy(results[-1])
+    result.update({"benchmark_type": "model.orchestration", "execution_plan": None})
+    result["tool"]["name"] = "pyneat.ModelRunner"
+    result["configuration"]["method"] = "model_orchestration"
+    pipeline = model.get("pipeline") or [{"component": item["component_id"]} for item in members]
+    selection = ", ".join(stage.get("component") or f"{stage['cpu']} on the CPU" for stage in pipeline)
+    result["configuration"]["workload"]["selection"] = selection[:1].upper() + selection[1:]
+    result["model"].update({"component_id": None, "package_id": entry["scope"]["package"],
+                            "path": None, "sha256": None, "uri": None})
+    result["components"] = [{
+        "component_id": item["component_id"], "path": f"/tmp/{item['component_id']}.tar.gz",
+        "sha256": item["artifact_sha256"], "uri": f"vulcan://runs/{item['run_id']}/artifacts/mpk",
+        "compile_run_id": item["run_id"], "layer_stats": component["benchmark_report"]["layer_stats"],
+        "execution_plan": _benchmark_template()["execution_plan"],
+    } for item, component in zip(members, results)]
+    report = result["benchmark_report"]
+    fps = round(0.98 / sum(1 / item["benchmark_report"]["fps"] for item in results), 1)
+    latency = round(sum(item["benchmark_report"]["latency_ms"] for item in results) / 0.98, 3)
+    scale = latency / report["latency_ms"]
+    report["fps"] = fps
+    for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+        report[field] = round(report[field] * scale, 3)
+    report["layer_stats"] = []
+    report["throughput_samples"] = round(fps * report["throughput_duration_ms"] / 1000)
+    report["energy_joules"] = round(report["avg_power_watts"] * result["configuration"]["samples"] / fps, 2)
+    return result
+
+
 def _accuracy_result(model: dict, build: dict) -> dict[str, Any]:
     """A DevKit accuracy result for the metrics and dataset the model's accuracy entry declares.
 
@@ -440,13 +490,14 @@ def _index() -> dict[str, Any]:
     """Lookups from every identifier the API serves to what it describes."""
     repository = _repository()
     runs = {run["id"]: run for run in repository["runs"]}
-    builds, packages, documentation, accuracy = {}, {}, {}, {}
+    builds, revision_builds, packages, documentation, accuracy = {}, {}, {}, {}, {}
     for revision in repository["revisions"]:
         for model in revision["document"]["models"]:
             source = repository["models"][model["id"]]
             documentation[model["documentation"]["run_id"]] = model["id"]
             for build in model["builds"]:
                 builds[build["run_id"]] = (source, build)
+                revision_builds[build["run_id"]] = model["builds"]
                 if build.get("validation_fingerprint"):
                     accuracy[build["validation_fingerprint"]] = (source, build)
             for package in model["packages"]:
@@ -454,6 +505,7 @@ def _index() -> dict[str, Any]:
     return {
         "runs": runs,
         "builds": builds,
+        "revision_builds": revision_builds,
         "packages": packages,
         "documentation": documentation,
         "accuracy": accuracy,
@@ -670,7 +722,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         elif rest == ["benchmarks", "latest"] and build.get("benchmark_fingerprint"):
             self._json({
                 "benchmark_run": {"id": _id("benchmark", run_id)},
-                "result": _benchmark_result(model, build, compiler),
+                "result": (_package_result(model, build, _index()["revision_builds"][run_id], compiler)
+                           or _benchmark_result(model, build, compiler)),
                 "result_artifact_url": "/fixtures/performance-result.json",
             })
         elif rest == ["benchmarks", "latest"]:

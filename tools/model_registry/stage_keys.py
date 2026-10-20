@@ -21,6 +21,7 @@ from .model import (
     CONVERSION_FILES,
     PERFORMANCE_SCRIPT,
     SCRIPTS_DIR,
+    benchmark_entry,
     build_profile_for,
     compile_invocations_for,
     load_and_validate_model,
@@ -251,33 +252,33 @@ def performance_key(
     model: dict[str, Any],
     build_profile_id: str,
     component_id: str,
-    *,
-    compile_run_id: str,
-    artifact_sha256: str,
+    builds: dict[str, dict[str, Any]],
 ) -> str:
-    """Identity of one component's DevKit performance measurement."""
+    """Identity of the DevKit performance measurement a component's build runs: its own, or its package's.
+
+    ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``; the key covers the
+    build of every component the benchmark measures.
+    """
     root = Path(repository).expanduser().resolve()
     model_id = str(model["id"])
-    entries = sorted(
-        (
-            entry
-            for entry in model["benchmark"]
-            if entry["scope"] == {"type": "component", "component": component_id}
-            and build_profile_id in entry["build_profiles"]
-        ),
-        key=lambda item: item["id"],
-    )
-    if not entries:
+    entry = benchmark_entry(model, component_id, build_profile_id)
+    if entry is None:
         raise ValidationError(f"no benchmark entry applies to {model_id}/{build_profile_id}/{component_id}")
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline")
+    measured = accuracy_components(model, entry)
+    missing = [item for item in measured if item not in builds]
+    if missing:
+        raise ValidationError(f"benchmark {entry['id']!r} needs compiled component {missing[0]!r}")
     return _key({
         "stage": "performance",
         "model_id": model_id,
         "build_profile_id": build_profile_id,
-        "component_id": component_id,
-        "compile_run_id": compile_run_id,
-        "artifact_sha256": artifact_sha256,
-        "benchmark": entries,
+        "components": measured,
+        "builds": {
+            item: {"compile_run_id": builds[item]["run_id"], "artifact_sha256": builds[item]["artifact_sha256"]}
+            for item in measured
+        },
+        "benchmark": entry,
         **({"benchmark_baseline": baseline} if baseline else {}),
         "files": _file_digests(root, [f"models/{model_id}/{PERFORMANCE_SCRIPT}", *PERFORMANCE_TOOLING]),
         "runtime": resolve_benchmark_runtime(root),

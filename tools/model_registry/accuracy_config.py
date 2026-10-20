@@ -18,7 +18,7 @@ def find_devkit_accuracy_config(model: dict[str, Any], build_profile_id: str) ->
 
 
 def accuracy_components(model: dict[str, Any], entry: dict[str, Any]) -> list[str]:
-    """Components whose compiled MPKs an accuracy entry runs."""
+    """Components whose compiled MPKs an accuracy or benchmark entry runs, in package order."""
     scope = entry["scope"]
     if scope["type"] == "component":
         return [scope["component"]]

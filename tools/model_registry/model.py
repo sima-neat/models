@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import DEVKIT_ACCURACY_ENGINE
+from .accuracy_config import DEVKIT_ACCURACY_ENGINE, accuracy_components
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
 from .published_metrics import load_accuracy_metrics, validate_published_metrics
@@ -102,6 +102,21 @@ def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
         for binding in profile["components"]
         if binding.get("status", "supported") == "supported"
     ]
+
+
+def benchmark_entry(model: dict[str, Any], component_id: str, build_profile_id: str) -> dict[str, Any] | None:
+    """The benchmark a component's build runs in a build profile: the component's own, or that of a package whose
+    last component it is. Vulcan links a benchmark run to one compile run, so a package's runs under its last
+    component's."""
+    return next(
+        (
+            entry
+            for entry in model["benchmark"]
+            if build_profile_id in entry["build_profiles"]
+            and accuracy_components(model, entry)[-1] == component_id
+        ),
+        None,
+    )
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
@@ -712,6 +727,20 @@ def validate_model(
             raise ValidationError(
                 f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
                 f"{', '.join(sorted(missing))}"
+            )
+    # A benchmark measures one component, or a package's components running as one pipeline.
+    for profile_id in profiles:
+        measured = [
+            component_id
+            for entry in model["benchmark"]
+            if profile_id in entry["build_profiles"]
+            for component_id in accuracy_components(model, entry)
+        ]
+        repeated = sorted({component_id for component_id in measured if measured.count(component_id) > 1})
+        if repeated:
+            raise ValidationError(
+                f"{directory}: more than one benchmark measures component {repeated[0]!r} "
+                f"in build profile {profile_id!r}"
             )
 
     validate_model_tests(directory, model, schema_file.parent / TESTS_SCHEMA)

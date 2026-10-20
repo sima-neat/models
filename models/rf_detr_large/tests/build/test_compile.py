@@ -397,8 +397,10 @@ def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 2048
     assert correctness["scope"] == {"type": "package", "package": "default"}
-    assert [entry["scope"]["component"] for entry in benchmarks] == ["backbone", "decoder"]
-    assert all(entry["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"] for entry in benchmarks)
+    assert [(entry["id"], entry["scope"]) for entry in benchmarks] == [
+        ("orchestration", {"type": "package", "package": "default"})
+    ]
+    assert benchmarks[0]["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"]
 
 
 def _gelu_mlp() -> onnx.ModelProto:

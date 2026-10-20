@@ -1,6 +1,7 @@
 # DevKit performance
 
-The performance stage measures each compiled component on a Modalix DevKit.
+The performance stage measures each compiled component on a Modalix DevKit, or
+a model's whole package when its `benchmark` entry has package scope.
 Each model owns `scripts/performance.py`, which loads one MPK with
 `pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
 inputs, warmup, latency and throughput measurement, board telemetry, and runner
@@ -104,8 +105,51 @@ A failed call exits unsuccessfully. Keep the log: a missing report is not a
 successful benchmark. Keep archives and results outside Git.
 
 The script runs once for each component that a `benchmark` entry covers in the
-build profile. RF-DETR's backbone and decoder therefore produce separate
-results; their numbers are not a measured combined pipeline.
+build profile.
+
+## Package benchmark
+
+A multi-component model can measure its package instead: every MPK and the
+CPU work between them, running as one pipeline. RF-DETR declares one
+package-scope entry:
+
+```yaml
+- id: orchestration
+  scope: {type: package, package: default}
+  build_profiles: [w8a8_w16a16, w8a16_w16a16]
+  status: pending
+  target: modalix
+  reason: Measure the package's components running as one pipeline.
+  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+```
+
+The script gets one `--mpk component=<archive>` per component:
+
+```bash
+~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py \
+  --mpk backbone=/workspace/backbone_mpk.tar.gz \
+  --mpk decoder=/workspace/decoder_mpk.tar.gz --output /workspace/result
+```
+
+It first runs Core's benchmark on each MPK only for its layer timings, and
+records each Model's execution plan. It then runs each Model through its async
+runner (`Model.build`, `push`, `pull`) in two passes, each measuring at least
+1000 frames over at least 60 seconds after 100 warm-up frames. The latency pass
+sends one frame at a time. The throughput pass runs one thread per stage, so
+the backbone, the CPU step, and the decoder each work on a different frame,
+and each stage ends the next one's input when it finishes. One
+`pyneat.TelemetryMonitor` samples the board over the throughput window.
+`benchmark-report.json` uses Core's report fields; `benchmark-context.json`
+adds each component's layer timings and execution plan.
+
+The result is a schema 6 `performance-result.json` with `benchmark_type`
+`model.orchestration`, `model.package_id`, a `components` list (each
+component's build, layer timings, and execution plan). Its scores are the
+whole model's. Component numbers are never added together.
+
+Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
+component rates measured on the same board, because the MLA runs one MPK at a
+time. A result well below that rate points at the pipeline, not the model.
 
 ## Per-layer profiling
 
@@ -221,6 +265,9 @@ clocks, then handles each component:
    digest, the source revision, the actual Core and platform versions, and
    the MLA and CPU clocks. It never runs or times a model.
 
+A package benchmark runs once, in its last component's folder, with every
+component's MPK.
+
 `scripts/run_model_tests.sh` then runs the model's
 `tests/measure/test_performance.py` on each component's result, which
 compares its throughput with the expected value in `tests/tests.yaml`, checks
@@ -232,7 +279,9 @@ A separate hosted job validates the result set and publishes each result as a
 `model_benchmark` run under the component's compile run. The run records the
 performance stage key and carries a `performance-result` artifact, the
 benchmark log, a `performance/model-synthetic` test result whose status is the
-test outcome, and the measurements. A failed test still publishes the result
+test outcome, and the measurements. A package result publishes under its last
+component's compile run, with one `compiled-model-<component>` input per
+component, and its stage key covers every component's build. A failed test still publishes the result
 and completes its run, then fails the workflow run. The model browser reads
 performance results with `schema_version` 1 through 6, shows measured values
 with their units, and marks absent metrics unavailable. Its Speed card shows the

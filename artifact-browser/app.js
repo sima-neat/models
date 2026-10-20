@@ -20,7 +20,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, highlightLayerLegend,
+  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, selectExecutionGraph, highlightLayerLegend,
   showExecutionTooltip, hideExecutionTooltip, keepExecutionTooltip, deferHideExecutionTooltip,
 } from "./model-view.js";
 
@@ -825,6 +825,7 @@ window.addEventListener("resize", hideExecutionTooltip);
 window.addEventListener("popstate", hideExecutionTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
+elements["detail-pane"].addEventListener("click", selectExecutionGraph);
 elements["detail-pane"].addEventListener("click", (event) => {
   const variantTab = event.target.closest("[data-detail-profile-id]");
   if (variantTab) {

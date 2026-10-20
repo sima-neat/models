@@ -114,6 +114,7 @@ function common(result) {
     modelId: result.model?.id,
     buildProfileId: result.model?.build_profile_id,
     componentId: result.model?.component_id,
+    packageId: result.model?.package_id,
     cpuCount: result.environment?.cpu_count,
     batchSize: result.configuration?.workload?.batch_size,
     executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan),
@@ -171,8 +172,23 @@ export function executionGraph(plan) {
   return { steps, tensors };
 }
 
+// A package result measures its components running as one pipeline and records each component's
+// layer timings and execution plan.
+function packageComponents(result) {
+  if (!Array.isArray(result.components)) return null;
+  return result.components.map((component) => ({
+    id: component.component_id,
+    layerAnalysis: analyzeLayers(component.layer_stats),
+    executionGraph: executionGraph(component.execution_plan),
+  }));
+}
+
 function adaptResult(result) {
-  return { ...common(result), orchestration: result.orchestration || null };
+  return {
+    ...common(result),
+    components: packageComponents(result),
+    orchestration: result.orchestration || null,
+  };
 }
 
 // Every published format stays readable; formats 1-6 share one reader.
@@ -183,4 +199,16 @@ export function adaptBenchmarkResult(result) {
   const adapter = benchmarkAdapters.get(result.schema_version);
   if (!adapter) return { kind: "unsupported", schemaVersion: result.schema_version };
   return { kind: "supported", value: adapter(result) };
+}
+
+// The package result a build carries: its components measured running as one pipeline, however many
+// there are. It lives on the benchmark of the package's last component and scores the whole model.
+export function packageBenchmark(details) {
+  for (const detail of details) {
+    const adapted = adaptBenchmarkResult(detail.benchmark?.result);
+    if (adapted.kind === "supported" && adapted.value.components) {
+      return { run: detail.benchmarkRun, payload: detail.benchmark, result: adapted.value };
+    }
+  }
+  return null;
 }

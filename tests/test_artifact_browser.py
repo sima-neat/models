@@ -227,6 +227,25 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
 
 
+def test_preview_reports_a_package_result_on_its_last_components_build(tmp_path: Path) -> None:
+    api = "/v1/repositories/sima-neat/models"
+    with _preview(tmp_path) as base:
+        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
+        model = next(model for model in catalog["catalog"]["document"]["models"] if model["id"] == "rf_detr_nano")
+        builds = [build for build in model["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
+        benchmarked = [build["component_id"] for build in builds if build.get("benchmark_fingerprint")]
+        decoder = next(build for build in builds if build["component_id"] == "decoder")
+        result = _get_json(f"{base}/v1/runs/{decoder['run_id']}/benchmarks/latest")["result"]
+
+    # The package's benchmark runs under its last component only.
+    assert benchmarked == ["decoder"]
+    assert result["benchmark_type"] == "model.orchestration"
+    assert result["model"]["package_id"] == "default"
+    assert [item["component_id"] for item in result["components"]] == ["backbone", "decoder"]
+    assert [item["sha256"] for item in result["components"]] == [build["artifact_sha256"] for build in builds]
+    assert result["configuration"]["workload"]["selection"] == "Backbone, Top 300 proposals on the CPU, decoder"
+
+
 def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("portal", encoding="utf-8")
     with _preview(tmp_path) as base:
@@ -439,7 +458,9 @@ def test_execution_graph_opens_its_tensors_from_details_beside_the_diagram() -> 
     design = (BROWSER / "DESIGN.md").read_text(encoding="utf-8")
 
     assert "executionGraph: executionGraph(result.execution_plan ?? report?.execution_plan)" in adapters
-    assert "${executionGraphSection(benchmark.executionGraph, runId)}" in script
+    # Every model's execution graph is a disclosure; a pipeline's switches between its components.
+    assert "${executionGraphSection([{ id: runId, graph: benchmark.executionGraph }], runId)}" in script
+    assert "${layerAnalysisSection([{ analysis: benchmark.layerAnalysis }], runId)}" in script
     # Details sits beside the diagram and controls the tensor table, which starts closed.
     assert '<div class="execution-graph-row"><ol>${steps}</ol>${details}</div>' in script
     assert 'aria-controls="${escapeHtml(key)}" aria-expanded="${open}">Details${icons.chevron}</button>' in script
@@ -977,7 +998,7 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert "run.ci_run_url" in measurement_source
     assert r"/^[a-f0-9]{40}$/i.test(commit)" in measurement_source
     assert 'target="_blank" rel="noreferrer"' in measurement_source
-    assert "${measurementSource(benchmarkRun, modelId)}</p>" in script
+    assert "${measurementSource(run, modelId)}</p>" in script
     assert "componentBenchmark(detail.benchmark, run.id, detail.benchmarkRun, modelId)" in script
     assert "const source = measurementSource(result?.run, modelId);" in script
     assert "${escapeHtml(dataset.split || \"\")}${sourceMarkup}</p>" in script
@@ -1108,14 +1129,14 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     adapters = (BROWSER / "benchmark-adapters.js").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert 'import { adaptBenchmarkResult } from "./benchmark-adapters.js"' in script
+    assert 'import { adaptBenchmarkResult, packageBenchmark } from "./benchmark-adapters.js"' in script
     assert "new Map([1, 2, 3, 4, 5, 6].map((version) => [version, adaptResult]))" in adapters
     # Schema 6 stores Core's saved report; the browser reads the metrics from it as the registry does.
     assert "const stored = result.schema_version >= 6 ? reportMetrics(result) : result.metrics || {};" in adapters
     assert "/benchmarks/latest" in script
     # Each headline tile shows one number; Benchmark details has three cards on the left and two on the right.
     assert "KPI_METRICS.map((key) => kpiTile(key, benchmark.measurements[key]))" in script
-    assert 'disclosure(`benchmark:${runId}`, "Benchmark details", details.markup' in script
+    assert 'disclosure(`benchmark:${key}`, "Benchmark details", details.markup' in script
     for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
                  '["memory", "Memory"']:
         assert card in script
@@ -1539,10 +1560,35 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "details.flatMap((detail) => detail.provenance.inputs || [])" in render_detail
     assert "(input) => input.sha256 || input.name" in render_detail
     assert "details.map((detail) => componentRow(detail, singleComponent))" in render_detail
+    # Without a package result, the page says the component numbers do not add up to one.
+    assert "${singleComponent || measuredPackage ? \"\" : `<p class=\"section-note\">" in render_detail
     assert "component latencies do not add up to end-to-end latency" in render_detail
     # A declared pipeline orders and numbers the components under a strip; otherwise they keep run order.
+    # A package result replaces the component scores under the strip.
     assert "componentPerformance(detail, !singleComponent, order && index + 1, model)" in render_detail
-    assert '${order ? pipelineStrip(variant.pipeline) : ""}' in render_detail
+    strip, package, components = (render_detail.index(marker) for marker in (
+        '${order ? pipelineStrip(variant.pipeline) : ""}',
+        "? packagePerformance(measuredPackage, model)",
+        ": performanceDetails.map((detail, index) => componentPerformance(",
+    ))
+    assert strip < package < components
+    package_performance = script.split("function packagePerformance(", 1)[1].split("\nfunction ", 1)[0]
+    # One layer analysis and one execution graph disclosure, each switching between the components.
+    assert (
+        "layerAnalysisSection(components.map(({ label, layerAnalysis }) => ({ label, analysis: layerAnalysis })), key)"
+    ) in package_performance
+    assert "executionGraphSection(components.map(" in package_performance
+    assert "benchmarkSummary(result, payload, key, run, modelId)" in package_performance
+    graphs = script.split("function executionGraphSection(", 1)[1].split("\nexport function ", 1)[0]
+    assert 'disclosure(`graphs:${key}`, "Execution graph"' in graphs
+    assert 'componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component")' in graphs
+    select = script.split("export function selectExecutionGraph(", 1)[1].split("\n}\n", 1)[0]
+    assert 'item.hidden = item.dataset.graphPanel !== button.value;' in select
+    assert 'elements["detail-pane"].addEventListener("click", selectExecutionGraph);' in _browser_source("app.js")
+    # Switching component re-renders the panel and restarts the minimum time on the new scale.
+    update = script.split("export function updateLayerAnalysis(", 1)[1].split("\nexport function ", 1)[0]
+    assert 'if (field === "component") {' in update
+    assert "entry.view.minUs = 0;\n    panel.innerHTML = layerAnalysisPanel(entry);" in update
     # Per-component facts live in the row, never on the page.
     for marker in ['keyValue("Run ID"', 'keyValue("Fingerprint"', "fidelityPanel(tests, run.id)"]:
         assert marker in component_row

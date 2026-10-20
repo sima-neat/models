@@ -423,14 +423,42 @@ def test_devkit_stage_keys_ignore_display_name_and_description() -> None:
         for component_id in ("backbone", "decoder")
     }
 
-    for component_id in ("backbone", "decoder"):
-        assert performance_key(
-            ROOT, renamed, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
-        ) == performance_key(
-            ROOT, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
-        )
+    assert performance_key(ROOT, renamed, "w8a8_w16a16", "decoder", builds) == performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
+    )
     assert accuracy_key(ROOT, renamed, "w8a8_w16a16", builds) == accuracy_key(
         ROOT, model, "w8a8_w16a16", builds
+    )
+
+
+def test_a_package_benchmark_runs_under_its_last_component_and_covers_every_build() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    matrix = build_matrix({"rf_detr_small": model}, ["rf_detr_small"], ["w8a8_w16a16"])
+    builds = {
+        component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
+        for component_id in ("backbone", "decoder")
+    }
+    rebuilt = {**builds, "backbone": {"run_id": "run-backbone-2", "artifact_sha256": "b" * 64}}
+
+    assert [entry["benchmark_component_ids"] for entry in matrix["include"]] == [["decoder"]]
+    assert performance_key(ROOT, model, "w8a8_w16a16", "decoder", rebuilt) != performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
+    )
+    with pytest.raises(ValidationError, match="no benchmark entry applies"):
+        performance_key(ROOT, model, "w8a8_w16a16", "backbone", builds)
+
+
+def test_a_package_benchmark_key_covers_the_component_order() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    reordered = copy.deepcopy(model)
+    reordered["packages"][0]["components"] = ["decoder", "backbone"]
+    builds = {
+        component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
+        for component_id in ("backbone", "decoder")
+    }
+
+    assert performance_key(ROOT, reordered, "w8a8_w16a16", "backbone", builds) != performance_key(
+        ROOT, model, "w8a8_w16a16", "decoder", builds
     )
 
 
@@ -449,12 +477,7 @@ def test_stage_keys_ignore_the_models_tests(tmp_path: Path) -> None:
         model = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
         return [
             compile_key(repository, "rf_detr_small", "w8a8_w16a16", "rf_detr", COMPILER_VERSION),
-            *(
-                performance_key(
-                    repository, model, "w8a8_w16a16", component_id, compile_run_id="run", artifact_sha256="a" * 64
-                )
-                for component_id in components
-            ),
+            performance_key(repository, model, "w8a8_w16a16", "decoder", builds),
             accuracy_key(repository, model, "w8a8_w16a16", builds),
         ]
 
@@ -720,11 +743,11 @@ def test_speculative_compile_key_tracks_weights_not_benchmark_baseline(tmp_path)
 
 def test_benchmark_baseline_changes_only_its_profiles_performance_key():
     model = load_and_validate_model(ROOT / "models/rf_detr_small")
-    arguments = dict(compile_run_id="run", artifact_sha256="a" * 64)
-    before = performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments)
-    other = performance_key(ROOT, model, "w8a16_w16a16", "backbone", **arguments)
+    builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
+    before = performance_key(ROOT, model, "w8a8_w16a16", "decoder", builds)
+    other = performance_key(ROOT, model, "w8a16_w16a16", "decoder", builds)
     model["build_profiles"][0]["benchmark_baseline"] = {"model_id": "resnet_50", "build_profile": "w16a16"}
-    assert performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments) != before
-    assert performance_key(ROOT, model, "w8a16_w16a16", "backbone", **arguments) == other
+    assert performance_key(ROOT, model, "w8a8_w16a16", "decoder", builds) != before
+    assert performance_key(ROOT, model, "w8a16_w16a16", "decoder", builds) == other
     model["build_profiles"][0].pop("benchmark_baseline")
-    assert performance_key(ROOT, model, "w8a8_w16a16", "backbone", **arguments) == before
+    assert performance_key(ROOT, model, "w8a8_w16a16", "decoder", builds) == before

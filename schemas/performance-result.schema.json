@@ -12,10 +12,16 @@
   "properties": {
     "schema_version": {"const": 6},
     "status": {"enum": ["passed", "error"]},
-    "benchmark_type": {"const": "model.synthetic"},
+    "benchmark_type": {
+      "description": "model.synthetic: Core benchmarks one component. model.orchestration: scripts/performance.py runs a package's components as one pipeline.",
+      "enum": ["model.synthetic", "model.orchestration"]
+    },
     "tool": {
       "type": "object", "required": ["name", "version"], "additionalProperties": false,
-      "properties": {"name": {"const": "pyneat.Model.benchmark"}, "version": {"type": "string", "minLength": 1}}
+      "properties": {
+        "name": {"enum": ["pyneat.Model.benchmark", "pyneat.ModelRunner"]},
+        "version": {"type": "string", "minLength": 1}
+      }
     },
     "identity": {
       "type": "object", "additionalProperties": false,
@@ -36,6 +42,7 @@
       "properties": {
         "id": {"type": ["string", "null"]}, "build_profile_id": {"type": ["string", "null"]},
         "component_id": {"type": ["string", "null"]},
+        "package_id": {"type": "string", "minLength": 1},
         "path": {"type": ["string", "null"]},
         "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "uri": {"type": ["string", "null"]}, "contract": {"type": ["object", "null"]},
@@ -102,24 +109,31 @@
             "linux_memory_used_mib": {"$ref": "#/$defs/telemetryMetric"}
           }
         },
-        "layer_stats": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name", "stage_index", "total_execution_time_us"],
-            "properties": {
-              "name": {"type": "string", "minLength": 1},
-              "stage_index": {"type": "integer", "minimum": 0},
-              "total_execution_time_us": {"$ref": "#/$defs/reportNumber"}
-            }
-          }
-        }
+        "layer_stats": {"$ref": "#/$defs/layerStats"}
       }
     },
     "execution_plan": {
-      "description": "The plan Model.execution_plan().to_json() wrote for the benchmarked model.",
-      "type": "object",
-      "required": ["schema", "schema_version"]
+      "description": "The plan Model.execution_plan().to_json() wrote for the benchmarked model; a package's components each have their own.",
+      "oneOf": [{"$ref": "#/$defs/executionPlan"}, {"type": "null"}]
+    },
+    "components": {
+      "description": "A package's components in pipeline order: each build the pipeline ran, with its layer stats and execution plan.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component_id", "path", "sha256", "uri", "compile_run_id", "layer_stats", "execution_plan"],
+        "properties": {
+          "component_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "uri": {"type": "string", "minLength": 1},
+          "compile_run_id": {"type": "string", "minLength": 1},
+          "layer_stats": {"$ref": "#/$defs/layerStats"},
+          "execution_plan": {"$ref": "#/$defs/executionPlan"}
+        }
+      }
     },
     "orchestration": {
       "type": "object",
@@ -141,12 +155,46 @@
       "properties": {"type": {"type": "string"}, "message": {"type": "string"}}
     }
   },
-  "allOf": [{
-    "if": {"properties": {"status": {"const": "error"}}},
-    "then": {"required": ["error"]}
-  }],
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "error"}}},
+      "then": {"required": ["error"]}
+    },
+    {
+      "if": {"properties": {"benchmark_type": {"const": "model.orchestration"}}},
+      "then": {
+        "required": ["components"],
+        "properties": {
+          "model": {"required": ["package_id"]},
+          "tool": {"properties": {"name": {"const": "pyneat.ModelRunner"}}},
+          "execution_plan": {"type": "null"}
+        }
+      },
+      "else": {
+        "not": {"required": ["components"]},
+        "properties": {
+          "model": {"not": {"required": ["package_id"]}},
+          "tool": {"properties": {"name": {"const": "pyneat.Model.benchmark"}}},
+          "execution_plan": {"type": "object"}
+        }
+      }
+    }
+  ],
   "$defs": {
     "reportNumber": {"type": "number", "minimum": 0},
+    "layerStats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "stage_index", "total_execution_time_us"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "stage_index": {"type": "integer", "minimum": 0},
+          "total_execution_time_us": {"$ref": "#/$defs/reportNumber"}
+        }
+      }
+    },
+    "executionPlan": {"type": "object", "required": ["schema", "schema_version"]},
     "telemetryMetric": {
       "type": "object",
       "required": ["key", "label", "unit", "samples", "mean", "minimum", "maximum"],

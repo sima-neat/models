@@ -85,7 +85,11 @@ def import_core_benchmark(
     environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Publish the report BenchmarkReport.save() wrote, unchanged, with the script's context and the
-    registry identity, provenance, and runner environment around it."""
+    registry identity, provenance, and runner environment around it.
+
+    For a package, the report is the pipeline's, written in the same fields by scripts/performance.py, and the
+    context holds each component's layer stats and execution plan.
+    """
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite)
     context = json.loads(context_path.read_text(encoding="utf-8"))
@@ -111,9 +115,13 @@ def import_core_benchmark(
     if include_layer_stats and not report.get("layer_stats"):
         raise ValidationError("benchmark requested layer stats but the report contains none")
     expected = manifest["compatibility"]
-    digest, _ = sha256_file(Path(manifest["model"]["path"]))
-    if digest != manifest["model"]["sha256"]:
-        raise ValidationError("benchmark input digest does not match the compilation")
+    package = "components" in manifest
+    for build in manifest["components"] if package else [manifest["model"]]:
+        digest, _ = sha256_file(Path(build["path"]))
+        if digest != build["sha256"]:
+            raise ValidationError("benchmark input digest does not match the compilation")
+    if package and set(context.get("components", {})) != {build["component_id"] for build in manifest["components"]}:
+        raise ValidationError("benchmark context must give each package component's layer stats and execution plan")
     environment = dict(runner_environment() if environment is None else environment)
     buildinfo = environment["buildinfo"]
     found = re.search(r"^\s*DISTRO_VERSION\s*=\s*(\S+)", buildinfo, re.MULTILINE)
@@ -129,8 +137,8 @@ def import_core_benchmark(
     result = {
         "schema_version": 6,
         "status": "passed",
-        "benchmark_type": "model.synthetic",
-        "tool": {"name": "pyneat.Model.benchmark", "version": actual_core},
+        "benchmark_type": "model.orchestration" if package else "model.synthetic",
+        "tool": {"name": "pyneat.ModelRunner" if package else "pyneat.Model.benchmark", "version": actual_core},
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "identity": {"algorithm": "sha256", "canonicalization_version": 5, "fingerprint": None},
         "model": {**manifest["model"], "contract": None},
@@ -144,7 +152,7 @@ def import_core_benchmark(
             **configuration,
             "include_layer_stats": include_layer_stats,
             "workload": workload,
-            "method": "core_model_benchmark",
+            "method": "model_orchestration" if package else "core_model_benchmark",
             "script_sha256": sha256_file(Path(manifest["script"]))[0],
         },
         "environment": environment,
@@ -159,6 +167,15 @@ def import_core_benchmark(
         },
         "provenance": manifest["provenance"],
     }
+    if package:
+        result["components"] = [
+            {
+                **build,
+                "layer_stats": context["components"][build["component_id"]]["layer_stats"],
+                "execution_plan": context["components"][build["component_id"]]["execution_plan"],
+            }
+            for build in manifest["components"]
+        ]
     result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")

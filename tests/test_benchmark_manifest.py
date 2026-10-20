@@ -4,19 +4,47 @@ import hashlib
 import json
 from pathlib import Path
 
-import model_registry.benchmark_manifest as benchmark_manifest
 import pytest
 from model_registry.benchmark_manifest import make_benchmark_manifest, validate_benchmark_components
 from model_registry.errors import ValidationError
-from model_registry.model import load_and_validate_model
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset(tmp_path: Path, monkeypatch) -> None:
-    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
-    model["benchmark"] = model["benchmark"][:1]
-    monkeypatch.setattr(benchmark_manifest, "load_and_validate_model", lambda *args: model)
+def compile_component(tmp_path: Path, model_id: str, build_profile_id: str, component_id: str, run_id: str) -> None:
+    """Leave a component's compiled MPK and its registered compile run where the benchmark stage reads them."""
+    component = tmp_path / "compiled" / model_id / build_profile_id / component_id
+    component.mkdir(parents=True)
+    archive = component / f"{model_id}_mpk.tar.gz"
+    archive.write_bytes(f"compiled {component_id}".encode())
+    (component / "compile-result.json").write_text(
+        json.dumps(
+            {
+                "archive": f"{model_id}_mpk.tar.gz",
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "provenance": {"compiler_version": "2.1.3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (component / "registry-publication.json").write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "model_id": model_id,
+                        "build_profile_id": build_profile_id,
+                        "component_id": component_id,
+                        "run_id": run_id,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset(tmp_path: Path) -> None:
     output_root = tmp_path / "rf_detr_small" / "w8a8_w16a16"
     outputs = []
     for component in ("backbone", "decoder"):
@@ -50,15 +78,16 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
     (output_root / "compile-outputs.json").write_text(json.dumps(manifest))
     args = (ROOT, tmp_path, "rf_detr_small", "w8a8_w16a16", "rf_detr")
 
-    validate_benchmark_components(*args, ["backbone"])
+    # The package's benchmark runs under its last component.
+    validate_benchmark_components(*args, ["decoder"])
     # An accuracy-only dispatch measures no component's performance.
     validate_benchmark_components(*args, [])
-    for components in (["decoder"], ["backbone", "decoder"], ["backbone", "backbone"]):
+    for components in (["backbone"], ["backbone", "decoder"], ["decoder", "decoder"]):
         with pytest.raises(ValidationError, match="declared benchmark entries"):
             validate_benchmark_components(*args, components)
-    (output_root / "decoder" / "decoder_mpk.tar.gz").unlink()
+    (output_root / "backbone" / "backbone_mpk.tar.gz").unlink()
     with pytest.raises(ValidationError, match="MPK does not exist"):
-        validate_benchmark_components(*args, ["backbone"])
+        validate_benchmark_components(*args, ["decoder"])
 
 
 @pytest.mark.parametrize(
@@ -67,42 +96,12 @@ def test_dispatch_validates_complete_compile_but_benchmarks_only_declared_subset
         ("resnet_50", "w16a16", "model"),
         ("ssd_mobilenet_v1", "w8a8", "model"),
         ("yolo26_tiny_drone", "w8a8", "model"),
-        ("rf_detr_small", "w8a8_w16a16", "backbone"),
-        ("rf_detr_small", "w8a8_w16a16", "decoder"),
     ],
 )
 def test_generates_direct_devkit_manifest_for_compiled_model(
     tmp_path: Path, model_id: str, build_profile_id: str, component_id: str
 ) -> None:
-    component = tmp_path / "compiled" / model_id / build_profile_id / component_id
-    component.mkdir(parents=True)
-    archive = component / f"{model_id}_mpk.tar.gz"
-    archive.write_bytes(b"compiled model")
-    (component / "compile-result.json").write_text(
-        json.dumps(
-            {
-                "archive": f"{model_id}_mpk.tar.gz",
-                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-                "provenance": {"compiler_version": "2.1.3"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    (component / "registry-publication.json").write_text(
-        json.dumps(
-            {
-                "runs": [
-                    {
-                        "model_id": model_id,
-                        "build_profile_id": build_profile_id,
-                        "component_id": component_id,
-                        "run_id": "00000000-0000-4000-8000-000000000001",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+    compile_component(tmp_path, model_id, build_profile_id, component_id, "00000000-0000-4000-8000-000000000001")
 
     result = make_benchmark_manifest(
         repository=ROOT,
@@ -130,3 +129,34 @@ def test_generates_direct_devkit_manifest_for_compiled_model(
     assert "build" not in manifest["runtime"]["devkit"]
     assert "benchmark" not in manifest
     assert "model_options" not in manifest
+
+
+def test_a_package_manifest_lists_each_build_its_last_component_runs(tmp_path: Path) -> None:
+    run_ids = {"backbone": "00000000-0000-4000-8000-000000000011", "decoder": "00000000-0000-4000-8000-000000000012"}
+    for component_id, run_id in run_ids.items():
+        compile_component(tmp_path, "rf_detr_small", "w8a8_w16a16", component_id, run_id)
+
+    result = make_benchmark_manifest(
+        repository=ROOT,
+        compiled_dir=tmp_path / "compiled",
+        output_path=tmp_path / "performance-test.json",
+        branch="feature/benchmark",
+        git_sha="b" * 40,
+        model_id="rf_detr_small",
+        build_profile_id="w8a8_w16a16",
+        component_id="decoder",
+    )
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+
+    assert manifest["model"] == {
+        "id": "rf_detr_small",
+        "build_profile_id": "w8a8_w16a16",
+        "component_id": None,
+        "package_id": "default",
+        "path": None,
+        "sha256": None,
+        "uri": None,
+    }
+    assert [(item["component_id"], item["compile_run_id"]) for item in manifest["components"]] == list(run_ids.items())
+    assert all(Path(item["path"]).is_file() for item in manifest["components"])
+    assert manifest["provenance"]["compile_run_id"] == run_ids["decoder"]
