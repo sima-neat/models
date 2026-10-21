@@ -395,7 +395,7 @@ def test_fidelity_entry_is_validated(settings: dict, expected: str) -> None:
 
 
 RUN_TESTS = {"run_tests": True}
-EXPECTED_SCORE = {"run_tests": True, "expected": {"fixture": {"score": 0.5}}}
+EXPECTED_SCORE = {"run_tests": True, "expected": {"fixture": {"top1_accuracy": 0.5}}}
 EXPECTED_THROUGHPUT = {"run_tests": True, "expected": {"fixture": {"model": {"throughput_fps": 9.0}}}}
 
 
@@ -412,7 +412,7 @@ def _devkit_accuracy_entry(**settings) -> dict:
         "status": "ready",
         "result_component": "model",
         "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
-        "metrics": ["score"],
+        "metrics": ["top1_accuracy"],
         **settings,
     }
 
@@ -496,7 +496,9 @@ def test_devkit_accuracy_may_share_scope_with_a_recorded_entry(tmp_path: Path) -
         ([_devkit_accuracy_entry(metrics=["Score"])], "not valid under any of the given schemas"),
         (
             # Published scores moved to the top-level published_metrics.
-            [_devkit_accuracy_entry(reference={"source": "https://example.com/card", "metrics": {"score": 0.5}})],
+            [_devkit_accuracy_entry(reference={
+                "source": "https://example.com/card", "metrics": {"top1_accuracy": 0.5},
+            })],
             "not valid under any of the given schemas",
         ),
         (
@@ -673,8 +675,10 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("stage", "entry", "expected"),
     [
-        ("accuracy", {**EXPECTED_SCORE, "expected": {"other": {"score": 0.5}}}, "expected.fixture lacks score"),
-        ("accuracy", {**EXPECTED_SCORE, "expected": {"fixture": {"top1": 0.5}}}, "expected.fixture lacks score"),
+        ("accuracy", {**EXPECTED_SCORE, "expected": {"other": {"top1_accuracy": 0.5}}},
+         "expected.fixture lacks top1_accuracy"),
+        ("accuracy", {**EXPECTED_SCORE, "expected": {"fixture": {"top1": 0.5}}},
+         "expected.fixture lacks top1_accuracy"),
         ("accuracy", {**EXPECTED_SCORE, "expected": {"fixture": {}}}, "accuracy.expected.fixture"),
         ("accuracy", {"run_tests": True}, "'expected' is a required"),
         ("accuracy", {**EXPECTED_SCORE, "allowed_drop": "50%"}, "accuracy: Unevaluated properties"),

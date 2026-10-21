@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 import onnxruntime as ort
-import yaml
 from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
@@ -38,6 +37,7 @@ from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images, select_top_proposals, to_afe_layout
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
+from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
     BOUNDARY_SHAPES,
@@ -82,6 +82,23 @@ COMPONENT_INTERFACES = {
         "outputs": [_float32_bytes(OUTPUT_SHAPES[name]) for name in OUTPUTS],
     },
 }
+
+
+def _validate_boundary_contract(metadata: dict[str, Any]) -> None:
+    """Match authored connections to the graph boundaries surgery and MPK audits enforce."""
+    expected = {
+        "backbone": ({INPUT: INPUT_SHAPE}, {name: BOUNDARY_SHAPES[name] for name in (FEATURES, SCORES, BOXES)}),
+        "decoder": ({name: BOUNDARY_SHAPES[name] for name in (FEATURES, PROPOSALS)},
+                    {name: OUTPUT_SHAPES[name] for name in OUTPUTS}),
+    }
+    for component in metadata["components"]:
+        entry = next(item for item in component["interface"]["entrypoints"] if item["id"] == "default")
+        for direction, shapes in zip(("inputs", "outputs"), expected[component["id"]]):
+            actual = [(tensor["name"], tensor["dtype"], tensor["shape"]) for tensor in entry[direction]]
+            if actual != [(name, "float32", shape) for name, shape in shapes.items()]:
+                raise ValueError(
+                    f"model.yaml {component['id']} {direction} do not match the RF-DETR graph boundary: {actual}"
+                )
 
 
 def _component_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, Any]]:
@@ -571,7 +588,8 @@ def compile_model(
     fidelity_dataset: Path,
     output_dir: Path,
 ) -> dict[str, Path]:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
+    _validate_boundary_contract(metadata)
     component_parameters = _component_parameters(metadata, profile_id)
     fidelity_config = next(entry for entry in metadata["fidelity"] if profile_id in entry["build_profiles"])
     selection = fidelity_config["selection"]

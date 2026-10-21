@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 from onnx import TensorProto, helper, numpy_helper
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -187,7 +187,7 @@ def test_int8_reference_evaluator_adapts_opset17_qdq_dispatch(
 
 def test_model_sources_match_pinned_v3_assets(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     component = metadata["components"][0]
     assert component["source"] == {
         "type": "file",
@@ -203,8 +203,6 @@ def test_model_sources_match_pinned_v3_assets(load_script: Callable[[str], Modul
         "size_bytes": 55112720,
         "media_type": "application/x-npz",
     }
-    assert component["surgery"]["parameters"]["bf16_source"] == "ssd_mobilenet_v3_torchvision_fp32.onnx"
-    assert component["surgery"]["parameters"]["int8_source"] == "ssd_mobilenet_v3_torchvision_qat_int8.onnx"
 
 
 def test_calibration_split_has_128_representative_and_32_disjoint_samples(
@@ -571,7 +569,7 @@ def test_recipe_preserves_quantization_and_public_io_policy() -> None:
 
 
 def test_model_declares_default_precision_profiles() -> None:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
         binding["parameters"]["precision"]

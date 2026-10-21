@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE, accuracy_components
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
+from .performance import validate_benchmarks
 from .published_metrics import load_accuracy_metrics, validate_published_metrics
 from .source import SourceSpec, source_identity
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
@@ -142,7 +145,148 @@ def load_model(model_dir: str | Path) -> dict[str, Any]:
         raise ValidationError(f"{path}: could not load YAML: {exc}") from exc
     if not isinstance(value, dict):
         raise ValidationError(f"{path}: expected a YAML object")
-    return value
+    return normalize_model(value, path.parent)
+
+
+def normalize_model(value: dict[str, Any], directory: Path) -> dict[str, Any]:
+    """Expand author shorthand once, without fetching sources or importing execution SDKs."""
+    model = deepcopy(value)
+    try:
+        model.setdefault("id", directory.name)
+        model.setdefault("maturity", "experimental")  # Existing catalog API compatibility.
+        for field in ("resources", "calibrations", "fidelity", "accuracy", "benchmark"):
+            model.setdefault(field, [])
+        if isinstance(model.get("architecture"), str):
+            model["architecture"] = {"id": model["architecture"]}
+        components = model.get("components", [])
+        if "upstream" not in model and components:
+            source = components[0].get("source", {})
+            if source.get("repository") and source.get("revision"):
+                model["upstream"] = {"repository": f"https://huggingface.co/{source['repository']}",
+                                     "revision": source["revision"]}
+        for component in components:
+            if "format" in component:
+                if "interface" in component:
+                    raise ValidationError("declare either format or interface, not both")
+                component["interface"] = {"format": component.pop("format")}
+            component.setdefault("role", "inference")
+            recipe = "compile.sh" if component.get("interface", {}).get("format") == "huggingface" else "compile.py"
+            component.setdefault("recipe", f"scripts/{recipe}")
+            if "interface" in component:
+                component["interface"].setdefault("shape_profiles", [])
+            if "source" in component:
+                component["source"] = _expand_source(component["source"])
+        for conversion in model.get("conversion", {}).values():
+            conversion["source"] = _expand_source(conversion["source"])
+        for item in [*model["resources"], *model["calibrations"]]:
+            if "source" in item:
+                item["source"] = _expand_source(item["source"])
+        if "upstream" not in model and components:
+            source = components[0].get("source", {})
+            uri = source.get("uri") or next((f["uri"] for f in source.get("files", [])), "")
+            if uri.startswith("hf://models/"):
+                repository, revision_path = uri.removeprefix("hf://models/").split("@", 1)
+                model["upstream"] = {"repository": f"https://huggingface.co/{repository}",
+                                     "revision": revision_path.split("/", 1)[0]}
+        if "upstream" in model:
+            model["upstream"].setdefault("model_card", model["upstream"]["repository"])
+        profiles = model.get("build_profiles", [])
+        for profile in profiles:
+            profile.setdefault("target", "modalix")
+        if len(components) > 1 and ("compositions" not in model or "packages" not in model):
+            raise ValidationError("multi-component models require explicit compositions and packages")
+        if len(components) == 1:
+            component = components[0]
+            public_name = component.get("entrypoint", "default")
+            entries = component.get("interface", {}).get("entrypoints", [])
+            if len(entries) == 1:
+                public_name = component.get("entrypoint", entries[0]["id"])
+            model.setdefault("compositions", [{"id": "default", "type": "single",
+                                              "component": component["id"], "entrypoint": public_name}])
+            model.setdefault("packages", [{"id": "default", "default": True,
+                                          "components": [component["id"]], "resources": [],
+                                          "build_profiles": [p["id"] for p in profiles if any(
+                                              b["id"] == component["id"] and b.get("status") != "unsupported"
+                                              for b in p["components"])], "composition": "default"}])
+        for package in model.get("packages", []):
+            package.setdefault("resources", [])
+        datasets = model.get("datasets", {})
+        calibrations = {c["id"] for c in model["calibrations"]}
+        for profile in profiles:
+            for binding in profile["components"]:
+                name = binding.get("calibration")
+                if name in datasets and name not in calibrations:
+                    model["calibrations"].append({"id": name, "status": "ready", "dataset": deepcopy(datasets[name])})
+                    calibrations.add(name)
+        if model["benchmark"] is True:
+            if len(components) != 1 or components[0]["interface"]["format"] != "onnx":
+                raise ValidationError("benchmark: true requires a single ONNX component")
+            model["benchmark"] = [{"id": "modalix_latency"}]
+        for stage in STAGES:
+            for entry in model[stage]:
+                if stage == "accuracy" and entry.get("engine") != DEVKIT_ACCURACY_ENGINE:
+                    continue  # Recorded evidence never becomes executable accuracy.
+                if isinstance(entry.get("dataset"), str):
+                    name = entry["dataset"]
+                    if name not in datasets:
+                        raise ValidationError(f"{stage} {entry.get('id')!r}: unknown dataset {name!r}")
+                    entry["dataset"] = deepcopy(datasets[name])
+                if "scope" not in entry:
+                    if stage == "benchmark" and len(components) == 1:
+                        entry["scope"] = {"type": "component", "component": components[0]["id"]}
+                    elif stage != "benchmark" and len(components) == 1:
+                        defaults = [p for p in model["packages"] if p["default"]]
+                        if len(defaults) != 1:
+                            raise ValidationError(f"{stage}: scope requires one default package")
+                        entry["scope"] = {"type": "package", "package": defaults[0]["id"]}
+                    else:
+                        raise ValidationError(f"{stage} {entry.get('id')!r}: multi-component scope must be explicit")
+                if "build_profiles" not in entry or (stage != "benchmark" and "result_component" not in entry):
+                    scoped = accuracy_components(model, entry)
+                    if stage != "benchmark" and len(scoped) == 1:
+                        entry.setdefault("result_component", scoped[0])
+                    if "build_profiles" not in entry:
+                        compatible = _supported_profiles(profiles, scoped)
+                        if entry["scope"]["type"] == "package":
+                            package = next(p for p in model["packages"] if p["id"] == entry["scope"]["package"])
+                            compatible = [p for p in compatible if p in package["build_profiles"]]
+                        entry["build_profiles"] = compatible
+        return model
+    except (KeyError, TypeError, AttributeError, StopIteration, ValueError) as exc:
+        raise ValidationError(f"{directory}: invalid model declaration: {exc}") from exc
+
+
+def _expand_source(source: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(source.get("files"), dict):
+        return source
+    source = deepcopy(source)
+    repository = source.pop("repository", None)
+    revision = source.pop("revision", None)
+    if repository is not None and (not isinstance(repository, str) or not re.fullmatch(r"[^/@]+/[^/@]+", repository)):
+        raise ValidationError("source repository must be owner/repository")
+    if revision is not None and (not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision)):
+        raise ValidationError("source revision must be an immutable 40-character commit")
+    files = []
+    for path, specification in source["files"].items():
+        if "path" in specification:
+            raise ValidationError("source files use their mapping key as the path")
+        member = {"path": path, **specification}
+        if "uri" not in member:
+            if not repository or not revision:
+                raise ValidationError(f"source member {path!r} requires a URI or repository and revision")
+            member["uri"] = f"hf://models/{repository}@{revision}/{path}"
+        files.append(member)
+    source["files"] = files
+    source.setdefault("type", "file_set")
+    return source
+
+
+def _supported_profiles(profiles: list[dict[str, Any]], components: list[str]) -> list[str]:
+    return [
+        profile["id"] for profile in profiles
+        if all(any(binding["id"] == component and binding.get("status") != "unsupported"
+                   for binding in profile["components"]) for component in components)
+    ]
 
 
 def find_schema(model_dir: str | Path, schema_path: str | Path | None = None) -> Path:
@@ -332,6 +476,9 @@ def validate_model(
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
 
+    model = normalize_model(model, directory)
+    if "upstream" not in model:
+        raise ValidationError(f"{directory}: upstream is required when the source has no Hugging Face repository")
     taxonomy_file = find_taxonomy(directory, taxonomy_path)
     taxonomy = load_taxonomy(taxonomy_file)
     try:
@@ -396,7 +543,7 @@ def validate_model(
                 raise ValidationError(f"{directory}: declare the complete LLiMa model as one component")
         elif component["recipe"] != "scripts/compile.py":
             raise ValidationError(f"{directory}: ONNX components require scripts/compile.py")
-        entrypoints = _by_id(interface["entrypoints"], f"entrypoint in component {component_id}")
+        entrypoints = _by_id(interface.get("entrypoints", []), f"entrypoint in component {component_id}")
         shape_profiles = _by_id(interface["shape_profiles"], f"shape profile in component {component_id}")
         symbols: dict[str, set[str]] = {}
         for entrypoint_id, entrypoint in entrypoints.items():
@@ -574,7 +721,10 @@ def validate_model(
                 raise ValidationError(
                     f"{directory}: composition {composition_id!r} references unknown component {component_id!r}"
                 )
-            entrypoints = {item["id"] for item in components[component_id]["interface"]["entrypoints"]}
+            component = components[component_id]
+            entrypoints = {item["id"] for item in component["interface"].get("entrypoints", [])}
+            if not entrypoints:
+                entrypoints = {component.get("entrypoint", "default")}
             if composition["entrypoint"] not in entrypoints:
                 raise ValidationError(
                     f"{directory}: composition {composition_id!r} references unknown entrypoint "
@@ -643,7 +793,7 @@ def validate_model(
     referenced_paths.extend(
         component["surgery"]["entrypoint"].split(":", 1)[0]
         for component in model["components"]
-        if component["surgery"]["type"] == "python"
+        if component.get("surgery", {}).get("type") == "python"
     )
     if model.get("conversion"):
         referenced_paths.extend(CONVERSION_FILES)
@@ -705,11 +855,11 @@ def validate_model(
             raise ValidationError(f"{label}: result_component {result_component!r} is not in the tested package")
         output_names = {
             output["name"]
-            for entrypoint in components[result_component]["interface"]["entrypoints"]
+            for entrypoint in components[result_component]["interface"].get("entrypoints", [])
             for output in entrypoint["outputs"]
         }
         unknown_outputs = set(entry["outputs"]) - output_names
-        if unknown_outputs:
+        if unknown_outputs and components[result_component]["interface"].get("entrypoints"):
             raise ValidationError(
                 f"{label}: fidelity outputs are not exposed by {result_component!r}: "
                 f"{', '.join(sorted(unknown_outputs))}"
@@ -719,11 +869,17 @@ def validate_model(
     for entry in model["accuracy"]:
         if entry.get("engine") == DEVKIT_ACCURACY_ENGINE:
             _validate_devkit_accuracy(entry, packages, profiles, directory, devkit_profiles)
+            vocabulary = load_accuracy_metrics(taxonomy_file.parent / "accuracy-metrics.yaml")
+            unknown = set(entry.get("metrics", ())) | set(entry.get("required_metrics", ()))
+            unknown -= set(vocabulary)
+            if unknown:
+                raise ValidationError(f"{directory}: accuracy {entry['id']!r} has unregistered metrics: "
+                                      f"{', '.join(sorted(unknown))}")
 
     for entry in model["benchmark"]:
-        metric_names = {metric if isinstance(metric, str) else metric["name"] for metric in entry["metrics"]}
+        metric_names = {metric if isinstance(metric, str) else metric["name"] for metric in entry.get("metrics", [])}
         missing = set(entry.get("required_metrics", ())) - metric_names
-        if missing:
+        if missing and "metrics" in entry:
             raise ValidationError(
                 f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
                 f"{', '.join(sorted(missing))}"
@@ -743,6 +899,7 @@ def validate_model(
                 f"in build profile {profile_id!r}"
             )
 
+    validate_benchmarks(model, directory)
     validate_model_tests(directory, model, schema_file.parent / TESTS_SCHEMA)
 
 
@@ -764,8 +921,8 @@ def _validate_devkit_accuracy(
             raise ValidationError(
                 f"{label}: build profile {profile_id!r} must compile {', '.join(scoped)} in one compile invocation"
             )
-    missing = set(entry.get("required_metrics", ())) - set(entry["metrics"])
-    if missing:
+    missing = set(entry.get("required_metrics", ())) - set(entry.get("metrics", []))
+    if missing and "metrics" in entry:
         raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")
     # The accuracy stage runs scripts/accuracy.py once per build profile.
     repeated = seen_profiles & set(entry["build_profiles"])

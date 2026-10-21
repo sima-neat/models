@@ -18,20 +18,19 @@ Before creating files, identify:
 - the product and its responsible owner;
 - each independently compiled ONNX component;
 - whether a component source is one file or a set of related files;
-- the public entrypoints, tensors, shapes, state, and preprocessing;
+- the public entrypoint, concrete compiler inputs, preprocessing and decoding;
 - runtime files such as tokenizers, labels, or configuration;
 - the target-wide build profiles and component-specific compiler parameters;
 - how the components compose and what users download;
 - the calibration, fidelity, and accuracy data each build needs.
 
-Do not add a product whose source, ownership, or license is ambiguous.
-`experimental` maturity may describe unfinished qualification; it does not
-permit mutable provenance.
+Do not add a product whose source, ownership, or license is ambiguous. Record
+ownership in `CODEOWNERS`; do not add owner or maturity boilerplate to YAML.
 
 ## 2. Create the directory
 
-The directory name and the `id` in `model.yaml` are the same lowercase
-snake-case identifier. A model directory may contain only these entries:
+The directory name supplies the lowercase snake-case model ID. An explicit
+`id` must match it. A model directory may contain only these entries:
 
 ```text
 models/<model-id>/
@@ -40,7 +39,7 @@ models/<model-id>/
   model.yaml                    # the model's only configuration file
   scripts/
     compile.py                  # compile stage: writes one MPK per component
-    performance.py              # performance stage: Core benchmark of one MPK on a DevKit
+    performance.py              # standalone customer benchmark, when the model declares one
     accuracy.py                 # accuracy stage, when model.yaml declares DevKit accuracy
     requirements-accuracy.txt   # optional wheels for accuracy.py
     convert.py                  # only when model.yaml declares a conversion
@@ -66,9 +65,10 @@ Keep board-only code inside `performance.py` or `accuracy.py`. For ONNX, any oth
 ## 3. Pin every input
 
 Each compiled component owns its source. Use `type: file` for one artifact and
-`type: file_set` when the recipe needs several related files in a fixed
-relative layout. Every file gets its own immutable URI, SHA-256, byte count,
-and media type.
+a file set when the recipe needs related files in a fixed relative layout.
+Every file retains its SHA-256 and byte count. Hugging Face file sets can share
+one immutable repository/revision declaration; see [source shorthand](metadata-schema.md#components-and-source-sets).
+Exceptional members can keep explicit URIs.
 
 Hugging Face sources use a full 40-character repository commit. Approved HTTPS
 sources include pinned Hugging Face resources and GitHub release assets.
@@ -107,19 +107,21 @@ pin reaches the compile stage; editing `convert.py` recompiles nothing.
 
 ## 4. Describe components and interfaces
 
-Declare one `components` entry for each independently compiled unit. A
-component owns:
+Declare one `components` entry for each independently compiled unit. For a
+single model, keep its `id`, `format: onnx` or `format: huggingface`, and pinned
+`source`. The role defaults to `inference`. Conventional recipes are
+`scripts/compile.py` and `scripts/compile.sh`; do not repeat their paths.
 
-- its role and immutable source;
-- named ONNX tensor entrypoints or a Hugging Face generation entrypoint;
-- tensor, state, streaming, and concrete shape-profile contracts;
-- preprocessing and postprocessing pipelines;
-- optional model-specific surgery;
-- its `recipe`, `scripts/compile.py` or `scripts/compile.sh`;
-- optional dependencies on other components.
+The public entrypoint defaults to `default`. Qwen/Gemma set `entrypoint: generate`
+and Whisper sets `entrypoint: transcribe`, independently of `source.entrypoint`.
+Keep preprocessing, decoding and surgery in executable code and describe their
+application-facing behavior in the README. Put concrete compiler shape overrides
+in build parameters. Core execution plans supply tensor details after compilation.
 
-Names and tensor details must match the pinned inputs. Inspect the ONNX files;
-do not copy them from a model card.
+Multi-component products retain minimal explicit interface contracts for real
+connections, an ordered package and composition, and any CPU steps. Inspect the
+actual graph after surgery and validate compiled artifacts against these contracts.
+Planning remains offline and does not import the SDK.
 
 ## 5. Add resources and calibration
 
@@ -128,9 +130,11 @@ Declare non-compiled files under `resources` and give each its package
 configuration. Declare a separate license when a resource has different
 distribution terms.
 
-Declare calibration inputs under `calibrations`. A ready calibration references
-either an immutable `source` or a registered dataset. A pending entry states
-what is missing. A build-profile component binding selects a calibration by ID.
+Declare immutable dataset pins once under `datasets` and refer to their aliases
+from calibration bindings, fidelity and accuracy. Aliases preserve the full
+dataset ID, variant, SHA-256 and size. Keep sample selections in their consuming
+stage. Explicit `calibrations` remain available for non-dataset sources or pending
+inputs with a reason.
 
 Calibration is compiler input for quantization. It is not accuracy evidence.
 Calibration, fidelity, and accuracy datasets resolve through Dataset Registry
@@ -146,7 +150,6 @@ parameters on the binding:
 ```yaml
 build_profiles:
   - id: w8a8
-    target: modalix
     components:
       - id: model
         calibration: default
@@ -179,6 +182,9 @@ accuracy entry must each compile all their components in one invocation.
 
 A binding proven incompatible may stay as `status: unsupported` with a reason.
 Do not use it for untested work.
+The build target defaults to `modalix`; keep runner class and graph-changing
+parameters explicit. Mixed-precision profiles still declare each component's
+precision rather than deriving it from the profile ID.
 
 ONNX recipes use the following interface for single and grouped invocations.
 For Hugging Face checkpoints, use the [LLiMa recipe](#llima-language-and-vision-language-models) instead:
@@ -193,7 +199,8 @@ scripts/compile.py --model <verified-source> --output-dir <new-directory> \
 runner passes `--dataset` when the binding selects a ready calibration and
 `--fidelity-dataset` when a `fidelity` entry applies. The recipe:
 
-- reads its build profile from `model.yaml`;
+- reads its effective build profile with `model_registry.model.load_model`, so
+  dataset aliases and omitted defaults reach execution consistently;
 - writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component of the invocation, by
   passing `<model-id>_<profile-id>` to the compiler as the model name; a
@@ -215,13 +222,17 @@ requests and approvals](runner-class-requests.md).
 
 ## 7. Define composition and packages
 
-A one-component product uses a `single` composition naming its component and
-entrypoint. A multi-component product uses a `declarative` composition whose
+A one-component product can omit `compositions` and `packages`: the loader
+generates IDs `default`, the public entrypoint, no extra resources and all
+compatible profiles, retaining the existing download layout. Declare packages
+when selecting resources or a different retrieval unit.
+
+A multi-component product uses a `declarative` composition whose
 `components`, `connections`, `inputs`, and `outputs` are written inline in
 `model.yaml`; see [Compositions and
 packages](metadata-schema.md#compositions-and-packages).
 
-Then declare one or more packages. A package selects:
+Its explicit ordered package selects:
 
 - the components whose MPKs it contains;
 - the runtime resources to install;
@@ -238,15 +249,18 @@ packages](metadata-schema.md#compositions-and-packages).
 
 ## 8. Declare fidelity, accuracy, and benchmark entries
 
-Each entry names its `scope` (a component or a package) and the
-`build_profiles` it applies to. IDs are unique within each section.
+Omit an unimplemented stage. Accuracy and fidelity IDs stay explicit. For one
+component, accuracy/fidelity default to package `default` and its sole result
+component; ordinary performance defaults to that component. Omitted
+`build_profiles` selects every supported profile for the scope. Retain restrictions
+such as INT8-only accuracy and explicit multi-component scopes and result components.
 
 | Section | Measured by | Runs in |
 | --- | --- | --- |
 | `fidelity` | `compile.py`, comparing the compiled graph with the source model | compile stage |
 | `accuracy` with `engine: devkit_script` | `accuracy.py`, running the compiled MPKs | accuracy stage |
 | `accuracy` without `engine` | nothing; the entry records results measured elsewhere | no stage |
-| `benchmark` | `performance.py`, once per component | performance stage |
+| `benchmark` | the model's standalone `performance.py` | performance stage |
 
 Fidelity is diagnostic numerical agreement, not task accuracy. A build profile
 has at most one `devkit_script` accuracy entry. Every component with a
@@ -257,10 +271,18 @@ Record the scores the source model's authors published under
 conditions, and pinned page of each. Record only numbers the page prints for
 these weights; leave the field out when none are published.
 
+Use `benchmark: true` for an ordinary single-component MPK workload: ID
+`modalix_latency`, 1000 samples, minimum 60000 ms and layer statistics enabled.
+Use the explicit form for decoder choices, different settings or required metrics;
+YOLO keeps its decoder and mandatory power/energy measurements. A custom
+`performance.py` remains appropriate for RF-DETR's package pipeline. Its settings
+stay script-owned; unsupported YAML workload options fail validation.
+
 Follow [Accuracy and fidelity](local-accuracy-development.md) for the fidelity
-and accuracy contracts. Start `performance.py` from the [canonical
-script](benchmarking.md#the-performance-script): it writes Core's whole
-benchmark report, including the board telemetry the model page shows.
+and accuracy contracts, and [DevKit performance](benchmarking.md) for shared and
+custom workloads. Executable accuracy keeps `engine: devkit_script` and nonempty
+`required_metrics`. Registered returned metric names and `tests/tests.yaml`
+expectations replace the repeated accuracy `metrics` list.
 
 ## 9. Know what a change reruns
 
@@ -273,10 +295,15 @@ selection before either stage can run; see [on-demand builds](#on-demand-builds)
 
 | Stage | Key inputs |
 | --- | --- |
-| compile (ONNX) | the invocation's components and bindings in `model.yaml` (source, interface, surgery, recipe, dependencies, parameters, shape profile, calibration), the build profile's target and compatibility, the `fidelity` entries for the profile, every `.py` and `.sh` file in `scripts/` except `performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py`, and `requirements-convert.txt`, declared training code, the Model Compiler version, and `scripts/run_model_compilation.sh` |
+| compile (ONNX) | source identity and layout, dependencies, explicit multi-component boundary contracts, component parameters and calibration, target and compatibility, consumed fidelity settings, compile/surgery code, declared training code, the Model Compiler version, `scripts/run_model_compilation.sh`, and the shared model loader |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of each component the `benchmark` entry measures, that entry, the profile's optional `benchmark_baseline`, `performance.py`, the shared performance tooling, and the DevKit runtime pin |
-| accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, the shared accuracy tooling, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of every measured component in package order, the workload declaration, the profile's optional `benchmark_baseline`, model-owned `performance.py`, shared performance tooling, and the DevKit runtime pin |
+| accuracy | the compile runs and MPK digests of its components, the `accuracy` entry, `accuracy.py` and `requirements-accuracy.txt`, shared accuracy tooling and registered metric vocabulary, and the DevKit runtime pin |
+
+ONNX compile code includes every `.py` and `.sh` under `scripts/` except
+`performance.py`, `accuracy.py`, `requirements-accuracy.txt`, `convert.py` and
+`requirements-convert.txt`. The shared model loader is an input to every ONNX
+compile key; descriptive preprocessing and surgery declarations are not.
 
 A new compile run changes the performance and accuracy keys too, so a
 recompiled build is always remeasured.
@@ -286,14 +313,16 @@ recompiled build is always remeasured.
 | README, display metadata, `published_metrics`, `convert.py`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
-| `performance.py` or a `benchmark` entry | that model's performance |
+| a model's `performance.py` or benchmark declaration | affected performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, or the `accuracy` entry | that model's accuracy |
+| registered accuracy vocabulary or its loader | accuracy stages |
 | the DevKit runtime pin, the benchmarking workflow, or `benchmark_publication.py` | every performance and accuracy stage |
 | a source model or graph parameter | that model's affected builds, then their DevKit stages |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their DevKit stages |
 | the Model Compiler pin | every build, then every DevKit stage |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their DevKit stages |
+| the shared model loader | ONNX builds, then their DevKit stages |
 | LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class | no LLiMa compilation |
 
 The keys are computed by `compile_key`, `performance_key` and `accuracy_key`
@@ -342,8 +371,10 @@ example before the model has a published result to expect values from.
 
 A running `accuracy` or `performance` entry also states what the model must
 deliver on a DevKit in `expected`: the latest published value of every
-measured build. For accuracy, that is every metric the accuracy entry
-declares, per build profile; for performance, `throughput_fps`, per build
+measured build. For accuracy, supply a nonempty map of registered finite numeric
+expectations per build profile, covering at least its `required_metrics`. Keep
+optional expectations such as top-5: a missing expected measurement fails.
+For performance, use `throughput_fps`, per build
 profile and component, or package for a [package
 benchmark](benchmarking.md#package-benchmark). Take the values from the model browser's latest
 `develop` results, rounded to 4 decimal places for accuracy and 1 for
@@ -445,7 +476,7 @@ color order, scaling, and normalization.>
 **Between the components.** <Only for a model with several components: what
 the application computes on the CPU and which tensors it passes on.>
 
-**Outputs.** <Each output tensor by its model.yaml name, and what it holds.>
+**Outputs.** <Each actual output tensor by name, and what it holds.>
 
 1. <Each decode step, in order, one line per step.>
 
@@ -502,11 +533,12 @@ for retention and the separate promotion workflow.
 
 ## LLiMa language and vision-language models
 
-Declare a complete language model as one component, with `interface.format: huggingface`,
-`recipe: scripts/compile.sh`, and a pinned Hugging Face `file_set` whose entrypoint is
-`config.json`. Include weights, tokenizer files, processor settings and the chat template;
-each file retains its revision, byte size and SHA-256. The existing verified downloader
-assembles the checkpoint directory. Do not list LLiMa's generated layers as components.
+Declare a complete language model as one component, with `format: huggingface`,
+`entrypoint: generate`, and a pinned Hugging Face file set whose source entrypoint
+is `config.json`. Share the repository/revision while retaining every weight,
+tokenizer, processor and chat-template file's path, size and SHA-256. The conventional
+recipe is `scripts/compile.sh`. The verified downloader assembles the checkpoint
+directory; do not list LLiMa's generated layers as components.
 
 For a speculative pair, put both pinned checkpoints in named subfolders of that
 file set. Set the entrypoint to `<target-name>/config.json` and the profile's
@@ -521,8 +553,8 @@ A build profile names one compiled configuration. Start with one profile per
 model and set `max_num_tokens: 4096` explicitly in its component `parameters`,
 alongside `language_group_size`. Add `input_height` and `input_width` only for
 VLMs needing a resolution override. Omit both for text-only LLMs and VLMs whose
-native resolution is fixed. Declare a VLM's actual resolution in its image
-interface even when no override is needed.
+native resolution is fixed. Published context and image dimensions come from
+compiled parameters; no copied image tensor inventory is needed.
 
 The shared runner forwards these parameters as compiler options after the
 checkpoint and output arguments; `compile.sh` must pass them to `llima-compile`.
@@ -562,7 +594,7 @@ the deployment folder with `manifest.json` at its root; its component uses
 file. See the [manifest and metadata contract](metadata-schema.md#llima-checkpoint-and-deployment-formats).
 No native stage creates a deployment ZIP.
 
-Whisper uses this same workflow with a model-specific recipe calling
+Whisper sets `entrypoint: transcribe` and uses a model-specific recipe calling
 `WhisperModel` directly instead of `llima-compile`. Its profile selects A16W8
 and the Whisper mask and log-probe options, without LLM context or image settings.
 The runner forwards boolean parameters as `--name` or `--no-name`.
@@ -571,10 +603,11 @@ The native compile key covers checkpoint content, the target, graph parameters
 and the pinned compiler identity. Declare graph-changing options in component
 `parameters`, including precision, group size, context length and image dimensions.
 Script edits, logging, job counts and runner selection do not invalidate it.
-ONNX builds retain their existing compile keys. README and hero changes remain
-outside compile identities.
+README and hero changes remain outside compile identities. The YAML migration
+plans one ONNX rebuild rather than recreating removed descriptive inputs solely
+to preserve their old hashes; LLiMa graph identities remain unchanged.
 
-Leave `calibrations`, `fidelity`, `accuracy`, and `benchmark` empty when no corresponding
+Omit `calibrations`, `fidelity`, `accuracy`, and `benchmark` when no corresponding
 stage is implemented. A manual Qwen build compiles and publishes only; performance
 and accuracy are separate follow-ups [#294](https://github.com/sima-neat/models/issues/294)
 and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen profile

@@ -216,7 +216,8 @@ def stage_repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     for relative in ("schemas", "taxonomies", f"models/{PLAN_MODEL}"):
         shutil.copytree(ROOT / relative, repository / relative)
-    for relative in ("deps/manifest.json", *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+    for relative in ("deps/manifest.json",
+                     *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)

@@ -14,7 +14,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-import yaml
 from calibration import (
     ARCHIVE_SHA256,
     CALIBRATION_ARRAY_SHA256,
@@ -24,6 +23,7 @@ from calibration import (
     validate_dataset,
 )
 from model_registry.dependencies import resolve_model_compiler
+from model_registry.model import load_model as load_metadata
 from surgery import INPUT_NAME, INPUT_SHAPE, OUTPUTS, prepare_int8_model, prepare_model
 
 LOG = logging.getLogger("ssd_mobilenet_v3.compile")
@@ -100,7 +100,7 @@ def build_reference_evaluator(path: Path, precision: str) -> Any:
 
 
 def variant_config(variant_id: str) -> dict[str, Any]:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one SSD-MobileNet V3 variant named {variant_id!r}")
@@ -297,10 +297,8 @@ def validate_quantization(
 
 
 def enforce_quantization_quality(report: dict[str, Any], precision: str) -> dict[str, Any]:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    specification = next(entry for entry in metadata["accuracy"] if entry["id"] == "coco_val2017_quantization")
     try:
-        thresholds = specification["compiler_raw_head_thresholds"][precision]
+        thresholds = variant_config(precision)["parameters"]["quantization_quality_thresholds"]
         minimum_cosine = float(thresholds["minimum_cosine_similarity"])
         maximum_nrmse = float(thresholds["maximum_normalized_root_mean_square_error"])
     except (KeyError, TypeError, ValueError) as exc:

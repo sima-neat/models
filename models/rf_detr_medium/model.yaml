@@ -1,19 +1,11 @@
-id: rf_detr_medium
 display_name: RF-DETR Medium
 description: A mid-size RF-DETR transformer detector for COCO objects.
 model_type: vision
-tasks:
-- object_detection
+tasks: [object_detection]
 modalities:
-  inputs:
-  - image
-  outputs:
-  - bounding_boxes
-  - class_scores
-architecture:
-  id: rf_detr
-owners:
-- '@sima-neat/models'
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+architecture: rf_detr
 license:
   spdx: Apache-2.0
   redistribution: allowed
@@ -21,25 +13,22 @@ license:
 upstream:
   repository: https://huggingface.co/Roboflow/rf-detr-medium
   revision: 1b5b672408f86dd38e05dd3cf3f2e0834e545a59
-  model_card: https://huggingface.co/Roboflow/rf-detr-medium
 conversion:
   default:
     source:
-      type: file_set
+      repository: Roboflow/rf-detr-medium
+      revision: 1b5b672408f86dd38e05dd3cf3f2e0834e545a59
       entrypoint: model.safetensors
       files:
-      - path: model.safetensors
-        uri: hf://models/Roboflow/rf-detr-medium@1b5b672408f86dd38e05dd3cf3f2e0834e545a59/model.safetensors
-        sha256: e52098adc46969794fbdd16e0548a62b81ba0c0f4b14392676edba50be9a69f6
-        size_bytes: 134812328
-      - path: config.json
-        uri: hf://models/Roboflow/rf-detr-medium@1b5b672408f86dd38e05dd3cf3f2e0834e545a59/config.json
-        sha256: 03b30b6ec4305333d81faf3884946818de6d390ed4b71781ae06b92b127010ac
-        size_bytes: 5771
-      - path: preprocessor_config.json
-        uri: hf://models/Roboflow/rf-detr-medium@1b5b672408f86dd38e05dd3cf3f2e0834e545a59/preprocessor_config.json
-        sha256: 4e55a721a4ca13007d7ee4bbe914958060519f64da7c6e21b8e75732d46b8fb6
-        size_bytes: 442
+        model.safetensors:
+          sha256: e52098adc46969794fbdd16e0548a62b81ba0c0f4b14392676edba50be9a69f6
+          size_bytes: 134812328
+        config.json:
+          sha256: 03b30b6ec4305333d81faf3884946818de6d390ed4b71781ae06b92b127010ac
+          size_bytes: 5771
+        preprocessor_config.json:
+          sha256: 4e55a721a4ca13007d7ee4bbe914958060519f64da7c6e21b8e75732d46b8fb6
+          size_bytes: 442
 components:
 - id: backbone
   role: feature_extractor
@@ -50,7 +39,6 @@ components:
     size_bytes: 120816271
   interface:
     format: onnx
-    opset: 17
     entrypoints:
     - id: default
       inputs:
@@ -58,51 +46,24 @@ components:
         dtype: float32
         shape: [1, 3, 576, 576]
         layout: NCHW
-        description: RGB image after resize and ImageNet normalization.
       outputs:
       - name: backbone_features
         dtype: float32
         shape: [1, 256, 36, 36]
         layout: NCHW
-        description: Feature map consumed by the decoder.
       - name: proposal_scores
         dtype: float32
         shape: [1, 1296]
         layout: NC
-        description: Objectness score for each proposal.
       - name: proposal_boxes
         dtype: float32
         shape: [1, 1296, 4]
         layout: NLC
-        description: Decoded box for each proposal.
-    shape_profiles: []
-  preprocessing:
-    pipeline:
-    - op: decode_image
-      parameters: {color_space: RGB}
-    - op: resize
-      parameters: {height: 576, width: 576, preserve_aspect_ratio: false, resample: bilinear}
-    - op: rescale
-      parameters: {factor: 0.00392156862745098}
-    - op: normalize
-      parameters:
-        mean: [0.485, 0.456, 0.406]
-        std: [0.229, 0.224, 0.225]
-    - op: transpose
-      parameters: {from: HWC, to: CHW}
-  postprocessing:
-    pipeline: []
-  surgery:
-    type: python
-    entrypoint: scripts/surgery.py:prepare_model
-    parameters: {}
-  recipe: scripts/compile.py
 - id: decoder
   role: detection_head
   source: *source
   interface:
     format: onnx
-    opset: 17
     entrypoints:
     - id: default
       inputs:
@@ -110,47 +71,33 @@ components:
         dtype: float32
         shape: [1, 256, 36, 36]
         layout: NCHW
-        description: Feature map emitted by the backbone.
       - name: proposals
         dtype: float32
         shape: [1, 300, 4]
         layout: NLC
-        description: Highest-scoring boxes selected by TopK and Gather on A65.
       outputs:
       - name: dets
         dtype: float32
         shape: [1, 300, 4]
         layout: NLC
-        description: Normalized (cx, cy, w, h) box for each query; scale by the original image size.
       - name: labels
         dtype: float32
         shape: [1, 300, 91]
         layout: NLC
-        description: COCO class logits for each query; apply a sigmoid to get scores.
-    shape_profiles: []
-  preprocessing:
-    pipeline: []
-  postprocessing:
-    pipeline: []
-  surgery:
-    type: python
-    entrypoint: scripts/surgery.py:prepare_model
-    parameters: {}
-  recipe: scripts/compile.py
-  depends_on:
-  - backbone
-resources: []
-calibrations:
-- id: coco_images
-  status: ready
-  dataset:
+  depends_on: [backbone]
+datasets:
+  coco_images:
     id: coco-2017
     variant: cal
     sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
     size_bytes: 187510866
+  accuracy:
+    id: coco-2017
+    variant: val
+    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
+    size_bytes: 898368520
 build_profiles:
 - id: w8a8_w16a16
-  target: modalix
   components:
   - id: backbone
     calibration: coco_images
@@ -161,19 +108,16 @@ build_profiles:
   - id: decoder
     parameters:
       precision: w16a16
-      # AFE runs Sin and Cos as INT8 lookup tables even at BF16, so the decoder's query sine
-      # embedding needs calibrated input ranges.
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       calibration_bins: 2048
       calibration_samples: 50
   compile_invocations:
   - id: rf_detr
     components: [backbone, decoder]
 - id: w8a16_w16a16
-  target: modalix
   components:
   - id: backbone
-    # The decoder calibrates on this backbone's outputs for these images; the W8A16 backbone itself skips
-    # calibration.
+    # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
     calibration: coco_images
     parameters:
       precision: w8a16
@@ -181,8 +125,7 @@ build_profiles:
   - id: decoder
     parameters:
       precision: w16a16
-      # AFE runs Sin and Cos as INT8 lookup tables even at BF16, so the decoder's query sine
-      # embedding needs calibrated input ranges.
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       calibration_bins: 2048
       calibration_samples: 50
   compile_invocations:
@@ -192,25 +135,45 @@ compositions:
 - id: default
   type: declarative
   components:
-  - {id: backbone, component: backbone, entrypoint: default}
-  - {id: decoder, component: decoder, entrypoint: default}
+  - id: backbone
+    component: backbone
+    entrypoint: default
+  - id: decoder
+    component: decoder
+    entrypoint: default
   connections:
-  - from: {component: backbone, output: backbone_features}
-    to: {component: decoder, input: backbone_features}
+  - from:
+      component: backbone
+      output: backbone_features
+    to:
+      component: decoder
+      input: backbone_features
   inputs:
   - name: input
-    to: {component: backbone, input: input}
+    to:
+      component: backbone
+      input: input
   - name: proposals
-    to: {component: decoder, input: proposals}
+    to:
+      component: decoder
+      input: proposals
   outputs:
   - name: proposal_scores
-    from: {component: backbone, output: proposal_scores}
+    from:
+      component: backbone
+      output: proposal_scores
   - name: proposal_boxes
-    from: {component: backbone, output: proposal_boxes}
+    from:
+      component: backbone
+      output: proposal_boxes
   - name: dets
-    from: {component: decoder, output: dets}
+    from:
+      component: decoder
+      output: dets
   - name: labels
-    from: {component: decoder, output: labels}
+    from:
+      component: decoder
+      output: labels
 pipeline:
 - component: backbone
 - cpu: Top 300 proposals
@@ -219,23 +182,17 @@ packages:
 - id: default
   default: true
   components: [backbone, decoder]
-  resources: []
   build_profiles: [w8a8_w16a16, w8a16_w16a16]
   composition: default
-  maturity: experimental
 fidelity:
 - id: full_pipeline_fidelity
-  scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
-  # Reordered queries can lower numerical similarity for equivalent detections,
-  # so fidelity does not gate publication.
+  scope:
+    type: package
+    package: default
+  # Reordered queries can lower numerical similarity for equivalent detections.
   status: diagnostic
   result_component: decoder
-  dataset:
-    id: coco-2017
-    variant: cal
-    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
-    size_bytes: 187510866
+  dataset: coco_images
   selection:
     method: seeded_random_without_replacement
     seed: 42
@@ -244,31 +201,26 @@ fidelity:
   outputs: [dets, labels]
 accuracy:
 - id: coco_accuracy
-  scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
+  scope:
+    type: package
+    package: default
   engine: devkit_script
   status: ready
   result_component: decoder
-  dataset:
-    id: coco-2017
-    variant: val
-    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
-    size_bytes: 898368520
-  metrics: [coco_map, coco_ap50, coco_ap75, coco_ap_small, coco_ap_medium, coco_ap_large,
-    coco_ar1, coco_ar10, coco_ar100, coco_ar_small, coco_ar_medium, coco_ar_large]
+  dataset: accuracy
   required_metrics: [coco_map]
 published_metrics:
 - source: https://github.com/roboflow/rf-detr/blob/56cdbbf57fc51c090f3aca398802d2cbc6703a05/README.md
-  dataset: {id: coco-2017, split: val}
+  dataset:
+    id: coco-2017
+    split: val
   conditions: 576x576
-  metrics: {coco_map: 0.547, coco_ap50: 0.736}
+  metrics:
+    coco_map: 0.547
+    coco_ap50: 0.736
 benchmark:
 - id: orchestration
-  scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
-  status: pending
-  target: modalix
-  reason: Measure the package's components running as one pipeline.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  scope:
+    type: package
+    package: default
   required_metrics: [avg_power_watts, energy_per_inference_joules]
-maturity: experimental

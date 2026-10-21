@@ -13,6 +13,7 @@ from model_registry.accuracy_result import (
 )
 from model_registry.cli import main
 from model_registry.errors import ValidationError
+from model_registry.model import load_and_validate_model
 
 ROOT = Path(__file__).resolve().parents[1]
 GIT_SHA = "a" * 40
@@ -96,15 +97,49 @@ def test_import_accuracy_leaves_published_scores_to_model_yaml(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("metrics", "expected"),
     [
-        ({"coco_map": 0.4, "top1": 0.9}, "undeclared metrics: top1"),
+        ({"coco_map": 0.4, "top1": 0.9}, "unregistered metrics: top1"),
         ({"coco_ap50": 0.6}, "did not measure required metrics: coco_map"),
     ],
 )
-def test_import_accuracy_rejects_metrics_outside_the_entry(
+def test_import_accuracy_rejects_unregistered_or_missing_required_metrics(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], metrics: dict[str, float], expected: str
 ) -> None:
     assert import_accuracy(tmp_path, metrics) == 2
     assert expected in capsys.readouterr().err
+
+
+def test_import_accuracy_accepts_registered_metrics_without_a_per_model_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    for entry in model["accuracy"]:
+        entry.pop("metrics", None)
+    monkeypatch.setattr("model_registry.accuracy_result.load_and_validate_model", lambda *_: model)
+
+    assert import_accuracy(tmp_path, {"coco_map": 0.4, "top1_accuracy": 0.9}) == 0
+
+
+def test_import_accuracy_preserves_an_explicit_legacy_metric_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", ROOT / "schemas" / "model.schema.json")
+    for entry in model["accuracy"]:
+        entry["metrics"] = ["coco_map"]
+    monkeypatch.setattr("model_registry.accuracy_result.load_and_validate_model", lambda *_: model)
+
+    assert import_accuracy(tmp_path, {"coco_map": 0.4, "coco_ap50": 0.6}) == 2
+    assert "undeclared metrics: coco_ap50" in capsys.readouterr().err
+
+
+def test_loading_accuracy_for_publication_rejects_unregistered_metrics(tmp_path: Path) -> None:
+    assert import_accuracy(tmp_path, {"coco_map": 0.4}) == 0
+    path = tmp_path / "accuracy-result.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["metrics"]["unknown_metric"] = report["metrics"]["coco_map"]
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="unregistered metrics: unknown_metric"):
+        load_accuracy_result(path, ROOT / ACCURACY_RESULT_SCHEMA)
 
 
 def test_import_accuracy_rejects_a_git_sha_that_is_not_a_full_revision(

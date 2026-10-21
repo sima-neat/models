@@ -1005,6 +1005,14 @@ def test_registry_entry_pins_qualified_qat_and_calibration_sources() -> None:
         "8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b"
     )
     assert profile["id"] == "w8a8"
+    assert profile["target"] == "modalix"
+    assert model["compositions"] == [
+        {"id": "default", "type": "single", "component": "model", "entrypoint": "default"}
+    ]
+    benchmark = model["benchmark"][0]
+    assert benchmark["id"] == "modalix_tracker_latency"
+    assert benchmark["scope"] == {"type": "component", "component": "model"}
+    assert benchmark["build_profiles"] == ["w8a8"]
     assert binding["parameters"]["calibration_samples"] == 128
     assert binding["parameters"]["calibration_tensor_sha256"] == (
         "d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e"
@@ -1081,9 +1089,10 @@ def test_modelsdk_output_labels_refuse_to_overwrite_an_abi_change(
 
 
 def test_registry_accuracy_gates_match_qualified_export() -> None:
-    accuracy = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["accuracy"][0]
+    accuracy = load_and_validate_model(MODEL_DIR)["accuracy"][0]
     metrics = {item["name"]: item for item in accuracy["metrics"]}
 
+    assert "engine" not in accuracy
     assert accuracy["status"] == "qualified_reference"
     assert accuracy["validation_tiny_ground_truth_count"] == 197828
     assert metrics["qat_ap50"]["measured"] > metrics["qat_ap50"]["minimum"]

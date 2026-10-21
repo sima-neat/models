@@ -2,11 +2,10 @@
 
 The performance stage measures each compiled component on a Modalix DevKit, or
 a model's whole package when its `benchmark` entry has package scope.
-Each model owns `scripts/performance.py`, which loads one MPK with
-`pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
-inputs, warmup, latency and throughput measurement, board telemetry, and runner
-lifetime. There is no shared benchmark executor and no model-specific timing
-loop.
+Each model's standalone `scripts/performance.py` contains its benchmark setup.
+Single-component scripts load an MPK with `pyneat.Model` and call Neat Core's
+benchmark API; RF-DETR's script measures its complete package pipeline. Core owns ordinary synthetic inputs, warmup, latency and throughput
+measurement, board telemetry, and runner lifetime.
 
 ## Set up a DevKit
 
@@ -42,46 +41,34 @@ The runner user therefore needs passwordless `sudo` for both writes.
 
 ## The performance script
 
-`scripts/performance.py` takes `--mpk <archive>` and `--output <directory>`:
+Every model that declares a benchmark includes `scripts/performance.py` in its
+own GitHub folder. CI runs that same script. Copy it to the DevKit and run it
+with PyNeat; no registry installation or YAML configuration is needed:
 
 ```bash
 ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/benchmark
 ```
 
-Every model's script follows the same pattern:
+The script contains the exact model selection and measurement settings. For
+example, YOLO26 boxes explicitly selects `BoxDecodeType.YoloV26` and top 100
+results; pose and segmentation use their corresponding decoders. The current
+scripts request 1000 samples, a 60000 ms minimum duration and layer statistics.
+Customers can read or adapt these settings directly in the model's script.
 
-```python
-import argparse
-import json
-from pathlib import Path
+`model.yaml` declares which workload runs, its scope/profiles and publication
+gates. `benchmark: true` is shorthand for the single-component
+`modalix_latency` entry over all supported profiles. Use an explicit entry for
+a different workload ID, scope or required telemetry:
 
-import pyneat
-
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--output", required=True, help="directory for benchmark-report.json and benchmark-context.json")
-args = parser.parse_args()
-output = Path(args.output)
-output.mkdir(parents=True, exist_ok=True)
-
-model = pyneat.Model(args.mpk)
-# Request 1000 samples and a 60 s minimum measurement duration.
-benchmark_options = pyneat.BenchmarkOptions()
-benchmark_options.num_samples = 1000
-benchmark_options.min_duration_ms = 60000
-benchmark_options.include_layer_stats = True
-model.benchmark(benchmark_options).save(output / "benchmark-report.json")
-# What the report does not record: the Core release, the requested run, and the graph that ran.
-context = {
-    "core_version": pyneat.__version__,
-    "num_samples": benchmark_options.num_samples,
-    "min_duration_ms": benchmark_options.min_duration_ms,
-    "include_layer_stats": benchmark_options.include_layer_stats,
-    "execution_plan": json.loads(model.execution_plan().to_json()),
-}
-(output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
+```yaml
+benchmark:
+- id: modalix_latency
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
 ```
+
+Decoder and measurement settings have one source of truth in `performance.py`;
+they are not repeated as YAML options or passed through a separate JSON flag.
 
 `BenchmarkReport.save()` writes `benchmark-report.json`, the whole Core report
 including its `telemetry` and `layer_stats`, so a field Core adds later reaches
@@ -116,11 +103,7 @@ package-scope entry:
 ```yaml
 - id: orchestration
   scope: {type: package, package: default}
-  build_profiles: [w8a8_w16a16, w8a16_w16a16]
-  status: pending
-  target: modalix
-  reason: Measure the package's components running as one pipeline.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
+  required_metrics: [avg_power_watts, energy_per_inference_joules]
 ```
 
 The script gets one `--mpk component=<archive>` per component:
@@ -153,7 +136,8 @@ time. A result well below that rate points at the pipeline, not the model.
 
 ## Per-layer profiling
 
-Every performance script explicitly enables `BenchmarkOptions.include_layer_stats`.
+The model scripts enable `BenchmarkOptions.include_layer_stats` explicitly.
+RF-DETR requests layer timings separately for each component.
 After latency and throughput measurement, Core profiles each MLA stage using
 MLA-RT and includes the compiled layer's `name`, zero-based `stage_index`, and
 `total_execution_time_us` in `benchmark_report.layer_stats`. A stage index counts
@@ -254,7 +238,7 @@ clocks, then handles each component:
 
 1. `make-benchmark-manifest` writes `performance-test.json` with the
    compilation's identity.
-2. `performance.py` writes `benchmark-report.json`, `benchmark-context.json`,
+2. The model's `performance.py` writes `benchmark-report.json`, `benchmark-context.json`,
    and `benchmark.log`.
 3. The workload is recorded in the manifest.
 4. `import-core-benchmark` stores the saved report unchanged as
@@ -292,7 +276,7 @@ result is still published, and the next push reruns only the stage that has no
 run. A dispatched run stops before measuring when its branch has since changed
 the tooling the stage keys hash; the newer push measures that build instead.
 
-Because the performance stage has its own key, editing `performance.py`, a
+Because the performance stage has its own key, editing the selected benchmark implementation, a
 `benchmark` entry, or the DevKit runtime pin remeasures performance from the
 published MPKs without recompiling. See [what a change
 reruns](adding-a-model.md#9-know-what-a-change-reruns).

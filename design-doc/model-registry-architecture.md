@@ -18,7 +18,7 @@ byte size, and SHA-256.
 | --- | --- |
 | Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
 | Model-owned `scripts/compile.sh` | Calls `llima-compile`; receives checkpoint/output paths, the profile's compiler options and `BUILD_PROFILE_ID`. |
-| Model-owned `scripts/performance.py` | Benchmarks one MPK with Neat Core on a Modalix DevKit. |
+| Shared `performance.py` or model-owned `scripts/performance.py` | Benchmarks one MPK with Neat Core, or runs a model-specific package workload. |
 | Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_llima_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, the compile matrix, and compile-output and MPK checks. CI installs the full command surface for stage planning, packaging, provenance, and publication. |
@@ -83,6 +83,7 @@ this table. Modules marked CI only are removed from the author package by
 | `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
 | `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
+| `performance.py` | validating that a declared benchmark has a model-owned runnable script |
 | `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
 | `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
 | `benchmark_metrics.py` | reading registry metrics from the saved Core report |
@@ -111,11 +112,11 @@ result depends on.
 | Stage | Model script | Key | Registry record |
 | --- | --- | --- | --- |
 | compile | `compile.py` or `compile.sh` | `compile_key` in `stage_keys.py` | compile run per component, recorded in the branch catalog |
-| performance | `performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
+| performance | `scripts/performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
 | accuracy | `accuracy.py` | `accuracy_key` in `stage_keys.py` | `model_accuracy` run under the result component's compile run |
 
 The ONNX compile key covers the invocation's `model.yaml` projection, the fidelity
-entries, the model's compile scripts, declared training code, and the compiler
+entries, the model's compile scripts, shared model loader, declared training code, and the compiler
 version. The LLiMa key covers checkpoint content, target, declared graph
 parameters and pinned compiler identity; scripts and registry helpers are not
 compile inputs. The performance and accuracy keys cover the compile runs and MPK
@@ -126,6 +127,12 @@ DevKit keys and is therefore remeasured. No key reads a model's `tests/`, so a
 changed test applies the next time its stage runs. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
+
+The YAML simplification rollout requires 47 ONNX compile invocations: two ResNet,
+eight RF-DETR, 30 standard YOLO26, six SSD-MobileNet and one Tiny Drone. The three
+LLiMa compile keys remain unchanged. Plan 47 performance runs and 39 executable
+accuracy runs; SSD/Tiny Drone accuracy remains recorded-only. These are rollout
+work items; the migration does not dispatch them while editing.
 
 ## CI flow
 

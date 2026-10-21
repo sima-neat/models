@@ -63,6 +63,7 @@ def model_repository(tmp_path: Path) -> Path:
     (tmp_path / "taxonomies" / "model-taxonomy.yaml").write_text(
         TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    shutil.copyfile(ROOT / "taxonomies/accuracy-metrics.yaml", tmp_path / "taxonomies/accuracy-metrics.yaml")
     (tmp_path / "deps").mkdir()
     (tmp_path / "deps" / "manifest.json").write_text(
         (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
@@ -228,19 +229,11 @@ def test_build_fingerprint_invalidates_model_dependency_and_compiler_changes(mod
     assert _fingerprint(model_repository, "alpha", "2.1.4") != dependency_changed
 
 
-def test_calibrated_build_fingerprint_includes_preprocessing_but_not_registry_tooling(
+def test_calibrated_build_tracks_dataset_pins_and_ignores_descriptive_preprocessing(
     model_repository: Path,
 ) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    uncalibrated = _fingerprint(model_repository, "alpha", "2.1.3")
-    model["components"][0]["preprocessing"]["pipeline"].append({
-        "op": "resize",
-        "parameters": {"height": 128, "width": 128},
-    })
-    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    assert _fingerprint(model_repository, "alpha", "2.1.3") == uncalibrated
-
     model["calibrations"] = [{
         "id": "default",
         "status": "ready",
@@ -254,25 +247,39 @@ def test_calibrated_build_fingerprint_includes_preprocessing_but_not_registry_to
     model["build_profiles"][0]["components"][0]["calibration"] = "default"
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
-    for relative in ("tools/model_registry/model.py",):
-        destination = model_repository / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
-
     first = _fingerprint(model_repository, "alpha", "2.1.3")
     model["components"][0]["preprocessing"]["pipeline"].append({
         "op": "normalize",
         "parameters": {"mean": [0.5], "std": [0.25]},
     })
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-    preprocessing_changed = _fingerprint(model_repository, "alpha", "2.1.3")
-    assert preprocessing_changed != first
+    assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
-    # Model-owned scripts calibrate; registry tooling changes must not rebuild MPKs.
-    for relative in ("model.py",):
-        tool = model_repository / "tools" / "model_registry" / relative
-        tool.write_text(tool.read_text(encoding="utf-8") + "\n# registry tooling change\n", encoding="utf-8")
-    assert _fingerprint(model_repository, "alpha", "2.1.3") == preprocessing_changed
+    for field in ("preprocessing", "postprocessing", "surgery", "recipe"):
+        model["components"][0].pop(field)
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    assert _fingerprint(model_repository, "alpha", "2.1.3") == first
+
+    model["calibrations"][0]["dataset"]["sha256"] = "e" * 64
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    assert _fingerprint(model_repository, "alpha", "2.1.3") != first
+
+
+@pytest.mark.parametrize("keep_surgery", [False, True])
+def test_onnx_loader_changes_invalidate_with_or_without_legacy_fields(
+    model_repository: Path, keep_surgery: bool
+) -> None:
+    manifest = model_repository / "models/alpha/model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    if not keep_surgery:
+        model["components"][0].pop("surgery")
+        manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
+    first = _fingerprint(model_repository, "alpha", "2.1.3")
+
+    loader = model_repository / "tools/model_registry/model.py"
+    loader.write_text(loader.read_text(encoding="utf-8") + "\n# loader change\n", encoding="utf-8")
+
+    assert _fingerprint(model_repository, "alpha", "2.1.3") != first
 
 
 def test_compile_invocation_fingerprint_includes_every_component_binding(
@@ -347,6 +354,25 @@ def test_build_fingerprint_includes_model_local_recipe_helpers(model_repository:
     assert _fingerprint(model_repository, "alpha", "2.1.3") != first
 
 
+@pytest.mark.parametrize("model_id", ["ssd_mobilenet_v1", "ssd_mobilenet_v2", "ssd_mobilenet_v3"])
+def test_ssd_quality_thresholds_invalidate_only_the_selected_build(
+    model_repository: Path, model_id: str
+) -> None:
+    directory = model_repository / "models" / model_id
+    shutil.copytree(ROOT / "models" / model_id, directory)
+    manifest = directory / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    before = {profile: compile_key(model_repository, model_id, profile, "model", "2.1.3")
+              for profile in ("w8a8", "w16a16")}
+
+    thresholds = model["build_profiles"][0]["components"][0]["parameters"]["quantization_quality_thresholds"]
+    thresholds["minimum_cosine_similarity"] = 0.99
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    assert compile_key(model_repository, model_id, "w8a8", "model", "2.1.3") != before["w8a8"]
+    assert compile_key(model_repository, model_id, "w16a16", "model", "2.1.3") == before["w16a16"]
+
+
 def test_yolo26_build_fingerprint_includes_its_training_subtree(
     model_repository: Path,
 ) -> None:
@@ -382,7 +408,6 @@ def test_build_fingerprint_ignores_non_transforming_registry_tooling_changes(
         model_repository / "tools" / "model_registry" / "__init__.py",
         model_repository / "tools" / "model_registry" / "errors.py",
         model_repository / "tools" / "model_registry" / "fetch.py",
-        model_repository / "tools" / "model_registry" / "model.py",
         model_repository / "tools" / "model_registry" / "registry.py",
         model_repository / "tools" / "model_registry" / "source.py",
         model_repository / "tools" / "runtime" / "execute.py",
@@ -504,6 +529,7 @@ def _declare_benchmark(manifest: Path, note: str) -> None:
         }
     ]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    (manifest.parent / "scripts/performance.py").touch()
 
 
 def test_matrix_records_fingerprints_without_catalog_carry_forward(model_repository: Path) -> None:
@@ -629,7 +655,7 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
         "status": "provisional",
         "result_component": "model",
         "dataset": {"id": "fixture-set", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1},
-        "metrics": ["score"],
+        "metrics": ["top1_accuracy"],
     }]
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     (manifest.parent / "scripts" / "accuracy.py").write_text("score = 0.5\n", encoding="utf-8")
@@ -647,7 +673,7 @@ def test_compile_key_ignores_benchmark_and_accuracy_declarations(model_repositor
         ("scripts/run_llima_compilation.sh", False),
         ("tools/model_registry/artifact.py", False),
         ("tools/model_registry/cli.py", False),
-        ("tools/model_registry/model.py", False),
+        ("tools/model_registry/model.py", True),
         ("tools/model_registry/compile_matrix.py", False),
         ("models/qwen3_5_0_8b/scripts/compile.sh", False),
         ("scripts/run_model_compilation.sh", True),
@@ -712,7 +738,7 @@ def test_llima_compile_key_tracks_source_compiler_and_graph_settings(tmp_path, s
     compiler = "3.0.0+develop.000000000000"
     before = compile_key(tmp_path, model_id, "w4a16", "model", compiler)
     if setting == "source":
-        model["components"][0]["source"]["files"][0]["sha256"] = value
+        next(iter(model["components"][0]["source"]["files"].values()))["sha256"] = value
     elif setting == "compiler":
         compiler = value
     else:

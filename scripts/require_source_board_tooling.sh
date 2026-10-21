@@ -30,7 +30,8 @@ def content(path: Path) -> bytes | None:
 
 changed = sorted(
     relative
-    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING}
+    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING,
+                     "tools/model_registry/performance.py", "tools/model_registry/model.py"}
     if content(Path(relative)) != content(source / relative)
 )
 if changed:

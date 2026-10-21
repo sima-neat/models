@@ -17,11 +17,20 @@ from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import ACCURACY_SCRIPT, load_and_validate_model
+from .published_metrics import load_accuracy_metrics
+from .taxonomy import find_taxonomy
 
 JsonObject = dict[str, Any]
 ACCURACY_RESULT_FILE = "accuracy-result.json"
 ACCURACY_RESULT_SCHEMA = "schemas/accuracy-result.schema.json"
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _require_registered_metrics(metrics: JsonObject, directory: Path) -> None:
+    vocabulary = load_accuracy_metrics(find_taxonomy(directory).parent / "accuracy-metrics.yaml")
+    unknown = set(metrics) - set(vocabulary)
+    if unknown:
+        raise ValidationError(f"accuracy result has unregistered metrics: {', '.join(sorted(unknown))}")
 
 
 def load_accuracy_result(path: str | Path, schema_path: str | Path) -> JsonObject:
@@ -39,6 +48,7 @@ def load_accuracy_result(path: str | Path, schema_path: str | Path) -> JsonObjec
     if errors:
         location = ".".join(str(part) for part in errors[0].absolute_path) or "result"
         raise ValidationError(f"{result_path}: accuracy result {location}: {errors[0].message}")
+    _require_registered_metrics(report["metrics"], Path(schema_path).expanduser().resolve().parent)
     dataset = report["dataset"]
     if dataset["evaluated_samples"] > dataset["available_samples"]:
         raise ValidationError(f"{result_path}: accuracy evaluated_samples exceeds available_samples")
@@ -92,7 +102,8 @@ def build_accuracy_result(
     metrics = output.get("metrics") if isinstance(output, dict) else None
     if not isinstance(metrics, dict):
         raise ValidationError("accuracy script output must contain a metrics object")
-    undeclared = set(metrics) - set(entry["metrics"])
+    _require_registered_metrics(metrics, root)
+    undeclared = set(metrics) - set(entry.get("metrics", metrics))
     if undeclared:
         raise ValidationError(f"accuracy script measured undeclared metrics: {', '.join(sorted(undeclared))}")
     missing = set(entry.get("required_metrics", ())) - set(metrics)

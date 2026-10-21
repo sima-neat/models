@@ -11,9 +11,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import yaml
 from calibration import validate_calibration
 from model_registry.fetch import Fetcher
+from model_registry.model import load_model as load_metadata
 from model_registry.source import SourceSpec
 from output_labels import restore_public_output_labels
 from quantized_snapshot import materialize_snapshot
@@ -34,7 +34,7 @@ from onnx_audit import audit_onnx  # noqa: E402
 
 
 def variant_config(variant_id: str) -> dict[str, Any]:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one YOLO26 tiny-drone variant named {variant_id!r}")

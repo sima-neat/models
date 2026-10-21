@@ -38,8 +38,8 @@ MODEL_COMPILE_INPUT_PATHS = {
     ),
 }
 
-# The runner used by ONNX builds.
-COMPILE_TOOLING = ("scripts/run_model_compilation.sh",)
+# Shared code used by ONNX builds.
+COMPILE_TOOLING = ("scripts/run_model_compilation.sh", "tools/model_registry/model.py")
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
@@ -71,6 +71,9 @@ ACCURACY_TOOLING = (
     "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",
     "tools/model_registry/accuracy_result.py",
+    "tools/model_registry/published_metrics.py",
+    "tools/model_registry/taxonomy.py",
+    "taxonomies/accuracy-metrics.yaml",
     ACCURACY_RESULT_SCHEMA,
 )
 
@@ -158,15 +161,14 @@ def _compile_consumed_fidelity(model: dict[str, Any], profile_id: str) -> list[d
 
 
 def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: component[key]
-        for key in ("id", "source", "interface", "surgery", "recipe", "depends_on")
-        if key in component
-    }
+    projection = {key: component[key] for key in ("id", "source", "depends_on") if key in component}
+    if component["interface"].get("entrypoints"):
+        projection["interface"] = component["interface"]  # Explicit multi-component boundary contract.
+    return projection
 
 
 def _binding_compile_projection(
-    model: dict[str, Any], component: dict[str, Any], binding: dict[str, Any]
+    model: dict[str, Any], binding: dict[str, Any]
 ) -> dict[str, Any]:
     return {
         **{
@@ -175,10 +177,7 @@ def _binding_compile_projection(
             if key in binding
         },
         **(
-            {
-                "calibration": _calibration_projection(model, binding),
-                "preprocessing": component.get("preprocessing", {}),
-            }
+            {"calibration": _calibration_projection(model, binding)}
             if binding.get("calibration") is not None
             else {}
         ),
@@ -229,7 +228,7 @@ def compile_key(
             "components": [
                 {
                     "component": _component_compile_projection(components[component_id]),
-                    "binding": _binding_compile_projection(model, components[component_id], bindings[component_id]),
+                    "binding": _binding_compile_projection(model, bindings[component_id]),
                 }
                 for component_id in invocation["components"]
             ],

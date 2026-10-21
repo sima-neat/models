@@ -189,6 +189,7 @@ registry stages. It needs only `id`, `scope`, and `build_profiles`; other
 fields are free-form. No stage runs it and it has no stage key. SSD-MobileNet
 uses such an entry to record its quantization evaluation.
 
-A recipe that reads settings from a recorded entry, as the SSD-MobileNet
-recipes read `compiler_raw_head_thresholds`, does not recompile when those
-settings change, because `accuracy` entries are not compile inputs.
+Compiler-enforced settings belong in the build profile's component `parameters`,
+which enter the compile key. SSD-MobileNet keeps its unchanged raw-head gates in
+`parameters.quantization_quality_thresholds`; its recorded accuracy entry retains
+the evaluation evidence.

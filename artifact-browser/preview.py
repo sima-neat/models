@@ -39,6 +39,7 @@ from model_registry.model import (  # noqa: E402
     mpk_filename,
     profile_component_for,
 )
+from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.published_metrics import published_metrics_by_model  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
@@ -424,7 +425,9 @@ def _accuracy_result(model: dict, build: dict) -> dict[str, Any]:
     }
     key = (model["id"], build["build_profile_id"])
     metrics = {}
-    for name in config["metrics"]:
+    expected_metrics = load_model_tests(ROOT / "models" / model["id"]).get("accuracy", {}).get(
+        "expected", {}).get(build["build_profile_id"], {})
+    for name in config.get("metrics", expected_metrics or config.get("required_metrics", [])):
         expected = published.get(name, 0.3 + _fraction("reference", *key, name) * 0.6)
         value = round(expected * (0.9 + _fraction("accuracy", *key, name) * 0.08), 4)
         metrics[name] = {"value": value, "unit": "ratio", "direction": "higher"}

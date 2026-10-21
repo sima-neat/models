@@ -6,11 +6,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
-import yaml
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.model import load_models
+from model_registry.model import load_model, load_models
 from model_registry.package import assemble_package
 from model_registry.registry import (
     RegistryPublicationError,
@@ -188,7 +187,7 @@ def _packaged_result(tmp_path: Path) -> Path:
 
 
 def _add_fidelity_result(dist: Path) -> Path:
-    config = yaml.safe_load((ROOT / "models" / "resnet_50" / "model.yaml").read_text(encoding="utf-8"))["fidelity"][0]
+    config = load_model(ROOT / "models" / "resnet_50")["fidelity"][0]
     path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
     path.write_text(
         json.dumps(

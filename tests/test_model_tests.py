@@ -9,12 +9,15 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
+from model_registry.errors import ValidationError
 from model_registry.model_tests import (
     TEST_GROUPS,
     load_model_tests,
     measured_shortfalls,
     skip_reason,
     stage_test_file,
+    validate_model_tests,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -264,3 +267,52 @@ def test_measured_shortfalls_take_the_package_of_a_package_result(tmp_path: Path
     assert measured_shortfalls(tmp_path, "performance", measured(44)) == [
         "throughput_fps 44 is below 50 by more than 10%"
     ]
+
+
+@pytest.mark.parametrize(
+    ("expected", "error"),
+    [
+        ({"w8a8": {"top1_accuracy": 0.8, "top5_accuracy": 0.95}}, None),
+        ({}, "accuracy.expected.w8a8 lacks top1_accuracy"),
+        ({"w8a8": {}}, "accuracy.expected.w8a8"),
+        ({"w8a8": {"top5_accuracy": 0.95}}, "lacks top1_accuracy"),
+        ({"w8a8": {"top1_accuracy": 0.8, "unknown_metric": 0.9}}, "unregistered metrics: unknown_metric"),
+        ({"w8a8": {"top1_accuracy": float("nan")}}, "must be a finite number"),
+        ({"w8a8": {"top1_accuracy": float("inf")}}, "must be a finite number"),
+    ],
+)
+def test_accuracy_expectations_remain_a_gate_without_a_declared_metric_list(
+    model_dir: Path, expected: dict, error: str | None
+) -> None:
+    tests = model_dir / "tests"
+    (tests / "build").mkdir()
+    (tests / "build" / "test_compile.py").write_text("", encoding="utf-8")
+    (tests / "measure" / "test_accuracy.py").write_text("", encoding="utf-8")
+    (tests / "tests.yaml").write_text(
+        yaml.safe_dump({"compile": {"run_tests": True}, "accuracy": {"run_tests": True, "expected": expected}}),
+        encoding="utf-8",
+    )
+    model = {
+        "benchmark": [],
+        "accuracy": [{"engine": "devkit_script", "build_profiles": ["w8a8"], "required_metrics": ["top1_accuracy"]}],
+    }
+    if error is None:
+        validate_model_tests(model_dir, model, ROOT / "schemas" / "model-tests.schema.json")
+    else:
+        with pytest.raises(ValidationError, match=error):
+            validate_model_tests(model_dir, model, ROOT / "schemas" / "model-tests.schema.json")
+
+
+def test_accuracy_expectations_may_be_skipped_explicitly(model_dir: Path) -> None:
+    (model_dir / "tests" / "build").mkdir()
+    (model_dir / "tests" / "build" / "test_compile.py").write_text("", encoding="utf-8")
+    (model_dir / "tests" / "tests.yaml").write_text(
+        "compile:\n  run_tests: true\naccuracy:\n  run_tests: false\n  skip_reason: no published measurement\n",
+        encoding="utf-8",
+    )
+    model = {
+        "benchmark": [],
+        "accuracy": [{"engine": "devkit_script", "build_profiles": ["w8a8"], "required_metrics": ["top1_accuracy"]}],
+    }
+
+    validate_model_tests(model_dir, model, ROOT / "schemas" / "model-tests.schema.json")

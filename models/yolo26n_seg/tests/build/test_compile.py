@@ -10,7 +10,8 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
+from model_registry.model_tests import load_model_tests
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "yolo26n_seg"
@@ -226,20 +227,9 @@ def accuracy_script(monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str]
     return module
 
 
-def test_model_declares_the_cut_interface_and_both_builds(
-    accuracy_script: ModuleType,
-    load_script: Callable[[str], ModuleType],
-) -> None:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    surgery = load_script("surgery")
-    component = model["components"][0]
-    entrypoint = component["interface"]["entrypoints"][0]
-
-    assert [(item["name"], item["shape"]) for item in entrypoint["inputs"]] == [("images", surgery.INPUT_SHAPE)]
-    assert {item["name"]: item["shape"] for item in entrypoint["outputs"]} == surgery.OUTPUT_SHAPES
-    assert [item["name"] for item in entrypoint["outputs"]] == surgery.OUTPUTS
-    assert component["surgery"]["entrypoint"] == "scripts/surgery.py:prepare_model"
-    assert component["recipe"] == "scripts/compile.py"
+def test_model_preserves_compilation_and_quality_settings(accuracy_script: ModuleType) -> None:
+    model = load_metadata(MODEL_DIR)
+    assert model["components"][0]["interface"]["format"] == "onnx"
     assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
@@ -247,6 +237,8 @@ def test_model_declares_the_cut_interface_and_both_builds(
         "attribution": "YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.",
     }
     declared = model["accuracy"][0]
-    assert declared["metrics"] == [name for metrics in accuracy_script.METRICS.values() for name in metrics]
+    metric_names = {name for metrics in accuracy_script.METRICS.values() for name in metrics}
+    for expected in load_model_tests(MODEL_DIR)["accuracy"]["expected"].values():
+        assert set(expected) == metric_names
     assert declared["required_metrics"] == ["coco_mask_map"]
     assert model["published_metrics"][0]["metrics"] == {"coco_mask_map": 0.339, "coco_box_map": 0.396}

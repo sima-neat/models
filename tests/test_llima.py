@@ -371,6 +371,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
             revision = "b" * 40 if member["path"].startswith(parameters["draft_model_path"] + "/") else "a" * 40
             member["uri"] = f"{repository}@{revision}/{revision_path.split('/', 1)[1]}"
     path.write_text(yaml.safe_dump(model, sort_keys=False))
+    model = load_and_validate_model(model_dir)
     source = deployment(tmp_path / "deployment")
     config_path = source / "devkit/vlm_config.json"
     config = json.loads(config_path.read_text())

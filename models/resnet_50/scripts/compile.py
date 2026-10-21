@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 import onnxruntime as ort
-import yaml
 from afe.apis.defines import (
     CalibrationMethod,
     InputName,
@@ -26,6 +25,7 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_samples, fidelity_names, preprocess_image, read_images
+from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 
 LOG = logging.getLogger("resnet_50.compile")
@@ -35,7 +35,7 @@ COMPONENT_ID = "model"
 
 
 def _metadata() -> dict[str, Any]:
-    return yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    return load_metadata(MODEL_DIR)
 
 
 def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:

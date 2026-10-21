@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import runpy
 import shutil
 import socket
 import subprocess
@@ -1192,6 +1193,14 @@ def test_benchmark_rendering_is_schema_versioned_and_charted() -> None:
     assert "fallbackMetricLabel" in script
     assert "mla_memory_peak_delta_mib" in script
     assert "time_to_first_inference_ms" in script
+
+
+def test_preview_accuracy_uses_the_regression_metrics_without_an_authored_inventory() -> None:
+    preview = runpy.run_path(str(BROWSER / "preview.py"))
+    result = preview["_accuracy_result"](load_models(ROOT)["resnet_50"], {
+        "build_profile_id": "w8a8", "component_id": "model", "artifact_sha256": "a" * 64,
+    })
+    assert set(result["metrics"]) == {"top1_accuracy", "top5_accuracy"}
 
 
 def test_accuracy_result_is_rendered_with_scope_and_reference_comparison() -> None:

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -253,12 +253,13 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
 
 
 def _metadata() -> dict:
-    return yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    return load_metadata(MODEL_DIR)
 
 
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
+    compile_module._validate_boundary_contract(_metadata())
     parameters = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
 
     assert parameters == {
@@ -274,6 +275,24 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
         compile_module._quantization_config({"precision": "int8"})
     with pytest.raises(ValueError, match="W8A8 component must declare calibration_bins"):
         compile_module._quantization_config({"precision": "w8a8"})
+
+
+@pytest.mark.parametrize("field", ["shape", "dtype", "name"])
+def test_compile_rejects_mismatched_boundary_contract(
+    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    metadata = _metadata()
+    tensor = metadata["components"][1]["interface"]["entrypoints"][0]["inputs"][0]
+    shape = tensor["shape"]
+    # Shape and dtype changes preserve the byte count, which alone cannot validate a connection.
+    tensor[field] = {"shape": [shape[0], shape[1], shape[2] * shape[3], 1],
+                     "dtype": "int32", "name": "wrong_features"}[field]
+    monkeypatch.setattr(compile_module, "load_metadata", lambda _: metadata)
+
+    with pytest.raises(ValueError, match="decoder inputs do not match the RF-DETR graph boundary"):
+        compile_module.compile_model(tmp_path / "source.onnx", "w8a16_w16a16", None,
+                                     tmp_path / "images", tmp_path / "output")
 
 
 def test_the_decoder_calibrates_in_every_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -383,7 +402,7 @@ def test_surgery_simplifies_only_the_decoder_partition() -> None:
 
 
 def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    model = load_metadata(MODEL_DIR)
     invocation = model["build_profiles"][0]["compile_invocations"][0]
     correctness = model["fidelity"][0]
     benchmarks = model["benchmark"]

@@ -181,7 +181,7 @@ def test_performance_runs_only_at_the_full_mla_clock() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
     clock = script.index('MLA_DEVFREQ=/sys/class/devfreq/5000000.mla')
 
-    assert clock < script.index('"$MODEL_DIR/scripts/performance.py"')
+    assert clock < script.index('"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"')
     assert 'if (( $(cat "$MLA_DEVFREQ/cur_freq") < MLA_FREQUENCY_HZ )); then' in script
     assert 'sudo -n tee "$MLA_DEVFREQ/userspace/set_freq"' in script
     assert "if (( mla_frequency_hz != MLA_FREQUENCY_HZ )); then" in script
@@ -191,10 +191,16 @@ def test_performance_runs_only_at_the_full_cpu_clock() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
     clock = script.index("CPU_CPUFREQ=/sys/devices/system/cpu/cpufreq/policy0")
 
-    assert clock < script.index('"$MODEL_DIR/scripts/performance.py"')
+    assert clock < script.index('"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"')
     assert 'if (( $(cat "$CPU_CPUFREQ/scaling_cur_freq") != CPU_FREQUENCY_KHZ )); then' in script
     assert 'sudo -n tee "$CPU_CPUFREQ/scaling_setspeed"' in script
     assert "if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then" in script
+
+
+def test_performance_runs_the_model_owned_script() -> None:
+    script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
+    assert '"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"' in script
+    assert '"${mpks[@]}" --output "$output"' in script
 
 def test_devkit_stages_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark-dispatched-model"]
@@ -497,14 +503,19 @@ def test_cleanup_removes_input_and_both_evidence_artifacts() -> None:
         assert f"{prefix}$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" in script
 
 
-def test_board_runs_require_the_measured_revisions_tooling(tmp_path) -> None:
+@pytest.mark.parametrize("relative", [
+    "tools/model_registry/benchmark_publication.py", "tools/model_registry/performance.py",
+    "tools/model_registry/model.py",
+])
+def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:
     stage = load_workflow()["jobs"]["stage-dispatched-benchmark"]
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
     assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
     source = tmp_path / "_source"
-    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING}:
-        (source / relative).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / relative, source / relative)
+    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING,
+                 "tools/model_registry/performance.py", "tools/model_registry/model.py"}:
+        (source / item).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / item, source / item)
     python_bin = tmp_path / "bin"
     python_bin.mkdir()
     # The CI step's `python` is the one with model-registry installed.
@@ -519,8 +530,8 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path) -> None:
         )
 
     assert check().returncode == 0
-    changed = source / "tools" / "model_registry" / "benchmark_publication.py"
+    changed = source / relative
     changed.write_text(changed.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
     result = check()
     assert result.returncode != 0
-    assert "tools/model_registry/benchmark_publication.py" in result.stderr
+    assert relative in result.stderr

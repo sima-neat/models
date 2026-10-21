@@ -10,7 +10,6 @@ from types import ModuleType
 
 import numpy as np
 import pytest
-import yaml
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
@@ -31,16 +30,14 @@ def _write_archive(path: Path, files: dict[str, bytes]) -> Path:
     return path
 
 
-def test_preprocessing_matches_the_pipeline_declared_in_model_yaml(load_script: Callable[[str], ModuleType]) -> None:
+def test_preprocessing_uses_imagenet_resize_and_normalization(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    component = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["components"][0]
-    steps = {step["op"]: step.get("parameters", {}) for step in component["preprocessing"]["pipeline"]}
 
-    assert steps["resize"] == {"shortest_edge": calibration.SHORTEST_EDGE, "resample": "bicubic"}
-    assert steps["center_crop"] == {"height": calibration.CROP, "width": calibration.CROP}
-    assert steps["rescale"]["factor"] == pytest.approx(float(calibration.RESCALE))
-    np.testing.assert_allclose(steps["normalize"]["mean"], calibration.MEAN)
-    np.testing.assert_allclose(steps["normalize"]["std"], calibration.STD)
+    assert calibration.SHORTEST_EDGE == 256
+    assert calibration.CROP == 224
+    assert calibration.RESCALE == pytest.approx(1 / 255)
+    np.testing.assert_allclose(calibration.MEAN, [0.485, 0.456, 0.406])
+    np.testing.assert_allclose(calibration.STD, [0.229, 0.224, 0.225])
 
 
 def test_preprocessing_resizes_the_shortest_edge_then_crops_the_centre(

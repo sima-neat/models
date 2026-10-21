@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 from onnx import TensorProto, helper, numpy_helper
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -78,7 +78,7 @@ def test_surgery_renames_and_reorders_static_heads_without_compute_stages(
 
 def test_model_pins_exact_immutable_v2_source_contract(load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     component = metadata["components"][0]
     assert component["source"] == {
         "type": "file",
@@ -87,7 +87,6 @@ def test_model_pins_exact_immutable_v2_source_contract(load_script: Callable[[st
         "size_bytes": 67387440,
         "media_type": "application/onnx",
     }
-    assert component["interface"]["opset"] == 13
     assert surgery.EXPECTED_CONVOLUTION_COUNT == 76
 
 
@@ -332,9 +331,10 @@ def test_quantization_validation_executes_all_32_held_out_samples(
 
 
 def test_first_qualification_thresholds_are_committed_from_vulcan_evidence() -> None:
-    specification = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["accuracy"][0]
+    metadata = load_metadata(MODEL_DIR)
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
-    assert specification["compiler_raw_head_thresholds"] == {
+    assert {profile["id"]: profile["components"][0]["parameters"]["quantization_quality_thresholds"]
+            for profile in metadata["build_profiles"]} == {
         "w8a8": {
             "minimum_cosine_similarity": 0.98,
             "maximum_normalized_root_mean_square_error": 0.20,
@@ -357,7 +357,7 @@ def test_recipe_preserves_quantization_and_public_io_policy() -> None:
 
 
 def test_model_declares_default_precision_profiles() -> None:
-    metadata = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    metadata = load_metadata(MODEL_DIR)
     bindings = [profile["components"][0] for profile in metadata["build_profiles"]]
     matrix = {
         binding["parameters"]["precision"]

@@ -15,7 +15,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-import yaml
 from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
@@ -32,6 +31,7 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import IMAGE_SIZE, calibration_images
 from model_registry.dependencies import resolve_model_compiler
+from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, prepare_model
 
@@ -45,7 +45,7 @@ OUTPUT_BYTES = [math.prod(OUTPUT_SHAPES[name]) * 4 for name in OUTPUTS]
 
 
 def _parameters(profile_id: str) -> dict[str, Any]:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    model = load_metadata(MODEL_DIR)
     profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")

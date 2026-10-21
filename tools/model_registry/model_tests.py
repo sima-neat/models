@@ -8,6 +8,7 @@ changing a test reruns nothing.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from jsonschema import Draft202012Validator
 from .accuracy_config import DEVKIT_ACCURACY_ENGINE
 from .benchmark_metrics import registry_metrics
 from .errors import ValidationError
+from .published_metrics import load_accuracy_metrics
+from .taxonomy import find_taxonomy
 
 # How far a measured value may fall below the value tests.yaml expects and still pass, relative to that value.
 ACCURACY_ALLOWED_DROP = 0.05
@@ -152,11 +155,10 @@ def _devkit_accuracy(model: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _measured_builds(model: dict[str, Any], stage: str) -> dict[tuple[str, ...], list[str]]:
-    """Each build the stage measures, with the metrics expected of it: accuracy per build profile, every
-    declared metric; performance per build profile and benchmarked component or package, its throughput."""
+    """Each measured build and its mandatory expectations: accuracy per profile, performance per scope."""
     if stage == "accuracy":
         return {
-            (profile,): list(entry["metrics"])
+            (profile,): list(entry.get("metrics", entry.get("required_metrics", ())))
             for entry in _devkit_accuracy(model)
             for profile in entry["build_profiles"]
         }
@@ -177,3 +179,16 @@ def _require_expected_values(
         missing = [metric for metric in metrics if metric not in values]
         if missing:
             raise ValidationError(f"{path}: {stage}.expected.{'.'.join(build)} lacks {', '.join(missing)}")
+        if not values:
+            raise ValidationError(f"{path}: {stage}.expected.{'.'.join(build)} must contain expected values")
+    if stage == "accuracy":
+        vocabulary = load_accuracy_metrics(find_taxonomy(path).parent / "accuracy-metrics.yaml")
+        for profile, values in expected.items():
+            unknown = set(values) - set(vocabulary)
+            if unknown:
+                raise ValidationError(
+                    f"{path}: accuracy.expected.{profile} has unregistered metrics: {', '.join(sorted(unknown))}"
+                )
+            for metric, value in values.items():
+                if not math.isfinite(value):
+                    raise ValidationError(f"{path}: accuracy.expected.{profile}.{metric} must be a finite number")
