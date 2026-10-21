@@ -1,8 +1,6 @@
-id: gemma_4_e2b_it_textonly_mtp
 build-on-demand: true
 display_name: Gemma 4 E2B Text MTP
-description: Generates text using a draft assistant whose proposals are checked by
-  the target model.
+description: Generates text using a draft assistant whose proposals are checked by the target model.
 model_type: llm
 tasks:
 - text_generation
@@ -11,23 +9,18 @@ modalities:
   - text
   outputs:
   - text
-architecture:
-  id: gemma
-owners:
-- '@sima-neat/models'
+architecture: gemma
 license:
   spdx: LicenseRef-Gemma
   redistribution: restricted
-  attribution: Derived from google/gemma-4-E2B-it under the Gemma Terms of Use; text-only
-    GPTQ checkpoint provided by SiMa.ai. Includes the Google Gemma 4 E2B MTP assistant.
+  attribution: Derived from google/gemma-4-E2B-it under the Gemma Terms of Use; text-only GPTQ checkpoint
+    provided by SiMa.ai. Includes the Google Gemma 4 E2B MTP assistant.
 upstream:
   repository: https://huggingface.co/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors
   revision: db99280a9577eb98fa639bfa362ef28750c1eb64
-  model_card: https://huggingface.co/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors
   derived_from: https://huggingface.co/google/gemma-4-E2B-it
 components:
 - id: model
-  role: inference
   source:
     type: file_set
     entrypoint: Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors/config.json
@@ -76,34 +69,10 @@ components:
       uri: hf://models/google/gemma-4-E2B-it-assistant@2d874ef7d29f9a30599a1e4b3c1cbc9595f005df/tokenizer_config.json
       sha256: 089594a3924fcfd4cb1c596a7906fbf476193519e5198f780912eed02b177e42
       size_bytes: 822
-  interface:
-    format: huggingface
-    entrypoints:
-    - id: generate
-      inputs:
-      - name: prompt
-        dtype: string
-        shape: []
-      outputs:
-      - name: text
-        dtype: string
-        shape: []
-      streaming:
-        mode: autoregressive
-        reset: true
-    shape_profiles: []
-  preprocessing:
-    pipeline: []
-  postprocessing:
-    pipeline: []
-  surgery:
-    type: none
-  recipe: scripts/compile.sh
-resources: []
-calibrations: []
+  format: huggingface
+  entrypoint: generate
 build_profiles:
 - id: w4a16
-  target: modalix
   runner_class: expensive
   benchmark_baseline:
     model_id: gemma_4_e2b_it_textonly
@@ -117,21 +86,3 @@ build_profiles:
       draft_model_path: gemma-4-E2B-it-assistant
       speculative_method: gemma4_mtp
       draft_precision: a16w8
-compositions:
-- id: default
-  type: single
-  component: model
-  entrypoint: generate
-packages:
-- id: default
-  default: true
-  components:
-  - model
-  resources: []
-  build_profiles:
-  - w4a16
-  composition: default
-fidelity: []
-accuracy: []
-benchmark: []
-maturity: experimental

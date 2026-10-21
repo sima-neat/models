@@ -25,9 +25,9 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import yaml
+from model_registry.model import load_model
 
-model = yaml.safe_load((Path(sys.argv[1]).resolve().parents[1] / "model.yaml").read_text())
+model = load_model(Path(sys.argv[1]).resolve().parents[1])
 profile_id = os.environ.get("BUILD_PROFILE_ID", model["build_profiles"][0]["id"])
 profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
 parameters = profile["components"][0]["parameters"]
