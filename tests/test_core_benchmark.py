@@ -483,7 +483,8 @@ def test_every_model_requests_and_saves_layer_stats(script, monkeypatch, tmp_pat
 
     pyneat = SimpleNamespace(
         __version__="test", Model=Model, ModelOptions=SimpleNamespace, BenchmarkOptions=SimpleNamespace,
-        BoxDecodeType=SimpleNamespace(YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"),
+        BoxDecodeType=SimpleNamespace(
+            YoloV8="YoloV8", YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"),
     )
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
     monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path)])
