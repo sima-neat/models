@@ -33,8 +33,9 @@ conversion, and normalization turned off.
 5. Remove overlapping boxes of the same class with non-maximum suppression at an overlap threshold of 0.7.
 6. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
 
-Class index i is the i-th COCO category ID in ascending order. Neat's existing
-`YoloV8` box decoder handles these outputs, including non-maximum suppression.
+Class index i is the i-th COCO category ID in ascending order. Neat's `YoloV8`
+box decoder decodes these outputs; give its score threshold as a logit
+(-1.0986 for 0.25).
 
 ## Building applications
 
