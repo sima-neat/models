@@ -93,7 +93,7 @@ this table. Modules marked CI only are removed from the author package by
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
-| `runner_approval.py` | authorizing requested compile runner classes |
+| `runner_approval.py` | authorizing requested compile runner classes/markets and selecting optional runner audit fields for durable publication |
 | `model_tests.py` | each model's test files and `tests/tests.yaml`, the comparison of a report's metrics with its build profile's expected values, and the outcomes a stage's tests report |
 | `errors.py` | the error types every module raises |
 

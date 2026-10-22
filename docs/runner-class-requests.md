@@ -189,7 +189,13 @@ selection also permits models with `build-on-demand: true`.
 
 The compile job's **Compile runner** summary shows requested, selected and actual
 market, runner name, EC2 instance ID/type, approval identity and policy revision.
-The same identity fields are written into artifact provenance. A default Spot
+The same identity fields persist in the registry's `model_compile` run parameters
+and the package manifest's `provenance`, also published in the `model_package`
+run parameters, beyond workflow-artifact retention.
+They describe the runner that actually compiled the result, not a later runner
+that reuses it. Older builds can omit these fields. Runner audit metadata does
+not change the compile fingerprint, compile-run fingerprint or compiled file
+checksums; the package manifest's own digest reflects its provenance content. A default Spot
 request needs no approval identity, but still records the policy revision. Link
 the first staging run and its summary in your Models PR, and ask the infrastructure
 owner to confirm EC2 lifecycle and cleanup. Local validation or admission alone

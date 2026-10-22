@@ -128,3 +128,21 @@ def authorize_runner_matrix(
         entry["runner_approval_spec_revision"] = revision
         authorized.append(entry)
     return {"include": authorized}
+
+
+RUNNER_PROVENANCE_FIELDS = (
+    "requested_runner_class", "runner_class", "requested_runner_market", "runner_market",
+    "runner_name", "runner_instance_id", "runner_instance_type", "runner_actual_market",
+    "runner_approval_id", "runner_approval_spec_revision",
+)
+
+
+def runner_provenance(provenance: dict[str, Any]) -> dict[str, str]:
+    """Carry optional runner audit fields without inventing values for older builds."""
+    result = {}
+    for field in RUNNER_PROVENANCE_FIELDS:
+        if field in provenance:
+            if not isinstance(provenance[field], str):
+                raise ValidationError(f"runner provenance {field} must be a string")
+            result[field] = provenance[field]
+    return result
