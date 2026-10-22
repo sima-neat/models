@@ -27,11 +27,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(#352): replace with the source block the Vulcan Model Convert workflow prints for yolov8s.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
-    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
-    size_bytes: 9917015
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolov8s/dad89b71b8c06c43c15617f5c95f97c4b467529d9fe3a3bbcf26b30ac5f17d8d/39727232557-1/model.onnx
+    sha256: dad89b71b8c06c43c15617f5c95f97c4b467529d9fe3a3bbcf26b30ac5f17d8d
+    size_bytes: 44855530
 
 calibrations:
 - id: coco-2017-cal
