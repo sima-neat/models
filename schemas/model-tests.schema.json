@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/sima-neat/models/schemas/model-tests.schema.json",
   "title": "SiMa Neat model tests",
-  "description": "One model's tests/tests.yaml: whether each stage's test file runs, and what the model is expected to deliver on a DevKit. build/ checks conversion and compilation; measure/ checks accuracy and performance.",
+  "description": "One model's tests/tests.yaml: whether each stage's test file runs, and what the model is expected to deliver on a DevKit. build/ checks conversion and compilation; benchmark/ checks accuracy and performance.",
   "type": "object",
   "additionalProperties": false,
   "required": ["compile"],
@@ -10,31 +10,32 @@
     "conversion": {"$ref": "#/$defs/buildStage"},
     "compile": {"$ref": "#/$defs/buildStage"},
     "accuracy": {
-      "$ref": "#/$defs/measureStage",
+      "$ref": "#/$defs/benchmarkStage",
       "unevaluatedProperties": false,
       "properties": {
         "expected": {
-          "description": "Per build profile, the value of every metric the accuracy result reports.",
+          "description": "Per build profile and dataset name from model.yaml's accuracy, the value of every metric the accuracy report gives on that dataset.",
           "type": "object",
-          "additionalProperties": {"$ref": "#/$defs/metricValues"}
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+            "additionalProperties": {"$ref": "#/$defs/metricValues"}
+          }
         }
       }
     },
     "performance": {
-      "$ref": "#/$defs/measureStage",
+      "$ref": "#/$defs/benchmarkStage",
       "unevaluatedProperties": false,
       "properties": {
         "expected": {
-          "description": "Per build profile and benchmarked component or package, the throughput its performance result reports.",
+          "description": "Per build profile, the whole model's throughput and any other performance metric its report gives.",
           "type": "object",
           "additionalProperties": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["throughput_fps"],
-              "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
-            }
+            "$ref": "#/$defs/metricValues",
+            "required": ["throughput_fps"],
+            "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
           }
         }
       }
@@ -58,7 +59,7 @@
       "then": {"required": ["skip_reason"]},
       "else": {"not": {"required": ["skip_reason"]}}
     },
-    "measureStage": {
+    "benchmarkStage": {
       "type": "object",
       "required": ["run_tests"],
       "properties": {

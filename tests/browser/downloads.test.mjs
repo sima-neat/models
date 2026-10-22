@@ -210,9 +210,9 @@ test('Hugging Face deployment links require immutable revisions and safe reposit
   ]) assert.equal(huggingFaceLocation({metadata: {huggingface: location}}), null);
 });
 
-test('JSON indexes are folders even when older metadata omitted the explicit layout', () => {
-  assert.equal(artifactDelivery({media_type: 'application/json; charset=utf-8', size_bytes: 40}), 'directory');
-  assert.equal(deploymentSize({media_type: 'application/json', size_bytes: 40}), undefined);
+test('artifact layout selects folder or archive delivery', () => {
+  assert.equal(artifactDelivery({metadata: {layout: 'directory', deployment_size_bytes: 80}, size_bytes: 40}), 'directory');
+  assert.equal(deploymentSize({metadata: {layout: 'directory', deployment_size_bytes: 80}, size_bytes: 40}), 80);
   assert.equal(artifactDelivery({media_type: 'application/zip'}), 'archive');
 });
 

@@ -65,7 +65,7 @@ def run_jq(program: str, document: object) -> object:
 def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     on = load(WORKFLOW)["on"]
 
-    # A push that changes no compile input still publishes its catalog; its stage keys select no work.
+    # A push that changes no compile input still publishes its catalog; its fingerprints select no work.
     assert "push" in on and not on["push"]
 
 
@@ -105,7 +105,8 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "compile",
         "publish-catalog",
         "publish-candidates",
-        "measure",
+        "benchmark",
+        "benchmark-without-compiles",
         "report-partial-publication",
     }
 
@@ -187,7 +188,7 @@ def test_model_compiler_is_resolved_before_requesting_a_runner() -> None:
     assert select["outputs"]["model_compiler_version"] == "${{ steps.compiler.outputs.version }}"
     assert select["outputs"]["model_compiler_label"] == "${{ steps.compiler.outputs.label }}"
     assert select["outputs"]["model_compiler_identity"] == "${{ steps.compiler.outputs.identity }}"
-    plan = step(jobs["plan"], "Compare stage keys with published runs")
+    plan = step(jobs["plan"], "Compare fingerprints with published runs")
     assert plan["env"]["COMPILER_IDENTITY"] == "${{ needs.select.outputs.model_compiler_identity }}"
     build = jobs["compile"]["with"]
     assert build["model_compiler_version"] == "${{ needs.select.outputs.model_compiler_version }}"
@@ -223,7 +224,7 @@ def test_targeted_profile_or_component_dispatch_skips_catalog_updates() -> None:
 def test_only_explicit_manual_model_selection_enables_on_demand_builds(
     manual: bool, models: str, profiles: str, expected: bool,
 ) -> None:
-    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")
     selection = plan["run"].split('plan="$(model-registry plan-stages', 1)[0]
     result = subprocess.run(
         ["bash", "-c", selection + '\nprintf "%s\\n" "${scope_args[@]}"'],
@@ -244,7 +245,7 @@ def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
     assert "model-registry resolve-base" in base["run"]
     assert ".base_branches | join(\",\")" in base["run"]
     assert base["env"]["PREFERRED_BRANCH"] == "${{ inputs.base_branch }}"
-    plan = step(jobs["plan"], "Compare stage keys with published runs")
+    plan = step(jobs["plan"], "Compare fingerprints with published runs")
     assert plan["env"]["BASE_BRANCHES"] == "${{ needs.select.outputs.base_branches }}"
     assert '--base-branches "$BASE_BRANCHES"' in plan["run"]
     assert jobs["compile"]["with"]["base_branches"] == "${{ needs.select.outputs.base_branches }}"
@@ -259,9 +260,9 @@ def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
     assert "if" not in jobs["plan"]
 
 
-def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
+def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     plan_job = load(WORKFLOW)["jobs"]["plan"]
-    plan = step(plan_job, "Compare stage keys with published runs")
+    plan = step(plan_job, "Compare fingerprints with published runs")
 
     assert plan_job["needs"] == ["select", "portal"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
@@ -276,19 +277,19 @@ def test_plan_compares_stage_keys_with_the_environment_registry() -> None:
     assert plan_job["outputs"] == {
         "compile_count": "${{ steps.plan.outputs.compile_count }}",
         "compile_matrix": "${{ steps.plan.outputs.compile_matrix }}",
-        "measure_count": "${{ steps.plan.outputs.measure_count }}",
-        "measure_matrix": "${{ steps.plan.outputs.measure_matrix }}",
+        "benchmark_count": "${{ steps.plan.outputs.benchmark_count }}",
+        "benchmark_matrix": "${{ steps.plan.outputs.benchmark_matrix }}",
         "candidate_count": "${{ steps.plan.outputs.candidate_count }}",
         "candidate_matrix": "${{ steps.plan.outputs.candidate_matrix }}",
     }
 
 
-def test_reused_build_stages_are_measured_on_modalix_only() -> None:
-    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
-    program = jq_program(plan["run"], 'measure_matrix="$(jq -c')
+def test_reused_builds_are_benchmarked_on_modalix_only() -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")
+    program = jq_program(plan["run"], 'benchmark_matrix="$(jq -c')
     document = {
         "compile": {"include": []},
-        "measure": {"include": [{"model_id": "a", "target": "modalix"}, {"model_id": "b", "target": "davinci"}]},
+        "benchmark": {"include": [{"model_id": "a", "target": "modalix"}, {"model_id": "b", "target": "davinci"}]},
     }
 
     assert run_jq(program, document) == {"include": [{"model_id": "a", "target": "modalix"}]}
@@ -353,7 +354,7 @@ def test_targeted_candidates_publish_feature_requirements_before_compiling(branc
 
 
 def test_native_candidates_are_not_published_again_by_the_multi_invocation_job():
-    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare stage keys with published runs")
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")
     program = jq_program(plan["run"], 'candidate_matrix="$(jq -c')
     native = {"model_id": "qwen", "build_profile_id": "w4a16", "build_on_demand": True,
               "runner_script": "scripts/run_llima_compilation.sh"}
@@ -441,46 +442,80 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event", "environment", "catalog_result", "measure_count", "expected"),
+    ("event", "environment", "publishable", "catalog_result", "benchmark_count", "expected"),
     [
-        ("push", "staging", "success", "1", True),
-        ("workflow_dispatch", "staging", "success", "3", True),
-        ("push", "production", "success", "1", False),
-        ("push", "staging", "failure", "1", False),
-        ("push", "staging", "skipped", "1", False),
-        ("push", "staging", "success", "0", False),
+        ("push", "staging", "true", "success", "1", True),
+        ("workflow_dispatch", "staging", "true", "success", "3", True),
+        ("push", "production", "true", "success", "1", False),
+        # A feature branch publishes a pending catalog for on-demand candidates only.
+        ("push", "staging", "false", "success", "1", False),
+        ("push", "staging", "true", "failure", "1", False),
+        ("push", "staging", "true", "skipped", "1", False),
+        ("push", "staging", "true", "success", "0", False),
     ],
 )
-def test_reused_builds_start_devkit_stages_after_the_catalog_snapshot(
-    event, environment, catalog_result, measure_count, expected,
+def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
+    event, environment, publishable, catalog_result, benchmark_count, expected,
 ) -> None:
-    job = load(WORKFLOW)["jobs"]["measure"]
+    job = load(WORKFLOW)["jobs"]["benchmark"]
     values = {
         "!cancelled()": True,
         "github.event_name": event,
-        "needs.publish-catalog.result": catalog_result,
+        "needs.initialize-catalog.result": catalog_result,
+        "needs.select.outputs.publishable": publishable,
         "needs.select.outputs.vulcan_environment": environment,
-        "needs.plan.outputs.measure_count": measure_count,
+        "needs.plan.outputs.benchmark_count": benchmark_count,
     }
 
-    assert job["needs"] == ["select", "plan", "publish-catalog"]
+    # The pending catalog already links reused builds, so their benchmarks do not wait for compiles.
+    assert job["needs"] == ["select", "plan", "initialize-catalog"]
     # Without a status function GitHub adds success(), which also requires the
-    # indirectly needed build jobs and skips reused builds when one build fails.
+    # indirectly needed jobs and skips reused builds when one of them is skipped.
     assert job["if"].startswith("!cancelled() &&")
     assert evaluate(job["if"], values) is expected
 
 
-def test_reused_builds_start_their_stages_from_one_job() -> None:
-    job = load(WORKFLOW)["jobs"]["measure"]
-    start = step(job, "Start the stages reused builds still lack")
+@pytest.mark.parametrize(
+    ("environment", "compile_count", "catalog_result", "benchmark_count", "expected"),
+    [
+        ("staging", "0", "success", "1", True),
+        # With compiles, the benchmark job already started them after the pending catalog.
+        ("staging", "2", "success", "1", False),
+        ("production", "0", "success", "1", False),
+        ("staging", "0", "failure", "1", False),
+        ("staging", "0", "skipped", "1", False),
+        ("staging", "0", "success", "0", False),
+    ],
+)
+def test_reused_builds_start_benchmarks_after_the_snapshot_when_nothing_compiles(
+    environment, compile_count, catalog_result, benchmark_count, expected,
+) -> None:
+    job = load(WORKFLOW)["jobs"]["benchmark-without-compiles"]
+    values = {
+        "!cancelled()": True,
+        "needs.plan.outputs.compile_count": compile_count,
+        "needs.publish-catalog.result": catalog_result,
+        "needs.select.outputs.vulcan_environment": environment,
+        "needs.plan.outputs.benchmark_count": benchmark_count,
+    }
 
-    assert job["name"] == "Dispatch DevKit stages for reused builds"
+    assert job["needs"] == ["select", "plan", "publish-catalog"]
+    assert job["if"].startswith("!cancelled() &&")
+    assert evaluate(job["if"], values) is expected
+
+
+@pytest.mark.parametrize("job_id", ["benchmark", "benchmark-without-compiles"])
+def test_reused_builds_start_their_benchmarks_from_one_job(job_id) -> None:
+    job = load(WORKFLOW)["jobs"][job_id]
+    start = step(job, "Start the benchmarks reused builds still lack")
+
+    assert job["name"] == "Dispatch benchmarks for reused builds"
     assert job["permissions"] == {"actions": "write", "contents": "read"}
     assert "strategy" not in job
     assert job["steps"][0]["uses"] == "actions/checkout@v6"
-    assert start["env"]["MEASURE_MATRIX"] == "${{ needs.plan.outputs.measure_matrix }}"
+    assert start["env"]["BENCHMARK_MATRIX"] == "${{ needs.plan.outputs.benchmark_matrix }}"
     # An empty source run restores each reused build from the registry at this catalog revision.
-    assert start["run"] == 'scripts/start_devkit_stages.sh "$MEASURE_MATRIX"'
+    assert start["run"] == 'scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"'
 
 
 def test_failed_builds_are_reported_after_the_snapshot() -> None:
@@ -638,13 +673,14 @@ def test_every_component_mpk_records_runner_and_input_provenance() -> None:
     assert compile_job["env"]["RUNNER_APPROVAL_SPEC_REVISION"] == (
         "${{ fromJSON(inputs.entry).runner_approval_spec_revision }}"
     )
-    assert 'for index in "${!components[@]}"' in verify
+    assert 'for component in "${components[@]}"' in verify
+    assert compile_job["env"]["RUNNER_APPROVAL_ID"] == "${{ fromJSON(inputs.entry).runner_approval_id }}"
     assert 'verify-artifact "$PROFILE_OUTPUT_DIR/$component"' in verify
     for option in (
         "--write-manifest",
         "--source-sha256",
         "--calibration-sha256",
-        "--build-fingerprint",
+        "--compile-fingerprint",
         "--requested-runner-class",
         "--runner-class",
         "--runner-approval-id",
@@ -685,10 +721,10 @@ def test_build_is_published_from_a_hosted_runner() -> None:
             "Verify the complete component set",
             "Configure artifact-registry publisher credentials",
             "Publish the complete component set",
-            "Retain the published model output for the DevKit stages",
-            "Start the DevKit stages",
             "Assemble the packages this build completes",
             "Publish the finalized packages",
+            "Retain the published model output for the benchmarks",
+            "Start the benchmarks",
             "Publish this build in the catalog",
         )
     ]
@@ -697,7 +733,7 @@ def test_build_is_published_from_a_hosted_runner() -> None:
 
 def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
     publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
-    retained = step(publish, "Retain the published model output for the DevKit stages")
+    retained = step(publish, "Retain the published model output for the benchmarks")
     stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage-dispatched-benchmark"]
     verify = step(stage, "Verify the source run and compiled artifact")["run"]
 
@@ -706,41 +742,59 @@ def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
         "-${{ fromJSON(inputs.entry).compile_invocation_id }}"
     )
     assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify
+    # Only a published build, with its package, is retained for the benchmarks.
+    assert retained["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
+
+
+def test_published_package_receipt_travels_with_the_build() -> None:
+    packages = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Publish the finalized packages")["run"]
+
+    assert 'receipt="$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"' in packages
+    assert 'cp "_packages/$receipt" "_compiled/$receipt"' in packages
+    assert packages.index("model-registry publish-package") < packages.index('cp "_packages/$receipt"')
 
 
 @pytest.mark.parametrize(
-    ("environment", "target", "stages", "expected"),
+    ("publishable", "on_demand", "packages", "environment", "target", "stages", "expected"),
     [
-        ("staging", "modalix", "performanceaccuracy", True),
-        ("staging", "modalix", "accuracy", True),
-        ("staging", "modalix", "", False),
-        ("production", "modalix", "performance", False),
-        ("staging", "davinci", "performance", False),
+        (True, False, "1", "staging", "modalix", "performanceaccuracy", True),
+        (True, False, "1", "staging", "modalix", "accuracy", True),
+        (True, False, "1", "staging", "modalix", "", False),
+        (True, False, "1", "production", "modalix", "performance", False),
+        (True, False, "1", "staging", "davinci", "performance", False),
+        # A benchmark runs under the profile's published package.
+        (False, False, "1", "staging", "modalix", "performance", False),
+        (True, True, "1", "staging", "modalix", "performance", False),
+        (True, False, "0", "staging", "modalix", "performance", False),
     ],
 )
-def test_new_builds_start_only_their_applicable_devkit_stages(environment, target, stages, expected) -> None:
-    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the DevKit stages")
+def test_new_builds_start_only_their_applicable_benchmarks(
+    publishable, on_demand, packages, environment, target, stages, expected
+) -> None:
+    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the benchmarks")
     values = {
+        "inputs.publishable": publishable,
+        "fromJSON(inputs.entry).build_on_demand": on_demand,
+        "steps.packages.outputs.count": packages,
         "inputs.vulcan_environment": environment,
         "fromJSON(inputs.entry).target": target,
         "join(fromJSON(inputs.entry).stages, '')": stages,
     }
 
-    assert "inputs.publishable" not in start["if"]
     assert evaluate(start["if"], values) is expected
 
 
 def test_new_build_starts_its_stages_with_the_shared_script() -> None:
-    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the DevKit stages")
+    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the benchmarks")
 
     # A failed dispatch leaves the build published; the next run plans the missing stages.
     assert start["continue-on-error"] == "true"
     assert start["env"]["ENTRY"] == "${{ inputs.entry }}"
     # The benchmark downloads this compile run's output.
-    assert start["run"] == 'scripts/start_devkit_stages.sh "$ENTRY" "$GITHUB_RUN_ID"'
+    assert start["run"] == 'scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"'
 
 
-START_SCRIPT = ROOT / "scripts" / "start_devkit_stages.sh"
+START_SCRIPT = ROOT / "scripts" / "start_benchmarks.sh"
 
 
 def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.CompletedProcess, Path, Path]:
@@ -763,14 +817,8 @@ def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.Co
     return result, summary, calls
 
 
-def build(model_id: str, components: list[str], stages: list[str]) -> dict:
-    return {
-        "model_id": model_id,
-        "build_profile_id": "int8",
-        "compile_invocation_id": "default",
-        "benchmark_component_ids": components,
-        "stages": stages,
-    }
+def build(model_id: str, stages: list[str]) -> dict:
+    return {"model_id": model_id, "build_profile_id": "int8", "compile_invocation_id": "default", "stages": stages}
 
 
 def test_start_script_dispatches_every_benchmark_input() -> None:
@@ -794,7 +842,7 @@ def test_start_script_dispatches_every_benchmark_input() -> None:
     ],
 )
 def test_start_script_logs_one_devkit_run_link_per_build(tmp_path: Path, gh: str, link: str) -> None:
-    matrix = {"include": [build("alpha", ["model"], ["performance", "accuracy"]), build("beta", [], ["accuracy"])]}
+    matrix = {"include": [build("alpha", ["performance", "accuracy"]), build("beta", ["accuracy"])]}
 
     result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
 
@@ -807,13 +855,12 @@ def test_start_script_logs_one_devkit_run_link_per_build(tmp_path: Path, gh: str
     assert summary.read_text(encoding="utf-8") == lines
     alpha, beta = calls.read_text(encoding="utf-8").splitlines()
     assert "-f source_run_id= " in alpha
-    assert "-f component_ids=model " in alpha
-    # An accuracy-only build names no performance component.
-    assert "-f component_ids= -f stages=accuracy" in beta
+    assert alpha.endswith("-f stages=performance,accuracy")
+    assert beta.endswith("-f compile_invocation_id=default -f stages=accuracy")
 
 
 def test_start_script_accepts_one_build_with_its_source_run(tmp_path: Path) -> None:
-    result, _, calls = run_start_script(tmp_path, "true", json.dumps(build("alpha", ["model"], ["performance"])), "77")
+    result, _, calls = run_start_script(tmp_path, "true", json.dumps(build("alpha", ["performance"])), "77")
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "DevKit run for alpha/int8/default (performance): link unavailable\n"
@@ -822,7 +869,7 @@ def test_start_script_accepts_one_build_with_its_source_run(tmp_path: Path) -> N
 
 def test_start_script_starts_the_other_builds_after_a_failure(tmp_path: Path) -> None:
     gh = 'case "$*" in *model_id=alpha*) echo "HTTP 404: not found" >&2; exit 1;; esac'
-    matrix = {"include": [build("alpha", ["model"], ["performance"]), build("beta", ["model"], ["performance"])]}
+    matrix = {"include": [build("alpha", ["performance"]), build("beta", ["performance"])]}
 
     result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
 

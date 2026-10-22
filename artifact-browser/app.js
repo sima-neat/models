@@ -11,7 +11,7 @@ import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } 
 import { formatBytes } from "./metrics.js";
 import {
   api, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
-  writeCachedCatalog, runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant,
+  writeCachedCatalog, runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun,
   loadHistoricalCatalogModel, selectedCatalogBuild,
 } from "./api.js";
 import {
@@ -73,7 +73,7 @@ function deletePageParams(url) {
 function writeVariantUrl(run) {
   const url = new URL(location.href);
   const modelId = run.metadata?.model_id;
-  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  const profile = run.metadata?.build_profile_id;
   deletePageParams(url);
   if (modelId && profile) {
     url.searchParams.set("model", modelId);
@@ -110,7 +110,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
     // A cached variant may gain package context later; avoid retrying a fetch from this selection.
     if (currentPackage && variant.packageSummary?.run?.id !== currentPackage.run_id
       && (cached || currentPackage.run_id !== variant.requestedPackageId)) {
-      variant.packageSummary = await api(`/v1/runs/${currentPackage.run_id}`).catch(() => null);
+      [variant.packageSummary, variant.packageTests] = await loadPackageRun(currentPackage.run_id);
     }
     if (state.catalogMode === "runs") await loadHistoricalCatalogModel(anchor);
     if (state.selectedId === runId) {
@@ -208,8 +208,7 @@ async function downloadVariant(runId) {
     pendingDownloads = downloads;
     pendingCommand = catalogDownloadCommand(summary.run);
     elements["download-copy-cli"].hidden = !pendingCommand;
-    const profile = summary.run.metadata?.build_profile_id || summary.run.metadata?.variant_id
-      ? profileLabel(summary.run) : "Selected variant";
+    const profile = profileLabel(summary.run);
     const fileLabel = downloads.length === 1 ? "file" : "files";
     elements["download-description"].textContent = `${profile} contains ${downloads.length} model ${fileLabel}. ${downloads.length === 1 ? "Confirm to download this variant." : "Download all components to use this variant."}`;
     const note = elements["download-dialog"].querySelector(".download-note");
@@ -238,9 +237,9 @@ async function downloadPackage(runId) {
     const artifact = (summary.artifacts || []).find((item) => item.artifact_type === "model-package");
     if (!run || !artifact) throw new Error("No complete package is available for this build.");
     const metadata = run.metadata || {};
-    const packageId = metadata.package_id || artifact.metadata?.package_id || "default";
-    const profile = metadata.build_profile_id ? variantLabel(metadata.build_profile_id) : "This build";
-    const components = Object.keys(metadata.component_run_ids || artifact.metadata?.component_run_ids || {});
+    const packageId = metadata.package_id;
+    const profile = variantLabel(metadata.build_profile_id);
+    const components = Object.keys(metadata.component_run_ids);
     // The registry serves the package under its published filename: the MPK itself, or a ZIP.
     const downloads = await prepareDownloads([{
       runId: run.id,
@@ -503,8 +502,8 @@ async function initialize() {
     if (cached || branchResult.status === "fulfilled" || state.availableBranches.length) {
       await loadRuns({ branch: elements["branch-filter"].value });
     } else {
-      // Older or temporarily unavailable registries can still infer branches
-      // from a broad runs page without making that page authoritative.
+      // Without a branch catalog, infer branches from a broad runs page
+      // without making that page authoritative.
       await loadRuns({ branch: "", limit: 200 });
     }
   } catch (error) {
@@ -623,7 +622,7 @@ elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterIndicators();
   if (branchSnapshotMode() && catalogMode()) {
     state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
-      elements["compiler-filter"].value, elements["branch-filter"].value);
+      elements["compiler-filter"].value);
     state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
     renderRuns();
     writeCachedCatalog();

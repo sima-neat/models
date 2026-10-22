@@ -6,37 +6,37 @@ accuracy:
   run_tests: true
   expected:
     w16a16:
-      coco_keypoint_map: 0.6988
-      coco_keypoint_ap50: 0.9020
-      coco_keypoint_ap75: 0.7663
-      coco_keypoint_ap_medium: 0.6517
-      coco_keypoint_ap_large: 0.7822
-      coco_keypoint_ar: 0.7572
-      coco_keypoint_ar50: 0.9320
-      coco_keypoint_ar75: 0.8186
-      coco_keypoint_ar_medium: 0.7000
-      coco_keypoint_ar_large: 0.8386
-      coco_person_box_map: 0.5663
-      coco_person_box_ap50: 0.7241
+      coco-2017-val:
+        coco_keypoint_map: 0.6988
+        coco_keypoint_ap50: 0.9020
+        coco_keypoint_ap75: 0.7663
+        coco_keypoint_ap_medium: 0.6517
+        coco_keypoint_ap_large: 0.7822
+        coco_keypoint_ar: 0.7572
+        coco_keypoint_ar50: 0.9320
+        coco_keypoint_ar75: 0.8186
+        coco_keypoint_ar_medium: 0.7000
+        coco_keypoint_ar_large: 0.8386
+        coco_person_box_map: 0.5663
+        coco_person_box_ap50: 0.7241
     w8a8:
-      coco_keypoint_map: 0.6581
-      coco_keypoint_ap50: 0.8920
-      coco_keypoint_ap75: 0.7372
-      coco_keypoint_ap_medium: 0.6171
-      coco_keypoint_ap_large: 0.7341
-      coco_keypoint_ar: 0.7270
-      coco_keypoint_ar50: 0.9265
-      coco_keypoint_ar75: 0.7975
-      coco_keypoint_ar_medium: 0.6732
-      coco_keypoint_ar_large: 0.8026
-      coco_person_box_map: 0.5590
-      coco_person_box_ap50: 0.7277
+      coco-2017-val:
+        coco_keypoint_map: 0.6581
+        coco_keypoint_ap50: 0.8920
+        coco_keypoint_ap75: 0.7372
+        coco_keypoint_ap_medium: 0.6171
+        coco_keypoint_ap_large: 0.7341
+        coco_keypoint_ar: 0.7270
+        coco_keypoint_ar50: 0.9265
+        coco_keypoint_ar75: 0.7975
+        coco_keypoint_ar_medium: 0.6732
+        coco_keypoint_ar_large: 0.8026
+        coco_person_box_map: 0.5590
+        coco_person_box_ap50: 0.7277
 performance:
   run_tests: true
   expected:
     w16a16:
-      model:
-        throughput_fps: 62.9
+      throughput_fps: 62.9
     w8a8:
-      model:
-        throughput_fps: 270.2
+      throughput_fps: 270.2

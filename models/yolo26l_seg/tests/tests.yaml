@@ -6,41 +6,41 @@ accuracy:
   run_tests: true
   expected:
     w16a16:
-      coco_mask_map: 0.4531
-      coco_mask_ap50: 0.6848
-      coco_mask_ap75: 0.4900
-      coco_mask_ap_small: 0.2752
-      coco_mask_ap_medium: 0.5019
-      coco_mask_ap_large: 0.6216
-      coco_mask_ar1: 0.3502
-      coco_mask_ar10: 0.5685
-      coco_mask_ar100: 0.6105
-      coco_mask_ar_small: 0.4296
-      coco_mask_ar_medium: 0.6680
-      coco_mask_ar_large: 0.7769
-      coco_box_map: 0.5430
-      coco_box_ap50: 0.7123
+      coco-2017-val:
+        coco_mask_map: 0.4531
+        coco_mask_ap50: 0.6848
+        coco_mask_ap75: 0.4900
+        coco_mask_ap_small: 0.2752
+        coco_mask_ap_medium: 0.5019
+        coco_mask_ap_large: 0.6216
+        coco_mask_ar1: 0.3502
+        coco_mask_ar10: 0.5685
+        coco_mask_ar100: 0.6105
+        coco_mask_ar_small: 0.4296
+        coco_mask_ar_medium: 0.6680
+        coco_mask_ar_large: 0.7769
+        coco_box_map: 0.5430
+        coco_box_ap50: 0.7123
     w8a8:
-      coco_mask_map: 0.4157
-      coco_mask_ap50: 0.6396
-      coco_mask_ap75: 0.4457
-      coco_mask_ap_small: 0.2476
-      coco_mask_ap_medium: 0.4656
-      coco_mask_ap_large: 0.5793
-      coco_mask_ar1: 0.3369
-      coco_mask_ar10: 0.5563
-      coco_mask_ar100: 0.6004
-      coco_mask_ar_small: 0.4254
-      coco_mask_ar_medium: 0.6622
-      coco_mask_ar_large: 0.7599
-      coco_box_map: 0.5077
-      coco_box_ap50: 0.6792
+      coco-2017-val:
+        coco_mask_map: 0.4157
+        coco_mask_ap50: 0.6396
+        coco_mask_ap75: 0.4457
+        coco_mask_ap_small: 0.2476
+        coco_mask_ap_medium: 0.4656
+        coco_mask_ap_large: 0.5793
+        coco_mask_ar1: 0.3369
+        coco_mask_ar10: 0.5563
+        coco_mask_ar100: 0.6004
+        coco_mask_ar_small: 0.4254
+        coco_mask_ar_medium: 0.6622
+        coco_mask_ar_large: 0.7599
+        coco_box_map: 0.5077
+        coco_box_ap50: 0.6792
 performance:
   run_tests: true
   expected:
     w16a16:
-      model:
-        throughput_fps: 46.2
+      throughput_fps: 46.2
     w8a8:
-      model:
-        throughput_fps: 17.4
+      throughput_fps: 17.4

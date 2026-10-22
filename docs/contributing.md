@@ -28,10 +28,10 @@ A typical new-model change contains:
 
 ```text
 models/<model-id>/README.md
-models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, benchmark
+models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, performance
 models/<model-id>/scripts/compile.py
 models/<model-id>/scripts/performance.py
-models/<model-id>/scripts/accuracy.py               # only with a devkit_script accuracy entry
+models/<model-id>/scripts/accuracy.py               # only with an accuracy declaration
 models/<model-id>/scripts/requirements-accuracy.txt # optional, with accuracy.py
 models/<model-id>/scripts/convert.py                # only with a declared conversion
 models/<model-id>/scripts/requirements-convert.txt  # required with convert.py
@@ -129,8 +129,9 @@ runner, and they read no registry state.
 For a model change, interpret a successful pull-request workflow as confirmation
 that:
 
-- the complete catalog, taxonomy, conversion sources, fidelity, accuracy, and
-  benchmark entries, and declarative compositions are structurally valid;
+- the complete catalog, taxonomy, conversion sources, fidelity, performance,
+  and accuracy declarations, and declarative compositions are structurally
+  valid;
 - the repository-wide Model Compiler dependency resolves;
 - the `model-registry` package builds; and
 - the model browser builds and loads.
@@ -154,14 +155,14 @@ When the change is merged to `develop`, the push runs **Vulcan Model Orchestrato
 on the reviewed revision:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
-   Chromium. If it fails, nothing is planned, compiled, measured, or published
+   Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
    for the revision. Every push runs this check, not only merges, and a
    push to `main` or `develop` publishes the checked browser to staging.
-2. **Plan.** `plan-stages` compares each build's compile key with the
+2. **Plan.** `plan-stages` compares each build's compile fingerprint with the
    branch's catalog and, on a feature branch, its base branches' catalogs. A
-   build compiles when no published run carries its key. A build that is
-   reused but lacks a completed performance or accuracy run for its current
-   stage key is queued for measurement only.
+   build compiles when no published run carries its fingerprint. A build that
+   is reused but lacks a completed performance or accuracy run for its current
+   benchmark fingerprint is queued for that benchmark only.
 3. **Authorize.** Each requested runner class is checked against the protected
    environment specification.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
@@ -171,25 +172,27 @@ on the reviewed revision:
    output. A failing test leaves the build unpublished.
 5. **Publish.** A GitHub-hosted job verifies the complete component set,
    publishes each component and its fidelity report as a compile run, starts
-   the DevKit stages for a new Modalix build, assembles and publishes the
+   the benchmarks for a new Modalix build, assembles and publishes the
    packages the build completes, and records the build in the catalog.
-6. **Publish the catalog.** The catalog snapshot for the revision is published
+6. **Benchmark.** For reused builds, the workflow starts only the benchmarks
+   they still lack, once the catalog marks the selected builds pending. They
+   run while the changed builds compile.
+7. **Publish the catalog.** The catalog snapshot for the revision is published
    and promoted.
-7. **Measure.** For reused builds, the workflow starts only the DevKit stages
-   they still lack.
 
 **Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
-stages of one build on a DevKit, runs the model's measure tests on each result,
-then publishes each result as its own registry run under the compile run, with
-the test outcome. A failed test fails the run after publication.
+stages of one build on a DevKit, runs the model's benchmark tests on each result,
+then publishes each result as its own registry run under the build profile's
+package run, with the test outcome. A failed test fails the run after
+publication.
 
-The compile and the DevKit stages are separate GitHub Actions runs. A
+The compile and the benchmarks are separate GitHub Actions runs. A
 successful compile does not by itself mean the dispatched benchmark succeeded;
 inspect the `Vulcan Model Benchmarking` run of each build and the model's
 staging registry record. If trusted compilation or measurement fails, follow
 up with a focused manifest, recipe, or script change and reproducible evidence.
 
-Production is an explicit protected workflow choice, and the DevKit stages run
+Production is an explicit protected workflow choice, and the benchmarks run
 only in staging. A manual dispatch can name models, build profiles, or
 components and can force every selected build to recompile, which also
 applies a changed model test at once; otherwise a changed test applies the next

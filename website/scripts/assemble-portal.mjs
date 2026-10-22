@@ -18,7 +18,7 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
+  'model-report', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
   'config', 'portal-shell',
 ];
 const stylesheets = ['brand', 'styles'];
@@ -47,7 +47,7 @@ writeFileSync(join(output, 'index.html'), browserHtml);
 // the scores each source model's authors published. api.js fetches each by its unfingerprinted name.
 const apiModule = join(output, `api.${revision}.js`);
 let apiSource = readFileSync(apiModule, 'utf8');
-for (const name of ['component-pipelines', 'published-metrics']) {
+for (const name of ['component-pipelines', 'reference-metrics']) {
   const url = `./${name}.json`;
   const file = `${name}.${revision}.json`;
   execFileSync(process.env.PYTHON || 'python3', [

@@ -8,13 +8,13 @@ same time. It also records each MPK's layer timings and execution plan.
 from __future__ import annotations
 
 import argparse
-import json
 import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import model_report
 import numpy as np
 import pyneat
 
@@ -212,53 +212,35 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
     return throughput
 
 
-def write_results(
+def write_report(
     output: Path,
     latencies: list[float],
     throughput: Throughput,
     models: dict[str, pyneat.Model],
     timings: dict[str, list[dict[str, object]]],
-    plans: dict[str, dict[str, object]],
 ) -> None:
-    fps = throughput.fps
-    throughput.telemetry.save(output / "telemetry.json")
-    power = throughput.telemetry.power_som_watts
-    report = {
-        "latency_ms": float(np.mean(latencies) * 1000),
-        "latency_p50_ms": percentile_ms(latencies, 50),
-        "latency_p95_ms": percentile_ms(latencies, 95),
-        "latency_p99_ms": percentile_ms(latencies, 99),
-        "fps": fps,
-        "avg_power_watts": power.mean if power.samples else 0.0,
-        "peak_power_watts": power.maximum if power.samples else 0.0,
-        # Core's convention: the energy of MEASURED_FRAMES frames at the measured rate and power.
-        "energy_joules": power.mean * MEASURED_FRAMES / fps if power.samples else 0.0,
-        "throughput_duration_ms": throughput.seconds * 1000,
-        "throughput_samples": throughput.frames,
-        "telemetry": json.loads((output / "telemetry.json").read_text(encoding="utf-8")),
-        "layer_stats": [],
-    }
-    (output / "benchmark-report.json").write_text(json.dumps(report, allow_nan=False), encoding="utf-8")
-    context = {
-        "core_version": pyneat.__version__,
-        "num_samples": MEASURED_FRAMES,
-        "min_duration_ms": MIN_DURATION_S * 1000,
-        # The pipeline's report has no layer timings; each component's are below.
-        "include_layer_stats": False,
-        "workload": {
-            "selection": f"Backbone, top {QUERY_COUNT} proposals on the CPU, decoder",
-            "inputs": [{"shape": [IMAGE_SIZE, IMAGE_SIZE, 3], "dtype": "FLOAT32"}],
-            "preprocess": models["backbone"].info().selection.preprocess_graph,
-            "postprocess": models["decoder"].info().selection.selected_post_kind,
-            "warmup_samples": WARMUP_FRAMES,
-            "queue_depth": QUEUE_DEPTH,
-        },
-        "components": {name: {"layer_stats": timings[name], "execution_plan": plans[name]} for name in models},
-    }
-    (output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
+    benchmark = pyneat.BenchmarkReport()
+    benchmark.latency_ms = float(np.mean(latencies) * 1000)
+    benchmark.latency_p50_ms = percentile_ms(latencies, 50)
+    benchmark.latency_p95_ms = percentile_ms(latencies, 95)
+    benchmark.latency_p99_ms = percentile_ms(latencies, 99)
+    benchmark.fps = throughput.fps
+    benchmark.throughput_duration_ms = throughput.seconds * 1000
+    benchmark.throughput_samples = throughput.frames
+    report = model_report.performance(
+        benchmark,
+        models,
+        workload=(
+            f"Backbone, top {QUERY_COUNT} proposals on the CPU, and decoder, pipelined {QUEUE_DEPTH} frames deep "
+            f"on a {IMAGE_SIZE}x{IMAGE_SIZE} FLOAT32 tensor"
+        ),
+        telemetry=throughput.telemetry,
+        layer_stats=timings,
+    )
+    report.save(output)
     print(
-        f"{fps:.1f} FPS over {throughput.frames} frames in {throughput.seconds:.1f} s; "
-        f"latency {report['latency_ms']:.2f} ms over {len(latencies)} frames; power {report['avg_power_watts']:.2f} W"
+        f"{benchmark.fps:.1f} FPS over {throughput.frames} frames in {throughput.seconds:.1f} s; "
+        f"latency {benchmark.latency_ms:.2f} ms over {len(latencies)} frames"
     )
 
 
@@ -267,10 +249,9 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
     models = {name: pyneat.Model(str(mpk), tensor_options()) for name, mpk in mpks.items()}
     image = synthetic_image()
     backbone, decoder = build_runners(models, image)
-    plans = {name: json.loads(model.execution_plan().to_json()) for name, model in models.items()}
     latencies = measure_latency(backbone, decoder, image)
     throughput = measure_throughput(backbone, decoder, image)
-    write_results(output, latencies, throughput, models, timings, plans)
+    write_report(output, latencies, throughput, models, timings)
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
@@ -283,13 +264,9 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
-    parser.add_argument(
-        "--output", required=True, help="directory for benchmark-report.json and benchmark-context.json"
-    )
+    parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
-    output = Path(args.output)
-    output.mkdir(parents=True, exist_ok=True)
-    benchmark_pipeline(parse_mpks(args.mpk), output)
+    benchmark_pipeline(parse_mpks(args.mpk), Path(args.output))
 
 
 if __name__ == "__main__":

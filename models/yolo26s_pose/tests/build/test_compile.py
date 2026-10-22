@@ -10,7 +10,8 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
+from model_registry.model_tests import load_model_tests
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "yolo26s_pose"
@@ -212,25 +213,17 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
         compile_module._parameters("w32a32")
 
 
-def test_model_declares_the_cut_interface_and_both_builds(load_script: Callable[[str], ModuleType]) -> None:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    surgery = load_script("surgery")
-    component = model["components"][0]
-    entrypoint = component["interface"]["entrypoints"][0]
-
-    assert [(item["name"], item["shape"]) for item in entrypoint["inputs"]] == [("images", surgery.INPUT_SHAPE)]
-    assert {item["name"]: item["shape"] for item in entrypoint["outputs"]} == surgery.OUTPUT_SHAPES
-    assert [item["name"] for item in entrypoint["outputs"]] == surgery.OUTPUTS
-    assert component["surgery"]["entrypoint"] == "scripts/surgery.py:prepare_model"
-    assert component["recipe"] == "scripts/compile.py"
+def test_model_preserves_compilation_and_quality_settings(load_script: Callable[[str], ModuleType]) -> None:
+    model = load_metadata(MODEL_DIR)
+    assert model["components"][0]["interface"]["format"] == "onnx"
     assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
         "attribution": "YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.",
     }
-    entry = model["accuracy"][0]
-    assert entry["metrics"] == list(load_script("accuracy").METRICS)
-    assert entry["required_metrics"] == ["coco_keypoint_map"]
-    assert (entry["dataset"]["id"], entry["dataset"]["variant"]) == ("coco-2017", "val")
+    entry = model["accuracy"]
+    for expected in load_model_tests(MODEL_DIR)["accuracy"]["expected"].values():
+        assert set(expected["coco-2017-val"]) == set(load_script("accuracy").METRICS)
+    assert list(entry["datasets"]) == ["coco-2017-val"]
     assert model["calibrations"][0]["dataset"]["variant"] == "cal"

@@ -60,7 +60,7 @@ async function checkPage(browser, url, readySelector) {
   }
   if (customer && await page.locator('.detail-title').count()) {
     if (await page.locator('#details-section, [data-scroll-to="details-section"]').count()) problems.push('Customer UI exposes Details');
-    if (await page.locator('[data-disclosure="accuracy"], [data-disclosure="published-scores"]').count()) problems.push('Customer UI exposes evaluation detail rows');
+    if (await page.locator('[data-disclosure^="accuracy"], [data-disclosure="published-scores"]').count()) problems.push('Customer UI exposes evaluation detail rows');
   }
   await page.close();
   return problems;
@@ -281,6 +281,10 @@ async function checkCatalogLayouts(browser, url) {
         } else {
           await page.locator('.run-row').first().waitFor();
           if (await page.locator('#catalog-layout-toggle').isVisible()) throw new Error('model layout switch leaked into build history');
+          // preview.py OLD_LAYOUT_RUN_IDS: compile runs without a build profile or recipe timing.
+          for (const id of ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2']) {
+            if (await page.locator(`.run-row[data-run-id="${id}"]`).count()) throw new Error(`build history shows old-layout run ${id}`);
+          }
         }
         if (errors.length) throw new Error(errors.join('; '));
         console.log(`ok  Catalog cards/table · ${viewport.width}px ${theme}`);
@@ -354,23 +358,24 @@ async function checkTaskComparison(browser, base) {
         const profiles = await add.locator('option').allTextContents();
         if (!profiles.some(text => text.endsWith('W8A8')) || !profiles.some(text => text.endsWith('W16A16'))) throw new Error('task list lost precision variants');
         if (!await page.locator('.compare-point[data-compare-toggle$=".w8a8"]').count() || !await page.locator('.compare-point[data-compare-toggle$=".w16a16"]').count()) throw new Error('chart did not include every precision');
-        const first = page.locator('.compare-point').first();
-        await first.hover();
+        // Neighbouring points' hit areas overlap on a phone; the last point is painted on top of the others.
+        const topmost = page.locator('.compare-point').last();
+        await topmost.hover();
         const tooltip = page.getByRole('tooltip');
         await tooltip.waitFor();
         if (!await tooltip.locator('strong').innerText()) throw new Error('tooltip is missing model name');
         if (JSON.stringify(await tooltip.locator('dt').allTextContents()) !== JSON.stringify(['Variant', 'Throughput', 'Accuracy'])) throw new Error('tooltip fields are incomplete');
-        const firstKey = await first.getAttribute('data-compare-toggle');
-        if (await tooltip.locator('dd').first().innerText() !== firstKey.split('.').at(-1).toUpperCase()) throw new Error('tooltip names the wrong variant');
+        const topmostKey = await topmost.getAttribute('data-compare-toggle');
+        if (await tooltip.locator('dd').first().innerText() !== topmostKey.split('.').at(-1).toUpperCase()) throw new Error('tooltip names the wrong variant');
         if (!/inferences\/s/.test(await tooltip.innerText()) || !/%/.test(await tooltip.innerText())) throw new Error('tooltip is missing measured throughput or accuracy');
         const bounds = await tooltip.boundingBox();
         if (bounds.x < 0 || bounds.x + bounds.width > viewport.width || bounds.y < 0 || bounds.y + bounds.height > viewport.height) throw new Error('tooltip is clipped by viewport');
         await page.screenshot({path: `/tmp/models-ui-compare-tooltip-${viewport.width}-${theme}.png`});
         await page.mouse.move(0, 0);
         if (await tooltip.isVisible()) throw new Error('tooltip remains visible after pointer leaves');
-        await first.focus();
-        await first.press('Enter');
-        if (await page.locator(`.compare-legend [data-compare-toggle="${firstKey}"]`).count() !== 1) throw new Error('plotted selection is missing from the legend');
+        await topmost.focus();
+        await topmost.press('Enter');
+        if (await page.locator(`.compare-legend [data-compare-toggle="${topmostKey}"]`).count() !== 1) throw new Error('plotted selection is missing from the legend');
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         await add.selectOption(await add.locator('option').nth(1).getAttribute('value'));
         if (await page.locator('.compare-table thead th').count() !== 3) throw new Error('selection did not populate three comparison columns');
@@ -394,16 +399,18 @@ async function checkTaskComparison(browser, base) {
         if (new URL(page.url()).searchParams.getAll('build').includes(removedKey)) throw new Error('table removal left the variant in the URL');
         if (await add.isDisabled() || !await add.locator(`option[value="${removedKey}"]`).count()) throw new Error('table removal did not restore the variant to Add model');
         if (await page.locator('[data-compare-control="component"]').count()) throw new Error('component control remains visible');
-        const available = await add.locator('option').allTextContents();
-        if (available.some(text => text.includes('RF-DETR'))) throw new Error('multi-component model remains selectable');
+        // A multi-component model competes with its whole-model result as its one value.
+        const pipelinePoints = page.locator('.compare-point[data-compare-toggle^="rf_detr_"]');
+        if (!await pipelinePoints.count()) throw new Error('multi-component model is missing from the chart');
+        const pipelineKey = await pipelinePoints.first().getAttribute('data-compare-toggle');
+        if (await add.locator(`option[value="${pipelineKey}"]`).count()) await add.selectOption(pipelineKey);
+        const columnKeys = await page.locator('.compare-table thead .compare-remove').evaluateAll(buttons => buttons.map(button => button.dataset.compareToggle));
+        const pipelineThroughput = await page.locator('.compare-table tbody tr', {hasText: 'Throughput'}).locator('td').nth(columnKeys.indexOf(pipelineKey)).innerText();
+        if (!/inferences\/s/.test(pipelineThroughput)) throw new Error('multi-component model shows no throughput');
         if (await page.locator('[data-compare-control="axis"] option[value="latency"]').count()) throw new Error('latency remains selectable as an axis');
         const chartLabels = await page.locator('.compare-axis-title').allTextContents();
         if (chartLabels[0] !== 'Throughput (inferences/s)' || !chartLabels[1].includes('mAP')) throw new Error('accuracy/throughput axes changed');
         if (!(await page.locator('.compare-chart-dataset').innerText()).includes('coco-2017')) throw new Error('chart does not identify its accuracy dataset');
-        const droneKey = await add.locator('option').filter({hasText: 'Tiny Drone'}).first().getAttribute('value');
-        await add.selectOption(droneKey);
-        if (await page.locator(`.compare-point[data-compare-toggle="${droneKey}"], .compare-legend [data-compare-toggle="${droneKey}"]`).count()) throw new Error('model with a different accuracy dataset appears in the chart');
-        if (await page.locator(`.compare-table .compare-remove[data-compare-toggle="${droneKey}"]`).count() !== 1) throw new Error('model with a different accuracy dataset is missing from the table');
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();

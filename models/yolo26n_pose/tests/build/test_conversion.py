@@ -7,7 +7,7 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -94,7 +94,7 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
 
 
 def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
-    model = yaml.safe_load((ROOT / "models/yolo26n_pose/model.yaml").read_text(encoding="utf-8"))
+    model = load_metadata(ROOT / "models/yolo26n_pose")
     converter.validate_source(model["conversion"]["default"]["source"])
     for other in ("yolo26n.pt", "yolo26n-seg.pt"):
         with pytest.raises(ValueError, match="yolo26n-pose.pt"):

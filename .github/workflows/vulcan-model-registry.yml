@@ -11,6 +11,7 @@ on:
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"
+      - "datasets/**"
       - "artifact-browser/**"
       - ".github/workflows/**"
       - "scripts/**"
@@ -18,6 +19,7 @@ on:
       - "conftest.py"
       - "packaging/model-registry/**"
       - "tools/model_registry/**"
+      - "tools/model_report/**"
       - "pyproject.toml"
   workflow_dispatch:
     inputs:

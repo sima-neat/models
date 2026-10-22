@@ -1,12 +1,21 @@
 // Registry API requests, local caches, and catalog build selection.
 import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
+import { BENCHMARK_RUN_TYPES } from "./model-report.js";
 import { DEFAULT_BRANCH, state, elements, categoryFilters } from "./state.js";
 
+// The registry answers 429 while all of its readers are busy, so those requests wait and try again.
+const BUSY_RETRY_DELAYS_MS = [500, 1000, 2000];
+
 export async function api(path) {
-  const response = await fetch(`${state.apiBase}${path}`, {
-    headers: { Accept: "application/json" },
-    mode: "cors",
-  });
+  let response;
+  for (const delay of [...BUSY_RETRY_DELAYS_MS, null]) {
+    response = await fetch(`${state.apiBase}${path}`, {
+      headers: { Accept: "application/json" },
+      mode: "cors",
+    });
+    if (response.status !== 429 || delay === null) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error?.message || payload.message || `Registry request failed (${response.status})`);
@@ -16,34 +25,40 @@ export async function api(path) {
   return payload;
 }
 
-// DevKit accuracy is its own registry run, keyed by the accuracy key the catalog records on the
-// build that reports the result.
-async function devkitAccuracy(accuracyKey) {
-  if (!accuracyKey) return null;
+// Each benchmark stage of a build profile is its own registry run, found by the benchmark fingerprint the
+// catalog records for that profile. No run means the stage has not benchmarked this build.
+async function loadBenchmarkRun(stage, benchmarkFingerprint) {
+  if (!benchmarkFingerprint) return null;
   const repo = state.repository;
-  const query = new URLSearchParams({ run_type: "model_accuracy", fingerprint: accuracyKey, fingerprint_version: "1" });
+  const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint });
+  let resolved;
   try {
-    const { run } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`);
-    // The resolved run omits its workflow; the full run gives the Accuracy section both commit and workflow.
-    const [payload, summary] = await Promise.all([
-      api(`/v1/runs/${run.id}/accuracy/latest`), api(`/v1/runs/${run.id}`).catch(() => null),
-    ]);
-    return { ...payload, run: summary?.run || run };
+    ({ run: resolved } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`));
   } catch (error) {
     if (error.status === 404) return null;
     throw error;
   }
+  // The resolved run omits its workflow; the full run gives the result both commit and workflow.
+  const [summary, provenance, tests] = await Promise.all([
+    api(`/v1/runs/${resolved.id}`).catch(() => null),
+    api(`/v1/runs/${resolved.id}/provenance`),
+    api(`/v1/runs/${resolved.id}/test-results`),
+  ]);
+  return {
+    run: summary?.run || resolved,
+    parameters: provenance.parameters?.parameters || {},
+    report: (tests.test_results || []).find((item) => item.suite === stage && item.name === "model")?.summary || null,
+  };
 }
 
-// Only the build of the component that reports the result carries the key. A build missing from the
-// current catalog, as in history mode, takes it from the catalog at the build's revision.
-async function accuracyKeyForRuns(runs) {
-  const runIds = new Set(runs.map((run) => run.id));
-  const keyIn = (model) => model?.builds?.find((build) => runIds.has(build.run_id) && build.validation_fingerprint)
-    ?.validation_fingerprint;
+// The catalog records each build profile's benchmark fingerprints on the model. A build missing from the
+// current catalog, as in history mode, takes them from the catalog at the build's revision; a catalog
+// that does not list the build has none for it.
+async function benchmarkFingerprints(runs, profile) {
+  const lists = (model) => runs.every((run) => model?.builds?.some((build) => build.run_id === run.id));
   const current = state.catalogMode === "runs" ? null : catalogModelForRun(runs[0]);
-  if (current?.builds?.some((build) => runIds.has(build.run_id))) return keyIn(current);
-  return keyIn(await loadHistoricalCatalogModel(runs[0]));
+  const model = lists(current) ? current : await loadHistoricalCatalogModel(runs[0]);
+  return lists(model) ? model.benchmark_fingerprints?.[profile] || {} : {};
 }
 
 export async function apiText(path) {
@@ -78,7 +93,7 @@ function catalogCacheKey() {
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
-  return `sima-neat-model-catalog:v4:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  return `sima-neat-model-catalog:v5:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -131,11 +146,7 @@ export function writeCachedBranches() {
 export function readCachedCatalog() {
   try {
     const cached = JSON.parse(localStorage.getItem(catalogCacheKey()));
-    if (!cached || (!Array.isArray(cached.runs) && !Array.isArray(cached.models))) return null;
-    const mode = ["models", "runs"].includes(cached.mode)
-      ? cached.mode
-      : (cached.models?.length || !cached.runs?.length ? "models" : "runs");
-    return { ...cached, mode };
+    return cached && ["models", "runs"].includes(cached.mode) ? cached : null;
   } catch {
     return null;
   }
@@ -146,7 +157,6 @@ export function writeCachedCatalog() {
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
       savedAt: new Date().toISOString(),
       mode: state.catalogMode,
-      models: state.models,
       runs: state.runs,
       compileRuns: state.compileRuns,
       packageRuns: state.packageRuns,
@@ -160,17 +170,9 @@ export function writeCachedCatalog() {
   }
 }
 
-export function buildProfileId(build) {
-  return build.build_profile_id || build.variant_id || "default";
-}
-
-export function componentId(build) {
-  return build.component_id || "model";
-}
-
 // The "model" component, else the first, opens a variant page.
 export function anchorBuild(builds) {
-  return builds.find((item) => componentId(item) === "model") || builds[0];
+  return builds.find((item) => item.component_id === "model") || builds[0];
 }
 
 function modelCategory(model, name, fallback) {
@@ -193,36 +195,15 @@ function catalogCategories(model) {
   };
 }
 
+// branchModels gives every shown build the compile run that produced it.
 export function runFromCatalogBuild(model, build) {
-  if (build.run) return { ...build.run, ...catalogCategories(model) };
-  const branch = elements["branch-filter"].value || DEFAULT_BRANCH;
-  return {
-    id: build.run_id,
-    repository: `${state.repository.organization}/${state.repository.name}`,
-    run_type: "model_compile",
-    status: build.status || "completed",
-    git_ref: model.git_ref || `refs/heads/${branch}`,
-    commit_sha: build.commit_sha || model.catalog_revision,
-    created_at: build.created_at,
-    finished_at: build.finished_at,
-    toolchain_name: build.toolchain_name,
-    toolchain_version: build.toolchain_version,
-    target_platform: build.target_platform,
-    metadata: {
-      model_id: model.model_id,
-      display_name: model.display_name,
-      build_profile_id: buildProfileId(build),
-      component_id: componentId(build),
-      compile_invocation_id: build.compile_invocation_id,
-    },
-    ...catalogCategories(model),
-  };
+  return { ...build.run, ...catalogCategories(model) };
 }
 
 export function profileGroups(model) {
   const groups = new Map();
   model.builds.forEach((build) => {
-    const profile = buildProfileId(build);
+    const profile = build.build_profile_id;
     if (!groups.has(profile)) groups.set(profile, []);
     groups.get(profile).push(build);
   });
@@ -256,24 +237,10 @@ export async function mapWithConcurrency(items, limit, mapper) {
 
 export async function loadRunDetail(runId) {
   if (state.detailCache.has(runId)) return state.detailCache.get(runId);
-  const optional = (request) => request.catch((error) => {
-    if (error.status === 404) return null;
-    throw error;
-  });
-  const [summary, provenance, tests, benchmark, accuracy] = await Promise.all([
+  const [summary, provenance, tests] = await Promise.all([
     api(`/v1/runs/${runId}`), api(`/v1/runs/${runId}/provenance`), api(`/v1/runs/${runId}/test-results`),
-    optional(api(`/v1/runs/${runId}/benchmarks/latest`)), optional(api(`/v1/runs/${runId}/accuracy/latest`)),
   ]);
-  // Builds measured before accuracy became its own run carry it on the benchmark run. A reused build is
-  // measured at a later commit than it was built, so the benchmark run's own commit and workflow are kept.
-  const benchmarkRunId = benchmark?.benchmark_run?.id;
-  const [benchmarkTests, benchmarkRun] = benchmarkRunId
-    ? await Promise.all([
-      api(`/v1/runs/${benchmarkRunId}/test-results`).catch(() => null),
-      api(`/v1/runs/${benchmarkRunId}`).then((benchmarkSummary) => benchmarkSummary.run).catch(() => null),
-    ])
-    : [null, null];
-  const detail = { summary, provenance, tests, benchmark, benchmarkTests, benchmarkRun, accuracy };
+  const detail = { summary, provenance, tests };
   state.detailCache.set(runId, detail);
   return detail;
 }
@@ -284,7 +251,7 @@ async function variantRuns(run) {
   const model = state.models.find((item) => item.model_id === run.metadata?.model_id);
   const build = model?.builds.find((item) => item.run_id === run.id);
   if (!build) return variantBuildRuns(run, api);
-  return model.builds.filter((item) => buildProfileId(item) === buildProfileId(build))
+  return model.builds.filter((item) => item.build_profile_id === build.build_profile_id)
     .map((item) => runFromCatalogBuild(model, item));
 }
 
@@ -304,14 +271,23 @@ function loadComponentPipeline(modelId) {
 
 // The scores each source model's authors published, generated from model.yaml when the portal is built.
 // Without it the accuracy section shows measurements alone, so a failed fetch is not an error.
-let publishedMetrics = null;
-function loadPublishedMetrics(modelId) {
-  publishedMetrics ||= fetch(new URL("./published-metrics.json", import.meta.url))
+let referenceMetrics = null;
+function loadReferenceMetrics(modelId) {
+  referenceMetrics ||= fetch(new URL("./reference-metrics.json", import.meta.url))
     .then((response) => (response.ok ? response.json() : {}))
     .catch(() => ({}));
-  return publishedMetrics.then((published) => published[modelId] || []);
+  return referenceMetrics.then((reference) => reference[modelId] || []);
 }
 
+// The package run's summary and test results: its artifacts and its numerical fidelity.
+export function loadPackageRun(runId) {
+  return Promise.all([
+    api(`/v1/runs/${runId}`).catch(() => null),
+    api(`/v1/runs/${runId}/test-results`).catch(() => null),
+  ]);
+}
+
+// A variant's performance and accuracy each measure the whole model, once per build profile.
 export async function loadVariant(anchor) {
   const key = variantBuildKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
@@ -319,15 +295,17 @@ export async function loadVariant(anchor) {
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
-  const [devkit, packageSummary, pipeline, published] = await Promise.all([
-    accuracyKeyForRuns(runs).then(devkitAccuracy),
-    packageRun ? api(`/v1/runs/${packageRun.run_id}`).catch(() => null) : null,
+  const fingerprints = await benchmarkFingerprints(runs, runProfile(anchor));
+  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference] = await Promise.all([
+    loadBenchmarkRun("performance", fingerprints.performance),
+    loadBenchmarkRun("accuracy", fingerprints.accuracy),
+    packageRun ? loadPackageRun(packageRun.run_id) : [null, null],
     loadComponentPipeline(anchor.metadata?.model_id),
-    loadPublishedMetrics(anchor.metadata?.model_id),
+    loadReferenceMetrics(anchor.metadata?.model_id),
   ]);
   const variant = {
-    key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, devkit, packageSummary,
-    requestedPackageId: packageRun?.run_id || null, pipeline, published,
+    key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance, accuracy,
+    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference,
   };
   state.variantCache.set(key, variant);
   return variant;
@@ -359,8 +337,8 @@ export async function loadHistoricalCatalogModel(run) {
     const payload = await api(
       `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/${encodeURIComponent(run.commit_sha)}?${query}`,
     );
-    const definition = (payload.catalog?.document?.models || []).find((model) => (model.model_id || model.id) === modelId);
-    const model = definition ? deploymentCatalog({ ...definition, model_id: definition.model_id || definition.id }) : null;
+    const definition = (payload.catalog?.document?.models || []).find((model) => model.id === modelId);
+    const model = definition ? deploymentCatalog({ ...definition, model_id: definition.id }) : null;
     state.historicalCatalogModels.set(key, model);
     return model;
   } catch {
@@ -371,7 +349,7 @@ export async function loadHistoricalCatalogModel(run) {
 
 function fullPackageForRun(run) {
   const model = catalogModelForRun(run);
-  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  const profile = run.metadata?.build_profile_id;
   if (!model || !profile) return null;
   return (model.packages || []).find((item) => item.build_profile_id === profile
     && item.component_run_ids?.[run.metadata?.component_id] === run.id) || null;
@@ -387,7 +365,7 @@ export function compilerFilteredBuilds(model) {
 export function selectedCatalogBuild(modelId, profileId) {
   const model = state.models.find((item) => item.model_id === modelId);
   if (!model) return null;
-  const build = anchorBuild(compilerFilteredBuilds(model).filter((build) => buildProfileId(build) === profileId));
+  const build = anchorBuild(compilerFilteredBuilds(model).filter((build) => build.build_profile_id === profileId));
   if (build) state.activeProfileByModel.set(modelId, profileId);
   return build || null;
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {analyzeLayers, selectLayers, layerTimeScale, layerFamily} from '../../artifact-browser/layer-stats.js';
-import {adaptBenchmarkResult} from '../../artifact-browser/benchmark-adapters.js';
+import {readPerformance} from '../../artifact-browser/model-report.js';
 
 const row = (name, time, stage = 0) => ({name, total_execution_time_us: time, stage_index: stage});
 const rows = [row('conv', 20), row('noop', 0), row('conv', 30, 2), row('squeeze', 0, 2), row('tail', 20)];
@@ -47,15 +47,12 @@ test('missing or malformed data never produces a partially rendered misleading p
   }
 });
 
-test('adapters expose layer analysis for saved reports and historical core reports', () => {
-  const result = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url)));
-  result.benchmark_report.layer_stats = rows;
-  const current = adaptBenchmarkResult(result);
-  assert.equal(current.value.layerAnalysis.totalUs, 70);
-  const old = {...result, schema_version: 5, core_report: result.benchmark_report, metrics: {}};
-  assert.equal(adaptBenchmarkResult(old).value.layerAnalysis.totalUs, 70);
-  delete old.core_report.layer_stats;
-  assert.equal(adaptBenchmarkResult(old).value.layerAnalysis, null);
+test('a model report exposes the layer analysis of each component', () => {
+  const report = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/model-report-performance.json', import.meta.url)));
+  report.components.model.layer_stats = rows;
+  assert.equal(readPerformance({report}).value.components[0].layerAnalysis.totalUs, 70);
+  delete report.components.model.layer_stats;
+  assert.equal(readPerformance({report}).value.components[0].layerAnalysis, null);
 });
 
 test('timing bars have a fixed, finite microsecond axis independent of the search', () => {

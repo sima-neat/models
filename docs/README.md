@@ -11,7 +11,7 @@ This documentation is for model developers who create or update that contract.
 It explains how to define a model, qualify it locally, submit it for review,
 and what trusted automation does after merge.
 
-## How a build is measured
+## How a build is benchmarked
 
 A **build** is one compile invocation of one build profile of one model. Each
 build passes through up to three **stages**, each driven by one script in the
@@ -19,15 +19,19 @@ model's `scripts/` directory:
 
 | Stage | Runs on | Model script | Produces |
 | --- | --- | --- | --- |
-| compile | pinned Model Compiler | `compile.py` | one MPK per component, plus a numerical fidelity report when `model.yaml` declares one |
-| performance | Modalix DevKit | `performance.py` | one Core benchmark report per benchmarked component |
-| accuracy | Modalix DevKit | `accuracy.py` | one task-accuracy report for the build profile |
+| compile | pinned Model Compiler | `compile.py` | one MPK per model component, plus a numerical fidelity report when `model.yaml` declares one |
+| performance | Modalix DevKit | `performance.py` | one whole-model performance report for the build profile |
+| accuracy | Modalix DevKit | `accuracy.py` | one whole-model accuracy report for the build profile |
 
-Each stage has a **stage key**, a SHA-256 of everything its result depends on.
-CI reruns a stage only when no published result carries its current key, so
-editing `performance.py` remeasures performance without recompiling, and
-editing a compile input recompiles and then remeasures. See [what a change
-reruns](adding-a-model.md#9-know-what-a-change-reruns).
+The performance and accuracy stages are the build's **benchmarks**. Each stage
+has a **fingerprint**, a SHA-256 of every input that decides its result. CI
+reruns a stage only when no published result carries its current fingerprint,
+so editing `performance.py` reruns the performance benchmark without
+recompiling, and editing a compile input recompiles and then reruns the
+benchmarks. See [what a change
+reruns](adding-a-model.md#9-know-what-a-change-reruns), and the
+[vocabulary](https://github.com/sima-neat/models/blob/develop/AGENTS.md#vocabulary)
+for these terms.
 
 ## Understand the three execution boundaries
 
@@ -35,7 +39,7 @@ reruns](adding-a-model.md#9-know-what-a-change-reruns).
 | --- | --- | --- |
 | Local development | Validation, verified downloads, each declared compile invocation, MPK checks, and the performance and accuracy stages on a DevKit. | The author has reproducible evidence for every submitted build. |
 | Pull request | `Target Branch Checks`: unit tests with catalog, taxonomy, and compiler-pin validation, the package build, and the model browser checks, on GitHub-hosted runners. | The committed contract is valid on the merge result. Pull requests do **not** run recipe or surgery code on self-hosted runners. |
-| Trusted automation | On a push, each stage whose key has no completed registry run: compilation, publication, then the DevKit stages. | Staging artifacts, measurements, and provenance come from the reviewed revision. Production is an explicit protected maintainer action. |
+| Trusted automation | On a push, each stage whose fingerprint has no completed registry run: compilation, publication, then the benchmarks. | Staging artifacts, measurements, and provenance come from the reviewed revision. Production is an explicit protected maintainer action. |
 
 The pinned Model Compiler and a compatible Modalix DevKit are submission
 prerequisites, not optional CI substitutes. Do not open a model pull request

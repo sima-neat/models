@@ -43,7 +43,7 @@ resolve_single_dataset() {
   DATASET=""
   for component in "${components[@]}"; do
     result="$("$PYTHON" -m model_registry "$command" "$MODEL_DIR" --build-profile "$BUILD_PROFILE_ID" \
-      --component "$component" "${cache_args[@]}" --json)"
+      --component "$component" ${cache_args[@]+"${cache_args[@]}"} --json)"
     candidate="$(json_field path <<< "$result")"
     if [[ -n "$candidate" && -n "$DATASET" && "$candidate" != "$DATASET" ]]; then
       echo "$command resolves different datasets within $COMPILE_INVOCATION_ID; compile.py takes one" >&2
@@ -66,7 +66,7 @@ IFS=',' read -ra components <<< "$COMPONENT_IDS"
 
 # compile.py receives the first component's source; multi-component recipes derive the rest from it.
 source_path="$("$PYTHON" -m model_registry fetch "$MODEL_DIR" --component "${components[0]}" \
-  "${cache_args[@]}" --json | json_field path)"
+  ${cache_args[@]+"${cache_args[@]}"} --json | json_field path)"
 dataset_args=()
 resolve_single_dataset fetch-calibration
 if [[ -n "$DATASET" ]]; then
@@ -86,7 +86,7 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --output-dir "$PROFILE_OUTPUT_DIR" \
   --build-profile "$BUILD_PROFILE_ID" \
   --compile-invocation "$COMPILE_INVOCATION_ID" \
-  "${dataset_args[@]}"
+  ${dataset_args[@]+"${dataset_args[@]}"}
 if [[ ! -d "$PROFILE_OUTPUT_DIR" ]]; then
   echo "$MODEL_DIR/scripts/compile.py wrote no output directory $PROFILE_OUTPUT_DIR" >&2
   exit 1

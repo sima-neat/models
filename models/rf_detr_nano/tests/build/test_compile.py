@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -244,7 +245,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert "quantized.compile(" in source
     assert "compile-outputs.json" in source
     assert '"derived_graphs"' in source
-    assert '"correctness"' in source
+    assert '"compile_invocation_id": profile_id' in source
     assert "shutil.copyfile" in source
     assert "requests" not in source
     assert "urllib" not in source
@@ -253,7 +254,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
 
 
 def _metadata() -> dict:
-    return yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    return load_metadata(MODEL_DIR)
 
 
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -274,6 +275,27 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
         compile_module._quantization_config({"precision": "int8"})
     with pytest.raises(ValueError, match="W8A8 component must declare calibration_bins"):
         compile_module._quantization_config({"precision": "w8a8"})
+
+
+def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    compile_module = load_script("compile")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["compile.py", "--model", str(tmp_path / "model.onnx"), "--fidelity-dataset", str(tmp_path / "images"),
+         "--output-dir", str(tmp_path / "out"), "--build-profile", "w8a16_w16a16", "--compile-invocation", "rf_detr"],
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        compile_module.main()
+
+    assert stopped.value.code == 2
+    assert "a build profile compiles in one invocation named after it" in capsys.readouterr().err
 
 
 def test_the_decoder_calibrates_in_every_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -382,25 +404,20 @@ def test_surgery_simplifies_only_the_decoder_partition() -> None:
     assert "full, valid = simplify(" not in source
 
 
-def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
+    model = load_metadata(MODEL_DIR)
     invocation = model["build_profiles"][0]["compile_invocations"][0]
-    correctness = model["fidelity"][0]
-    benchmarks = model["benchmark"]
 
-    assert invocation["components"] == ["backbone", "decoder"]
-    assert "python_packages" not in invocation
+    assert invocation == {"id": "w8a8_w16a16", "components": ["backbone", "decoder"]}
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16"]
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
     assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 1024
-    assert correctness["scope"] == {"type": "package", "package": "default"}
-    assert [(entry["id"], entry["scope"]) for entry in benchmarks] == [
-        ("orchestration", {"type": "package", "package": "default"})
-    ]
-    assert benchmarks[0]["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"]
+    assert model["numerical_fidelity"]["outputs"] == ["dets", "labels"]
+    assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]
+    assert model["performance"] == {}
 
 
 def _gelu_mlp() -> onnx.ModelProto:

@@ -23,12 +23,13 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
 @pytest.mark.parametrize(
     "command",
     [
-        "make-benchmark-manifest",
+        "model-component-mpks",
+        "check-report",
         "publish",
         "promotion",
         "publish-candidate",
         "publish-branch-deployment",
-        "publish-benchmark",
+        "publish-report",
         "publish-catalog",
         "resolve-base",
         "resolve-benchmark-runtime",
@@ -47,7 +48,9 @@ def test_repository_cli_retains_ci_only_commands() -> None:
     parser = cli._parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
 
-    assert {"publish", "publish-benchmark", "publish-catalog"} <= set(subcommands.choices)
+    assert {"publish", "model-component-mpks", "check-report", "publish-report", "publish-catalog"} <= set(
+        subcommands.choices
+    )
     assert {"package", "fetch-previous"}.isdisjoint(subcommands.choices)
 
 
@@ -120,7 +123,7 @@ def test_validate_models_checks_every_manifest(capsys) -> None:
     assert result == 0
     output = capsys.readouterr().out
     assert f'"model_count": {len(list((ROOT / "models").glob("*/model.yaml")))}' in output
-    assert '"ssd_mobilenet_v3"' in output
+    assert '"yolo26n"' in output
     assert '"valid": true' in output
 
 
@@ -235,7 +238,7 @@ def test_fetch_fidelity_dataset_skips_model_without_fidelity(monkeypatch, capsys
     result = main(
         [
             "fetch-fidelity-dataset",
-            str(ROOT / "models" / "ssd_mobilenet_v1"),
+            str(ROOT / "models" / "yolo26n"),
             "--build-profile",
             "w16a16",
             "--component",
@@ -251,7 +254,7 @@ def test_fetch_fidelity_dataset_skips_model_without_fidelity(monkeypatch, capsys
 def test_invalid_model_has_nonzero_exit(capsys) -> None:
     result = main(["validate", str(ROOT / "tests" / "fixtures" / "invalid_model")])
     assert result == 2
-    assert "components[0].source" in capsys.readouterr().err
+    assert "compilation.source" in capsys.readouterr().err
 
 
 def test_matrix_emits_workflow_json(capsys) -> None:
@@ -259,7 +262,7 @@ def test_matrix_emits_workflow_json(capsys) -> None:
     assert result == 0
     entries = json.loads(capsys.readouterr().out)["include"]
     assert {entry["model_id"] for entry in entries} == {"resnet_50"}
-    assert all(len(entry["build_fingerprint"]) == 64 for entry in entries)
+    assert all(len(entry["compile_fingerprint"]) == 64 for entry in entries)
 
 
 def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> None:
@@ -275,14 +278,78 @@ def test_component_pipelines_writes_each_declared_pipeline(tmp_path: Path) -> No
     ]
 
 
-def test_published_metrics_writes_each_models_published_scores(tmp_path: Path) -> None:
-    output = tmp_path / "published-metrics.json"
-    assert main(["published-metrics", "--repository", str(ROOT), "--output", str(output)]) == 0
+def test_reference_metrics_writes_each_models_published_scores(tmp_path: Path) -> None:
+    output = tmp_path / "reference-metrics.json"
+    assert main(["reference-metrics", "--repository", str(ROOT), "--output", str(output)]) == 0
 
-    published = json.loads(output.read_text(encoding="utf-8"))
-    assert "yolo26_tiny_drone" not in published
-    assert published["resnet_50"][0]["dataset"] == {"id": "imagenet-2012", "split": "val"}
-    assert published["resnet_50"][0]["metrics"] == {"top1_accuracy": 0.80382, "top5_accuracy": 0.94598}
+    reference = json.loads(output.read_text(encoding="utf-8"))
+    assert "whisper_small" not in reference
+    assert reference["resnet_50"][0]["dataset"] == {"id": "imagenet-2012", "split": "val"}
+    assert reference["resnet_50"][0]["metrics"] == {"top1_accuracy": 0.80382, "top5_accuracy": 0.94598}
+
+
+def test_resolve_devkit_accuracy_caches_each_accuracy_dataset_of_the_profile(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    dataset = tmp_path / "imagenet-mini.tgz"
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", lambda *args, **kwargs: dataset)
+
+    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "w8a8"]) == 0
+
+    # One JSON line per dataset model.yaml's accuracy names.
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [{
+        "name": "imagenet-2012-mini",
+        "path": str(dataset),
+        "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
+        "size_bytes": 356052889,
+    }]
+
+
+def test_resolve_devkit_accuracy_skips_a_profile_without_accuracy(monkeypatch, capsys) -> None:
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("a profile without accuracy must not resolve a dataset")
+
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
+
+    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "w16a16"]) == 0
+
+    assert capsys.readouterr().out == ""
+
+
+def test_model_component_mpks_prints_one_component_mpk_per_line(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = []
+
+    def inputs(*args):
+        calls.append(args)
+        return ["backbone=/c/backbone.tar.gz", "decoder=/c/decoder.tar.gz"]
+
+    monkeypatch.setattr("model_registry.report_publication.model_component_mpks", inputs)
+
+    assert main([
+        "model-component-mpks", str(tmp_path), "--repository", str(ROOT), "--model", "rf_detr_nano",
+        "--build-profile", "w8a8_w16a16",
+    ]) == 0  # fmt: skip
+    assert calls == [(tmp_path, ROOT, "rf_detr_nano", "w8a8_w16a16")]
+    assert capsys.readouterr().out == "backbone=/c/backbone.tar.gz\ndecoder=/c/decoder.tar.gz\n"
+
+
+def test_check_report_records_the_devkit_beside_the_checked_report(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = []
+
+    def check(*args):
+        calls.append(args)
+        return {"metrics": {"throughput_fps": 400.0, "latency_avg_ms": 2.5}}
+
+    monkeypatch.setattr("model_registry.report_publication.check_report", check)
+    monkeypatch.setattr("model_registry.report_publication.runner_environment", lambda: {"board_model": "Modalix"})
+
+    assert main([
+        "check-report", str(tmp_path), "--repository", str(ROOT), "--stage", "performance", "--model", "resnet_50",
+        "--build-profile", "w8a8",
+    ]) == 0  # fmt: skip
+    assert calls == [(tmp_path / "model-report.json", ROOT, "resnet_50", "w8a8", "performance")]
+    assert json.loads((tmp_path / "environment.json").read_text(encoding="utf-8")) == {"board_model": "Modalix"}
+    assert capsys.readouterr().out == "Checked the performance report: latency_avg_ms, throughput_fps\n"
 
 
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:
@@ -291,7 +358,7 @@ def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     assert "unknown model id" in capsys.readouterr().err
 
 
-def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
+def test_matrix_selects_one_build_profile(capsys) -> None:
     profile = "w8a8"
     result = main(
         [
@@ -299,7 +366,7 @@ def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
             "--repository",
             str(ROOT),
             "--models",
-            "ssd_mobilenet_v1",
+            "yolo26n",
             "--profiles",
             profile,
         ]
@@ -307,7 +374,7 @@ def test_matrix_selects_one_ssd_build_profile(capsys) -> None:
     assert result == 0
     output = capsys.readouterr().out
     assert f'"build_profile_id":"{profile}"' in output
-    assert '"model_id":"ssd_mobilenet_v1"' in output
+    assert '"model_id":"yolo26n"' in output
 
 
 def test_publish_writes_one_receipt_per_component(monkeypatch, tmp_path: Path) -> None:
@@ -364,54 +431,43 @@ def test_tooling_supports_python_module_entrypoint() -> None:
     assert "Model Registry lifecycle tooling" in result.stdout
 
 
-PUBLISH_MEASUREMENT_ARGS = {
-    "publish-benchmark": ["--result", "performance-result.json"],
-    "publish-accuracy": ["--result", "accuracy-result.json", "--compiled-dir", "compiled"],
-}
-PUBLISH_MEASUREMENT_FUNCTIONS = {
-    "publish-benchmark": "publish_benchmark_result",
-    "publish-accuracy": "publish_accuracy_run",
-}
-
-
-def publish_measurement(monkeypatch, command: str, *extra: str, subject: dict | None = None) -> list[dict]:
+def publish_report(monkeypatch, stage: str, *extra: str) -> list[dict]:
     calls = []
 
     def publish(**kwargs):
         calls.append(kwargs)
         return {
-            "result_fingerprint": "f", "accuracy_key": "k", "model_id": "m", "build_profile_id": "p",
-            **(subject or {"component_id": "c"}),
-        }  # fmt: skip
+            "benchmark_fingerprint": "k", "model_id": kwargs["model_id"], "build_profile_id": kwargs["build_profile_id"],
+        }
 
-    monkeypatch.setattr(f"model_registry.benchmark_publication.{PUBLISH_MEASUREMENT_FUNCTIONS[command]}", publish)
+    monkeypatch.setattr("model_registry.report_publication.publish_report", publish)
     main([
-        command, *PUBLISH_MEASUREMENT_ARGS[command], "--repository", ".", "--api-url", "https://writer.example.invalid",
+        "publish-report", f"_{stage}", "--stage", stage, "--repository", ".", "--compiled-dir", "_compiled",
+        "--model", "resnet_50", "--build-profile", "w8a8", "--api-url", "https://writer.example.invalid",
         "--bucket", "model-artifacts", "--environment", "staging", "--branch", "feat/tests", "--git-sha", "a" * 40,
         *extra,
     ])  # fmt: skip
     return calls
 
 
-@pytest.mark.parametrize("command", PUBLISH_MEASUREMENT_ARGS)
+@pytest.mark.parametrize("stage", ["performance", "accuracy"])
 @pytest.mark.parametrize("status", ["passed", "failed", "skipped"])
-def test_publishing_a_measurement_sends_its_test_status(monkeypatch, command: str, status: str) -> None:
-    calls = publish_measurement(monkeypatch, command, "--test-status", status)
+def test_publishing_a_report_sends_its_stage_and_test_status(monkeypatch, capsys, stage: str, status: str) -> None:
+    calls = publish_report(monkeypatch, stage, "--test-status", status)
 
-    assert [call["test_status"] for call in calls] == [status]
+    assert [(call["output_dir"], call["stage"], call["test_status"]) for call in calls] == [
+        (Path(f"_{stage}"), stage, status)
+    ]
+    assert (calls[0]["compiled_dir"], calls[0]["model_id"], calls[0]["build_profile_id"]) == (
+        Path("_compiled"), "resnet_50", "w8a8",
+    )
+    assert capsys.readouterr().out == f"Published {stage} k for resnet_50/w8a8\n"
 
 
-def test_publishing_a_package_benchmark_names_its_package(monkeypatch, capsys) -> None:
-    publish_measurement(monkeypatch, "publish-benchmark", "--test-status", "passed", subject={"package_id": "default"})
-
-    assert capsys.readouterr().out == "Published benchmark f for m/p/default\n"
-
-
-@pytest.mark.parametrize("command", PUBLISH_MEASUREMENT_ARGS)
 @pytest.mark.parametrize("extra", [(), ("--test-status", "error")])
-def test_publishing_a_measurement_requires_a_test_outcome(monkeypatch, command: str, extra: tuple[str, ...]) -> None:
+def test_publishing_a_report_requires_a_test_outcome(monkeypatch, extra: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit) as raised:
-        publish_measurement(monkeypatch, command, *extra)
+        publish_report(monkeypatch, "performance", *extra)
 
     assert raised.value.code == 2
 

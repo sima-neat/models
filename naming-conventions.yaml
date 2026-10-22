@@ -25,11 +25,9 @@ mpk:
 
 order:
   - precision
-  - quantization
   - calibration
   - histogram_bins
   - weight_scaling
-  - requantization
   - bias_correction
   - equalization
   - smooth_quant
@@ -49,8 +47,6 @@ tokens:
     w16a16: BF16 weights and activations
     w8a16: INT8 weights and BF16 activations
     w4a16: INT4 weights and BF16 activations
-  quantization:
-    qat: Quantization-aware-trained source
   calibration:
     mse: Histogram mean squared error
     mm: MinMax
@@ -58,8 +54,6 @@ tokens:
     ent: Histogram entropy
   weight_scaling:
     wpt: Per-tensor integer weight scales instead of per-channel scales
-  requantization:
-    rqtf: TFLite requantization instead of SiMa requantization
   bias_correction:
     bcr: Regular bias correction
     bci: Iterative bias correction

@@ -23,8 +23,8 @@ from model_registry.model_tests import STAGE_GROUP, TESTS_FILE, load_model_tests
 STAGE_OUTPUTS = {
     "converted": "converted ONNX model the conversion tests check",
     "compiled": "one build's compile output directory, <root>/<model>/<build profile>",
-    "accuracy": "accuracy-result.json the accuracy tests check",
-    "performance": "one component's performance-result.json the performance tests check",
+    "accuracy": "model-report.json the accuracy tests check",
+    "performance": "model-report.json the performance tests check",
 }
 # Compiler and DevKit modules the model scripts import but the tests never call. Where one is not
 # installed, a loaded script gets a stand-in for it.
@@ -58,6 +58,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("model stage outputs")
     for name, help_text in STAGE_OUTPUTS.items():
         group.addoption(f"--{name}", type=Path, help=help_text)
+    group.addoption("--build-profile", help="the build profile an accuracy or performance report measured")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -116,7 +117,7 @@ def model_dir(request: pytest.FixtureRequest) -> Path:
 
 @pytest.fixture
 def load_script(model_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], ModuleType]:
-    """Import one of the model's scripts by its path under scripts/, such as "compile" or "qat/contract"."""
+    """Import one of the model's scripts by its path under scripts/, such as "compile" or "calibration"."""
     for name in MISSING_MODULES:
         monkeypatch.setitem(sys.modules, name, MagicMock())
 
@@ -158,22 +159,24 @@ def compiled(request: pytest.FixtureRequest) -> Path:
 
 @pytest.fixture
 def accuracy(request: pytest.FixtureRequest) -> dict[str, Any]:
-    """The build's DevKit accuracy result, as published (schemas/accuracy-result.schema.json)."""
+    """The build profile's DevKit accuracy report, as published (schemas/model-report.schema.json)."""
     return json.loads(_given(request, "accuracy").read_text(encoding="utf-8"))
 
 
 @pytest.fixture
 def performance(request: pytest.FixtureRequest) -> dict[str, Any]:
-    """One component's DevKit performance result, as published (schemas/performance-result.schema.json)."""
+    """The build profile's DevKit performance report, as published (schemas/model-report.schema.json)."""
     return json.loads(_given(request, "performance").read_text(encoding="utf-8"))
 
 
 @pytest.fixture
 def build_profile(request: pytest.FixtureRequest) -> str:
-    """The build profile the given compile output or DevKit result belongs to."""
-    for name in ("accuracy", "performance"):
-        if request.config.getoption(name):
-            return request.getfixturevalue(name)["model"]["build_profile_id"]
+    """The build profile the given compile output or DevKit report belongs to."""
+    if request.config.getoption("accuracy") or request.config.getoption("performance"):
+        profile = request.config.getoption("build_profile")
+        if profile is None:
+            raise pytest.UsageError("--build-profile is required with an accuracy or performance report")
+        return profile
     if request.config.getoption("compiled"):
         outputs = json.loads((_given(request, "compiled") / "compile-outputs.json").read_text(encoding="utf-8"))
         return outputs["build_profile_id"]

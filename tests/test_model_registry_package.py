@@ -89,7 +89,8 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "Version: 0.1.0+unit" in metadata
         assert "Requires-Dist: jsonschema<5,>=4.18.4" in metadata
         assert "model_registry/cli.py" in names
-        for ci_module in ("benchmark_manifest", "benchmark_publication", "registry", "candidates", "promotions"):
+        assert "model_report/metrics.json" in names
+        for ci_module in ("report_publication", "registry", "candidates", "promotions"):
             assert f"model_registry/{ci_module}.py" not in names
         assert "author_main" in wheel.read("model_registry/__main__.py").decode()
         entry_points = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
@@ -147,7 +148,7 @@ def test_installer_uses_the_model_compiler_environment_without_changing_dependen
     )
     assert "-m venv" not in script
     assert ".local/bin/model-registry" not in script
-    assert "publish-benchmark" in script
+    assert "publish-report" in script
     subprocess.run(["bash", "-n", str(INSTALL_SCRIPT)], check=True)
     subprocess.run(["bash", "-n", str(RESOLVER)], check=True)
     subprocess.run(["bash", "-n", str(BUILD_SCRIPT)], check=True)

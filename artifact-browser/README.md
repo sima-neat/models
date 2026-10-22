@@ -65,26 +65,28 @@ this checkout defines; a model added or removed there appears or disappears
 without changes to the preview. Only what a board or the registry would produce
 is synthetic: run IDs, timestamps, sizes, and measured values. Two catalog
 revisions give every variant an older build in its history.
-The preview's benchmark results start from
-`artifact-browser/fixtures/performance-result.json`, a ResNet-50 result
-that `import-core-benchmark` produced from a DevKit Core benchmark, so its
-board telemetry and power rails are real readings; the preview varies only
-speed, energy, and MLA memory per build, and generates illustrative layer timings
-covering all ten recognized operation families in each profiling panel. These synthetic
+The preview resolves each benchmark fingerprint the catalog records to a DevKit run
+whose model report starts from a fixture. `fixtures/model-report-performance.json`
+is a ResNet-50 DevKit Core benchmark converted to a model report, so its board
+telemetry and power rails are real readings; the preview varies only speed,
+energy, and MLA memory per build, and generates illustrative layer timings
+covering all ten recognized operation families in each profiling panel. A
+multi-component model, such as RF-DETR, reports each component's layers and
+execution graph in the order its pipeline runs them. These synthetic
 layer names include fused operations, nested reshapes, segmentation helpers,
 outputs and zero-time entries. Input placeholders are omitted, matching the
 benchmark API. These names do not describe the selected model's actual graph.
-Edit it to exercise other metric
-values or availability states. Keep one fixture per benchmark adapter, not
-per schema version: a new format that needs its own adapter adds its own
-fixture and tests, and the existing fixture keeps covering the older formats.
-Keep an adapter for every published schema version.
+`fixtures/model-report-accuracy.json` gives each accuracy run its shape; the
+preview fills in the metrics the model's tests expect. YOLO26n W16A16
+keeps its benchmark fingerprint without a run, so its page shows **Not measured at
+this revision.** Edit the fixtures to exercise other metric values or
+availability states.
 
-Benchmark adapters preserve every metric that follows the result contract.
-Known metrics receive curated labels, formatting, and a place in a benchmark
-card; unknown additive metrics appear automatically under Other measurements.
-Unsupported schema versions still
-link to the raw result instead of guessing at incompatible structures.
+The browser reads version 1 of the model report (`schemas/model-report.schema.json`)
+in `model-report.js`. Known metrics receive curated labels, formatting, and a
+place in a benchmark card; unknown additive metrics appear automatically under
+Other measurements. Any other report format shows **This result format is not
+supported by this browser** instead of guessing at an incompatible structure.
 
 ## Staging deployment
 
@@ -178,40 +180,46 @@ everything longer sits in one expandable row.
   catalog. It renders the README from the section after Overview, because the title,
   hero, and Overview are already on the page.
 - **Performance** shows throughput, latency, SoM power, and energy per
-  inference for each component, one number per tile. **Benchmark details** is
+  inference for the whole model, one number per tile, from the build profile's
+  performance run. A multi-component model is measured with its components
+  running together, and its layer analysis and execution graph switch between
+  the components. **Performance details** is
   performance, heat, and CPU cards, with power (SoM; SoC as the sum of its
   MLA and Non-MLA rails; and each other power rail) and memory cards beside
   them,
   then any other measurements and a footer with the telemetry source and
-  runtime beside **Raw result** and **Download CSV** (every reading of the
-  component in one table).
-- **Accuracy** shows the status, the first four metrics, and the scope.
-  In the developer UI, **Evaluation details** explains status and coverage and lists the context
-  and remaining metrics. **Published scores** lists each `published_metrics`
-  entry of `model.yaml` with its dataset, conditions, and source; a published
-  score sits beside a measured one only when both name the same dataset. A
-  build without an accuracy result shows only the published scores.
+  runtime beside **Raw result** (the run's model report) and **Download CSV**
+  (every reading of the model in one table).
+- **Accuracy** shows the coverage, the first four metrics, and the dataset,
+  from the build profile's accuracy run. In the developer UI, **Evaluation
+  details** explains the coverage and lists the context and remaining metrics.
+  **Published scores** lists each `reference_metrics` entry of `model.yaml`
+  with its dataset, conditions, and source; a published score sits beside a
+  measured one only when both name the same dataset. A build without an
+  accuracy result shows only the published scores.
 - **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
-  and **Download components** for a multi-component build), then rows for build provenance, source models (one
-  per distinct digest), and each component: checksum, run identity, numerical
-  fidelity, and a nested **Compile parameters** row.
+  and **Download components** for a multi-component build) and the package's numerical
+  fidelity, then rows for build provenance, source models (one
+  per distinct digest), and each component: checksum, run identity, and a nested
+  **Compile parameters** row.
 - **License** is one line with the SPDX identifier and redistribution, plus
   the attribution.
 
-Components are measured on their own, so their latencies do not add up to
-end-to-end latency.
+The catalog records each build profile's benchmark fingerprints. A fingerprint
+without a run, or a profile without one, shows **Not measured at this
+revision.**
 
 ## Compare page
 
 **Compare** explores the selected branch's model variants by task. All
 precisions appear together; measured variants appear in a scatter
 plot of accuracy against throughput in inferences/s. Accuracy plots keep dataset
-and metric identities separate. Multi-component models are excluded for now. Hovering or focusing a point
+and metric identities separate. A multi-component model shows its whole-model result, with all its components running as one pipeline. Hovering or focusing a point
 shows the model name, variant, throughput and accuracy.
 
 Select up to three points or use **Add model** to inspect exact measurements
 in a table. It includes throughput, latency, power, energy, peak MLA memory and
-accuracy. Best performance values are highlighted only within matching components.
+accuracy. Bold marks the best value.
 Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
 Links preserve the task and selected builds with `compare_task` and repeated
 `build` parameters. Build history is not compared.
@@ -232,7 +240,7 @@ delegation.
 | `catalog-view.js` | Model cards, build history, search, and filters |
 | `model-view.js` | The model page |
 | `compare-view.js` | The Compare page: pickers and table |
-| `benchmark-adapters.js` | One shape for every supported result schema |
+| `model-report.js` | Reading performance and accuracy model reports |
 | `metrics.js` | Metric labels, units, and formatting |
 | `downloads.js` | Component discovery for downloads |
 | `markdown.js` | The README renderer |
@@ -256,10 +264,10 @@ for the deployed portal and fails when a module imports a file missing from its
 `fingerprintedAssets` list, so add a new module there.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
-model page, and `published-metrics.<revision>.json` from each
-`published_metrics`; `preview.py` serves the same data from `models/`.
-`accuracy-metrics.js` keeps the metric labels of
-`taxonomies/accuracy-metrics.yaml`, and a test keeps the two in step. Run
+model page, and `reference-metrics.<revision>.json` from each
+`reference_metrics`; `preview.py` serves the same data from `models/`.
+`metrics.js` and `accuracy-metrics.js` keep the labels, units, and directions
+of `tools/model_report/metrics.json`, and tests keep them in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for
 `preview.py`.
 
@@ -333,14 +341,12 @@ duration** comes from `metadata.compile_timing`, captured around the compilation
 recipe by the compile workflow. It includes surgery and any validation performed
 inside that recipe; it excludes runner queue/setup, separate accuracy jobs,
 publication, and subsequent benchmarks. Components compiled together share this
-invocation timing. Older builds display **Not recorded** instead of presenting
-publication time as compile time; the workflow link provides historical job timing.
+invocation timing.
 
-The publisher accepts optional `compile-timing.json` alongside `compile-outputs.json`,
+The publisher requires `compile-timing.json` alongside `compile-outputs.json`,
 validates its timezone-aware start/end timestamps before any registry writes,
-and publishes it as additive run metadata. Existing outputs remain publishable.
-No registry API or database schema changes are required.
+and publishes it as run metadata.
 
 The preview's layer timings are illustrative generated data, including zero-time
 entries and multiple MLA stages to exercise the analysis controls. Production
-pages use only the compiled layer timings in each published Core report.
+pages use only the compiled layer timings in each published model report.

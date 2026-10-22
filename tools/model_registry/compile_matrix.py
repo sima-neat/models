@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .accuracy_config import find_devkit_accuracy_config
+from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles
 from .errors import ValidationError
-from .model import benchmark_entry, compile_invocations_for, effective_runner_class
-from .stage_keys import compile_key
+from .fingerprints import compile_fingerprint
+from .model import compile_invocations_for, effective_runner_class
 
 
 def build_matrix(
@@ -49,7 +49,6 @@ def build_matrix(
             if requested_profiles and profile["id"] not in requested_profiles:
                 continue
             bindings = {item["id"]: item for item in profile["components"]}
-            accuracy = find_devkit_accuracy_config(model, profile["id"])
             for invocation in sorted(compile_invocations_for(profile), key=lambda item: item["id"]):
                 invocation_component_ids = list(invocation["components"])
                 if requested_components and not requested_components.intersection(invocation_component_ids):
@@ -64,25 +63,17 @@ def build_matrix(
                     "build_profile_id": profile["id"],
                     "requested_runner_class": effective_runner_class(profile, bindings[first_component_id]),
                     "target": profile["target"],
-                    # A package's benchmark runs under its last component, which the invocation also compiles.
-                    "benchmark_component_ids": [
-                        component_id
-                        for component_id in invocation_component_ids
-                        if benchmark_entry(model, component_id, profile["id"]) is not None
+                    # The benchmarks measure the whole model once this profile's package is published.
+                    "stages": [
+                        stage for stage in BENCHMARK_STAGES if profile["id"] in benchmarked_profiles(model, stage)
                     ],
-                    # Model validation keeps an accuracy entry's components in one invocation.
-                    "accuracy_id": (
-                        accuracy["id"]
-                        if accuracy is not None and accuracy["result_component"] in invocation_component_ids
-                        else None
-                    ),
                 }
                 if model["components"][0]["interface"]["format"] == "huggingface":
                     entry["runner_script"] = "scripts/run_llima_compilation.sh"
                 if model.get("build-on-demand", False):
                     entry["build_on_demand"] = True
                 if repository is not None and compiler_version is not None:
-                    entry["build_fingerprint"] = compile_key(
+                    entry["compile_fingerprint"] = compile_fingerprint(
                         repository, model_id, profile["id"], invocation["id"], compiler_version
                     )
                 include.append(entry)

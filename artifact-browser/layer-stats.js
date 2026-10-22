@@ -62,8 +62,8 @@ export function layerFamily(name) {
     || /_output(?:_(?:batch_)?segment_\d+)?$/.test(text)) return "io";
   if (/_output_reshape(?:_|\/|$)/.test(text)) return "layout";
 
-  // Parent-first matching keeps decomposed reshapes together, while supporting
-  // scoped names from historical reports (block_0/conv2d, etc.).
+  // Parent-first matching keeps decomposed reshapes together and supports
+  // scoped names (block_0/conv2d, etc.).
   for (const component of text.split("/")) {
     const operation = component.replace(/^(?:nn\.|qnn[._])/, "");
     if (/^(?:group_)?conv(?:[123]d)?(?:transpose)?(?:_|$)/.test(operation)) return "conv";

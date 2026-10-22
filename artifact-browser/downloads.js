@@ -3,7 +3,7 @@ import { deploymentCatalog, variantBuildRuns } from "./branch-builds.js";
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
   if (artifact.metadata?.storage_backend === "huggingface") return "huggingface";
-  if (artifact.metadata?.layout === "directory" || artifact.media_type?.split(";")[0] === "application/json") return "directory";
+  if (artifact.metadata?.layout === "directory") return "directory";
   return "archive";
 }
 
@@ -24,7 +24,7 @@ export function huggingFaceLocation(artifact = {}) {
 export async function variantDownloads(run, api, catalogModel = null) {
   if (catalogModel) catalogModel = deploymentCatalog(catalogModel);
   const modelId = run.metadata?.model_id;
-  const profile = run.metadata?.build_profile_id || run.metadata?.variant_id;
+  const profile = run.metadata?.build_profile_id;
   const packs = (summary) => (summary.artifacts || []).filter((item) => item.artifact_type === "model-pack");
   const roots = (catalogModel?.branch_deployments?.[profile] || catalogModel?.approved_deployments?.[profile])
     ? catalogModel.builds.filter((build) => build.build_profile_id === profile) : [];
@@ -36,7 +36,7 @@ export async function variantDownloads(run, api, catalogModel = null) {
     const summary = await api(`/v1/runs/${encodeURIComponent(item.id)}`);
     const root = selected.find((build) => build.run_id === item.id);
     const artifacts = packs(summary).filter((artifact) => !root || artifact.name === root.artifact_name);
-    const component = item.metadata?.component_id || "model";
+    const component = item.metadata.component_id;
     if (!artifacts.length) throw new Error(`No model file is available for ${component}. No downloads were started.`);
     return artifacts.map((artifact) => ({
       runId: item.id, component, name: artifact.name, size: deploymentSize(artifact),

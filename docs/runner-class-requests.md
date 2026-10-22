@@ -108,14 +108,13 @@ approved logical runner label
 job scheduling and scaler provisioning
 ```
 
-The version 2 admission check matches repository, model folder ID, and requested
-class against the Vulcan record. It returns only an approved logical
-runner label.
-
-For legacy published schema version 1, an existing `variant_id` approval without the new
-fields is interpreted as that build profile for the conventional single
-component named `model`. It cannot authorize a newly introduced named
-component. Migrate legacy approvals to model-folder grants when adopting version 2.
+The admission check matches repository, model folder ID, and requested class
+against the Vulcan record. It returns only an approved logical runner label.
+Vulcan publishes approval schema version 2: one grant per model folder, the
+same in every environment. Any other version, and any approval field beyond
+repository, model ID, maximum class, approver, reason, and evidence, fails
+closed. The approval ID is `repository:model_id`, and every build of the model
+records it with the policy revision.
 
 The workflow and scaler must fail closed when:
 
@@ -167,19 +166,3 @@ Compilation results should record:
 
 This allows cost, reliability, and compile-time analysis without coupling the
 model manifest to a particular EC2 instance type.
-
-
-## Shared-policy rollout compatibility
-
-The admission reader accepts published approval schema version 2 (shared,
-durable grants) and legacy version 1 (including its environment and timestamp
-restrictions) so the reader can be released before Vulcan changes its policy.
-A missing version means legacy version 1. Unknown versions fail closed. Version
-2 rejects legacy environment, timestamp, profile, component, and variant fields
-rather than ignoring them. Version 2 approval IDs are `repository:model_id`;
-all builds under that model record the same approval ID and policy revision.
-Grouped compilation records the single shared model grant in `runner_approval_ids`.
-
-Release this reader to every active workflow revision before deploying Vulcan's
-version 2 specification. Do not roll back to an older reader while version 2 is
-published. Legacy support can be removed once all environments have migrated.

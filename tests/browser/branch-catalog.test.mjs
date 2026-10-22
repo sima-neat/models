@@ -98,6 +98,18 @@ test('a profile the catalog no longer declares shows no variant, even with a new
   assert.deepEqual([...new Set(model.builds.map((build) => build.build_profile_id))], ['int8']);
 });
 
+test('a model the catalog no longer lists shows no variant, even with runs that predate component ids', () => {
+  const removed = (id, profile) => run(id, 'ssd_mobilenet_v1', develop, '2026-09-02T00:00:00Z',
+    {metadata: {model_id: 'ssd_mobilenet_v1', build_profile_id: profile, github_run_id: `${id}-workflow`}});
+  const models = branchModels([removed('ssd-int8', 'int8'), removed('ssd-bf16', 'bf16'), resnet, yolo], [], catalog);
+
+  assert.deepEqual(models.map((model) => model.model_id), ['resnet_50', 'yolo']);
+});
+
+test('a branch without a catalog shows every completed run', () => {
+  assert.deepEqual(branchModels([resnet, yolo], [], []).map((model) => model.model_id), ['resnet_50', 'yolo']);
+});
+
 test('a profile still pending in the catalog shows its completed run', () => {
   const pending = run('resnet-pending', 'resnet_50', develop, '2026-10-02T00:00:00Z',
     {metadata: {...resnet.metadata, build_profile_id: 'bf16'}});
@@ -212,20 +224,24 @@ test('deployment-only catalogs resolve inherited builds and keep the selected pa
 });
 
 
+test('only a profile showing the catalog build keeps its benchmark fingerprints', () => {
+  const benchmark_fingerprints = {int8: {performance: 'performance-fingerprint', accuracy: 'accuracy-fingerprint'}};
+  const [model] = branchModels([resnet], [], [{...catalog[0], benchmark_fingerprints}]);
+  assert.deepEqual(model.benchmark_fingerprints, benchmark_fingerprints);
+  // The fingerprints name the catalog build's MPKs, so a newer build compiled on the branch has none.
+  const branchResnet = run('resnet-feature', 'resnet_50', feature, '2026-10-02T00:00:00Z');
+  const [rebuilt] = branchModels([branchResnet, resnet], [], [{...catalog[0], benchmark_fingerprints}]);
+  assert.equal(rebuilt.builds[0].run_id, branchResnet.id);
+  assert.deepEqual(rebuilt.benchmark_fingerprints, {});
+});
+
 for (const field of ['branch_deployments', 'approved_deployments']) {
-  test(`${field} retains accuracy only from the exact selected component build`, () => {
+  test(`${field} keep the benchmark fingerprints of the selected build's profile`, () => {
     const selection = {artifacts: [{run_id: resnet.id, component_id: 'model', artifact_name: 'mpk'}]};
-    const exact = {...catalogBuild(resnet), validation_fingerprint: 'measured-accuracy'};
-    const mismatches = [
-      {...exact, run_id: 'other-run', validation_fingerprint: 'wrong-run'},
-      {...exact, build_profile_id: 'bf16', validation_fingerprint: 'wrong-profile'},
-      {...exact, component_id: 'backbone', validation_fingerprint: 'wrong-component'},
-    ];
-    const definition = {model_id: 'resnet_50', builds: [...mismatches, exact], [field]: {int8: selection}};
+    const benchmark_fingerprints = {int8: {performance: 'performance-fingerprint'}};
+    const definition = {model_id: 'resnet_50', builds: [], benchmark_fingerprints, [field]: {int8: selection}};
     const [model] = branchModels([resnet], [], [definition]);
     assert.equal(model.builds[0].run_id, resnet.id);
-    assert.equal(model.builds[0].validation_fingerprint, 'measured-accuracy');
-    const [unmeasured] = branchModels([resnet], [], [{...definition, builds: mismatches}]);
-    assert.equal(unmeasured.builds[0].validation_fingerprint, undefined);
+    assert.deepEqual(model.benchmark_fingerprints, benchmark_fingerprints);
   });
 }
