@@ -72,6 +72,25 @@ def test_verify_artifact_dispatches_to_the_generic_verifier(entrypoint, monkeypa
     assert json.loads(capsys.readouterr().out) == result
 
 
+def test_verify_artifact_preserves_runner_provenance(monkeypatch, tmp_path):
+    recorded = {}
+
+    def verify(output_dir, *, write_manifest, provenance):
+        recorded.update(provenance)
+        return {"manifest": "manifest.json"}
+
+    monkeypatch.setattr(cli, "verify_artifact", verify)
+    expected = {
+        "requested_runner_market": "on-demand", "runner_market": "on-demand",
+        "runner_actual_market": "on-demand", "runner_name": "ephemeral-test",
+        "runner_instance_id": "i-test", "runner_instance_type": "c8gd.4xlarge",
+        "runner_approval_id": "sima-neat/models:test", "runner_approval_spec_revision": "a" * 64,
+    }
+    flags = [value for key, item in expected.items() for value in ("--" + key.replace("_", "-"), item)]
+    assert main(["verify-artifact", str(tmp_path), "--write-manifest", *flags]) == 0
+    assert recorded == expected
+
+
 def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkeypatch, tmp_path, capsys) -> None:
     calls = []
     result = {
@@ -437,7 +456,8 @@ def publish_report(monkeypatch, stage: str, *extra: str) -> list[dict]:
     def publish(**kwargs):
         calls.append(kwargs)
         return {
-            "benchmark_fingerprint": "k", "model_id": kwargs["model_id"], "build_profile_id": kwargs["build_profile_id"],
+            "benchmark_fingerprint": "k", "model_id": kwargs["model_id"],
+            "build_profile_id": kwargs["build_profile_id"],
         }
 
     monkeypatch.setattr("model_registry.report_publication.publish_report", publish)

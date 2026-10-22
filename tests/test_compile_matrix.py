@@ -620,3 +620,30 @@ def test_llima_compile_fingerprint_tracks_source_compiler_and_graph_settings(tmp
     manifest.write_text(yaml.safe_dump(model, sort_keys=False))
 
     assert compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler) != before
+
+
+def test_market_inheritance_and_fingerprint_stability(model_repository):
+    path = model_repository / "models/alpha/model.yaml"
+    authored = yaml.safe_load(path.read_text())
+    before = _fingerprint(model_repository, "alpha", COMPILER_VERSION)
+    profile = authored["build_profiles"]["fixture"]
+    profile["runner_market"] = "on-demand"
+    path.write_text(yaml.safe_dump(authored))
+    model = load_and_validate_model(path.parent)
+    assert build_matrix({"alpha": model}, ["alpha"])["include"][0]["requested_runner_market"] == "on-demand"
+    assert _fingerprint(model_repository, "alpha", COMPILER_VERSION) == before
+    profile["components"]["model"]["runner_market"] = "spot"
+    path.write_text(yaml.safe_dump(authored))
+    model = load_and_validate_model(path.parent)
+    assert build_matrix({"alpha": model}, ["alpha"])["include"][0]["requested_runner_market"] == "spot"
+    assert _fingerprint(model_repository, "alpha", COMPILER_VERSION) == before
+
+
+def test_grouped_compile_rejects_conflicting_markets(model_repository):
+    path = model_repository / "models/alpha/model.yaml"
+    authored = yaml.safe_load(path.read_text())
+    _declare_components(authored)
+    authored["build_profiles"]["fixture"]["components"]["decoder"]["runner_market"] = "on-demand"
+    path.write_text(yaml.safe_dump(authored))
+    with pytest.raises(ValidationError, match="conflicting runner_market"):
+        load_and_validate_model(path.parent)

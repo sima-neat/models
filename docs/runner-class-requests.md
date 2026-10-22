@@ -1,4 +1,4 @@
-# Compile runner class requests and approvals
+# Compile runner class and market requests
 
 The schema and compilation workflow support this contract. Elevated requests
 remain unusable until a matching approval is deployed through the Vulcan
@@ -110,10 +110,10 @@ job scheduling and scaler provisioning
 
 The admission check matches repository, model folder ID, and requested class
 against the Vulcan record. It returns only an approved logical runner label.
-Vulcan publishes approval schema version 2: one grant per model folder, the
-same in every environment. Any other version, and any approval field beyond
-repository, model ID, maximum class, approver, reason, and evidence, fails
-closed. The approval ID is `repository:model_id`, and every build of the model
+Readers accept published approval schema versions 2 and 3: one grant per model
+folder, the same in every environment. Version 3 additionally requires a boolean
+`allow_on_demand`; version 2 never permits an explicit on-demand request. Unknown
+versions or fields fail closed. The approval ID is `repository:model_id`, and every build of the model
 records it with the policy revision.
 
 The workflow and scaler must fail closed when:
@@ -166,3 +166,61 @@ Compilation results should record:
 
 This allows cost, reliability, and compile-time analysis without coupling the
 model manifest to a particular EC2 instance type.
+
+## Runner market requests
+
+`runner_market` is independent of `runner_class`. It defaults to `spot`, may be
+set to `on-demand` on a build profile, and may be overridden by a component
+binding. Every component in a grouped compile must resolve to the same market;
+conflicts fail before jobs queue. This is unrelated to `build-on-demand`, which
+controls when a build is requested.
+
+```yaml
+build_profiles:
+  w8a8:
+    runner_class: default
+    runner_market: on-demand
+    components:
+      model: {parameters: {}}
+```
+
+This fragment requires a separately reviewed Vulcan market grant, including at
+default size. A size approval alone never permits on-demand. A market grant
+permits a request but never selects on-demand automatically, triggers a build,
+or upgrades an interrupted Spot job. Unapproved requests fail before queuing.
+
+Request approval through a Vulcan policy PR with exact model folder IDs, owner,
+reason, observed compile durations, interruption evidence (a canceled GitHub job
+alone is not proof of Spot reclamation), expected build frequency, and the cost
+tradeoff. The shared grant covers current and future profiles/components of those
+models; consider that scope when estimating cost. Update the owning model README
+when changing its request. No model requests or approvals change in this feature.
+
+New jobs request `runner-market-spot` or `runner-market-on-demand`. Vulcan checks
+the grant again and registers only the selected market label. The job verifies
+EC2 instance lifecycle through IMDSv2 and records requested/selected/actual market,
+runner name, instance ID/type, approval identity and policy revision in provenance
+and its summary. Market and approval metadata are outside compile/artifact identity;
+changing a model's market request does not invalidate an otherwise reusable compile.
+
+On-demand avoids Spot reclamation, but not workflow timeouts, cancellation, or
+other failures. The supported job timeout is 360 minutes. Vulcan's compiler
+profile uses a seven-hour hard lifetime: six hours plus 15 minutes for startup and
+45 minutes for cleanup. Pending/canceled/completed cleanup still applies earlier.
+
+## Market rollout order
+
+1. Deploy the compatible Vulcan scaler while retaining catalog v1 / published
+   policy v2. It understands explicit market labels and retains configured
+   behavior for older unlabelled jobs.
+2. Release the Models reader/workflow to active branches. New jobs explicitly
+   request Spot by default; on-demand still fails closed under v2.
+3. In a reviewed Vulcan policy PR, migrate the grouped catalog to v2 (published
+   v3), setting `allow_on_demand: false` for existing size-only grants and `true`
+   only for separately approved exact model IDs. A default-size market grant
+   uses `maximum_runner_class: default`. Deploy to staging, validate, then production.
+4. Enable the approved model request with its README update. Verify a staging job's
+   actual EC2 lifecycle, GitHub runner matching, provenance and cleanup before wider use.
+
+Do not roll readers back to v2-only while v3 is published. Live deployment and
+staging acceptance are tracked in [Vulcan #280](https://github.com/sima-neat/vulcan/issues/280).
