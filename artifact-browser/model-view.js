@@ -11,7 +11,7 @@ import {
 } from "./metrics.js";
 import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
-  compilerFilteredBuilds, documentationHeroUrl,
+  compilerFilteredBuilds, documentationHeroUrl, documentationHeroFallbackUrl,
 } from "./api.js";
 import { packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
 
@@ -842,7 +842,7 @@ function modelHero(model) {
   if (!documentation) return "";
   const heroUrl = documentationHeroUrl(documentation);
   return heroUrl
-    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" decoding="async" /></figure>`
+    ? `<figure class="model-card-hero"><img src="${escapeHtml(heroUrl)}" data-hero-fallback="${escapeHtml(documentationHeroFallbackUrl(documentation))}" alt="${escapeHtml(documentation.hero.alt_text || `${model.display_name || model.model_id} model hero`)}" decoding="async" /></figure>`
     : "";
 }
 

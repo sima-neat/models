@@ -1,3 +1,4 @@
+import { installHeroImageRecovery } from "./hero-images.js";
 import { variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, modelDownloadCommand } from "./downloads.js";
 import { mountDeveloperPortal } from "./portal-shell.js";
 import {
@@ -23,6 +24,8 @@ import {
   detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, selectExecutionGraph, highlightLayerLegend,
   showExecutionTooltip, hideExecutionTooltip, keepExecutionTooltip, deferHideExecutionTooltip,
 } from "./model-view.js";
+
+installHeroImageRecovery(document);
 
 function writeCategoryFilterUrl() {
   const url = new URL(location.href);

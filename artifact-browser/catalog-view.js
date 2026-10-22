@@ -9,7 +9,7 @@ import { readPerformance } from "./model-report.js";
 import { accuracyHeadline } from "./model-view.js";
 import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
-  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, loadVariant, mapWithConcurrency,
+  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadVariant, mapWithConcurrency,
 } from "./api.js";
 
 // A filter lists only the values the loaded builds use, labeled from the taxonomy.
@@ -285,7 +285,7 @@ export function compareModels(left, right) {
 function modelCardImage(model) {
   const heroUrl = documentationHeroUrl(model.documentation);
   return heroUrl
-    ? `<span class="model-card-image"><img src="${escapeHtml(heroUrl)}" alt="" loading="lazy" decoding="async" /></span>`
+    ? `<span class="model-card-image"><img src="${escapeHtml(heroUrl)}" data-hero-fallback="${escapeHtml(documentationHeroFallbackUrl(model.documentation))}" alt="" loading="lazy" decoding="async" /></span>`
     : `<span class="model-card-image model-card-image-empty" aria-hidden="true"><img src="favicon.svg" alt="" /></span>`;
 }
 
