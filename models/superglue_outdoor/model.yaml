@@ -1,0 +1,43 @@
+display_name: SuperGlue Outdoor
+description: Matches SuperPoint keypoints between two outdoor images.
+model_type: vision
+tasks: [feature_matching]
+
+modalities:
+  inputs: [keypoints, embeddings]
+  outputs: [keypoint_matches]
+
+architecture: superglue
+
+# Upstream terms are noncommercial research only; this entry is approved for internal use only.
+license:
+  spdx: LicenseRef-SiMa-Internal
+  redistribution: restricted
+  attribution: SuperGlue is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
+
+upstream:
+  repository: https://huggingface.co/magic-leap-community/superglue_outdoor
+  revision: f4041f88aa6789c46558efaafc98316c6b58a382
+  derived_from: https://github.com/magicleap/SuperGluePretrainedNetwork
+
+conversion:
+  source:
+    uri: hf://models/magic-leap-community/superglue_outdoor@f4041f88aa6789c46558efaafc98316c6b58a382/model.safetensors
+    sha256: 9bf0577b46cd76feedbc1e6908f56e10b7d92212d33338086c9156d0287d6e38
+    size_bytes: 53413232
+
+compilation:
+  format: onnx
+  # TODO(#365): replace with the source block the Vulcan Model Convert workflow prints for superglue_outdoor.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
+    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
+    size_bytes: 9917015
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+performance: {}
