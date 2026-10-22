@@ -28,11 +28,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(#365): replace with the source block the Vulcan Model Convert workflow prints for superglue_outdoor.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
-    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
-    size_bytes: 9917015
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/superglue_outdoor/ecaf6ad7eee48bb7f52e89d126e0a55e095a1a280d8d4ba13be0c4c7165c7a3a/39768412477-1/model.onnx
+    sha256: ecaf6ad7eee48bb7f52e89d126e0a55e095a1a280d8d4ba13be0c4c7165c7a3a
+    size_bytes: 48231927
 
 build_profiles:
   w16a16:

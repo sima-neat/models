@@ -135,3 +135,8 @@ def test_mla_layout_matcher_equals_the_transformers_layers(converter: ModuleType
         )
 
     np.testing.assert_allclose(converter.couplings_matrix(actual.numpy()), expected[0].numpy(), atol=1e-4)
+
+
+def test_converted_model_has_the_declared_interface(converted: Path, converter: ModuleType) -> None:
+    """The conversion stage's real output: opset 17, the 4D inputs and the couplings output, self-contained."""
+    converter.validate_export(converted)
