@@ -163,13 +163,37 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     )
     runtime = step(steps, "Resolve and verify benchmark runtime")["run"]
     install = step(steps, "Install selected Neat Core")["run"]
-    assert "resolve-benchmark-runtime --repository _source" in runtime
+    assert 'json.load(open("_source/deps/manifest.json"))' in runtime
     assert "^[[:space:]]*DISTRO_VERSION[[:space:]]*=" in runtime
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime
-    assert 'sima-cli neat install --env production --type minimal "$target"' in install
-    assert '["neat_core"]["install_target"]' in install
+    assert 'sima-cli neat install --env production --type minimal "$NEAT_CORE_TARGET"' in install
+    assert 'm["neat-core"]["install_target"]' in runtime
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
+
+
+def test_core_installs_before_any_venv(tmp_path: Path) -> None:
+    steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
+    names = [item.get("name") for item in steps]
+    core = names.index("Install selected Neat Core")
+
+    # Platform 3.0.0 images lack python3-venv until Core's installer adds it.
+    assert names.index("Resolve and verify benchmark runtime") < core
+    assert core < names.index("Install registry tooling in an isolated environment")
+    for earlier in steps[:core]:
+        assert "-m venv" not in earlier.get("run", "")
+        assert "REGISTRY_PYTHON" not in earlier.get("run", "")
+
+    # The runtime step reads the pin with the board's system python3.
+    runtime = step(steps, "Resolve and verify benchmark runtime")["run"].splitlines()
+    pin = "\n".join(line for line in runtime if line.strip().startswith(("pin=", "read -r")))
+    (tmp_path / "_source").symlink_to(ROOT)
+    result = subprocess.run(
+        ["bash", "-c", f'set -euo pipefail\n{pin}\necho "$platform_version $core_target"'],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    manifest = yaml.safe_load((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    assert result.stdout.split() == [manifest["platform-version"], manifest["neat-core"]["install_target"]]
 
 
 def test_performance_runs_only_at_the_full_mla_clock() -> None:
@@ -265,10 +289,11 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
         "performance": "${{ steps.performance-tests.outcome }}",
         "accuracy": "${{ steps.accuracy-tests.outcome }}",
     }
-    # Shared setup gates both stages; a failed accuracy dataset step does not skip performance.
-    assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
-        "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
-    )
+    # Shared setup gates both stages; Core installs before the accuracy dataset steps, so their failure does
+    # not skip performance.
+    names = [item.get("name") for item in benchmark["steps"]]
+    assert "if" not in step(benchmark["steps"], "Install selected Neat Core")
+    assert names.index("Install selected Neat Core") < names.index("Install trusted dataset tooling")
     assert "needs.benchmark-dispatched-model.result" not in publish["if"]
     assert "needs.benchmark-dispatched-model.outputs.performance == 'success' ||" in publish["if"]
     assert "needs.benchmark-dispatched-model.outputs.accuracy == 'success'" in publish["if"]
@@ -342,7 +367,7 @@ def test_devkit_steps_use_only_tools_the_board_provides() -> None:
     scripts = sorted({word.strip('"') for word in runs.split() if word.startswith("scripts/") and word.endswith(".sh")})
 
     assert "scripts/cache_accuracy_dataset.sh" in scripts
-    # The DevKit image has no jq; JSON is read with the registry Python.
+    # The DevKit image has no jq; JSON is read with Python.
     for text in [runs, *((ROOT / script).read_text(encoding="utf-8") for script in scripts)]:
         assert "jq " not in text
 
