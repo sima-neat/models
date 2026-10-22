@@ -3,11 +3,19 @@ import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from
 import { BENCHMARK_RUN_TYPES } from "./model-report.js";
 import { DEFAULT_BRANCH, state, elements, categoryFilters } from "./state.js";
 
+// The registry answers 429 while all of its readers are busy, so those requests wait and try again.
+const BUSY_RETRY_DELAYS_MS = [500, 1000, 2000];
+
 export async function api(path) {
-  const response = await fetch(`${state.apiBase}${path}`, {
-    headers: { Accept: "application/json" },
-    mode: "cors",
-  });
+  let response;
+  for (const delay of [...BUSY_RETRY_DELAYS_MS, null]) {
+    response = await fetch(`${state.apiBase}${path}`, {
+      headers: { Accept: "application/json" },
+      mode: "cors",
+    });
+    if (response.status !== 429 || delay === null) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error?.message || payload.message || `Registry request failed (${response.status})`);

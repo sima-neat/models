@@ -341,6 +341,8 @@ function renderCatalogTable(models) {
             <thead><tr><th scope="col">Model</th><th scope="col">Precision</th><th scope="col">Accuracy</th><th scope="col">Performance</th></tr></thead>
             <tbody>${entries.map(renderRow).join("")}</tbody></table></div></section>`;
     }).join("");
+  // A model page hides the list; returning to the list renders the table again and loads its details then.
+  if (state.selectedId) return;
   const requestId = tableRequestId;
   // Load details only in table view, with bounded concurrency and the model page's existing cache.
   mapWithConcurrency(models, 3, async (model) => {
