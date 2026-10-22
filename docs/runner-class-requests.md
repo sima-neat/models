@@ -1,10 +1,37 @@
 # Request expensive or on-demand compile runners
 
-Model authors request compile resources in `model.yaml`; Vulcan grants access
-through a separately reviewed policy. Start with the default size on Spot and
-request additional resources only when measurements justify them. This guide
-covers the author workflow. Platform maintainers should also follow the
-[runner integration guide](runner-integration.md).
+Use this guide when your model needs more compilation capacity or more predictable
+completion than the default Spot runner provides. It explains what makes a model
+eligible for an exception, what to submit for approval, and how to use the approved
+runner. You request resources in `model.yaml`; the Vulcan infrastructure owner
+reviews and deploys the permission. Start with the default size on Spot.
+
+## What qualifies as a special model?
+
+A special model is one with a demonstrated compilation need that justifies an
+exception. It is not a schema category or an automatic entitlement for a model
+family. The following are reasons to request review, not automatic approvals:
+
+| Demonstrated need | Examples worth investigating | Appropriate request |
+| --- | --- | --- |
+| Default capacity cannot compile the model reliably because of memory or resource pressure. | Large LLM/VLM checkpoints, long-context builds, or large vision graphs with measured peak-memory pressure or out-of-memory failures. | The smallest sufficient elevated class, initially on Spot. |
+| A larger runner materially improves an otherwise impractical compile. | CPU-heavy compilation or expensive graph optimization, with measured runtime and cost comparisons. | Elevated class supported by the comparison; more cores alone do not establish a speedup. |
+| Long, costly-to-repeat compilation makes Spot reclamation unacceptable for the use case. | A long detector, language, vision-language or audio build with lost work, verified interruptions, or a documented completion deadline and reliability requirement. | On-demand at the existing size unless separate evidence supports a size upgrade. |
+| Both capacity and completion reliability are limiting. | A resource-heavy compile that also loses substantial work to Spot interruptions. | Elevated class plus on-demand, with evidence for each permission. |
+
+A model name, parameter count, large input resolution, or membership in the LLM,
+VLM, audio or RF-DETR families is not sufficient on its own. Existing grants are
+for exact folder IDs, not whole families. A new model can request review before
+registration using representative measurements or documented resource estimates;
+label estimates clearly and explain what still needs measurement.
+
+There is no universal parameter-count or compile-duration cutoff in this policy.
+Explain why the default runner is unsuitable for this build and why the added
+cost is justified. First rule out invalid model inputs, compiler errors, avoidable
+recipe work, and queue delays: on-demand does not fix those. A canceled GitHub job
+is not evidence of Spot reclamation unless corroborated by EC2 events. If there
+have been no observed interruptions, say so and justify the reliability need
+without claiming a measured interruption rate.
 
 ## Choose size and market independently
 
@@ -30,24 +57,28 @@ can be used with that scheduling setting.
 
 Set the request on the existing profile in `models/<model_id>/model.yaml`.
 These are partial examples; retain the model's real parameters and calibration.
-For an expensive Spot build:
+For a build approved for both an expensive runner and on-demand purchasing:
 
 ```yaml
 build_profiles:
   w8a8:
     runner_class: expensive
-    runner_market: spot
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w8a8}
 ```
 
-For on-demand at the default size, change those two fields to:
+If only on-demand is justified, keep the default size:
 
 ```yaml
 runner_class: default
 runner_market: on-demand
 ```
+
+For an expensive Spot build, use `runner_class: expensive` with
+`runner_market: spot` (or omit the market). Request only the combination approved
+for your model.
 
 Place both fields directly under the profile, alongside `components`, not inside
 `parameters`. A component binding can override either profile value. A missing
@@ -75,9 +106,45 @@ Before enabling the request on a branch that runs trusted compilation:
    upgrades separately instead of assuming a larger runner is cheaper overall.
 3. Have the infrastructure owner review and deploy the grant. A model PR cannot
    approve itself. Existing size grants do not permit on-demand; an on-demand
-   grant needs the v3 runtime contract described in the integration guide.
+   grant needs published policy v3 with `allow_on_demand: true`. Ask the owner
+   to confirm that compatible Models workflows and Vulcan scaler code are deployed
+   before enabling it; a merged policy PR alone does not prove it is active.
 4. Link the Vulcan PR in the Models PR, update the owning README to explain the
    runner request, and validate the manifest. Enable only the reviewed request.
+
+Use this checklist in the approval request so the owner can review it without
+reconstructing the build history:
+
+```text
+Model folder ID(s):
+Owner:
+Profiles/components measured:
+Requested class and market:
+Why the default Spot runner is unsuitable:
+Compiler version, current runner type, and build/run links:
+Observed duration and peak memory (or clearly labeled estimates):
+Interruption evidence and lost work, or the required completion window:
+Recipe/resource reductions already considered:
+Expected builds per week/month, including retries:
+Estimated current versus requested cost per build and per month:
+Why this is the smallest sufficient exception:
+Validation plan and links to the Models/Vulcan PRs:
+```
+
+Estimate compute cost as hourly price × billed hours, including startup and
+retries; state the region, pricing date, assumptions, and excluded charges.
+On-demand can be worthwhile for predictable completion without being cheaper.
+For a size upgrade, compare runtime as well as hourly price. Do not claim a
+speedup or cost saving that has not been measured.
+
+You do not need to operate Terraform or edit deployed specifications to use this
+feature. The infrastructure owner maintains the shared approval catalog and
+publishes it to both admission and provisioning. For size-only access, the grant
+sets `maximum_runner_class` high enough for the request. For on-demand it must
+also explicitly allow the market, including when the maximum class is `default`.
+The owner handles any required policy-version migration; existing size-only
+grants must not silently acquire on-demand permission. Infrastructure details
+belong in [Vulcan's approval documentation](https://github.com/sima-neat/vulcan/blob/develop/docs/model-runner-approvals.md).
 
 The grant identity is `sima-neat/models:<model_id>`, where `model_id` is the exact
 folder name, without `models/`. It covers every current and future profile and
@@ -123,14 +190,17 @@ selection also permits models with `build-on-demand: true`.
 The compile job's **Compile runner** summary shows requested, selected and actual
 market, runner name, EC2 instance ID/type, approval identity and policy revision.
 The same identity fields are written into artifact provenance. A default Spot
-request needs no approval identity, but still records the policy revision.
+request needs no approval identity, but still records the policy revision. Link
+the first staging run and its summary in your Models PR, and ask the infrastructure
+owner to confirm EC2 lifecycle and cleanup. Local validation or admission alone
+does not prove a runner was launched or that compilation succeeded.
 
 | Symptom | Action |
 | --- | --- |
 | Missing approval or requested class exceeds the maximum | Check the exact folder ID and the deployed grant, not only whether its PR merged. |
 | No Vulcan on-demand approval | Check runtime policy v3 and `allow_on_demand: true`; a size grant is insufficient. |
 | Conflicting markets | Make all bindings in the grouped invocation resolve to one market. |
-| Unsupported schema or malformed grant | Have the integrator check reader compatibility and policy publication. Do not bypass admission. |
+| Unsupported schema or malformed grant | Ask the infrastructure owner to check reader compatibility and policy publication. Do not bypass admission. |
 | Job waits for a runner | Check that the deployed scaler supports the requested market label and that pool capacity is available. |
 | Runner market mismatch | Stop and investigate runner registration versus EC2 lifecycle; the job fails before recording identity. |
 | No new compile job | Check fingerprint reuse and `build-on-demand`; an approval never forces a rebuild. |
@@ -139,3 +209,7 @@ There is no silent downgrade. On-demand avoids Spot reclamation but not
 cancellation, compiler errors, workflow timeouts, or Vulcan cleanup. The job timeout
 is 360 minutes; the compiler profile's hard lifetime is seven hours, including
 startup and cleanup margin. A larger class does not extend these limits.
+
+Revisit the exception when the compiler, recipe or model changes. Remove an
+unneeded manifest request and ask the infrastructure owner to reduce or revoke
+the grant. Policy changes affect future admission, not a job already running.

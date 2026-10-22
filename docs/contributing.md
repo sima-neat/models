@@ -59,8 +59,8 @@ the model README with the request. Larger size and on-demand are separate
 permissions; an existing expensive-size grant does not authorize on-demand.
 
 A passing Models PR validates the manifest, not the protected policy. Confirm
-the grant is deployed and the [integration prerequisites](runner-integration.md)
-are met before expecting a trusted compile to acquire a runner. A runner-only
+the grant and compatible workflows/scaler are deployed as described in the
+[runner request guide](runner-class-requests.md#obtain-access-through-a-vulcan-policy-pr) before expecting a trusted compile to acquire a runner. A runner-only
 change can reuse an existing build; use a narrowly selected forced staging build
 only when deliberately collecting new runner evidence.
 

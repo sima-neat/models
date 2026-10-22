@@ -87,9 +87,8 @@ Use these references when the model needs them:
   workload, and how results are published.
 - [`model.yaml` reference](metadata-schema.md): field-level contracts.
 - [Expensive and on-demand compile runners](runner-class-requests.md):
-  choose size and market, request Vulcan approval, and verify a build.
-- [Integrator’s guide to runner access](runner-integration.md): policy versions,
-  deployment order, staging acceptance, and rollback.
+  decide whether a model qualifies for an exception, prepare approval evidence,
+  configure the request, and verify a build.
 - [Model taxonomy](model-taxonomy.md): sanctioned category IDs.
 
 The JSON Schemas under

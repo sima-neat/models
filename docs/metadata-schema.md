@@ -182,8 +182,7 @@ Bindings inherit from the profile; prefer profile-level settings because all its
 components compile on one runner. Effective markets must agree across that grouped
 invocation. Neither field changes a compile fingerprint. `build-on-demand` is a
 separate top-level scheduling flag, not a purchasing market. See [runner access
-and approval](runner-class-requests.md) and the [integration
-contract](runner-integration.md).
+and approval](runner-class-requests.md) for eligibility, evidence and usage.
 
 The recipe compiles a profile's components together in one compile
 invocation, named after the profile, and writes a `compile-outputs.json` with

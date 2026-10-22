@@ -30,7 +30,6 @@ const sidebars: SidebarsConfig = {
         'metadata-schema',
         {type: 'doc', id: 'model-browser', label: 'Model browser'},
         'runner-class-requests',
-        'runner-integration',
         'model-taxonomy',
       ],
     },
