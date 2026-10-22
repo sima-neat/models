@@ -44,6 +44,10 @@ OUTPUT_SHAPES = {"couplings": [1, KEYPOINTS + 1, 1, KEYPOINTS + 1]}
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {name: math.prod(shape) * 4 for name, shape in INPUT_SHAPES.items()}
 OUTPUT_BYTES = [math.prod(shape) * 4 for shape in OUTPUT_SHAPES.values()]
+# The terminal EV74 plugin only converts the MLA result to the float32 interface: BF16 builds end in a cast.
+OUTPUT_KERNELS = {"pass_through", "cast_transform"}
+# Share of re-observed keypoints whose quantized best match must equal FP32's.
+MIN_MATCH_AGREEMENT = 0.95
 
 
 def _parameters(profile_id: str) -> dict[str, Any]:
@@ -64,23 +68,60 @@ def _quantization(precision: str) -> Any:
     return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
 
 
-def representative_inputs() -> dict[str, np.ndarray]:
-    """One channels-last sample per input: keypoints in SuperGlue's normalized frame, scores, unit descriptors.
+def representative_pair() -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+    """One channels-last sample per input, in which half of image 1's keypoints re-observe image-0 keypoints.
 
+    Keypoints are in SuperGlue's normalized frame and descriptors are unit vectors, as SuperPoint gives them.
+    Returns the inputs and the image-0 and image-1 indices of the re-observed keypoints.
     BF16 derives nothing from representative data, but quantize() still needs one sample.
     """
     rng = np.random.RandomState(0)
+    keypoints = [rng.uniform(-0.7, 0.7, (KEYPOINTS, 2)) for _ in range(2)]
     descriptors = [rng.normal(0, 1, (KEYPOINTS, DESCRIPTOR_SIZE)) for _ in range(2)]
+    shared = rng.permutation(KEYPOINTS)[: KEYPOINTS // 2]
+    target = rng.permutation(KEYPOINTS)[: KEYPOINTS // 2]
+    keypoints[1][target] = keypoints[0][shared] * 0.95 + 0.02 + rng.normal(0, 0.003, (len(shared), 2))
+    descriptors[1][target] = descriptors[0][shared] + rng.normal(0, 0.3, (len(shared), DESCRIPTOR_SIZE))
     columns = {
-        "keypoints": [rng.uniform(-0.7, 0.7, (KEYPOINTS, 2)) for _ in range(2)],
+        "keypoints": keypoints,
         "scores": [rng.uniform(0.005, 0.5, (KEYPOINTS, 1)) for _ in range(2)],
         "descriptors": [value / np.linalg.norm(value, axis=1, keepdims=True) for value in descriptors],
     }
-    return {
+    inputs = {
         f"{kind}{image}": values[image].astype(np.float32)[None, None]
         for kind, values in columns.items()
         for image in range(2)
     }
+    return inputs, shared, target
+
+
+def representative_inputs() -> dict[str, np.ndarray]:
+    return representative_pair()[0]
+
+
+def check_quantized_matches(source: Path, quantized: Any) -> float:
+    """Require the quantized matcher's couplings to be finite and to keep FP32's best match for re-observed keypoints.
+
+    Runs the quantized model through the Model Compiler's own execution and the source ONNX through ONNX Runtime
+    on the representative pair; returns the share of re-observed image-0 keypoints whose best image-1 keypoint
+    agrees.
+    """
+    import onnxruntime as ort
+
+    inputs, shared, _ = representative_pair()
+    reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"]).run(
+        None, {name: np.ascontiguousarray(value.transpose(0, 3, 1, 2)) for name, value in inputs.items()}
+    )[0]
+    # ONNX gives [1, j, 1, i]; the compiler's execution returns channels-last [1, 1, i, j].
+    expected = np.asarray(reference).reshape(KEYPOINTS + 1, KEYPOINTS + 1).T[:KEYPOINTS, :KEYPOINTS]
+    output = np.asarray(quantized.execute(inputs, fast_mode=False)[0], dtype=np.float32)
+    actual = output.reshape(KEYPOINTS + 1, KEYPOINTS + 1)[:KEYPOINTS, :KEYPOINTS]
+    if not np.isfinite(output).all():
+        raise RuntimeError(f"quantized couplings hold {int((~np.isfinite(output)).sum())} non-finite values")
+    agreement = float((actual[shared].argmax(1) == expected[shared].argmax(1)).mean())
+    if agreement < MIN_MATCH_AGREEMENT:
+        raise RuntimeError(f"quantized best matches agree with FP32 for only {agreement:.3f} of re-observed keypoints")
+    return agreement
 
 
 def validate_source(path: Path) -> None:
@@ -133,8 +174,8 @@ def audit_mpk(archive: Path) -> None:
     terminal = plugins[-1] if plugins else {}
     kernel = str(terminal.get("config_params", {}).get("kernel", ""))
     outputs = [node.get("size") for node in terminal.get("output_nodes", [])]
-    if kernel != "pass_through" or outputs != OUTPUT_BYTES:
-        raise RuntimeError(f"MPK output interface mismatch: {outputs}")
+    if kernel not in OUTPUT_KERNELS or outputs != OUTPUT_BYTES:
+        raise RuntimeError(f"MPK output interface mismatch: kernel {kernel!r}, sizes {outputs}")
 
 
 def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
@@ -161,6 +202,8 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
+        agreement = check_quantized_matches(source, quantized)
+        logging.info("Quantized best matches agree with FP32 for %.3f of re-observed keypoints", agreement)
         quantized.compile(
             output_path=str(build_dir / "mpk"),
             batch_size=1,

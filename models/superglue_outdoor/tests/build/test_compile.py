@@ -41,7 +41,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "inputs", "outputs", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "bf16_cast", "inputs", "outputs", "decoder", "two_mla", "host", "compiler"])
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path,
     case: str,
@@ -50,8 +50,12 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     compile_module = load_script("compile")
     manifest = _mpk_manifest(compile_module)
     plugins = manifest["plugins"]
-    if case == "inputs":
+    if case == "bf16_cast":
+        plugins[-1]["config_params"]["kernel"] = "cast_transform"
+    elif case == "inputs":
         manifest["input_nodes"] = manifest["input_nodes"][:-1]
+    elif case == "decoder":
+        plugins[-1]["config_params"]["kernel"] = "boxdecode"
     elif case == "outputs":
         plugins[-1]["output_nodes"][0]["size"] = 4
     elif case == "two_mla":
@@ -63,11 +67,54 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
-    if case == "valid":
+    if case in ("valid", "bf16_cast"):
         compile_module.audit_mpk(archive)
     else:
         with pytest.raises(RuntimeError):
             compile_module.audit_mpk(archive)
+
+
+class _Quantized:
+    """Stands in for the quantized model: returns given channels-last couplings."""
+
+    def __init__(self, couplings: np.ndarray) -> None:
+        self.couplings = couplings
+
+    def execute(self, inputs, fast_mode=False):
+        return [self.couplings]
+
+
+@pytest.mark.parametrize("case", ["exact", "nan", "shuffled"])
+def test_quantized_matches_must_follow_fp32(
+    tmp_path: Path, case: str, load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compile_module = load_script("compile")
+    size = compile_module.KEYPOINTS + 1
+    _, shared, target = compile_module.representative_pair()
+    # FP32 couplings [1, j, 1, i] in which each re-observed image-0 keypoint scores highest with its partner.
+    reference = np.zeros((size, size), np.float32)
+    reference[target, shared] = 5.0
+    channels_last = reference.T.copy()
+    if case == "nan":
+        channels_last[0, 0] = np.nan
+    elif case == "shuffled":
+        channels_last[shared] = channels_last[np.roll(shared, 1)]
+
+    class Session:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, outputs, feed):
+            return [reference.reshape(1, size, 1, size)]
+
+    monkeypatch.setitem(__import__("sys").modules, "onnxruntime", type("ort", (), {"InferenceSession": Session}))
+    quantized = _Quantized(channels_last.reshape(1, 1, size, size))
+
+    if case == "exact":
+        assert compile_module.check_quantized_matches(tmp_path / "model.onnx", quantized) == 1.0
+    else:
+        with pytest.raises(RuntimeError):
+            compile_module.check_quantized_matches(tmp_path / "model.onnx", quantized)
 
 
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
