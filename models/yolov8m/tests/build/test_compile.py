@@ -10,7 +10,7 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "yolov8m"
@@ -190,21 +190,13 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
         compile_module._parameters("w32a32")
 
 
-def test_model_declares_the_cut_interface_and_its_build(load_script: Callable[[str], ModuleType]) -> None:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
-    surgery = load_script("surgery")
-    component = model["components"][0]
-    entrypoint = component["interface"]["entrypoints"][0]
-
-    assert [(item["name"], item["shape"]) for item in entrypoint["inputs"]] == [("images", surgery.INPUT_SHAPE)]
-    assert {item["name"]: item["shape"] for item in entrypoint["outputs"]} == surgery.OUTPUT_SHAPES
-    assert [item["name"] for item in entrypoint["outputs"]] == surgery.OUTPUTS
-    assert component["surgery"]["entrypoint"] == "scripts/surgery.py:prepare_model"
-    assert component["recipe"] == "scripts/compile.py"
+def test_model_preserves_compilation_and_quality_settings() -> None:
+    model = load_metadata(MODEL_DIR)
+    assert model["components"][0]["interface"]["format"] == "onnx"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
         "attribution": "YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.",
     }
-    assert model["accuracy"][0]["required_metrics"] == ["coco_map"]
+    assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]

@@ -7,7 +7,7 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -91,7 +91,7 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
 
 
 def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
-    model = yaml.safe_load((ROOT / "models/yolov8l/model.yaml").read_text(encoding="utf-8"))
+    model = load_metadata(ROOT / "models/yolov8l")
     converter.validate_source(model["conversion"]["default"]["source"])
     with pytest.raises(ValueError, match="yolov8l.pt"):
         converter.validate_source({"type": "file", "uri": "hf://models/Ultralytics/YOLOv8@main/yolov8l-seg.pt"})

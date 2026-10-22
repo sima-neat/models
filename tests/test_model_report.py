@@ -208,7 +208,9 @@ def test_every_single_component_script_saves_a_report_from_its_benchmark(script,
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
         __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
         ModelOptions=types.SimpleNamespace, BenchmarkOptions=types.SimpleNamespace,
-        BoxDecodeType=types.SimpleNamespace(YoloV8="YoloV8", YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"),
+        BoxDecodeType=types.SimpleNamespace(
+            YoloV8="YoloV8", YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"
+        ),
     ))
     monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path)])
 
