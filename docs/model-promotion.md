@@ -1,212 +1,70 @@
 # Promoting a model to Develop
 
-The **Promote model** workflow selects an existing finalized candidate in
-the selected Vulcan environment's Develop catalog. It never compiles, copies binaries, or changes source
-provenance. Main/Hugging Face release is not supported. Production use still requires its own
-approver configuration and acceptance testing.
+## When you need promotion
 
-## Enable the protected gate
+Use promotion for models with `build-on-demand: true` in `model.yaml`.
+These models are costly to build, so they compile only when you request a
+build. Merging their source into `develop` publishes the model definition,
+but does not build it or approve a build for download.
 
-`VULCAN_ENV` selects `staging` or `production`. GitHub's repository variable
-overrides the organization variable; Models currently sets `staging`. There is
-no implicit default. The configuration job selects that GitHub environment and
-reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (authenticated writer origin) and
-`VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` (public catalog reader). Candidate and
-promotion operations use the signed writer client; catalog snapshots are fetched
-without AWS credentials from the public reader.
-Each subsequent job uses the resolved environment and URLs, with publisher roles
-from that environment and approver credentials from `<VULCAN_ENV>-promote-develop`.
-Both URLs are configuration, not embedded in Python. For source CLI use, export all three
-variables explicitly. Missing/invalid configuration fails before any registry call.
+Promotion makes an existing, validated build available in the Develop
+catalog without compiling it again. Models that build automatically use the
+normal pull request and CI process and do not need this workflow.
 
-The request plan saves the environment and both URLs. A retry with a different environment or URL
-fails before a registry call; use the original configuration to finish the old
-request, or start a new dispatch in the new environment with its own candidate.
-Environment-local candidate and promotion IDs must never be moved between registries.
+This guide covers promotion to Develop in staging. Release to Main is a
+separate process.
 
-Before normal use, a repository administrator and Vulcan operator must:
+## Build and validate on your branch
 
-1. Create `<VULCAN_ENV>-promote-develop` (`staging-promote-develop` or
-   `production-promote-develop`) with required reviewers, prevent self-review,
-   and restrict deployment branches to `develop`. Verify the repository plan
-   supports these protection rules, and restrict administrator bypass according
-   to the team's approval policy. GitHub requires one eligible listed reviewer,
-   not all listed reviewers.
-2. Configure Vulcan's `promotion_approvers` entry for `sima-neat/models` with that
-   exact environment and a separate role authorized only for Develop request
-   inspection/approval/rejection. Scope its OIDC trust to that environment.
-3. Set environment variable `VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN` in
-   the selected protected environment to the provisioned role ARN. Keep the publisher
-   role and both registry URL variables in the corresponding `staging` or
-   `production` environment. Set each URL to its corresponding writer or reader origin.
-4. Protect Develop and review changes to this workflow and its tooling. All jobs
-   check out the workflow run's exact trusted commit, never the candidate ref.
-5. Make `.github/workflows/model-promotion.yml` available on the repository default
-   branch (`main`) so GitHub discovers its [manual dispatch trigger](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Dispatch with
-   `develop` selected; execution from Main is intentionally excluded. This is
-   workflow discovery, not Main artifact promotion.
-6. Run disposable fixture acceptance below. Provisioning the environment or a
-   successful unit test does not establish working OIDC or backend authorization.
+1. In GitHub Actions, run **Vulcan Model Orchestrator** on your feature branch. Select both the model and the build profile you want to build.
+2. Wait for the build and publication to finish. Test the result on your target device and keep links to your validation results. A successful compile alone does not show that the model works correctly.
+3. Open a pull request to `develop` with the model changes and validation links.
 
-The workflow fails without its role configuration. GitHub may create a missing
-referenced environment automatically; that does not configure protection. Do not
-provision approver trust until the required environment rules are in place.
+For example, Qwen3.5 0.8B uses `models=qwen3_5_0_8b` and
+`profiles=w4a16`. See [on-demand builds](adding-a-model.md#on-demand-builds)
+for more about requesting a build.
 
-## Build, request, review, consume
+## Merge before requesting promotion
 
-1. Run **Vulcan Model Orchestrator** with the on-demand model and profile selected.
-   Candidates may originate on a feature branch or Develop. Compile
-   success is not runtime qualification; review the relevant evidence first.
-2. Run **Promote model** from **develop**, choose `promote`, enter `model_id` and
-   `build_profile`, and a reason including validation evidence links. The model ID
-   is the folder name under `models/` (also the top-level `id` in `model.yaml`);
-   the profile is an `id` under `build_profiles` in that file. For Qwen3.5 0.8B,
-   use `qwen3_5_0_8b` and `w4a16`. Leave promotion ID blank.
-   In staging, leave `deployment_id` blank to select the newest matching candidate receipt by creation time
-   across source branches, verifies its identity and finalized state with Vulcan,
-   and pins the UUID before review. Missing or expired receipts fail with build
-   instructions; it never silently falls back to an older receipt. Check the
-   resolved source commit and candidate in the review summary. Retries restore
-   the saved plan instead of resolving a newer build. Source CLI users may still
-   supply an exact UUID with `--deployment-id`.
-3. The prepare job reads the candidate and current Develop canonical snapshot,
-   creates a correlated request issue, and uploads `promotion-plan`. At this point
-   the issue is only a preparation record: no pending hold is promised yet.
-4. The request job submits the saved body/key, verifies backend pending protection,
-   and writes the review details to its summary and the issue **before** the
-   approval job waits. Inspect source commit, candidate digest, model/profile,
-   previous/proposed selections, evidence, and expiry. Pending holds last seven
-   days. The complete backend JSON is shown to avoid hiding review fields.
-5. A different eligible maintainer reviews the protected environment deployment.
-   The gated job inspects the exact saved request and approves it using the
-   separate role. Only Vulcan's `promoted` receipt and result snapshot establish
-   success. The final report inspects current backend state; later catalog
-   publication may already have advanced beyond the promotion receipt's snapshot.
-6. Download the selected model through a reader supporting `approved_deployments`.
-   Directory roots are JSON file manifests, not ZIPs; download and verify every
-   required file. Never treat compile success as proof of model runtime quality.
+Merge the pull request once review and the required checks pass. Then wait
+for the Develop workflow to publish the updated model definition. The
+published definition must match the build you intend to promote.
 
-## Status, cancellation, rejection, and retries
+**Keep the feature branch until promotion is complete.** If GitHub offers to
+delete it after merging, leave it in place for now.
 
-Dispatch the same workflow from Develop with `status`, `cancel`, or `reject`, an
-existing promotion UUID, and a reason. `status` and `cancel` use publisher
-credentials; `reject` requires the protected approver gate. Cancellation cannot
-undo a completed promotion. Management dispatches produce their own summaries;
-they do not edit the original request issue. Use its request UUID to check state.
+If you change build inputs after validation, build and validate that version
+before requesting promotion. Promotion reuses the selected build; it does
+not rebuild it from the merged source.
 
-Re-running jobs restores the original `promotion-plan` from the same run. The
-request body, target snapshot, and idempotency key stay unchanged. Receipts are
-saved separately per attempt. After a lost response, an exact POST replay recovers
-the request; inspection reports current state. Decision retries inspect the same
-request and recognize an already completed matching transition.
+## Request promotion
 
-If issue updating fails after request creation, the request remains protected and
-the gate does not proceed; rerun the failed job to recover the same request and
-retry the issue update. If preparation fails before its plan is uploaded, start
-a new dispatch. On a rerun, a missing/expired plan fails closed rather than taking
-a fresh target. Artifact records are retained for 30 days; pending holds still
-expire after seven days.
+Open [**Promote model** in GitHub Actions](https://github.com/sima-neat/models/actions/workflows/model-promotion.yml)
+and choose **Run workflow**:
 
-A target conflict, expired request, or changed review content requires a new
-workflow dispatch and review. There is no automatic rebase. Explicitly cancel an
-obsolete pending request where useful; changing workflows does not cancel it.
+- Select the `develop` branch and the `promote` operation.
+- Set `model_id` to the model folder name under `models/` and `build_profile` to the profile ID in its `model.yaml`.
+- Add a short reason and links to your validation results.
+- Leave `promotion_id` blank. Leave `deployment_id` blank to use the newest matching build in staging, or enter the `deployment_id` from your build's `candidate.json` to select that exact build.
 
-Rejecting/cancelling a GitHub job is not backend rejection/cancellation. The report
-job attempts inspection after a rejected gate, but a cancelled workflow may never
-run it. Use `status`, then explicitly `cancel` if appropriate; otherwise the
-pending hold expires. Other retention holds remain effective.
+Check the source commit and selected build in the workflow summary. Automatic
+selection looks across branches, so confirm that it found the build you tested.
+A maintainer reviews the request and approves it. Wait for the final report
+to show **`promoted`**; submitting the request is not completion.
 
-## CLI operations
+## Delete your branch after checking Develop
 
-These commands are CI-only and excluded from the author-safe installed package.
-Use a source checkout with `python -m pip install .` and the appropriate temporary
-AWS role credentials. Commands run from the repository root. Example identifiers
-must be replaced with actual UUIDs.
+Delete the original feature branch only after:
 
-```sh
-model-registry promotion prepare --record plan.json \
-  --deployment-id "$CANDIDATE_ID" --reason 'Validated candidate; evidence URL' \
-  --identity "$GITHUB_RUN_ID" --run-url "$WORKFLOW_URL"
-# Durably save plan.json before request. Never regenerate it on a retry.
-model-registry promotion request --record plan.json --output request.json
-model-registry promotion inspect --promotion-id "$PROMOTION_ID" --record status.json
-# Separate approver role, only after review of request.json:
-model-registry promotion approve --record request.json --output decision.json \
-  --identity "$GITHUB_RUN_ID" --reason 'Reviewed candidate and evidence'
-# Publisher role; reject instead requires approver credentials:
-model-registry promotion cancel --record request.json --output cancellation.json \
-  --identity "$CANCEL_OPERATION_ID" --reason 'Request superseded'
-```
+- Its source changes are merged into `develop` and the updated model page is published, including its README and image.
+- The promotion report shows `promoted` for the intended build.
+- You can download the intended build from the Develop model page or with `sima-cli`.
 
-## Acceptance and remaining rollout work
+The promoted build is retained independently of the original branch. Merging
+also preserves the source and model documentation; promotion alone does not
+preserve the branch's published README or image.
 
-Local tests cover request/decision recovery, snapshot conflicts, immutable review
-content, terminal states, and workflow credential/job boundaries. They do not
-prove deployed OIDC, S3 retention, model compatibility, or consumer installation.
-Before routine enablement, record an actual protected staging demonstration with
-separate requester/reviewer identities and tiny Models-produced MPK and native
-LLiMa fixtures (component and full directory package, and ZIP if supported).
-Verify every download/checksum, publisher-denied approval, wrong-scope denial,
-metadata preservation, source purge/supersession protection, and terminal/retry
-behavior. Retain workflow URLs, commits/schema versions, candidate/request IDs,
-snapshots, and outcomes. Verify required evidence/documentation retention:
-current candidate publication binds compile/package runs and their inline fidelity;
-ordinary README/hero publication is branch-retained, not automatically bound into
-candidate protection. Close any required source-documentation binding gap before
-claiming it survives source-branch deletion. Test sima-cli consumption separately
-from browser coverage.
-
-[Vulcan #264](https://github.com/sima-neat/vulcan/issues/264) is separate work.
-Until it lands, first approval and same-requirements replacement work, but changing
-an approved profile's requirements blocks ordinary catalog publication. Use
-disposable fixture profiles for acceptance; do not prematurely approve Qwen's
-shared evolving definition. Routine upgrades will preserve the old approved build
-until a future approval replaces it; no withdrawal-first workflow is introduced.
-
-Tracking: [Models #315](https://github.com/sima-neat/models/issues/315), under
-[master plan #306](https://github.com/sima-neat/models/issues/306). Backend contract:
-[Vulcan integration guide](https://github.com/sima-neat/vulcan/pull/253#issuecomment-6210178603).
-
-## Approval and outcome notifications
-
-After Vulcan confirms a pending promotion, the request job adds a comment
-mentioning `@sima-neat/owners-models` to the evidence issue. It posts that comment
-once per promotion, including on retries. It then sends a Slack reminder with
-the model/profile, environment, promotion ID, evidence issue, and approval URL.
-This notification does not approve the request.
-
-Reuse `SLACK_VULCAN_EVENT_CHANNEL_ID`, the shared channel variable used by
-other Vulcan notifications. It must be available to the selected environment
-through environment, repository, or organization variables. Make
-`SLACK_BOT_TOKEN` available to the request job; the bot needs `chat:write` and
-access to the destination channel. The Slack reminder identifies the GitHub
-team by name; it does not assume a corresponding Slack user group.
-
-Only pending promote requests send reminders. Retrying the request job may send
-another Slack reminder; the GitHub team comment is deduplicated. Slack delivery
-failure is visible as a failed notification step but does not block approval.
-
-## Environment-local candidate selection
-
-Automatic model/profile discovery uses legacy build receipts, which are staging-only:
-candidate publication currently rejects other environments. Production dispatches
-must provide an exact `deployment_id` from the production registry. They fail
-before searching GitHub artifacts when that ID is omitted. The UUID is also an
-optional override in staging, allowing selection of a specific validated build.
-Find it in the build's `candidate.json` receipt, using `deployment_id`.
-
-Model ID and build profile remain required and are verified against the candidate
-returned by the selected registry. A staging UUID cannot be used to promote in
-production. This does not enable production candidate publication; that producer
-path still requires separate implementation and acceptance testing.
-
-After the approval/decision job finishes, the report job sends a second Slack
-message to the same channel. It includes the model/profile, environment, promotion
-ID, workflow and evidence links, approval-job result, and freshly read backend
-state. Only `promoted` with a result snapshot is described as completed.
-Rejected, cancelled, expired, still-pending, and unreadable backend states are
-reported explicitly. Status-only dispatches do not send outcome notifications.
-The outcome message is prepared before updating the issue, so an issue-update
-failure does not suppress Slack delivery. Reporting requires the saved plan and
-request receipt; failures before those are available cannot send this outcome.
-Retries may resend the outcome notification.
+If promotion fails or expires, keep the branch and follow the workflow report
+to retry or submit a new request. Cancelling a GitHub workflow does not cancel
+its promotion request: use **Promote model** with `status` to check it, then
+`cancel` with its promotion ID if you no longer need it.
