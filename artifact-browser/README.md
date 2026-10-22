@@ -76,6 +76,8 @@ execution graph in the order its pipeline runs them. These synthetic
 layer names include fused operations, nested reshapes, segmentation helpers,
 outputs and zero-time entries. Input placeholders are omitted, matching the
 benchmark API. These names do not describe the selected model's actual graph.
+Each preview package run also carries a generated MLA stage simulation for the
+same stages, at illustrative rates, so developer mode shows MLA Utilization.
 `fixtures/model-report-accuracy.json` gives each accuracy run its shape; the
 preview fills in the metrics the model's tests expect. YOLO26n W16A16
 keeps its benchmark fingerprint without a run, so its page shows **Not measured at
@@ -241,6 +243,8 @@ delegation.
 | `model-view.js` | The model page |
 | `compare-view.js` | The Compare page: pickers and table |
 | `model-report.js` | Reading performance and accuracy model reports |
+| `mla-layer-stats.js` | Analyzing a component's MLA layer stats |
+| `mla-utilization.js` | Comparing measured MLA stages with their simulation |
 | `metrics.js` | Metric labels, units, and formatting |
 | `downloads.js` | Component discovery for downloads |
 | `markdown.js` | The README renderer |

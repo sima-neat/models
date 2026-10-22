@@ -546,6 +546,7 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(model
         ("tools/model_registry/artifact.py", False),
         ("tools/model_registry/cli.py", False),
         ("tools/model_registry/model.py", True),
+        ("tools/model_registry/mla_stage_simulation.py", True),
         ("tools/model_registry/compile_matrix.py", False),
         ("models/qwen3_5_0_8b/scripts/compile.sh", False),
         ("scripts/run_model_compilation.sh", True),

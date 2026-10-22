@@ -58,13 +58,13 @@ The script contains the exact model selection and measurement settings. For
 example, YOLO26 boxes explicitly selects `BoxDecodeType.YoloV26` and top 100
 results; pose and segmentation use their corresponding decoders. The current
 scripts of single-component models request 1000 samples, a 60000 ms minimum
-duration and layer statistics. Customers can read or adapt these settings
+duration and MLA layer and stage stats. Customers can read or adapt these settings
 directly in the model's script.
 
-The script hands what Core returned to `model_report.performance()`:
+The script hands what Core returned to `model_report.from_performance()`:
 
 ```python
-report = model_report.performance(
+report = model_report.from_performance(
     model.benchmark(benchmark_options), {"model": model}, workload="Model.benchmark with default options"
 )
 report.save(args.output)
@@ -77,7 +77,7 @@ registry publishes unchanged and the model browser reads, and Core's own
 report. Its `metrics` hold one number per measured metric, named as
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json)
 defines them. It also keeps Core's whole `telemetry` and, for each component,
-its execution plan and layer timings. `workload` is one line that says what
+its execution plan and MLA layer and stage stats. `workload` is one line that says what
 ran, such as the selected decoder and postprocessing.
 
 `model.yaml` declares that the model is measured and, optionally, which build
@@ -122,8 +122,8 @@ PYTHONPATH=tools ~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py 
   --mpk decoder=/workspace/decoder_mpk.tar.gz --output /workspace/performance
 ```
 
-RF-DETR's script first runs Core's benchmark on each MPK only for its layer
-timings. It then runs each Model through its async runner (`Model.build`,
+RF-DETR's script first runs Core's benchmark on each MPK only for its MLA
+layer and stage stats. It then runs each Model through its async runner (`Model.build`,
 `push`, `pull`) in two passes, each measuring at least 1000 frames over at
 least 60 seconds after 100 warm-up frames. The latency pass sends one frame at
 a time. The throughput pass runs one thread per stage, so the backbone, the
@@ -132,25 +132,30 @@ the next one's input when it finishes. One `pyneat.TelemetryMonitor` samples
 the board over the throughput window.
 
 The script fills a `pyneat.BenchmarkReport` with what it timed and passes it
-to `model_report.performance()` with the monitor's telemetry, each component's
-Model, and each component's layer timings. The report's scores are the whole
+to `model_report.from_performance()` with the monitor's telemetry, each component's
+Model, and each component's MLA layer and stage stats. The report's scores are the whole
 model's; component numbers are never added together.
 
 Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
 component rates measured on the same board, because the MLA runs one MPK at a
 time. A result well below that rate points at the pipeline, not the model.
 
-## Per-layer profiling
+## MLA profiling
 
-The model scripts enable `BenchmarkOptions.include_layer_stats` explicitly.
-RF-DETR requests layer timings separately for each component.
-After latency and throughput measurement, Core profiles each MLA stage using
-MLA-RT and includes the compiled layer's `name`, zero-based `stage_index`, and
-`total_execution_time_us` in the BenchmarkReport's `layer_stats`, which the model report keeps
-under each component. A stage index counts
-all executable stages, including A65 stages, so MLA indices can have gaps.
-Zero-time entries are kept in compiler order. Names describe compiled layers,
-which may fuse or split source ONNX operators.
+The model scripts enable `BenchmarkOptions.include_mla_layer_stats` and
+`include_mla_stage_stats` explicitly. RF-DETR requests them separately for each
+component. After latency and throughput measurement, Core profiles each MLA
+stage with MLA-RT. Its BenchmarkReport holds two results, which the model report
+keeps under each component:
+
+- `mla_layer_stats`: each compiled layer's `stage_index`, `name` and
+  `latency_us`. Zero-time entries are kept in compiler order. Names describe
+  compiled layers, which may fuse or split source ONNX operators.
+- `mla_stage_stats`: each MLA stage's `stage_index` and mean `latency_us`.
+
+Each also has a `status`: `ok`, `not requested`, or why Core could not profile.
+A stage index counts all executable stages, including A65 stages, so MLA
+indices can have gaps.
 
 Use an idle DevKit with `mla-rt` in `PATH` and the MIP-to-kernel handoff fix
 (verified with MLA-RT `603a8c6` on eLxr B2121). Core runs profiling after its
@@ -158,10 +163,29 @@ benchmark runners close. The profile is a separate pass with MLA-RT's default
 inputs; its summed time is not the model's end-to-end latency or a breakdown of
 throughput-pass telemetry. Ordinary inference can resume when it returns.
 
-`model_report` keeps each component's layer timings unchanged, and each model's
-performance stage test requires nonempty timings with at least one nonzero
-layer. Changing a performance script remeasures existing builds without
-invalidating their compile fingerprints.
+`model_report` keeps each component's stats unchanged, and each model's
+performance stage test requires both statuses to be `ok`, nonempty stage stats,
+and at least one nonzero layer. Changing a performance script remeasures
+existing builds without invalidating their compile fingerprints.
+
+### MLA utilization
+
+After an MPK compile, `scripts/run_model_compilation.sh` runs
+`model-registry simulate-mla-stages`. It runs the Model Compiler's `mla-msim
+--dry-run` on each MLA stage's ELF and writes `mla-stage-simulation.json` beside
+`compile-outputs.json`: for each component, each MLA stage's `stage_index`
+(numbered as Core numbers it), `effective_ops`, `total_ops`, and
+`simulated_latency_us`. A missing or failing `mla-msim` is recorded in the
+component's `status` rather than failing the build.
+[`mla-stage-simulation.schema.json`](../schemas/mla-stage-simulation.schema.json)
+defines the file. The package carries it, and a staging package run publishes it
+as the `performance/mla-stage-simulation` test result.
+
+The model browser's developer mode compares it with the measured
+`mla_stage_stats` as **MLA Utilization**. Effective TOPS divides a stage's
+effective operations by its measured latency; packing is
+`effective_ops / total_ops`; and a w8a8 stage's utilization is its effective TOPS
+as a share of the MLA's 50 TOPS INT8 peak.
 
 The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer
 count, and share in the ten slowest layers. **Duration** displays a ranked chart

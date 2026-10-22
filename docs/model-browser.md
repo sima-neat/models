@@ -120,7 +120,7 @@ in this order:
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
    this revision.**
-   When the report includes layer stats, **Runtime Layer Analysis**
+   When the report includes MLA layer stats, **Runtime Layer Analysis**
    shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
    headings. Each execution-time cell shows its exact value above a thin bar,
    colored by operation family with a compact legend. Families are inferred from
@@ -156,6 +156,16 @@ in this order:
    denominator. These timings come from a separate profiling pass; they are not
    a partition of headline latency. Compiled layer names may differ from ONNX
    operators. Historical reports without stats omit this section.
+   In developer mode, **MLA Utilization** follows Runtime Layer Analysis. For each
+   MLA stage it shows the latency Core measured on the board, the latency the
+   Model Compiler's simulator estimated, the simulator's count of effective
+   operations (those that contribute to the result), packing (their share of all
+   operations the MLA executes), and effective TOPS: effective operations divided by
+   the measured latency. A w8a8 component also shows utilization, its effective TOPS
+   as a share of the MLA's 50 TOPS INT8 peak. The summary gives the effective TOPS
+   the model sustains at its measured throughput. A component whose stages were not
+   measured or simulated, or whose board and simulator stages differ, says so instead.
+   Customers do not see this section, because its rates rest on a simulator estimate.
    **Performance details** has three cards on the left:
    **Performance** with the throughput, the mean latency, and the p50, p95,
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
@@ -194,7 +204,8 @@ in this order:
    The tiles, context line, and **Performance details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
    components and CPU step running together. **Runtime Layer Analysis** and
-   **Execution graph** each switch between the components, and **Download CSV**
+   **Execution graph** each switch between the components, **MLA Utilization** shows
+   one table per component, and **Download CSV**
    lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,

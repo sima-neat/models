@@ -409,6 +409,8 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .tensor-table table { width: 100%; border-collapse: collapse; color: var(--ink-soft); font: 13px var(--font-mono); font-variant-numeric: tabular-nums; }
 .tensor-table th, .tensor-table td { padding: 6px 16px 6px 0; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .tensor-table thead th { padding-top: 0; border-top: 0; border-bottom: 1px solid var(--line); color: var(--ink-faint); font: 500 11px var(--font-body); letter-spacing: .04em; text-transform: uppercase; }
+/* Uppercase would turn µs into a capital mu, which reads as ms. */
+.mla-utilization thead small { font-size: inherit; text-transform: none; }
 .tensor-table tbody th { color: var(--ink); font: 400 14px var(--font-body); }
 .tensor-table tbody td:first-of-type { color: var(--ink); font-weight: 500; }
 .tensor-table tbody tr:first-child > *, .tensor-table tr.continued > * { border-top: 0; }

@@ -1,0 +1,10 @@
+MSIM version: v3.0.0-3647-g26297e70
+Latency [ms]: 0.678432
+Throughput [FPS]: 1473.99
+Performance [TOPS]: 15.3971
+Total compute efficiency [%]: 30.0725
+Peak efficiency [%]: 99.7951
+Total bandwidth [GB/s] local memory: 0
+Incoming data size [MB]: 0
+Total arithmetic ops: 10445905152
+Effective arithmetic ops: 8213719016

@@ -18,7 +18,11 @@ from .model import CONVERSION_FILES, SCRIPTS_DIR, compile_invocations_for, load_
 from .source import source_identity
 
 # Shared code used by ONNX builds.
-COMPILE_TOOLING = ("scripts/run_model_compilation.sh", "tools/model_registry/model.py")
+COMPILE_TOOLING = (
+    "scripts/run_model_compilation.sh",
+    "tools/model_registry/model.py",
+    "tools/model_registry/mla_stage_simulation.py",
+)
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}

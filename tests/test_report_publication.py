@@ -73,7 +73,11 @@ def performance_report(components: list[str], **changes: object) -> dict:
         "schema": "sima.model-report", "schema_version": 1, "stage": "performance",
         "runtime": {"pyneat": "3.0.0", "build": {}}, "workload": "MPK default", "metrics": dict(PERFORMANCE_METRICS),
         "telemetry": {},
-        "components": {component: {"execution_plan": {}, "layer_stats": []} for component in components},
+        "components": {component: {
+            "execution_plan": {},
+            "mla_layer_stats": {"status": "not requested", "layers": []},
+            "mla_stage_stats": {"status": "not requested", "stages": []},
+        } for component in components},
         **changes,
     }  # fmt: skip
 

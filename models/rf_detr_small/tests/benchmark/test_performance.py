@@ -20,7 +20,9 @@ def test_performance_records_each_components_execution_plan(performance: dict[st
         assert plan["nodes"] and plan["edges"]
 
 
-def test_performance_records_each_components_layer_timings(performance: dict[str, Any]) -> None:
+def test_mla_stats_collected(performance: dict[str, Any]) -> None:
     for component_id, item in performance["components"].items():
-        layers = item["layer_stats"]
-        assert any(layer["total_execution_time_us"] > 0 for layer in layers), component_id
+        layer_stats, stage_stats = item["mla_layer_stats"], item["mla_stage_stats"]
+        assert (layer_stats["status"], stage_stats["status"]) == ("ok", "ok"), component_id
+        assert any(layer["latency_us"] > 0 for layer in layer_stats["layers"]), component_id
+        assert stage_stats["stages"], component_id

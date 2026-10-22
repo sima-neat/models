@@ -49,7 +49,8 @@ def test_artifact_browser_assets_exist() -> None:
         "compare-view.js",
         "model-view.js",
         "model-report.js",
-        "layer-stats.js",
+        "mla-layer-stats.js",
+        "mla-utilization.js",
         "branch-builds.js",
         "downloads.js",
         "markdown.js",
@@ -298,7 +299,8 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
     builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
     # One report for the whole model, with each component's layers in the order the pipeline runs them.
     assert list(report["components"]) == ["backbone", "decoder"]
-    assert all(component["layer_stats"] for component in report["components"].values())
+    assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
+               for component in report["components"].values())
     assert report["workload"] == "Backbone, Top 300 proposals on the CPU, decoder"
     assert measured["parameters"]["builds"] == {
         build["component_id"]: {"run_id": build["run_id"], "artifact_sha256": build["artifact_sha256"]}
@@ -318,7 +320,7 @@ def test_preview_leaves_a_profile_without_a_benchmark_run(tmp_path: Path) -> Non
     assert on_demand is None
 
 
-def test_preview_package_runs_carry_numerical_fidelity(tmp_path: Path) -> None:
+def test_preview_package_runs_carry_numerical_fidelity_and_mla_stage_simulation(tmp_path: Path) -> None:
     api = "/v1/repositories/sima-neat/models"
     with _preview(tmp_path) as base:
         catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
@@ -327,8 +329,12 @@ def test_preview_package_runs_carry_numerical_fidelity(tmp_path: Path) -> None:
         tests = _get_json(f"{base}/v1/runs/{package['run_id']}/test-results")["test_results"]
         compile_tests = _get_json(f"{base}/v1/runs/{model['builds'][0]['run_id']}/test-results")["test_results"]
 
-    [fidelity] = tests
+    fidelity, simulation = tests
     assert (fidelity["suite"], fidelity["name"]) == ("correctness", "numerical-fidelity")
+    assert (simulation["suite"], simulation["name"]) == ("performance", "mla-stage-simulation")
+    schema = json.loads((ROOT / "schemas/mla-stage-simulation.schema.json").read_text(encoding="utf-8"))
+    Draft202012Validator(schema).validate(simulation["summary"])
+    assert [stage["stage_index"] for stage in simulation["summary"]["components"]["model"]["stages"]] == [0, 2]
     assert fidelity["summary"]["build_profile_id"] == package["build_profile_id"]
     assert fidelity["summary"]["samples"] == fidelity["summary"]["selection"]["samples"]
     assert "numerical-fidelity" not in {test["name"] for test in compile_tests}
@@ -365,7 +371,8 @@ def test_combined_portal_fingerprints_mutable_browser_assets() -> None:
     assert "process.env.GITHUB_SHA" in assemble
     for asset in (
         "app", "state", "ui", "metrics", "api", "catalog-view", "compare-view", "model-view",
-        "model-report", "layer-stats", "branch-builds", "downloads", "markdown", "brand", "styles", "config",
+        "model-report", "mla-layer-stats", "mla-utilization", "branch-builds", "downloads", "markdown", "brand",
+        "styles", "config",
     ):
         assert f"'{asset}'" in assemble
     assert "cpSync(docsBuild, output, {recursive: true})" in assemble
@@ -1736,7 +1743,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "This model runs as ${details.length} components, measured running together." in render_detail
     assert "section-note" not in script
     strip, performance = (render_detail.index(marker) for marker in (
-        '${order ? pipelineStrip(variant.pipeline) : ""}', "${modelPerformance(variant.performance, model)}",
+        '${order ? pipelineStrip(variant.pipeline) : ""}', "${modelPerformance(variant, model)}",
     ))
     assert strip < performance
     model_performance = script.split("function modelPerformance(", 1)[1].split("\nfunction ", 1)[0]
@@ -1746,6 +1753,13 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
         "({ label, analysis: layerAnalysis })), run.id)"
     ) in model_performance
     assert "executionGraphSection(components.map(" in model_performance
+    # MLA utilization follows the layer analysis, from the package run's simulation.
+    assert (model_performance.index("layerAnalysisSection(") < model_performance.index("renderMlaUtilization(")
+            < model_performance.index("executionGraphSection("))
+    assert "mlaStageSimulation(variant.packageTests?.test_results)" in model_performance
+    utilization = script.split("function renderMlaUtilization(", 1)[1].split("\nfunction ", 1)[0]
+    # It rests on a simulator estimate, so customers never see it.
+    assert utilization.split("\n", 2)[1].strip().startswith("if (customerView ||")
     assert "performanceSummary(result.value, run, modelId)" in model_performance
     graphs = script.split("function executionGraphSection(", 1)[1].split("\nexport function ", 1)[0]
     assert 'disclosure(`graphs:${key}`, "Execution graph"' in graphs

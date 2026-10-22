@@ -14,6 +14,7 @@ from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
+from .mla_stage_simulation import write_mla_stage_simulation
 from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
 from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
@@ -29,6 +30,7 @@ AUTHOR_COMMANDS = frozenset(
         "authorize-runner-matrix",
         "assemble-package",
         "resolve-compiler",
+        "simulate-mla-stages",
         "validate",
         "validate-models",
         "validate-compile-outputs",
@@ -216,6 +218,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     record_outputs.add_argument("--build-profile-id", required=True)
     record_outputs.add_argument("--compile-invocation-id", required=True)
     record_outputs.add_argument("--components", required=True, help="comma-separated component IDs")
+
+    simulate = subcommands.add_parser(
+        "simulate-mla-stages", help="write mla-stage-simulation.json: mla-msim's estimate of each compiled MLA stage"
+    )
+    simulate.add_argument("output_dir", type=Path, help="the build profile's compile output, with compile-outputs.json")
 
     package = subcommands.add_parser(
         "assemble-package", help="assemble deterministic package bundles from verified component MPKs"
@@ -886,6 +893,9 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 compile_invocation_id=args.compile_invocation_id,
                 component_ids=_id_list(args.components, "--components"),
             ))
+            return 0
+        if args.command == "simulate-mla-stages":
+            print(write_mla_stage_simulation(args.output_dir))
             return 0
         if args.command == "fetch":
             return _fetch(args)

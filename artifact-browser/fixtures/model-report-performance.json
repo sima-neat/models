@@ -451,7 +451,8 @@
           }
         ]
       },
-      "layer_stats": []
+      "mla_layer_stats": {"status": "not requested", "layers": []},
+      "mla_stage_stats": {"status": "not requested", "stages": []}
     }
   }
 }

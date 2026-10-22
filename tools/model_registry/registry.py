@@ -28,6 +28,7 @@ from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
+from .mla_stage_simulation import SIMULATION_FILE
 from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
 from .runner_approval import runner_provenance
@@ -1252,6 +1253,69 @@ def _publish_fidelity(
     )
 
 
+def _mla_stage_simulation_result(path: Path, schema_path: Path, *, model_id: str, build_profile_id: str) -> JsonObject:
+    try:
+        simulation = json.loads(path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{path}: could not read MLA stage simulation: {exc}") from exc
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(simulation),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        first = errors[0]
+        location = ".".join(str(part) for part in first.absolute_path) or "<root>"
+        raise ValidationError(f"{path}: MLA stage simulation {location}: {first.message}")
+    for field, value in {"model_id": model_id, "build_profile_id": build_profile_id}.items():
+        if simulation[field] != value:
+            raise ValidationError(f"{path}: MLA stage simulation {field} must be {value!r}")
+    return simulation
+
+
+def _publish_mla_stage_simulation(
+    client: SigV4RegistryClient,
+    store: S3ArtifactStore,
+    path: Path,
+    simulation: JsonObject,
+    *,
+    run_id: str,
+    stable_key: str,
+    bucket: str,
+    retention_class: str,
+    s3_key: str,
+) -> None:
+    """Attach a profile's MLA stage simulation to its package run, where the model browser reads it."""
+    stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type="application/json")
+    artifact = client.request(
+        "PUT",
+        f"/v1/runs/{run_id}/artifacts/mla-stage-simulation",
+        {
+            "artifact_type": "mla-stage-simulation",
+            "s3_bucket": bucket,
+            "s3_key": stored.key,
+            "s3_version_id": stored.version_id,
+            "sha256": stored.sha256,
+            "size_bytes": stored.size_bytes,
+            "media_type": "application/json",
+            "retention_class": retention_class,
+            "metadata": {key: simulation[key] for key in ("model_id", "build_profile_id")},
+        },
+        f"{stable_key}-mla-stage-simulation-artifact",
+    )
+    # A component mla-msim could not simulate leaves nothing to compare, which is not a failure of the model.
+    simulated = all(component["status"] == "ok" for component in simulation["components"].values())
+    test: JsonObject = {"status": "passed" if simulated else "skipped", "summary": simulation}
+    if artifact.get("artifact_id"):
+        test["report_artifact_id"] = artifact["artifact_id"]
+    client.request(
+        "PUT",
+        f"/v1/runs/{run_id}/test-results/performance/mla-stage-simulation",
+        test,
+        f"{stable_key}-mla-stage-simulation-test-result",
+    )
+
+
 def _compile_timing(path: Path) -> JsonObject:
     """Read the recipe timing the compile runner writes; registry run timestamps measure publication."""
     try:
@@ -1806,6 +1870,14 @@ def publish_packages(
             build_profile_id=profile_id,
             config=model["numerical_fidelity"],
         ) if fidelity_path.is_file() else None
+        # Staging alone shows the simulation, in the model browser's developer mode.
+        simulation_path = result_path.parent / SIMULATION_FILE
+        simulation = _mla_stage_simulation_result(
+            simulation_path,
+            root / "schemas" / "mla-stage-simulation.schema.json",
+            model_id=model_id,
+            build_profile_id=profile_id,
+        ) if environment == "staging" and simulation_path.is_file() else None
 
         manifest_sha = canonical_sha256(manifest)
         parameters = {
@@ -1895,6 +1967,13 @@ def publish_packages(
                 retention_class=retention_class,
                 s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/numerical-fidelity.json" if candidate else
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/numerical-fidelity.json"),
+            )
+        if simulation is not None:
+            _publish_mla_stage_simulation(
+                client, store, simulation_path, simulation, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                retention_class=retention_class,
+                s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/{SIMULATION_FILE}" if candidate else
+                        f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/{SIMULATION_FILE}"),
             )
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
         published.append({

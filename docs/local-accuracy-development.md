@@ -90,7 +90,7 @@ It scores the whole model on each dataset and hands the scores to
 ```python
 dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-mini, <directory>
 ...
-report = model_report.accuracy({
+report = model_report.from_accuracy({
     dataset_id: {
         "metrics": {"top1_accuracy": top1 / len(names), "top5_accuracy": top5 / len(names)},
         "split": VALIDATION_SPLIT,

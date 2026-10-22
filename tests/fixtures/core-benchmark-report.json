@@ -312,5 +312,15 @@
       "unit": "MiB"
     }
   },
-  "layer_stats": []
+  "mla_layer_stats": {
+    "status": "ok",
+    "layers": [
+      {"stage_index": 0, "name": "MLA_0/conv2d_0", "latency_us": 41.2},
+      {"stage_index": 0, "name": "MLA_0/conv2d_1", "latency_us": 0.0}
+    ]
+  },
+  "mla_stage_stats": {
+    "status": "ok",
+    "stages": [{"stage_index": 0, "latency_us": 678.0}]
+  }
 }

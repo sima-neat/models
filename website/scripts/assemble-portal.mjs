@@ -18,8 +18,8 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'model-report', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
-  'config', 'portal-shell',
+  'model-report', 'mla-layer-stats', 'mla-utilization', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics',
+  'brand', 'styles', 'config', 'portal-shell',
 ];
 const stylesheets = ['brand', 'styles'];
 const config = portalConfig();

@@ -1,6 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
-import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
+import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
+import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics } from "./mla-utilization.js";
 import { readAccuracy, readPerformance } from "./model-report.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
@@ -601,8 +602,36 @@ function pipelineStrip(pipeline) {
   return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
 }
 
-// The build profile's numbers for the whole model, with each component's layer analysis and execution graph.
-function modelPerformance(benchmarkRun, modelId) {
+// Each component's MLA stages set against the simulator's operation counts, in developer mode only: the rates rest
+// on a simulator estimate.
+function renderMlaUtilization(components, simulation, precisions, throughputFps, key) {
+  if (customerView || !simulation && !components.some(({ mlaStageStats }) => mlaStageStats?.status === "ok")) return "";
+  const results = components.map((component) => {
+    const { stages, reason } = matchMlaStages(component.mlaStageStats, simulation?.components?.[component.id]);
+    return { ...component, reason, metrics: stages && mlaUtilizationMetrics(stages, { int8: precisions[component.id] === "w8a8" }) };
+  });
+  const number = (value, digits) => value === null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: digits });
+  const percent = (value) => value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+  const row = (label, stage) => `<tr><th scope="row">${label}</th>${[number(stage.measuredUs, 1), number(stage.simulatedUs, 1),
+    number(stage.effectiveOps / 1e9, 2), percent(stage.packing), number(stage.effectiveTops, 2), percent(stage.utilization)]
+    .map((value) => `<td>${value}</td>`).join("")}</tr>`;
+  const headings = ["Stage", "Measured <small>(µs)</small>", "Simulated <small>(µs)</small>", "Effective GOP", "Packing",
+    "Effective TOPS", "Utilization"];
+  const table = ({ metrics }) => `<div class="tensor-table"><table><thead><tr>${headings.map((heading) => `<th scope="col">${heading}</th>`).join("")}</tr></thead>
+    <tbody>${metrics.stages.map((stage) => row(`MLA stage ${stage.index}`, stage)).join("")}${metrics.stages.length > 1 ? row("All MLA stages", metrics.total) : ""}</tbody></table></div>`;
+  const body = results.map((result) => `${results.length > 1 ? `<h4>${escapeHtml(result.label)}</h4>` : ""}
+    ${result.metrics ? table(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`}`).join("");
+  const compared = results.every(({ metrics }) => metrics) && Number.isFinite(throughputFps);
+  const sustainedTops = compared ? results.reduce((ops, { metrics }) => ops + metrics.total.effectiveOps, 0) * throughputFps / 1e12 : null;
+  return disclosure(`mla-utilization:${key}`, "MLA Utilization", `<div class="mla-utilization">
+    <p class="layer-explanation">Effective TOPS divides the Model Compiler simulator's count of operations that contribute to the result by the stage's latency on the board. Packing is their share of all operations the MLA executes. Utilization compares a w8a8 stage's effective TOPS with the MLA's ${MLA_PEAK_INT8_TOPS} TOPS INT8 peak.${compared ? ` At the measured throughput, the model sustains ${number(sustainedTops, 2)} effective TOPS.` : ""}</p>
+    ${body}</div>`, compared ? `${number(sustainedTops, 2)} effective TOPS sustained` : "");
+}
+
+// The build profile's numbers for the whole model, with each component's layer analysis, MLA utilization and
+// execution graph.
+function modelPerformance(variant, modelId) {
+  const benchmarkRun = variant.performance;
   const result = readPerformance(benchmarkRun);
   if (result.kind === "missing") return `<p class="muted-message">Not measured at this revision.</p>`;
   if (result.kind === "unsupported") return `<p class="muted-message">This result format is not supported by this browser.</p>`;
@@ -611,8 +640,16 @@ function modelPerformance(benchmarkRun, modelId) {
   return `<div class="component-performance">
     ${performanceSummary(result.value, run, modelId)}
     ${layerAnalysisSection(components.map(({ label, layerAnalysis }) => ({ label, analysis: layerAnalysis })), run.id)}
+    ${renderMlaUtilization(components, mlaStageSimulation(variant.packageTests?.test_results), componentPrecisions(variant),
+      result.value.measurements.throughput_fps?.value, run.id)}
     ${executionGraphSection(components.map(({ id, label, executionGraph }) => ({ id: `${run.id}:${id}`, label, graph: executionGraph })), run.id)}
   </div>`;
+}
+
+// Each component's compile precision, such as w8a8.
+function componentPrecisions(variant) {
+  return Object.fromEntries(variant.details.map((detail) => [detail.summary.run.metadata.component_id,
+    detail.provenance.parameters?.parameters?.compile_parameters?.precision]));
 }
 
 function compileDuration(run) {
@@ -1015,7 +1052,7 @@ export function renderDetail(variant) {
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, measured running together.</p>`}
       ${order ? pipelineStrip(variant.pipeline) : ""}
-      ${modelPerformance(variant.performance, model)}
+      ${modelPerformance(variant, model)}
     </section>
 
     ${accuracyMarkup}

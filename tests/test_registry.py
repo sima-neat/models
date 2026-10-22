@@ -245,10 +245,10 @@ def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
     return packages, assembled
 
 
-def _publish_packages(packages: Path, request, store: FakeStore) -> dict:
+def _publish_packages(packages: Path, request, store: FakeStore, environment: str = "staging") -> dict:
     return publish_packages(
         repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
-        bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+        bucket="artifacts", kms_key_id=None, environment=environment, branch="feature/models", git_sha="a" * 40,
         github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
         request=request, artifact_store=store,
     )
@@ -350,6 +350,91 @@ def test_publish_package_rejects_fidelity_that_does_not_match_the_declaration(
         return {"run_id": "package-run"}
 
     with pytest.raises(ValidationError, match=message):
+        _publish_packages(packages, request, FakeStore())
+    assert calls == []
+
+
+def _add_mla_stage_simulation(packages: Path, status: str = "ok") -> Path:
+    path = packages / "resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    stages = [{"stage_index": 0, "effective_ops": 8213719016, "total_ops": 10445905152,
+               "simulated_latency_us": 678.432}] if status == "ok" else []
+    path.write_text(json.dumps({
+        "schema_version": 1, "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "components": {"model": {"status": status, "stages": stages}},
+    }), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(("status", "test_status"), [("ok", "passed"), ("mla-msim not found", "skipped")])
+def test_staging_package_publishes_the_mla_stage_simulation(tmp_path: Path, status: str, test_status: str) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages, status)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "package-run"}
+        if path.endswith("/artifacts/mla-stage-simulation"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000003"}
+        return {"ok": True}
+
+    store = FakeStore()
+    _publish_packages(packages, request, store)
+
+    bodies = {path: body for _, path, body, _ in calls}
+    artifact = bodies["/v1/runs/package-run/artifacts/mla-stage-simulation"]
+    assert artifact["artifact_type"] == "mla-stage-simulation"
+    assert artifact["s3_key"] == "models/feature%2Fmodels/aaaaaaaaaaaa/resnet_50/w16a16/mla-stage-simulation.json"
+    assert bodies["/v1/runs/package-run/test-results/performance/mla-stage-simulation"] == {
+        "status": test_status,
+        "summary": json.loads(simulation_path.read_text(encoding="utf-8")),
+        "report_artifact_id": "00000000-0000-4000-8000-000000000003",
+    }
+    assert [path for _, path, _, _ in calls][-1] == "/v1/runs/package-run/finalize"
+    assert store.objects[-1][0] == simulation_path
+
+
+def test_package_carries_the_profile_mla_stage_simulation(tmp_path: Path) -> None:
+    compiled = _packaged_result(tmp_path)
+    (compiled / "resnet_50/w16a16/mla-stage-simulation.json").write_text('{"simulated": true}', encoding="utf-8")
+
+    assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+    )
+
+    copied = tmp_path / "packages/resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    assert copied.read_text(encoding="utf-8") == '{"simulated": true}'
+
+
+def test_production_package_leaves_the_mla_stage_simulation_unpublished(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    _add_mla_stage_simulation(packages)
+    calls: list[str] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append(path)
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore(), environment="production")
+
+    assert not any("mla-stage-simulation" in path for path in calls)
+
+
+def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages)
+    simulation = json.loads(simulation_path.read_text(encoding="utf-8"))
+    simulation["build_profile_id"] = "w8a8"
+    simulation_path.write_text(json.dumps(simulation), encoding="utf-8")
+    calls = []
+
+    def request(method, path, *args):
+        calls.append((method, path))
+        return {"run_id": "package-run"}
+
+    with pytest.raises(ValidationError, match="build_profile_id must be 'w16a16'"):
         _publish_packages(packages, request, FakeStore())
     assert calls == []
 

@@ -1,6 +1,6 @@
 // Reads the whole-model reports a build profile's benchmark runs publish
 // (schemas/model-report.schema.json, written by tools/model_report).
-import { analyzeLayers } from "./layer-stats.js";
+import { analyzeLayers } from "./mla-layer-stats.js";
 
 // Each benchmark stage's registry run type, as tools/model_registry/fingerprints.py BENCHMARK_RUN_TYPES records it.
 export const BENCHMARK_RUN_TYPES = {
@@ -109,7 +109,8 @@ export function readPerformance(benchmarkRun) {
       cpuCores: cpuCores(report.telemetry),
       components: Object.entries(report.components || {}).map(([id, component]) => ({
         id,
-        layerAnalysis: analyzeLayers(component?.layer_stats),
+        layerAnalysis: analyzeLayers(component?.mla_layer_stats?.layers),
+        mlaStageStats: component?.mla_stage_stats || null,
         executionGraph: executionGraph(component?.execution_plan),
       })),
     };

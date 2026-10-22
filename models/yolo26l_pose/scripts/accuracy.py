@@ -225,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = score(ground_truth, results, "keypoints", image_ids) | score(ground_truth, results, "bbox", image_ids)
     scoring_seconds = time.monotonic() - started
 
-    report = model_report.accuracy({
+    report = model_report.from_accuracy({
         dataset_id: {
             "metrics": {name: stats[name] for name in METRICS},
             "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
