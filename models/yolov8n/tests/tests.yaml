@@ -3,8 +3,24 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The expected COCO values are recorded from the first DevKit accuracy run (#352 follow-up).
+  run_tests: true
+  expected:
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.3636
+        coco_ap50: 0.5155
+        coco_ap75: 0.3940
+        coco_ap_small: 0.1768
+        coco_ap_medium: 0.4051
+        coco_ap_large: 0.5277
+        coco_ar1: 0.3142
+        coco_ar10: 0.5282
+        coco_ar100: 0.5863
+        coco_ar_small: 0.3666
+        coco_ar_medium: 0.6528
+        coco_ar_large: 0.7730
 performance:
-  run_tests: false
-  skip_reason: The expected throughput is recorded from the first DevKit performance run (#352 follow-up).
+  run_tests: true
+  expected:
+    w8a8:
+      throughput_fps: 649.8
