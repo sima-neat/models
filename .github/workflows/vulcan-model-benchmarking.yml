@@ -245,45 +245,10 @@ jobs:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
 
-      # Platform 3.0.0 images lack python3-venv and Core's installer adds it, so the pinned Core installs
-      # before any venv; system python3 reads the pin from the dependency manifest.
-      - name: Resolve and verify benchmark runtime
-        id: runtime
-        run: |
-          set -euo pipefail
-          pin="$(python3 -c 'import json; m = json.load(open("_source/deps/manifest.json")); print(m["platform-version"], m["neat-core"]["install_target"])')"
-          read -r platform_version core_target <<< "$pin"
-          actual_platform="$(
-            awk -F= '
-              /^[[:space:]]*DISTRO_VERSION[[:space:]]*=/ {
-                value = $2
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-                print value
-                exit
-              }
-            ' /etc/buildinfo
-          )"
-          if [[ -z "$actual_platform" ]]; then
-            echo "Could not read DISTRO_VERSION from /etc/buildinfo" >&2
-            exit 1
-          fi
-          if [[ "$actual_platform" != "$platform_version" ]]; then
-            echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
-            exit 1
-          fi
-          echo "Verified DevKit platform $actual_platform."
-          echo "NEAT_CORE_TARGET=$core_target" >> "$GITHUB_ENV"
-
-      - name: Install selected Neat Core
-        id: core
-        run: |
-          set -euo pipefail
-          sima-cli neat install --env production --type minimal "$NEAT_CORE_TARGET"
-          "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
-          dpkg-query -W '*neat*'
-
       - name: Install registry tooling in an isolated environment
         run: |
+          # Platform 3.0.0 images ship without python3-venv; Core's installer adds it, but Core installs later.
+          python3 -c 'import ensurepip' 2>/dev/null || sudo -n apt-get install -y python3-venv
           python3 -m venv "$RUNNER_TEMP/model-registry-tools"
           "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install '.[tests]'
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
@@ -308,6 +273,33 @@ jobs:
                   print(f"{profile} declares no {stage} benchmark; skipping it.", file=sys.stderr)
               print(f"{stage}={str(stage in requested and declared).lower()}")
           PY
+
+      - name: Resolve and verify benchmark runtime
+        id: runtime
+        run: |
+          set -euo pipefail
+          runtime="$("$REGISTRY_PYTHON" -m model_registry resolve-benchmark-runtime --repository _source)"
+          platform_version="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["devkit"]["platform_version"])' <<< "$runtime")"
+          actual_platform="$(
+            awk -F= '
+              /^[[:space:]]*DISTRO_VERSION[[:space:]]*=/ {
+                value = $2
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                print value
+                exit
+              }
+            ' /etc/buildinfo
+          )"
+          if [[ -z "$actual_platform" ]]; then
+            echo "Could not read DISTRO_VERSION from /etc/buildinfo" >&2
+            exit 1
+          fi
+          if [[ "$actual_platform" != "$platform_version" ]]; then
+            echo "DevKit platform mismatch: expected $platform_version, found $actual_platform" >&2
+            exit 1
+          fi
+          echo "Verified DevKit platform $actual_platform."
+          echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
 
       - name: Install trusted dataset tooling
         if: steps.stages.outputs.accuracy == 'true'
@@ -338,6 +330,17 @@ jobs:
           AWS_DEFAULT_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
           SIMA_DATASET_S3_URI: s3://${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_bucket }}
         run: scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID"
+
+      - name: Install selected Neat Core
+        id: core
+        # A failed accuracy dataset step must not stop the performance stage.
+        if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
+          sima-cli neat install --env production --type minimal "$target"
+          "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
+          dpkg-query -W '*neat*'
 
       - name: Measure performance on DevKit
         id: performance
