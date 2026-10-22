@@ -106,6 +106,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "publish-catalog",
         "publish-candidates",
         "benchmark",
+        "benchmark-without-compiles",
         "report-partial-publication",
     }
 
@@ -441,37 +442,71 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event", "environment", "catalog_result", "benchmark_count", "expected"),
+    ("event", "environment", "publishable", "catalog_result", "benchmark_count", "expected"),
     [
-        ("push", "staging", "success", "1", True),
-        ("workflow_dispatch", "staging", "success", "3", True),
-        ("push", "production", "success", "1", False),
-        ("push", "staging", "failure", "1", False),
-        ("push", "staging", "skipped", "1", False),
-        ("push", "staging", "success", "0", False),
+        ("push", "staging", "true", "success", "1", True),
+        ("workflow_dispatch", "staging", "true", "success", "3", True),
+        ("push", "production", "true", "success", "1", False),
+        # A feature branch publishes a pending catalog for on-demand candidates only.
+        ("push", "staging", "false", "success", "1", False),
+        ("push", "staging", "true", "failure", "1", False),
+        ("push", "staging", "true", "skipped", "1", False),
+        ("push", "staging", "true", "success", "0", False),
     ],
 )
-def test_reused_builds_start_benchmarks_after_the_catalog_snapshot(
-    event, environment, catalog_result, benchmark_count, expected,
+def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
+    event, environment, publishable, catalog_result, benchmark_count, expected,
 ) -> None:
     job = load(WORKFLOW)["jobs"]["benchmark"]
     values = {
         "!cancelled()": True,
         "github.event_name": event,
+        "needs.initialize-catalog.result": catalog_result,
+        "needs.select.outputs.publishable": publishable,
+        "needs.select.outputs.vulcan_environment": environment,
+        "needs.plan.outputs.benchmark_count": benchmark_count,
+    }
+
+    # The pending catalog already links reused builds, so their benchmarks do not wait for compiles.
+    assert job["needs"] == ["select", "plan", "initialize-catalog"]
+    # Without a status function GitHub adds success(), which also requires the
+    # indirectly needed jobs and skips reused builds when one of them is skipped.
+    assert job["if"].startswith("!cancelled() &&")
+    assert evaluate(job["if"], values) is expected
+
+
+@pytest.mark.parametrize(
+    ("environment", "compile_count", "catalog_result", "benchmark_count", "expected"),
+    [
+        ("staging", "0", "success", "1", True),
+        # With compiles, the benchmark job already started them after the pending catalog.
+        ("staging", "2", "success", "1", False),
+        ("production", "0", "success", "1", False),
+        ("staging", "0", "failure", "1", False),
+        ("staging", "0", "skipped", "1", False),
+        ("staging", "0", "success", "0", False),
+    ],
+)
+def test_reused_builds_start_benchmarks_after_the_snapshot_when_nothing_compiles(
+    environment, compile_count, catalog_result, benchmark_count, expected,
+) -> None:
+    job = load(WORKFLOW)["jobs"]["benchmark-without-compiles"]
+    values = {
+        "!cancelled()": True,
+        "needs.plan.outputs.compile_count": compile_count,
         "needs.publish-catalog.result": catalog_result,
         "needs.select.outputs.vulcan_environment": environment,
         "needs.plan.outputs.benchmark_count": benchmark_count,
     }
 
     assert job["needs"] == ["select", "plan", "publish-catalog"]
-    # Without a status function GitHub adds success(), which also requires the
-    # indirectly needed build jobs and skips reused builds when one build fails.
     assert job["if"].startswith("!cancelled() &&")
     assert evaluate(job["if"], values) is expected
 
 
-def test_reused_builds_start_their_benchmarks_from_one_job() -> None:
-    job = load(WORKFLOW)["jobs"]["benchmark"]
+@pytest.mark.parametrize("job_id", ["benchmark", "benchmark-without-compiles"])
+def test_reused_builds_start_their_benchmarks_from_one_job(job_id) -> None:
+    job = load(WORKFLOW)["jobs"][job_id]
     start = step(job, "Start the benchmarks reused builds still lack")
 
     assert job["name"] == "Dispatch benchmarks for reused builds"

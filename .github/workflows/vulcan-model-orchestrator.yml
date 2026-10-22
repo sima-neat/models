@@ -517,8 +517,8 @@ jobs:
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
           role-session-name: models-catalog-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Each build already published itself. This snapshot carries metadata-only changes and pins the
-      # catalog revision the reused builds' benchmarks read.
+      # Each build already published itself. This snapshot carries metadata-only changes and, when
+      # nothing compiles, pins the catalog revision the reused builds' benchmarks read.
       - name: Publish and promote the catalog snapshot
         env:
           BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
@@ -546,11 +546,37 @@ jobs:
             --git-sha "$GITHUB_SHA"
 
   # One job starts every reused build's benchmarks; each build's line links its benchmarking workflow run.
+  # The pending catalog already links every reused build, so its benchmarks need not wait for compiles.
   benchmark:
+    name: Dispatch benchmarks for reused builds
+    needs: [select, plan, initialize-catalog]
+    if: >-
+      !cancelled() &&
+      needs.initialize-catalog.result == 'success' &&
+      needs.select.outputs.publishable == 'true' &&
+      needs.select.outputs.vulcan_environment == 'staging' &&
+      needs.plan.outputs.benchmark_count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out the trusted revision
+        uses: actions/checkout@v6
+
+      - name: Start the benchmarks reused builds still lack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
+        run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
+
+  # Without compiles the pending catalog is skipped, so the snapshot is the catalog the benchmarks read.
+  benchmark-without-compiles:
     name: Dispatch benchmarks for reused builds
     needs: [select, plan, publish-catalog]
     if: >-
       !cancelled() &&
+      needs.plan.outputs.compile_count == '0' &&
       needs.publish-catalog.result == 'success' &&
       needs.select.outputs.vulcan_environment == 'staging' &&
       needs.plan.outputs.benchmark_count != '0'

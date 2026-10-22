@@ -174,10 +174,11 @@ on the reviewed revision:
    publishes each component and its fidelity report as a compile run, starts
    the benchmarks for a new Modalix build, assembles and publishes the
    packages the build completes, and records the build in the catalog.
-6. **Publish the catalog.** The catalog snapshot for the revision is published
+6. **Benchmark.** For reused builds, the workflow starts only the benchmarks
+   they still lack, once the catalog marks the selected builds pending. They
+   run while the changed builds compile.
+7. **Publish the catalog.** The catalog snapshot for the revision is published
    and promoted.
-7. **Benchmark.** For reused builds, the workflow starts only the benchmarks
-   they still lack.
 
 **Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
 stages of one build on a DevKit, runs the model's benchmark tests on each result,

@@ -146,13 +146,13 @@ push (Vulcan Model Orchestrator, every push)
   -> plan: compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
+  -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, the package with its fidelity report, start the benchmarks, catalog entry
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
   -> publish the catalog snapshot
-  -> benchmark: start the benchmarks that reused builds still lack
 benchmarks (Vulcan Model Benchmarking, per build profile)
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
   -> publish each report under the profile's package run with its test outcome; a failed test then fails the run

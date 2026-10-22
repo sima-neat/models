@@ -228,8 +228,9 @@ in the same commit.
   fingerprint against the registry. `compile` calls
   `.github/workflows/vulcan-model-compile.yml` once per build to compile,
   run the model's compile tests, publish, and start the build's
-  benchmarks. `publish-catalog` writes the final catalog snapshot, and
-  `benchmark` starts the benchmarks a reused build still lacks.
+  benchmarks. `benchmark` starts the benchmarks a reused build still lacks
+  once `initialize-catalog` marks the selected builds pending, or after
+  `publish-catalog` writes the final catalog snapshot when nothing compiles.
 - **Benchmarks.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` of one build profile on a DevKit, runs the model's benchmark tests on
   each `model-report.json`, and publishes performance (`model_performance` runs)
