@@ -327,6 +327,10 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
         type=Path,
         help="omit prior packages for build profiles selected for replacement",
     )
+    publish_catalog_parser.add_argument(
+        "--force-rebuild-all", action="store_true",
+        help="reject forced replacement of packages already published in the current revision",
+    )
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
     publish_catalog_parser.add_argument("--aws-region", default="us-west-2")
@@ -827,6 +831,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         compiled_dir=args.compiled_dir,
         package_dir=args.package_dir,
         selected_matrix=args.selected_matrix,
+        force_rebuild_all=args.force_rebuild_all,
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,

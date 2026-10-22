@@ -297,7 +297,9 @@ The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprin
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's
 builds, which runs the compile tests and remeasures every build. A changed
-conversion test applies on the next conversion dispatch.
+conversion test applies on the next conversion dispatch. If a selected package
+is already published in the current catalog revision, use a new Git commit;
+[forced rebuilds cannot replace immutable packages](../design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 ## 10. Write the model's tests
 

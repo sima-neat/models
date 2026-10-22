@@ -182,7 +182,8 @@ gh workflow run vulcan-model-orchestrator.yml --ref develop \
 The selected ref must contain the request and compatible workflow. A market-only
 change may reuse an existing result and launch no runner. For a deliberate fresh
 staging verification, add `-f force_rebuild_all=true` to that narrowly selected
-dispatch; this incurs another compile and may run its declared benchmarks. Manual
+dispatch on a new Git commit if the selected package is already published in
+the current catalog revision; this incurs another compile and may run its declared benchmarks. Manual
 selection also permits models with `build-on-demand: true`.
 
 ## Verify the result and diagnose failures

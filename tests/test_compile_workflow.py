@@ -330,6 +330,9 @@ def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
     assert publish["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
     assert "model-registry publish-catalog" in publish["run"]
     assert '--selected-matrix "$matrix_file"' in publish["run"]
+    assert publish["env"]["FORCE_REBUILD_ALL"] == "${{ inputs.force_rebuild_all }}"
+    assert "force_args+=(--force-rebuild-all)" in publish["run"]
+    assert '"${force_args[@]}"' in publish["run"]
     assert '--base-branches "$BASE_BRANCHES"' in publish["run"]
 
 

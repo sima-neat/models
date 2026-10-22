@@ -811,6 +811,7 @@ def publish_catalog(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
+    force_rebuild_all: bool = False,
     base_branches: list[str] | None = None,
     bucket: str | None = None,
     kms_key_id: str | None = None,
@@ -850,6 +851,25 @@ def publish_catalog(
     target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
     target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     continuing_revision = target_revision == git_sha.lower()
+    if continuing_revision and force_rebuild_all:
+        selected = _selected_invocation_keys(
+            Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+        )
+        selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
+        published_profiles = {
+            (model["id"], package["build_profile_id"])
+            for model in target_catalog["document"].get("models", [])
+            for package in model.get("packages", [])
+            if not model.get("build_on_demand", False)
+        }
+        conflicts = sorted(selected_profiles & published_profiles)
+        if conflicts:
+            profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
+            raise ValidationError(
+                f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
+                "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
+                "For an initialization retry, omit --force-rebuild-all."
+            )
     # Base branches seed a new revision only. During progress publication they
     # could restore a deliberately withheld package, or replace a published one
     # when a base branch finishes rebuilding before this branch does.

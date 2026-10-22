@@ -185,7 +185,8 @@ takes stage output. No fingerprint reads `models/<id>/tests/` or
 `run_model_tests.sh`, so a changed test reruns nothing and applies the next
 time its stage runs. To apply it now, dispatch `Vulcan Model Orchestrator`
 with `models` set to the model and `force_rebuild_all`, which recompiles and
-remeasures it.
+remeasures it. If its package is already published in the current catalog
+revision, use a new Git commit; published packages are immutable within a revision.
 
 ## Keep the structure consistent
 

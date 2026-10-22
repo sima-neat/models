@@ -247,3 +247,8 @@ If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
 failure.
+
+
+Forced rebuilds of packages already published in the current catalog revision
+require a new Git commit. Initialization rejects the conflict before compilation;
+see [forced rebuilds](../design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).

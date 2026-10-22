@@ -497,7 +497,8 @@ def test_publishing_a_report_requires_a_test_outcome(monkeypatch, extra: tuple[s
     ("argument", "base_branches"),
     [(None, []), ("", []), ("develop", ["develop"]), ("develop,release-1.0", ["develop", "release-1.0"])],
 )
-def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches) -> None:
+@pytest.mark.parametrize("force_rebuild_all", [False, True])
+def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches, force_rebuild_all) -> None:
     calls = []
 
     def publish(**kwargs):
@@ -511,9 +512,12 @@ def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, ba
         "--git-sha", "a" * 40, "--bucket", "model-artifacts",
         "--environment", "staging",
     ]
+    if force_rebuild_all:
+        args.append("--force-rebuild-all")
     if argument is not None:
         args.extend(["--base-branches", argument])
     assert main(args) == 0
+    assert calls[0]["force_rebuild_all"] == force_rebuild_all
     assert calls[0]["base_branches"] == base_branches
     assert calls[0]["branch"] == "feat/names"
     assert calls[0]["bucket"] == "model-artifacts"

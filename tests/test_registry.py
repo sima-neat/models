@@ -1239,3 +1239,53 @@ def test_progress_publication_does_not_reimport_base_packages(
     assert profile["builds"] == expected["builds"]
     # Retrying initialization must not drop packages already published this revision.
     assert captured["selected_matrix"] == (None if continuing_revision else selected)
+
+
+@pytest.mark.parametrize("same_revision", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_forced_rebuild_checks_revision_before_publication(
+    monkeypatch, tmp_path, same_revision, force, published, on_demand,
+):
+    selected = tmp_path / "selected.json"
+    selected.write_text(json.dumps({"include": [{
+        "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "compile_invocation_id": "w16a16",
+    }]}))
+    target = {
+        "catalog_revision": ("a" if same_revision else "b") * 40,
+        "canonical_sha256": "c" * 64,
+        "document": {"models": [{
+            "id": "resnet_50", "builds": [], "build_on_demand": on_demand,
+            "packages": [{"build_profile_id": "w16a16", "package_id": "default"}] if published else [],
+        }]},
+    }
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    snapshots = []
+    writes = []
+
+    def build_snapshot(**kwargs):
+        snapshots.append(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+
+    def publish():
+        return publish_catalog(
+            repository=ROOT, api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+            branch="feature", git_sha="a" * 40, selected_matrix=selected,
+            force_rebuild_all=force, read_request=lambda url: {"catalog": target},
+            request=lambda *args: writes.append(args) or {"stored": True},
+        )
+
+    if same_revision and force and published and not on_demand:
+        with pytest.raises(ValidationError, match="new Git revision"):
+            publish()
+        assert not snapshots
+        assert not writes
+    else:
+        publish()
+        assert len(writes) == 1
+        assert snapshots[0]["selected_matrix"] == (None if same_revision else selected)
