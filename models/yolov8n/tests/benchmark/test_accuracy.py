@@ -149,5 +149,5 @@ def test_decode_rejects_another_output_layout(load_script: Callable[[str], Modul
         accuracy.decode(outputs, 1, 640, 640, np.arange(80) + 1)
 
 
-def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path) -> None:
-    assert measured_shortfalls(model_dir, "accuracy", accuracy) == []
+def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
+    assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []
