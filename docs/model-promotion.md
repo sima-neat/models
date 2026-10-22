@@ -45,10 +45,16 @@ and choose **Run workflow**:
 - Select the `develop` branch and the `promote` operation.
 - Set `model_id` to the model folder name under `models/` and `build_profile` to the profile ID in its `model.yaml`.
 - Add a short reason and links to your validation results.
-- Leave `promotion_id` blank. Leave `deployment_id` blank to use the newest matching build in staging, or enter the `deployment_id` from your build's `candidate.json` to select that exact build.
+- Leave `promotion_id` blank. Set `deployment_id` to the value in the `candidate.json` receipt from the successfully published build you tested. This selects that exact build.
 
-Check the source commit and selected build in the workflow summary. Automatic
-selection looks across branches, so confirm that it found the build you tested.
+If you leave `deployment_id` blank in staging, the workflow selects the newest
+matching GitHub receipt across branches. That receipt may come from a failed
+publication attempt. If its build is not finalized, promotion fails; it does
+not fall back to an older successful build. Use your tested build's exact ID
+to avoid this.
+
+Check the source commit and selected build in the workflow summary to confirm
+that it found the build you tested.
 A maintainer reviews the request and approves it. Wait for the final report
 to show **`promoted`**; submitting the request is not completion.
 
