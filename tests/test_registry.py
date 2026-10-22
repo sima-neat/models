@@ -1187,3 +1187,55 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
     assert parameters["provenance"] == result["manifest"]["provenance"]
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("published_package", [False, True])
+def test_progress_publication_does_not_reimport_base_packages(
+    monkeypatch, tmp_path: Path, continuing_revision: bool, published_package: bool,
+) -> None:
+    """A sibling publisher must not fill a pending profile from a moving base."""
+    target_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "old", "run_id": "target-build"}],
+        "packages": ([{"build_profile_id": "w16a16", "package_id": "default",
+                       "run_id": "target-package"}] if published_package else []),
+    }
+    base_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "new", "run_id": "base-build"}],
+        "packages": [{"build_profile_id": "w16a16", "package_id": "default",
+                      "run_id": "base-package"}],
+    }
+    target = {"canonical_sha256": "c" * 64,
+              "catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "document": {"models": [target_profile]}}
+    matrix = [{"model_id": "resnet_50", "build_profile_id": "w16a16",
+               "component_ids": ["model"], "compile_fingerprint": "new"}]
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: matrix)
+    captured = {}
+
+    def build_snapshot(**kwargs):
+        captured.update(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+    selected = tmp_path / "selected.json"
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        selected_matrix=selected,
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base_profile]}} if url.endswith("develop") else target
+        )},
+    )
+    profile = result["catalog"]["models"][0]
+    expected = target_profile if continuing_revision else base_profile
+    assert profile["packages"] == expected["packages"]
+    assert profile["builds"] == expected["builds"]
+    # Retrying initialization must not drop packages already published this revision.
+    assert captured["selected_matrix"] == (None if continuing_revision else selected)

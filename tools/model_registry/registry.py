@@ -848,19 +848,24 @@ def publish_catalog(
     # before the compare-and-swap POST below.
     root = Path(repository).expanduser().resolve()
     target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
-    previous = merge_catalog_sources(sources, _head_matrix(root, load_models(root)))
+    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+    continuing_revision = target_revision == git_sha.lower()
+    # Base branches seed a new revision only. During progress publication they
+    # could restore a deliberately withheld package, or replace a published one
+    # when a base branch finishes rebuilding before this branch does.
+    previous = merge_catalog_sources(sources[:1] if continuing_revision else sources,
+                                     _head_matrix(root, load_models(root)))
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         package_dir=package_dir,
-        selected_matrix=selected_matrix,
+        selected_matrix=None if continuing_revision else selected_matrix,
         previous=previous,
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
-    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
