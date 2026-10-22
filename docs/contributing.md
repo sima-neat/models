@@ -49,6 +49,21 @@ model and should include corresponding unit or contract tests. A model change
 updates that model's own tests under `models/<model-id>/tests/` ([write the
 model's tests](adding-a-model.md#10-write-the-models-tests)).
 
+## Request additional compile resources
+
+For expensive runners or on-demand purchasing, follow the [runner request
+guide](runner-class-requests.md) before enabling the model's request. Link the
+reviewed Vulcan policy PR, exact model IDs, owner, duration/memory or interruption
+evidence, expected build frequency, and cost tradeoff in the Models PR. Update
+the model README with the request. Larger size and on-demand are separate
+permissions; an existing expensive-size grant does not authorize on-demand.
+
+A passing Models PR validates the manifest, not the protected policy. Confirm
+the grant is deployed and the [integration prerequisites](runner-integration.md)
+are met before expecting a trusted compile to acquire a runner. A runner-only
+change can reuse an existing build; use a narrowly selected forced staging build
+only when deliberately collecting new runner evidence.
+
 ## Never commit generated or sensitive artifacts
 
 Do not add:
@@ -163,8 +178,8 @@ on the reviewed revision:
    build compiles when no published run carries its fingerprint. A build that
    is reused but lacks a completed performance or accuracy run for its current
    benchmark fingerprint is queued for that benchmark only.
-3. **Authorize.** Each requested runner class is checked against the protected
-   environment specification.
+3. **Authorize.** Each requested runner class and market is checked against the protected
+   environment specification before a self-hosted compile is queued.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
    access, the backend's runner (`run_model_compilation.sh` for ONNX or
    `run_llima_compilation.sh` for LLiMa) runs the recipe. Each artifact is

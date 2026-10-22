@@ -86,8 +86,10 @@ Use these references when the model needs them:
 - [DevKit performance](benchmarking.md): the performance script, its
   workload, and how results are published.
 - [`model.yaml` reference](metadata-schema.md): field-level contracts.
-- [Compile runner class requests and approvals](runner-class-requests.md):
-  per-build resource requests and admission policy.
+- [Expensive and on-demand compile runners](runner-class-requests.md):
+  choose size and market, request Vulcan approval, and verify a build.
+- [Integrator’s guide to runner access](runner-integration.md): policy versions,
+  deployment order, staging acceptance, and rollback.
 - [Model taxonomy](model-taxonomy.md): sanctioned category IDs.
 
 The JSON Schemas under
