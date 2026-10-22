@@ -98,6 +98,18 @@ test('a profile the catalog no longer declares shows no variant, even with a new
   assert.deepEqual([...new Set(model.builds.map((build) => build.build_profile_id))], ['int8']);
 });
 
+test('a model the catalog no longer lists shows no variant, even with runs that predate component ids', () => {
+  const removed = (id, profile) => run(id, 'ssd_mobilenet_v1', develop, '2026-09-02T00:00:00Z',
+    {metadata: {model_id: 'ssd_mobilenet_v1', build_profile_id: profile, github_run_id: `${id}-workflow`}});
+  const models = branchModels([removed('ssd-int8', 'int8'), removed('ssd-bf16', 'bf16'), resnet, yolo], [], catalog);
+
+  assert.deepEqual(models.map((model) => model.model_id), ['resnet_50', 'yolo']);
+});
+
+test('a branch without a catalog shows every completed run', () => {
+  assert.deepEqual(branchModels([resnet, yolo], [], []).map((model) => model.model_id), ['resnet_50', 'yolo']);
+});
+
 test('a profile still pending in the catalog shows its completed run', () => {
   const pending = run('resnet-pending', 'resnet_50', develop, '2026-10-02T00:00:00Z',
     {metadata: {...resnet.metadata, build_profile_id: 'bf16'}});

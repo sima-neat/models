@@ -152,6 +152,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   const declaredProfiles = new Map([...definitions].map(([modelId, model]) => [modelId,
     new Set([...(model.builds || []), ...(model.pending_builds || [])].map((build) => build.build_profile_id))]));
   for (const group of variantBuilds(runs)) {
+    // A model removed from the catalog keeps its completed runs too; a branch without a catalog shows every run.
+    if (definitions.size && !definitions.has(group.modelId)) continue;
     if (declaredProfiles.get(group.modelId)?.has(group.profile) === false) continue;
     const definition = definitions.get(group.modelId);
     if (definition?.build_on_demand || definition?.branch_deployments?.[group.profile]

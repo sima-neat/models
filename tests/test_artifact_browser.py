@@ -1694,7 +1694,8 @@ const performanceRun = {...run('benchmark', 'inherited', 'model', 'workflow-2'),
 assert.deepEqual(branchModels([performanceRun], [], catalog), []);
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
   .map(model => run(model, model, 'model', model));
-assert.equal(branchModels(develop, [], catalog).length, 6);
+// Only models the catalog lists show; a removed model's runs stay in the registry.
+assert.deepEqual(branchModels(develop, [], catalog).map(model => model.model_id), ['rf_detr_small', 'ssd_mobilenet']);
 const calls = [];
 const definitions = await allPages(async path => {
   calls.push(path);
