@@ -29,8 +29,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(convert-pin): replace with the source block Vulcan Model Convert prints for this conversion.
-  source: {uri: TODO(convert-pin), sha256: TODO(convert-pin), size_bytes: 0}
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/netvlad/48cc5517c6ce43d4079190960041986353710486c66dc3b16fd6bb7d945243fb/39914565894-1/model.onnx
+    sha256: 48cc5517c6ce43d4079190960041986353710486c66dc3b16fd6bb7d945243fb
+    size_bytes: 596020767
 
 # No loop closure set (Pitts30k, MSLS, Tokyo 24/7) is in Dataset Registry; COCO's outdoor and urban scenes calibrate.
 calibrations:
