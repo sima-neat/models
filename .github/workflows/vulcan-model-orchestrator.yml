@@ -1,16 +1,18 @@
 name: Vulcan Model Orchestrator
 
+run-name: Vulcan Model Orchestrator (${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}) — ${{ github.ref_name }}
+
 on:
   # Every push publishes its revision's catalog; unchanged fingerprints compile and benchmark nothing.
   push:
   workflow_dispatch:
     inputs:
       environment:
-        description: Vulcan environment whose Model Compiler runner and artifact bucket are used
+        description: Override Vulcan environment; default uses repository VULCAN_ENV (staging if unset)
         required: true
-        default: staging
+        default: default
         type: choice
-        options: [staging, production]
+        options: [default, staging, production]
       models:
         description: Comma-separated model IDs; leave empty to plan the entire catalog
         required: false
@@ -43,7 +45,7 @@ env:
 # builds the cancelled one left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
-    model-compile-${{ github.ref }}-${{ inputs.environment || 'staging' }}${{
+    model-compile-${{ github.ref }}-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}${{
     github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
@@ -80,7 +82,7 @@ jobs:
       - name: Resolve Vulcan environment
         id: environment
         env:
-          REQUESTED_ENVIRONMENT: ${{ inputs.environment }}
+          REQUESTED_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
           set -euo pipefail
           environment="${REQUESTED_ENVIRONMENT:-staging}"
@@ -189,7 +191,10 @@ jobs:
 
   plan:
     name: Plan compilations and benchmarks against the registry
-    needs: [select, portal]
+    needs: [select, portal, resolve-vulcan-config]
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     outputs:
@@ -212,10 +217,19 @@ jobs:
       - name: Install registry tooling
         run: python -m pip install .
 
+      - name: Configure authenticated production registry reads
+        if: needs.select.outputs.vulcan_environment == 'production'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-plan-${{ github.run_id }}
+
       - name: Compare fingerprints with published runs
         id: plan
         env:
-          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           COMPILER_IDENTITY: ${{ needs.select.outputs.model_compiler_identity }}
           BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           REQUESTED_MODELS: ${{ inputs.models }}
@@ -351,7 +365,8 @@ jobs:
           FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
           SELECTED_MATRIX: ${{ needs.authorize-runner-classes.outputs.matrix }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
@@ -400,6 +415,7 @@ jobs:
       base_branches: ${{ needs.select.outputs.base_branches }}
       publishable: ${{ needs.select.outputs.publishable == 'true' }}
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      dataset_bucket: ${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
     secrets: inherit
@@ -528,7 +544,8 @@ jobs:
         env:
           BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}

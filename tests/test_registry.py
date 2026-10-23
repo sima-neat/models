@@ -1289,3 +1289,35 @@ def test_forced_rebuild_checks_revision_before_publication(
         publish()
         assert len(writes) == 1
         assert snapshots[0]["selected_matrix"] == (None if same_revision else selected)
+
+
+def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
+    import io
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    calls = []
+
+    def signed(self, method, path, body, key):
+        calls.append((self.api_url, self.region, method, path))
+        return {"authenticated": True}
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
+    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
+    assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
+    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+        assert registry._public_registry_json(url) == {"public": True}
+    assert len(calls) == 1
+
+
+def test_iam_registry_reads_require_a_region(monkeypatch):
+    import model_registry.registry as registry
+
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.test")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
+        registry._public_registry_json("https://private.example.test/v1/repositories")
