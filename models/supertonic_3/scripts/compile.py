@@ -194,13 +194,41 @@ def _metrics(reference: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _verify_quantized(loaded: Any, quantized: Any, inputs: dict[InputName, np.ndarray]) -> list[dict[str, Any]]:
-    """Compare the quantized graph with the float graph on the calibration sample."""
-    reference = list(loaded.execute(inputs=inputs))
-    candidate = list(quantized.execute(inputs=inputs, use_jax=True))
+def _to_nchw(value: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """Return a quantized output in the graph's NCHW layout, whichever layout AFE returns."""
+    value = np.asarray(value)
+    if value.shape == shape:
+        return value
+    batch, channels, height, width = shape
+    if value.shape == (batch, height, width, channels):
+        return value.transpose(0, 3, 1, 2)
+    raise RuntimeError(f"unexpected quantized output shape {value.shape} for {shape}")
+
+
+def _verify_quantized(
+    graph: Path,
+    component_id: str,
+    quantized: Any,
+    physical_inputs: dict[str, np.ndarray],
+    afe_inputs: dict[InputName, np.ndarray],
+) -> list[dict[str, Any]]:
+    """Compare the quantized graph with the float graph on the calibration sample.
+
+    ONNX Runtime runs the float graph: the compiler's own float execution of this graph crashes with
+    Model Compiler 8681769b526b.
+    """
+    import onnxruntime as ort
+
+    session = ort.InferenceSession(str(graph), providers=["CPUExecutionProvider"])
+    reference = session.run(None, {name: physical_inputs[name] for name in COMPONENTS[component_id]["inputs"]})
+    candidate = list(quantized.execute(inputs=afe_inputs, use_jax=True))
     if len(reference) != len(candidate):
         raise RuntimeError(f"output count mismatch: {len(reference)} != {len(candidate)}")
-    return [_metrics(expected, actual) for expected, actual in zip(reference, candidate, strict=True)]
+    shapes = COMPONENTS[component_id]["outputs"].values()
+    return [
+        _metrics(expected, _to_nchw(actual, shape))
+        for expected, actual, shape in zip(reference, candidate, shapes, strict=True)
+    ]
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -275,8 +303,8 @@ def _component_phase(
     graph = prepared["model"]
     model_name = mpk_filename(load_metadata(MODEL_DIR), profile_id, component_id).removesuffix("_mpk.tar.gz")
     inputs = _calibration_inputs(component_id, prepared.get("runtime_data"))
-    loaded, quantized, afe_inputs = _load_and_quantize(graph, component_id, model_name, parameters, inputs)
-    verification = _verify_quantized(loaded, quantized, afe_inputs)
+    _, quantized, afe_inputs = _load_and_quantize(graph, component_id, model_name, parameters, inputs)
+    verification = _verify_quantized(graph, component_id, quantized, inputs, afe_inputs)
     build_dir = work_dir / "compiled"
     build_dir.mkdir()
     batch_size = _batch_size(parameters)
