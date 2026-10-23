@@ -74,6 +74,40 @@ def test_each_mla_stage_is_simulated_under_cores_stage_index(tmp_path: Path, mla
     assert all(" --dry-run --limit=2000000000 --stats=" in run for run in runs)
 
 
+def test_elfs_sharing_a_file_name_are_simulated_separately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fake mla-msim that reports the ELF's contents as its operation counts.
+    script = tmp_path / "mla-msim"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "ops = open(sys.argv[1]).read()\n"
+        "stats = next(arg for arg in sys.argv if arg.startswith('--stats='))[len('--stats='):]\n"
+        "open(stats, 'w').write(\n"
+        "    f'Latency [ms]: 0.5\\nTotal arithmetic ops: {ops}\\nEffective arithmetic ops: {ops}\\n')\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    plugins = [
+        {"name": "MLA_0", "processor": "MLA", "sequence": 1, "resources": {"executable": "first/model.elf"}},
+        {"name": "MLA_1", "processor": "MLA", "sequence": 2, "resources": {"executable": "second/model.elf"}},
+    ]
+    # The second ELF sits under share/, where Core looks first.
+    members = {"etc/model_mpk.json": json.dumps({"plugins": plugins}).encode(),
+               "first/model.elf": b"1", "share/second/model.elf": b"2"}
+    mpk = tmp_path / "model.tar.gz"
+    with tarfile.open(mpk, "w:gz") as archive:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+    simulation = simulate_mla_stages(mpk)
+
+    assert simulation["status"] == "ok"
+    assert [stage["effective_ops"] for stage in simulation["stages"]] == [1, 2]
+
+
 def test_a_missing_simulator_is_recorded_as_the_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
 

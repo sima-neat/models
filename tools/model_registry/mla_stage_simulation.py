@@ -10,6 +10,7 @@ the MPK manifest's MLA and A65 plugins in execution order, from zero.
 from __future__ import annotations
 
 import json
+import posixpath
 import shutil
 import subprocess
 import tarfile
@@ -71,9 +72,9 @@ def write_mla_stage_simulation(output_dir: Path) -> Path:
 
 
 def _extract_mla_stages(mpk: Path, directory: Path) -> list[tuple[int, Path]]:
-    """Each MLA stage's index and its ELF, extracted into ``directory``."""
+    """Each MLA stage's index and its ELF, extracted into its own folder under ``directory``."""
     with tarfile.open(mpk, "r:gz") as archive:
-        members = {Path(member.name).name: member for member in archive.getmembers() if member.isfile()}
+        members = {posixpath.normpath(member.name): member for member in archive.getmembers() if member.isfile()}
         manifests = [name for name in members if name.endswith("_mpk.json")]
         if len(manifests) != 1:
             raise ValueError(f"{mpk.name} must hold one *_mpk.json manifest, not {len(manifests)}")
@@ -84,13 +85,31 @@ def _extract_mla_stages(mpk: Path, directory: Path) -> list[tuple[int, Path]]:
         for stage_index, plugin in enumerate(stages):
             if plugin["processor"].upper() != "MLA":
                 continue
-            name = Path((plugin.get("resources") or {}).get("executable") or "").name
-            if name not in members:
-                raise ValueError(f"{mpk.name} has no MLA ELF {name!r} for {plugin.get('name')}")
-            elf = directory / name
-            elf.write_bytes(archive.extractfile(members[name]).read())
+            executable = (plugin.get("resources") or {}).get("executable") or ""
+            member = _resolve_executable(members, manifests[0], executable)
+            if member is None:
+                raise ValueError(f"{mpk.name} has no MLA ELF {executable!r} for {plugin.get('name')}")
+            elf = directory / f"stage{stage_index}" / posixpath.basename(member.name)
+            elf.parent.mkdir()
+            elf.write_bytes(archive.extractfile(member).read())
             extracted.append((stage_index, elf))
     return extracted
+
+
+def _resolve_executable(members: dict[str, tarfile.TarInfo], manifest: str,
+                        executable: str) -> tarfile.TarInfo | None:
+    """The archive member an executable path names, found as Core's resolve_mla_executable finds it: under
+    the package root's share/, lib/, or the root itself, keeping the path's folders."""
+    if not executable:
+        return None
+    root = posixpath.dirname(manifest)
+    if posixpath.basename(root) == "etc":
+        root = posixpath.dirname(root)
+    for candidate in (posixpath.join(root, "share", executable), posixpath.join(root, "lib", executable),
+                      posixpath.join(root, executable), executable):
+        if posixpath.normpath(candidate) in members:
+            return members[posixpath.normpath(candidate)]
+    return None
 
 
 def _execution_order(plugins: list[dict[str, Any]]) -> list[dict[str, Any]]:
