@@ -30,6 +30,7 @@ from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
+from .runner_approval import runner_provenance
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -892,6 +893,13 @@ def _revision_documentation_receipts(
 
 
 def _public_registry_json(url: str) -> JsonObject:
+    # Sign only the explicitly configured API, never artifact download URLs.
+    iam_api = os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+    if iam_api and url.startswith(iam_api + "/v1/"):
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if not region:
+            raise RegistryPublicationError("AWS_REGION is required for authenticated registry reads")
+        return SigV4RegistryClient(iam_api, region).request("GET", url[len(iam_api):], None, "")
     try:
         with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
             value = json.load(response)
@@ -1429,6 +1437,7 @@ def _preflight_compilations(
                 "compiler_version": compiler_version,
                 "compiler_label": compiler_label,
                 "llima_version": provenance.get("llima_version"),
+                "runner_provenance": runner_provenance(provenance),
                 "target": target,
                 "source_sha": source_sha,
                 "compile_fingerprint": recorded_fingerprint,
@@ -1523,6 +1532,8 @@ def publish_compilations(
             "target_platform": target,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
+        # Runner allocation is audit metadata, not a compile/run identity input.
+        parameters.update(compilation["runner_provenance"])
         environment_fingerprint = canonical_sha256(environment_document)
         # A new attempt of the same workflow run resumes the same registry
         # transaction instead of creating a duplicate record per attempt.
@@ -1812,6 +1823,9 @@ def publish_packages(
             "component_run_ids": component_runs,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
+        # Single-component packages publish the MPK without an embedded manifest;
+        # retain its provenance in the durable package run as well.
+        parameters["provenance"] = manifest.get("provenance", {})
         environment_document = {
             "vulcan_environment": environment,
             "target_platform": manifest.get("target"), "packager": "model-registry",

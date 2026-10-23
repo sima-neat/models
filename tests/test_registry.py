@@ -1127,3 +1127,93 @@ def test_compile_timing_is_required_and_normalized_to_utc(tmp_path: Path) -> Non
         "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00+00:00",
         "finished_at": "2026-08-13T01:29:52+00:00",
     }
+
+
+def test_publish_preserves_runner_audit_without_changing_compile_identity(tmp_path):
+    dist = _packaged_result(tmp_path)
+    path = dist / "resnet_50/w16a16/model/compile-result.json"
+    original = json.loads(path.read_text())
+    runner = {
+        "requested_runner_class": "default", "runner_class": "default",
+        "requested_runner_market": "on-demand", "runner_market": "on-demand",
+        "runner_actual_market": "on-demand", "runner_name": "runner-test",
+        "runner_instance_id": "i-test", "runner_instance_type": "c8gd.4xlarge",
+        "runner_approval_id": "sima-neat/models:resnet_50", "runner_approval_spec_revision": "a" * 64,
+    }
+
+    def publish():
+        calls = []
+
+        def request(method, endpoint, body, key):
+            calls.append((endpoint, body, key))
+            return {"run_id": "compile-run"} if endpoint == "/v1/runs" else {"ok": True}
+
+        result = publish_compilations(
+            repository=ROOT, dist_dir=dist, api_url="https://registry.example.invalid", aws_region="us-west-2",
+            bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+            github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
+            request=request, artifact_store=FakeStore(),
+        )
+        parameters = next(body["parameters"] for endpoint, body, _ in calls if endpoint.endswith("/parameters"))
+        return calls[0], parameters, result
+
+    before, legacy_parameters, legacy_result = publish()
+    original["provenance"].update(runner)
+    path.write_text(json.dumps(original))
+    after, parameters, result = publish()
+    assert {field: parameters[field] for field in runner} == runner
+    assert all(field not in legacy_parameters for field in runner)
+    assert before == after  # Includes run fingerprint and idempotency key.
+    assert result["runs"][0]["artifact_sha256"] == legacy_result["runs"][0]["artifact_sha256"]
+    assert parameters["build_fingerprint"] == legacy_parameters["build_fingerprint"]
+
+
+def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
+    packages, assembled = _assembled_package(tmp_path)
+    path = next(packages.rglob("package-result.json"))
+    result = json.loads(path.read_text())
+    result["manifest"]["provenance"].update({
+        "runner_market": "on-demand", "runner_instance_id": "i-test",
+        "runner_actual_market": "on-demand", "runner_approval_spec_revision": "b" * 64,
+    })
+    path.write_text(json.dumps(result))
+    calls = []
+
+    def request(method, endpoint, body, key):
+        calls.append((endpoint, body))
+        return {"run_id": "package-run"} if endpoint == "/v1/runs" else {"ok": True}
+
+    published = _publish_packages(packages, request, FakeStore())
+    parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
+    assert parameters["provenance"] == result["manifest"]["provenance"]
+    assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
+    import io
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    calls = []
+
+    def signed(self, method, path, body, key):
+        calls.append((self.api_url, self.region, method, path))
+        return {"authenticated": True}
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
+    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
+    assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
+    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+        assert registry._public_registry_json(url) == {"public": True}
+    assert len(calls) == 1
+
+
+def test_iam_registry_reads_require_a_region(monkeypatch):
+    import model_registry.registry as registry
+
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.test")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
+        registry._public_registry_json("https://private.example.test/v1/repositories")

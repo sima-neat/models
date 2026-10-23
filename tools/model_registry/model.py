@@ -75,6 +75,10 @@ def effective_runner_class(profile: dict[str, Any], binding: dict[str, Any]) -> 
     return str(binding.get("runner_class", profile.get("runner_class", "default")))
 
 
+def effective_runner_market(profile: dict[str, Any], binding: dict[str, Any]) -> str:
+    return binding.get("runner_market", profile.get("runner_market", "spot"))
+
+
 def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """A build profile's one compile invocation, which compiles every component."""
     return profile["compile_invocations"]
@@ -155,6 +159,7 @@ def normalize_model(value: dict[str, Any], directory: Path) -> dict[str, Any]:
                 "id": profile_id,
                 "target": "modalix",
                 **({"runner_class": profile["runner_class"]} if "runner_class" in profile else {}),
+                **({"runner_market": profile["runner_market"]} if "runner_market" in profile else {}),
                 "components": bindings,
                 # One invocation compiles every component, so its ID is the profile ID. Vulcan's catalog and
                 # promotion contracts still name each build's compile_invocation_id.
@@ -270,6 +275,13 @@ def validate_model(
     if errors:
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
+
+    for profile_id, profile in authored["build_profiles"].items():
+        markets = {effective_runner_market(profile, binding) for binding in profile["components"].values()}
+        if len(markets) != 1:
+            raise ValidationError(
+                f"{directory}: {profile_id} has conflicting runner_market requests in grouped compile"
+            )
 
     model = normalize_model(authored, directory)
     if "upstream" not in model:

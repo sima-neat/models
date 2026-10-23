@@ -15,6 +15,7 @@ from .artifact import deployment_files, verify_artifact
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import load_and_validate_model
+from .runner_approval import runner_provenance
 from .source import source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.
@@ -104,6 +105,7 @@ def assemble_package(
             field: str(provenance.get(field) or "")
             for field in ("git_sha", "environment", "compiler_version", "compiler_label", "target")
         }
+        current_identity.update(runner_provenance(provenance))
         if provenance.get("llima_version"):
             current_identity["llima_version"] = str(provenance["llima_version"])
         if provenance_identity is None:

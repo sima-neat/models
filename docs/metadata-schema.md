@@ -170,8 +170,19 @@ The Model Browser shows variant IDs in uppercase, while
 `sima-cli models download --variant` takes the lowercase ID.
 
 Each component's `parameters.precision` is its precision token, and the
-recipe maps it to compiler settings. The target is `modalix`. `runner_class`
-may be set on the profile or overridden on a component.
+recipe maps it to compiler settings. The target is `modalix`.
+
+| Runner field | Values | Default | Access requirement |
+| --- | --- | --- | --- |
+| `runner_class` | `default`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
+| `runner_market` | `spot`, `on-demand` | `spot` | On-demand requires an independent v3 `allow_on_demand: true` grant, including at default size. |
+
+Both fields belong on the profile or a component binding, outside `parameters`.
+Bindings inherit from the profile; prefer profile-level settings because all its
+components compile on one runner. Effective markets must agree across that grouped
+invocation. Neither field changes a compile fingerprint. `build-on-demand` is a
+separate top-level scheduling flag, not a purchasing market. See [runner access
+and approval](runner-class-requests.md) for eligibility, evidence and usage.
 
 The recipe compiles a profile's components together in one compile
 invocation, named after the profile, and writes a `compile-outputs.json` with

@@ -187,6 +187,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--environment")
     mpk.add_argument("--compile-fingerprint")
     mpk.add_argument("--requested-runner-class")
+    mpk.add_argument("--requested-runner-market")
+    mpk.add_argument("--runner-market")
+    mpk.add_argument("--runner-name")
+    mpk.add_argument("--runner-instance-id")
+    mpk.add_argument("--runner-instance-type")
+    mpk.add_argument("--runner-actual-market")
     mpk.add_argument("--runner-class")
     mpk.add_argument("--runner-approval-id")
     mpk.add_argument("--runner-approval-spec-revision")
@@ -613,6 +619,12 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "environment",
         "compile_fingerprint",
         "requested_runner_class",
+        "requested_runner_market",
+        "runner_market",
+        "runner_name",
+        "runner_instance_id",
+        "runner_instance_type",
+        "runner_actual_market",
         "runner_class",
         "runner_approval_id",
         "runner_approval_spec_revision",

@@ -65,14 +65,14 @@
       "additionalProperties": {
         "type": "object", "additionalProperties": false, "required": ["components"],
         "properties": {
-          "runner_class": {"$ref": "#/$defs/runnerClass"},
+          "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]},
           "calibration_dataset": {"description": "A calibrations entry.", "$ref": "#/$defs/datasetId"},
           "components": {
             "description": "Each component's build parameters, keyed like compilation.components.",
             "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
             "additionalProperties": {
               "type": "object", "additionalProperties": false, "required": ["parameters"],
-              "properties": {"parameters": {"type": "object"}, "runner_class": {"$ref": "#/$defs/runnerClass"}}
+              "properties": {"parameters": {"type": "object"}, "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]}}
             }
           }
         }

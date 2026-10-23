@@ -195,8 +195,14 @@ For a single-component model, `scripts/run_model_compilation.sh` writes
 `compile-outputs.json` when the recipe does not. Shared download, checksum, MPK
 validation, and publication code belongs in `tools/`, not in model code.
 
-Elevated `runner_class` requests need approval. See [Compile runner class
-requests and approvals](runner-class-requests.md).
+Set `runner_class` and `runner_market` at profile level for the shared compile
+runner. They default independently to `default` and `spot`. `expensive` and
+`most-expensive` need a sufficient Vulcan size grant; `on-demand` needs a separate
+market grant even at default size. An approval permits a request but does not
+select it or start a build. Follow [requesting expensive or on-demand
+runners](runner-class-requests.md) for manifest examples, evidence, approval,
+validation and dispatch. Update the owning README when changing the request.
+Do not confuse the market with `build-on-demand`, which controls scheduling.
 
 ## 7. Know what the package holds
 
@@ -268,7 +274,7 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `convert.py`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
@@ -283,7 +289,7 @@ is always benchmarked again.
 | the Model Compiler pin | every build, then every benchmark |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their benchmarks |
 | the shared model loader | ONNX builds, then their benchmarks |
-| LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class | no LLiMa compilation |
+| LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class/market | no LLiMa compilation |
 
 The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprint` in
 `tools/model_registry/fingerprints.py`.

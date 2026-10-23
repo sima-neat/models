@@ -8,7 +8,7 @@ from typing import Any
 from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles
 from .errors import ValidationError
 from .fingerprints import compile_fingerprint
-from .model import compile_invocations_for, effective_runner_class
+from .model import compile_invocations_for, effective_runner_class, effective_runner_market
 
 
 def build_matrix(
@@ -53,6 +53,11 @@ def build_matrix(
                 invocation_component_ids = list(invocation["components"])
                 if requested_components and not requested_components.intersection(invocation_component_ids):
                     continue
+                markets = {effective_runner_market(profile, bindings[c]) for c in invocation_component_ids}
+                if len(markets) != 1 or not markets <= {"spot", "on-demand"}:
+                    raise ValidationError(
+                        f"{model_id}/{profile['id']} has conflicting or unsupported runner_market requests"
+                    )
                 first_component_id = invocation_component_ids[0]
                 entry: dict[str, Any] = {
                     "model_dir": f"models/{model_id}",
@@ -62,6 +67,7 @@ def build_matrix(
                     "component_ids": invocation_component_ids,
                     "build_profile_id": profile["id"],
                     "requested_runner_class": effective_runner_class(profile, bindings[first_component_id]),
+                    "requested_runner_market": effective_runner_market(profile, bindings[first_component_id]),
                     "target": profile["target"],
                     # The benchmarks measure the whole model once this profile's package is published.
                     "stages": [
