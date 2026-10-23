@@ -167,13 +167,27 @@ A successful build or metadata publication is not approval. See
 [promoting a model](model-promotion.md) for the protected review and recovery procedure.
 
 When the change is merged to `develop`, the push runs **Vulcan Model Orchestrator**
-on the reviewed revision:
+on the reviewed revision. Pushes still target staging; merging production-read
+support does not switch `develop` to production. Production requires an explicit
+manual dispatch with `environment=production`, not a change to `VULCAN_ENV`:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
    for the revision. Every push runs this check, not only merges, and a
    push to `main` or `develop` publishes the checked browser to staging.
-2. **Plan.** `plan-stages` compares each build's compile fingerprint with the
+2. **Resolve configuration and plan.** `plan` waits for `select`, the portal
+   check and `resolve-vulcan-config`. It requests OIDC permission; only a production
+   dispatch assumes the selected GitHub environment's
+   `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` before reading registry state.
+   That publisher-capable role must trust the workflow and permit this repository's
+   catalog/resolve reads, or planning fails before compilation. Staging skips this
+   assumption and retains public reads. Read URLs prefer
+   `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` and fall back to
+   `VULCAN_ARTIFACT_REGISTRY_API_URL`; only production reads under the configured
+   API base's `/v1/` path are SigV4-signed. Public-reader URLs, other hosts and
+   artifact downloads retain their existing behavior. This enables private
+   production reads without opening public access and does not grant credentials
+   to pull-request validation. `plan-stages` compares each build's compile fingerprint with the
    branch's catalog and, on a feature branch, its base branches' catalogs. A
    build compiles when no published run carries its fingerprint. A build that
    is reused but lacks a completed performance or accuracy run for its current

@@ -143,7 +143,8 @@ push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
        -> on main and develop: publish that model browser to staging
-  -> plan: compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
+  -> resolve-vulcan-config: after select, resolve the selected environment configuration
+  -> plan (waits for select, portal and resolve-vulcan-config): compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
   -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
@@ -157,6 +158,29 @@ benchmarks (Vulcan Model Benchmarking, per build profile)
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
   -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
 ```
+
+Pushes, including merges to `develop`, select staging. Production is an explicit
+manual dispatch choice (`environment=production`); this orchestrator does not use
+repository variable `VULCAN_ENV` to switch push builds. The selected configuration
+supplies the runner environment, artifact bucket and dataset bucket; compile
+workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
+
+The `plan` job requests `id-token: write` and waits for configuration resolution
+as well as validation and the portal check. Only production assumes the selected
+GitHub environment's `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` via OIDC before
+planning. That role must authorize catalog/resolve reads for this repository;
+planning uses a publisher-capable identity even though its registry operations
+are reads. Missing trust or read permissions fail the job before compilation.
+Staging skips this credential step and continues using public registry reads.
+
+Read URLs prefer `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL`, falling back to
+`VULCAN_ARTIFACT_REGISTRY_API_URL`. For production, `MODEL_REGISTRY_IAM_READ_API_URL`
+is set to the configured API base: only reads below that exact base's `/v1/`
+path are SigV4-signed. Public-reader URLs, other hosts and artifact downloads
+retain their existing behavior. An unset public-read URL therefore permits
+private production planning without enabling public access. Catalog initialization
+and final publication use the same read selection alongside their existing write
+authentication. Pull-request validation does not acquire this planning identity.
 
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
 compile fingerprint, or when a maintainer forces a rebuild. A reused build is
