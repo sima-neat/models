@@ -261,7 +261,8 @@ jobs:
       COMPILE_INVOCATION_ID: ${{ fromJSON(inputs.entry).compile_invocation_id }}
       COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).component_ids, ',') }}
       REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+      MODEL_REGISTRY_IAM_READ_API_URL: ${{ inputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
       AWS_REGION: ${{ inputs.aws_region }}
       ARTIFACT_BUCKET: ${{ inputs.artifact_bucket }}
       KMS_KEY_ID: ${{ inputs.artifact_kms_key_id }}
