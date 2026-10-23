@@ -11,3 +11,9 @@ export function resolveEnvironment(config, search = '') {
     heroCdnBaseUrl: '',
   };
 }
+
+// Branchless previews keep the existing UI audience, but always browse Main.
+export function branchPolicy(config, search = '') {
+  const enabled = config.uiMode !== 'customer' && new URLSearchParams(search).get('branches') !== '0';
+  return {enabled, defaultBranch: enabled ? 'develop' : 'main'};
+}

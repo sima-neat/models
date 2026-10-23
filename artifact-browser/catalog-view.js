@@ -1,7 +1,7 @@
 // Model catalog and build history: filters, search, and the result list.
 import { branchModels, variantBuilds } from "./branch-builds.js";
 import {
-  DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
+  DEFAULT_BRANCH, branchSelectionEnabled, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
 import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
@@ -206,8 +206,8 @@ function filteredModels() {
 
 function populateFilters({ persistBranchFallback = false } = {}) {
   const selectedCompiler = elements["compiler-filter"].value;
-  const preferredBranch = state.preferredBranch ?? DEFAULT_BRANCH;
-  const branches = state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
+  const preferredBranch = branchSelectionEnabled ? state.preferredBranch ?? DEFAULT_BRANCH : DEFAULT_BRANCH;
+  const branches = !branchSelectionEnabled ? [DEFAULT_BRANCH] : state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
     ? [...state.availableBranches, preferredBranch].sort() : state.availableBranches;
   const compilers = [...new Set([
     selectedCompiler,
@@ -394,7 +394,7 @@ function renderModels() {
   if (!models.length) {
     const noBuilds = !state.compileRuns.length && elements["branch-filter"].value;
     elements["result-list"].innerHTML = noBuilds
-      ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>Its catalog appears after its first push completes. Select another branch to browse its models.</p></div>`
+      ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>${branchSelectionEnabled ? "Its catalog appears after its first push completes. Select another branch to browse its models." : "No models have been published to Main yet."}</p></div>`
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }

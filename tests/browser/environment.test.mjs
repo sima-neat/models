@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {resolveEnvironment} from '../../artifact-browser/environment.js';
+import {resolveEnvironment, branchPolicy} from '../../artifact-browser/environment.js';
 import {portalConfig} from '../../website/scripts/portal-config.mjs';
 
 test('staging is unchanged by default or unrecognized environment values', () => {
@@ -29,4 +29,15 @@ test('production and custom/local configurations do not opt into query switching
     {environment: 'Production', apiBase: 'https://production.test', allowProductionPreview: true},
     {environment: 'Staging', apiBase: 'https://custom.test'},
   ]) assert.equal(resolveEnvironment(config, '?env=prod'), config);
+});
+
+
+test('branches=0 selects Main without changing audience or environment', () => {
+  const config = portalConfig({});
+  assert.deepEqual(branchPolicy(config, '?branches=0&branch=develop'), {enabled: false, defaultBranch: 'main'});
+  assert.deepEqual(branchPolicy(config, '?env=prod&branches=0'), {enabled: false, defaultBranch: 'main'});
+  for (const query of ['', '?branches=1', '?branches=no']) {
+    assert.deepEqual(branchPolicy(config, query), {enabled: true, defaultBranch: 'develop'});
+  }
+  assert.deepEqual(branchPolicy({uiMode: 'customer'}, '?branches=1'), {enabled: false, defaultBranch: 'main'});
 });

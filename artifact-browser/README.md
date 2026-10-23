@@ -393,3 +393,14 @@ CDN. The preview is enabled only by staging configuration, including customer UI
 builds staged for review. Local custom APIs and production configurations do not
 opt into this override. No AWS credentials are sent by the browser. CORS permits
 cross-origin reads, while registry policy enforces repository and artifact access.
+
+## Hide branch selection
+
+Add `?branches=0` to browse Main with the branch selector hidden. This overrides
+saved branch preferences and any `branch=` parameter, without changing the UI
+audience or the selected backend. Other developer filters remain available.
+Clear filters and in-page navigation keep Main selected and retain `branches=0`.
+The preview does not replace your saved branch preference. Omit the parameter
+(or use `branches=1`) to restore the normal branch behavior; customer UI remains
+Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
+production Main. That catalog must be published before it can display models.
