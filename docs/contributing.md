@@ -167,13 +167,29 @@ A successful build or metadata publication is not approval. See
 [promoting a model](model-promotion.md) for the protected review and recovery procedure.
 
 When the change is merged to `develop`, the push runs **Vulcan Model Orchestrator**
-on the reviewed revision:
+on the reviewed revision. Pushes use repository variable `VULCAN_ENV`, with staging
+as the fallback when unset. Manual dispatch's `environment=default` uses the same
+setting; explicitly choosing `staging` or `production` overrides it for that run.
+The variable currently remains staging, so merge does not switch builds to
+production. Changing it to production later switches default builds and publication:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
    for the revision. Every push runs this check, not only merges, and a
-   push to `main` or `develop` publishes the checked browser to staging.
-2. **Plan.** `plan-stages` compares each build's compile fingerprint with the
+   push to `main` or `develop` publishes the checked browser only when staging is selected.
+2. **Resolve configuration and plan.** `plan` waits for `select`, the portal
+   check and `resolve-vulcan-config`. It requests OIDC permission; only a production
+   run assumes the selected GitHub environment's
+   `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` before reading registry state.
+   That publisher-capable role must trust the workflow and permit this repository's
+   catalog/resolve reads, or planning fails before compilation. Staging skips this
+   assumption and retains public reads. Read URLs prefer
+   `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` and fall back to
+   `VULCAN_ARTIFACT_REGISTRY_API_URL`; only production reads under the configured
+   API base's `/v1/` path are SigV4-signed. Public-reader URLs, other hosts and
+   artifact downloads retain their existing behavior. This enables private
+   production reads without opening public access and does not grant credentials
+   to pull-request validation. `plan-stages` compares each build's compile fingerprint with the
    branch's catalog and, on a feature branch, its base branches' catalogs. A
    build compiles when no published run carries its fingerprint. A build that
    is reused but lacks a completed performance or accuracy run for its current
@@ -204,11 +220,11 @@ publication.
 The compile and the benchmarks are separate GitHub Actions runs. A
 successful compile does not by itself mean the dispatched benchmark succeeded;
 inspect the `Vulcan Model Benchmarking` run of each build and the model's
-staging registry record. If trusted compilation or measurement fails, follow
+selected environment's registry record. If trusted compilation or measurement fails, follow
 up with a focused manifest, recipe, or script change and reproducible evidence.
 
-Production is an explicit protected workflow choice, and the benchmarks run
-only in staging. A manual dispatch can name models, build profiles, or
+Production can be selected through `VULCAN_ENV` or a manual override; its
+GitHub environment and IAM protections still apply. Benchmarks run only in staging. A manual dispatch can name models, build profiles, or
 components and can force every selected build to recompile, which also
 applies a changed model test at once; otherwise a changed test applies the next
 time its stage runs. A dispatch that

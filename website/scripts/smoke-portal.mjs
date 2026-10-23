@@ -447,6 +447,23 @@ try {
       ['variant page', variantUrl, '#components-section .component-performance'],
       ['component pipeline', new URL('/?model=rf_detr_nano&variant=w8a8_w16a16', variantUrl), '#components-section .component-pipeline'],
     ];
+    for (const viewport of [{width: 1440, height: 1000}, {width: 390, height: 844}]) {
+      const page = await browser.newPage({viewport});
+      await page.goto(new URL('/?branches=0&branch=develop', variantUrl).href);
+      // The developer fixture has no Main catalog: selection must stay Main even then.
+      await page.waitForFunction(() => document.querySelector('#branch-filter').value === 'main');
+      if (await page.locator('#branch-filter').isVisible()) throw new Error('branches=0 exposes branch filter');
+      if (await page.locator('#branch-filter').inputValue() !== 'main') throw new Error('branches=0 did not select main');
+      await page.locator('#nav-compare').click();
+      await page.locator('#nav-models').click();
+      if (new URL(page.url()).searchParams.get('branches') !== '0') throw new Error('Navigation lost branches=0');
+      if (!await page.locator('#clear-filters').isVisible()) await page.locator('#filter-toggle').click();
+      await page.locator('#clear-filters').click();
+      if (await page.locator('#branch-filter').inputValue() !== 'main') throw new Error('Clear filters left main');
+      await page.screenshot({path: `/tmp/model-browser-branches-${viewport.width}.png`});
+      await page.close();
+      console.log(`ok  Main-only branches=0 · ${viewport.width}px`);
+    }
     await checkLayerAnalysis(browser, variantUrl);
     await checkExecutionTooltips(browser, variantUrl);
     await checkCatalogLayouts(browser, new URL('/', variantUrl));

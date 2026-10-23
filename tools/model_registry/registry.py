@@ -894,6 +894,13 @@ def _revision_documentation_receipts(
 
 
 def _public_registry_json(url: str) -> JsonObject:
+    # Sign only the explicitly configured API, never artifact download URLs.
+    iam_api = os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+    if iam_api and url.startswith(iam_api + "/v1/"):
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if not region:
+            raise RegistryPublicationError("AWS_REGION is required for authenticated registry reads")
+        return SigV4RegistryClient(iam_api, region).request("GET", url[len(iam_api):], None, "")
     try:
         with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
             value = json.load(response)

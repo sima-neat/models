@@ -893,7 +893,7 @@ def test_run_selection_keeps_the_url_branch_in_sync_with_the_filter() -> None:
 
     assert 'url.searchParams.set("branch", elements["branch-filter"].value);' in write_url
     assert 'url.searchParams.set("branch", branch);' not in write_url
-    assert 'state.urlBranch = customerView || link.has("branch")' in script
+    assert 'state.urlBranch = !branchSelectionEnabled || link.has("branch")' in script
 
 
 def test_all_branches_selection_has_an_explicit_url_value() -> None:
@@ -927,7 +927,7 @@ def test_detail_error_can_be_retried_and_closed() -> None:
 def test_branch_filter_defaults_to_develop_and_persists_user_selection() -> None:
     script = _browser_source("app.js", "state.js", "api.js", "catalog-view.js")
 
-    assert 'const DEFAULT_BRANCH = customerView ? "main" : "develop"' in script
+    assert 'const DEFAULT_BRANCH = branches.defaultBranch' in script
     assert "sima-neat-model-branch:" in script
     assert "readBranchPreference" in script
     assert "writeBranchPreference(state.preferredBranch)" in script
@@ -1003,7 +1003,7 @@ def test_developer_filters_are_directly_visible_and_status_is_not_presented() ->
     assert 'id="more-filters"' not in html
     assert "moreFiltersActive" not in script
     assert html.index('id="task-filter"') < html.index('id="architecture-filter"') < html.index('id="branch-filter"')
-    assert '<label class="developer-only"><span>Branch</span>' in html
+    assert '<label class="developer-only branch-filter"><span>Branch</span>' in html
     assert '<label class="developer-only"><span>Compiler</span>' in html
     assert 'id="filter-count"' in html
     assert "--filter-surface: color-mix(in srgb, var(--surface) 88%, var(--blue-soft))" in styles

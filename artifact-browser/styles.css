@@ -842,3 +842,5 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-order-toggle button { min-height: 36px; padding: 8px 14px; border: 0; border-radius: 4px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 14px; cursor: pointer; }
 .component-switch { width: fit-content; margin-bottom: 16px; }
 .layer-order-toggle button[aria-pressed="true"] { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px #0002; font-weight: 600; }
+
+:root[data-branches="0"] .branch-filter { display: none; }
