@@ -382,6 +382,11 @@ Each hero shows the model's output on an input, such as labeled boxes on a
 scene, in a scene no other model uses. Models of one architecture share a
 style and accent color, and labels use the same size on every hero.
 
+For new or refreshed artwork, follow the [illustration guide](docs/illustration-guide.md),
+the single source for the two geometric comic styles, exact palette, Roboto
+typography, prediction overlays and reusable prompts. Use existing model heroes
+as visual references.
+
 When a change alters what the model detects, its input, its outputs, or its
 components, update the README and the hero in the same change. A README- or
 hero-only edit is documentation or catalog metadata; it must not change

@@ -472,6 +472,9 @@ word limits, the Building applications text, and the internal terms a README
 leaves out. The writing rules are in
 [`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 
+Create the hero using the [geometric comic illustration guide](illustration-guide.md),
+which includes the fixed palette, Roboto typography, reference heroes and reusable prompts.
+
 ## 12. Validate the contract
 
 ```bash
