@@ -28,11 +28,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(#363): replace with the source block the Vulcan Model Convert workflow prints for superpoint.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
-    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
-    size_bytes: 9917015
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/superpoint/59af69dba3fe9aab0f480882a92e5ded20c23fd39c013a58fc6ee19b83b68291/39938959015-1/model.onnx
+    sha256: 59af69dba3fe9aab0f480882a92e5ded20c23fd39c013a58fc6ee19b83b68291
+    size_bytes: 5210057
 
 calibrations:
 - id: coco-2017-cal
