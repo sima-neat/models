@@ -69,6 +69,10 @@ architectures:
     display_name: Mistral
     paradigm: transformer
     allowed_model_types: [llm]
+  netvlad:
+    display_name: NetVLAD
+    paradigm: cnn
+    allowed_model_types: [vision]
   phi:
     display_name: Phi
     paradigm: transformer
@@ -131,6 +135,9 @@ tasks:
   license_plate_recognition:
     display_name: License Plate Recognition
     allowed_model_types: [vision, vlm]
+  loop_closure:
+    display_name: Loop Closure
+    allowed_model_types: [vision]
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
