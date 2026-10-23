@@ -1019,3 +1019,11 @@ def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
     assert {"--model", "--output-dir", "--build-profile", "--dataset"} <= option_strings
     assert "--accuracy-samples" not in option_strings
     assert "--accuracy-workers" not in option_strings
+
+
+def test_compile_dataset_mirror_uses_the_selected_environment_config() -> None:
+    caller = load(WORKFLOW)["jobs"]["compile"]
+    build = load(BUILD_WORKFLOW)
+    assert caller["with"]["dataset_bucket"] == "${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}"
+    assert build["on"]["workflow_call"]["inputs"]["dataset_bucket"]["required"] == "true"
+    assert build["jobs"]["compile"]["env"]["SIMA_DATASET_S3_URI"] == "s3://${{ inputs.dataset_bucket }}"

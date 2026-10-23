@@ -34,6 +34,9 @@ on:
       aws_region:
         required: true
         type: string
+      dataset_bucket:
+        required: true
+        type: string
       artifact_bucket:
         required: true
         type: string
@@ -66,6 +69,7 @@ jobs:
     # Large models compile for hours; the limit only stops a stalled compile.
     timeout-minutes: 360
     env:
+      SIMA_DATASET_S3_URI: s3://${{ inputs.dataset_bucket }}
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
       MODEL_DIR: ${{ fromJSON(inputs.entry).model_dir }}

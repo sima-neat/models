@@ -408,6 +408,7 @@ jobs:
       base_branches: ${{ needs.select.outputs.base_branches }}
       publishable: ${{ needs.select.outputs.publishable == 'true' }}
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      dataset_bucket: ${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
     secrets: inherit
