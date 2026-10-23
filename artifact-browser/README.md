@@ -375,3 +375,21 @@ After deployment, test a fresh catalog load, a model detail page, and an image
 missing from the CDN (API fallback). Inspect image request paths, verify that no
 repeated failure loops occur, and check staging reader throttles. Backend tests
 and local browser tests do not replace this staging acceptance check.
+
+## Preview production data from staging
+
+The staging browser uses staging by default. Open
+[the production preview](https://developer-stg.sima.ai/models?env=prod)
+to run the same staged UI against the public read-only production Models registry.
+The registry label changes to **Production registry**, downloads use production,
+and catalog/branch caches stay separate by API origin. Model navigation retains
+`env=prod`; remove that parameter to return to staging. Select the catalog branch
+you want to inspect; changing backend does not populate or promote a catalog.
+
+The preview uses only the fixed `https://models-registry.neat.sima.ai` reader.
+Other `env` values retain the default backend; query strings cannot set arbitrary
+API origins. Production images use production API reads, never the staging image
+CDN. The preview is enabled only by staging configuration, including customer UI
+builds staged for review. Local custom APIs and production configurations do not
+opt into this override. No AWS credentials are sent by the browser. CORS permits
+cross-origin reads, while registry policy enforces repository and artifact access.

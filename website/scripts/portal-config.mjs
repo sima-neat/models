@@ -19,6 +19,7 @@ export function portalConfig(env = process.env) {
     heroCdnBaseUrl,
     apiBase: apiBase.replace(/\/$/, ''),
     environment: 'Staging',
+    allowProductionPreview: apiBase.replace(/\/$/, '') === 'https://models-registry.stg.neat.sima.ai',
     defaultBranch: customer ? 'main' : 'develop',
     siteUrl: 'https://developer-stg.sima.ai',
     repository: {organization: 'sima-neat', name: 'models'},

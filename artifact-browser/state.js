@@ -1,5 +1,6 @@
 // Shared page state, configuration, DOM elements, and the readers of that state.
-export const config = window.MODEL_REGISTRY_CONFIG || {};
+import {resolveEnvironment} from "./environment.js";
+export const config = resolveEnvironment(window.MODEL_REGISTRY_CONFIG || {}, location.search);
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
 const configuredRepository = config.repository || {};
 export const customerView = config.uiMode === "customer";
