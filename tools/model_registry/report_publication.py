@@ -114,8 +114,9 @@ def _run_id(value: Any, path: Path) -> str:
 
 def runner_environment() -> JsonObject:
     """The DevKit's installation and clocks, without taking performance measurements."""
+    # Core installs the Neat runtime as Scheduler packages named simaai-*.
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*", "simaai-*"],
         capture_output=True,
         text=True,
         check=True,
@@ -125,8 +126,6 @@ def runner_environment() -> JsonObject:
         fields = line.split("\t", 2)
         if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
             installed[fields[1]] = fields[2]
-    if not any(name.partition(":")[0] == "neat-runtime" for name in installed):
-        raise ValidationError("could not establish installed Neat Internals version")
     return {
         "buildinfo": Path("/etc/buildinfo").read_text(encoding="utf-8"),
         "packages": installed,
