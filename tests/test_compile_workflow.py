@@ -69,13 +69,52 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     assert "push" in on and not on["push"]
 
 
-def test_production_is_an_explicit_dispatch_choice() -> None:
+def test_manual_environment_can_override_the_repository_default() -> None:
     inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
 
     assert set(inputs) == {"environment", "models", "profiles", "components", "base_branch", "force_rebuild_all"}
-    assert inputs["environment"]["options"] == ["staging", "production"]
-    assert inputs["environment"]["default"] == "staging"
+    assert inputs["environment"]["options"] == ["default", "staging", "production"]
+    assert inputs["environment"]["default"] == "default"
     assert inputs["force_rebuild_all"]["type"] == "boolean"
+
+
+@pytest.mark.parametrize(
+    ("override", "repository_env", "expected"),
+    [
+        ("", "staging", "staging"),
+        ("", "production", "production"),
+        ("", "", "staging"),
+        ("default", "production", "production"),
+        ("default", "staging", "staging"),
+        ("default", "", "staging"),
+        ("production", "staging", "production"),
+        ("staging", "production", "staging"),
+        ("", "invalid", "invalid"),
+    ],
+)
+def test_environment_selection_and_runner_mapping(tmp_path, override, repository_env, expected) -> None:
+    workflow = load(WORKFLOW)
+    resolve = step(workflow["jobs"]["select"], "Resolve Vulcan environment")
+    expression = resolve["env"]["REQUESTED_ENVIRONMENT"][3:-3].strip()
+    selected = evaluate(expression, {"inputs.environment": override, "vars.VULCAN_ENV": repository_env})
+    assert selected == expected
+    assert expression in workflow["concurrency"]["group"]
+    assert expression in workflow["run-name"]
+    output = tmp_path / "outputs"
+    result = subprocess.run(
+        ["bash", "-c", resolve["run"]],
+        env={**os.environ, "REQUESTED_ENVIRONMENT": selected, "GITHUB_OUTPUT": str(output)},
+        capture_output=True, text=True,
+    )
+    if expected == "invalid":
+        assert result.returncode != 0
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        runner = "vulcan-stg" if expected == "staging" else "vulcan-production"
+        assert output.read_text().splitlines() == [
+            f"vulcan_environment={expected}", f"runner_environment={runner}",
+        ]
 
 
 def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -> None:

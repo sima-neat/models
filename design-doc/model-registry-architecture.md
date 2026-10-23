@@ -142,7 +142,7 @@ configuration, retries, and the staging acceptance boundary.
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
-       -> on main and develop: publish that model browser to staging
+       -> on main and develop, when staging is selected: publish that model browser to staging
   -> resolve-vulcan-config: after select, resolve the selected environment configuration
   -> plan (waits for select, portal and resolve-vulcan-config): compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
@@ -159,9 +159,13 @@ benchmarks (Vulcan Model Benchmarking, per build profile)
   -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
 ```
 
-Pushes, including merges to `develop`, select staging. Production is an explicit
-manual dispatch choice (`environment=production`); this orchestrator does not use
-repository variable `VULCAN_ENV` to switch push builds. The selected configuration
+Pushes, including merges to `develop`, select repository variable `VULCAN_ENV`,
+falling back to staging when it is unset. Manual dispatch defaults to `default`
+(use that same repository setting); choosing `staging` or `production` explicitly
+overrides it for that run. Concurrency and the run title use the same selection.
+The repository variable is currently staging, so merging this support preserves
+staging builds. Changing it to production switches subsequent default builds and
+publication to production. The selected configuration
 supplies the runner environment, artifact bucket and dataset bucket; compile
 workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
 
@@ -191,7 +195,7 @@ selection described below, and their builds are not benchmarked.
 
 ### Branches, merges, and concurrent pushes
 
-- **One registry per environment.** Pushes publish to staging. Each branch has
+- **One registry per environment.** Pushes publish to the environment selected by `VULCAN_ENV`. Each branch has
   its own catalog in that registry, keyed by Git ref; runs are shared by every
   branch.
 - **Where each decision looks.** The compile decision compares compile

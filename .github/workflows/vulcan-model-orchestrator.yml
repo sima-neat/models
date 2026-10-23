@@ -1,16 +1,18 @@
 name: Vulcan Model Orchestrator
 
+run-name: Vulcan Model Orchestrator (${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}) — ${{ github.ref_name }}
+
 on:
   # Every push publishes its revision's catalog; unchanged fingerprints compile and benchmark nothing.
   push:
   workflow_dispatch:
     inputs:
       environment:
-        description: Vulcan environment whose Model Compiler runner and artifact bucket are used
+        description: Override Vulcan environment; default uses repository VULCAN_ENV (staging if unset)
         required: true
-        default: staging
+        default: default
         type: choice
-        options: [staging, production]
+        options: [default, staging, production]
       models:
         description: Comma-separated model IDs; leave empty to plan the entire catalog
         required: false
@@ -43,7 +45,7 @@ env:
 # builds the cancelled one left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
-    model-compile-${{ github.ref }}-${{ inputs.environment || 'staging' }}${{
+    model-compile-${{ github.ref }}-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}${{
     github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
@@ -80,7 +82,7 @@ jobs:
       - name: Resolve Vulcan environment
         id: environment
         env:
-          REQUESTED_ENVIRONMENT: ${{ inputs.environment }}
+          REQUESTED_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
           set -euo pipefail
           environment="${REQUESTED_ENVIRONMENT:-staging}"
