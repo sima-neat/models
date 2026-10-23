@@ -1,0 +1,49 @@
+display_name: Supertonic 3
+description: Multilingual text-to-speech in ten voices.
+model_type: audio
+tasks: [text_to_speech]
+
+modalities:
+  inputs: [text]
+  outputs: [audio]
+
+architecture: supertonic
+
+license:
+  spdx: OpenRAIL-M
+  redistribution: restricted
+  attribution: Supertonic 3 model weights are distributed by Supertone under the OpenRAIL-M license.
+
+upstream:
+  repository: https://huggingface.co/Supertone/supertonic-3
+  revision: 724fb5abbf5502583fb520898d45929e62f02c0b
+  derived_from: https://github.com/florianvoss-commit/supertonic-sima
+
+compilation:
+  format: onnx
+  # The recipe opens the vector estimator and finds the vocoder beside it.
+  source:
+    repository: Supertone/supertonic-3
+    revision: 724fb5abbf5502583fb520898d45929e62f02c0b
+    main_file: onnx/vector_estimator.onnx
+    files:
+      onnx/vector_estimator.onnx: {sha256: 883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c, size_bytes: 256534781}
+      onnx/vocoder.onnx: {sha256: 085de76dd8e8d5836d6ca66826601f615939218f90e519f70ee8a36ed2a4c4ba, size_bytes: 101424195}
+  components: [vector_estimator, vocoder]
+
+build_profiles:
+  w8a16_w16a16:
+    components:
+      vector_estimator:
+        # One call runs both guidance branches of a step: slot 0 conditional, slot 1 unconditional.
+        parameters: {precision: w8a16, batch_size: 2}
+      vocoder:
+        parameters: {precision: w16a16}
+
+pipeline:
+- {cpu: Text encoder and duration predictor}
+- {component: vector_estimator}
+- {cpu: 'Guidance and Euler update, 8 steps'}
+- {component: vocoder}
+
+performance: {}
