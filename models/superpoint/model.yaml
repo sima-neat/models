@@ -1,0 +1,58 @@
+display_name: SuperPoint
+description: Detects keypoints and computes their descriptors in a grayscale image.
+model_type: vision
+tasks: [feature_point_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [keypoints, embeddings]
+
+architecture: superpoint
+
+# Upstream terms are noncommercial research only; this entry is approved for internal use only.
+license:
+  spdx: LicenseRef-SiMa-Internal
+  redistribution: restricted
+  attribution: SuperPoint is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
+
+upstream:
+  repository: https://huggingface.co/magic-leap-community/superpoint
+  revision: 734450e9ffe229074f5998494ddc615475cdb20a
+  derived_from: https://github.com/magicleap/SuperPointPretrainedNetwork
+
+conversion:
+  source:
+    uri: hf://models/magic-leap-community/superpoint@734450e9ffe229074f5998494ddc615475cdb20a/model.safetensors
+    sha256: 1daf35c4ed78b386f7a8d3744f8160e72a30a749360a04a27ae886ff5a3ce23e
+    size_bytes: 5206004
+
+compilation:
+  format: onnx
+  # TODO(#363): replace with the source block the Vulcan Model Convert workflow prints for superpoint.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
+    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
+    size_bytes: 9917015
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+accuracy:
+  # Each val2017 image is paired with its own warp by a seeded homography; see scripts/accuracy.py.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}

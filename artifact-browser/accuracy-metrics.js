@@ -40,6 +40,9 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_large: "Mask AR large",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
+  keypoint_repeatability: "Repeatability",
+  matching_accuracy: "Matching accuracy",
+  homography_accuracy: "Homography accuracy",
 };
 
 export function accuracyMetricLabel(name) {

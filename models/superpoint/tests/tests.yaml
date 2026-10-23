@@ -1,0 +1,10 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: false
+  skip_reason: The expected values are recorded from the first DevKit accuracy run (#363 follow-up).
+performance:
+  run_tests: false
+  skip_reason: The expected throughput is recorded from the first DevKit performance run (#363 follow-up).

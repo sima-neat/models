@@ -216,7 +216,10 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
-        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
+        self.preprocess = types.SimpleNamespace(
+            resize=types.SimpleNamespace(), normalize=types.SimpleNamespace(), color_convert=types.SimpleNamespace()
+        )
+        self.superpoint = types.SimpleNamespace()
 
 
 class Tensor:
@@ -236,9 +239,10 @@ PYNEAT_ENUMS = {
     "AutoFlag": ("On", "Off"),
     "ResizeMode": ("Letterbox", "Stretch"),
     "NormalizePreset": ("ImageNet",),
-    "PixelFormat": ("RGB",),
+    "PixelFormat": ("RGB", "GRAY8"),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg"),
+    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
+    "SuperPointProfile": ("MagicLeapDemoV1",),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
