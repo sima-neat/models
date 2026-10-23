@@ -621,8 +621,9 @@ function renderMlaUtilization(components, simulation, precisions, throughputFps,
     <tbody>${metrics.stages.map((stage) => row(`MLA stage ${stage.index}`, stage)).join("")}${metrics.stages.length > 1 ? row("All MLA stages", metrics.total) : ""}</tbody></table></div>`;
   const body = results.map((result) => `${results.length > 1 ? `<h4>${escapeHtml(result.label)}</h4>` : ""}
     ${result.metrics ? table(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`}`).join("");
-  const compared = results.every(({ metrics }) => metrics) && Number.isFinite(throughputFps);
-  const sustainedTops = compared ? results.reduce((ops, { metrics }) => ops + metrics.total.effectiveOps, 0) * throughputFps / 1e12 : null;
+  // Component numbers are never added up, so only a single-component model gets a model-level rate.
+  const compared = results.length === 1 && results[0].metrics && Number.isFinite(throughputFps);
+  const sustainedTops = compared ? results[0].metrics.total.effectiveOps * throughputFps / 1e12 : null;
   return disclosure(`mla-utilization:${key}`, "MLA Utilization", `<div class="mla-utilization">
     <p class="layer-explanation">Effective TOPS divides the Model Compiler simulator's count of operations that contribute to the result by the stage's latency on the board. Packing is their share of all operations the MLA executes. Utilization compares a w8a8 stage's effective TOPS with the MLA's ${MLA_PEAK_INT8_TOPS} TOPS INT8 peak.${compared ? ` At the measured throughput, the model sustains ${number(sustainedTops, 2)} effective TOPS.` : ""}</p>
     ${body}</div>`, compared ? `${number(sustainedTops, 2)} effective TOPS sustained` : "");
