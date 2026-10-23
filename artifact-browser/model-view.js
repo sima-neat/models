@@ -1,7 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import { accuracyMetricLabel, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
-import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics } from "./mla-utilization.js";
+import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
 import { readAccuracy, readPerformance } from "./model-report.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
@@ -622,8 +622,8 @@ function renderMlaUtilization(components, simulation, precisions, throughputFps,
   const body = results.map((result) => `${results.length > 1 ? `<h4>${escapeHtml(result.label)}</h4>` : ""}
     ${result.metrics ? table(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`}`).join("");
   // Component numbers are never added up, so only a single-component model gets a model-level rate.
-  const compared = results.length === 1 && results[0].metrics && Number.isFinite(throughputFps);
-  const sustainedTops = compared ? results[0].metrics.total.effectiveOps * throughputFps / 1e12 : null;
+  const compared = results.length === 1 && results[0].metrics && Number.isFinite(throughputFps) && results[0].batch > 0;
+  const sustainedTops = compared ? sustainedEffectiveTops(results[0].metrics.total, throughputFps, results[0].batch) : null;
   return disclosure(`mla-utilization:${key}`, "MLA Utilization", `<div class="mla-utilization">
     <p class="layer-explanation">Effective TOPS divides the Model Compiler simulator's count of operations that contribute to the result by the stage's latency on the board. Packing is their share of all operations the MLA executes. Utilization compares a w8a8 stage's effective TOPS with the MLA's ${MLA_PEAK_INT8_TOPS} TOPS INT8 peak.${compared ? ` At the measured throughput, the model sustains ${number(sustainedTops, 2)} effective TOPS.` : ""}</p>
     ${body}</div>`, compared ? `${number(sustainedTops, 2)} effective TOPS sustained` : "");

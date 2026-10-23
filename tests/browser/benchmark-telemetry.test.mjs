@@ -50,6 +50,7 @@ test('names the model, build, runtime, and time of the run that measured it', ()
   assert.match(benchmark.tool, /^PyNeat \S/);
   assert.equal(benchmark.workload, 'Model.benchmark with default options');
   assert.ok(benchmark.cpuCores.length > 1);
+  assert.equal(benchmark.components[0].batch, 1);
 });
 
 test('reads model report version 1 of the right stage and no other format', () => {

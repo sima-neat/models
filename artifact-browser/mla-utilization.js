@@ -31,6 +31,12 @@ export function matchMlaStages(measured, simulated) {
   };
 }
 
+// The effective TOPS a model sustains at its measured throughput. Throughput counts inferences, and each MLA run
+// covers one batch of them.
+export function sustainedEffectiveTops(total, throughputFps, batch) {
+  return total.effectiveOps * throughputFps / batch / 1e12;
+}
+
 // Rates in TOPS from the measured latency: the effective rate counts only operations that contribute to the result,
 // and packing is the share of the MLA's executed operations that do.
 export function mlaUtilizationMetrics(stages, { int8 = false } = {}) {

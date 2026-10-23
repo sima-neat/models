@@ -111,6 +111,8 @@ export function readPerformance(benchmarkRun) {
         id,
         layerAnalysis: analyzeLayers(component?.mla_layer_stats?.layers),
         mlaStageStats: component?.mla_stage_stats || null,
+        // Inferences in each MLA run, which Core's execution plan records for every model.
+        batch: component?.execution_plan?.model?.batch,
         executionGraph: executionGraph(component?.execution_plan),
       })),
     };

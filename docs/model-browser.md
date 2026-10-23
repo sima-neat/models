@@ -163,7 +163,8 @@ in this order:
    operations the MLA executes), and effective TOPS: effective operations divided by
    the measured latency. A w8a8 component also shows utilization, its effective TOPS
    as a share of the MLA's 50 TOPS INT8 peak. For a single-component model, the
-   summary gives the effective TOPS the model sustains at its measured throughput.
+   summary gives the effective TOPS the model sustains at its measured throughput,
+   counting one MLA run per batch in the execution plan.
    A component whose stages were not
    measured or simulated, or whose board and simulator stages differ, says so instead.
    Customers do not see this section, because its rates rest on a simulator estimate.

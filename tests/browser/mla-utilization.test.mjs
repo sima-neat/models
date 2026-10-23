@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics} from '../../artifact-browser/mla-utilization.js';
+import {matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops} from '../../artifact-browser/mla-utilization.js';
 
 // resnet_50 w8a8: mla-msim's counts for its one MLA stage, and a board latency for it.
 const simulated = {status: 'ok', stages: [{stage_index: 0, effective_ops: 8213719016, total_ops: 10445905152, simulated_latency_us: 678.432}]};
@@ -52,4 +52,10 @@ test('totals the stages of a component', () => {
   assert.deepEqual([total.measuredUs, total.simulatedUs, total.effectiveOps, total.totalOps], [400, 340, 4e9, 6e9]);
   assert.equal(total.effectiveTops, 10);
   assert.equal(total.utilization, 0.2);
+});
+
+test('sustains one MLA run per batch', () => {
+  const total = {effectiveOps: 8e9};
+  assert.equal(sustainedEffectiveTops(total, 1000, 1), 8);
+  assert.equal(sustainedEffectiveTops(total, 1000, 4), 2);
 });
