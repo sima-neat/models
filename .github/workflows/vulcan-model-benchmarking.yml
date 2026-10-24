@@ -166,7 +166,7 @@ jobs:
           AWS_SESSION_TOKEN: ${{ steps.registry-reader-credentials.outputs.aws-session-token }}
           AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
-          REGISTRY_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
         run: |
           set -euo pipefail

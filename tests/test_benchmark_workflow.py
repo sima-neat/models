@@ -573,9 +573,7 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
                    'Restore the current immutable compilation from the registry')
     urls = {**values, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
             'vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://public.example'}
-    assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == (
-        'https://iam.example' if expected == 'production' else 'https://public.example'
-    )
+    assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == 'https://public.example'
     assert evaluate(restore['env']['MODEL_REGISTRY_IAM_READ_API_URL'][3:-3], urls) == (
         'https://iam.example' if expected == 'production' else ''
     )
