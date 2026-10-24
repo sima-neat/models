@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {cpSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -23,23 +24,27 @@ const fingerprintedAssets = [
 ];
 const stylesheets = ['brand', 'styles'];
 const config = portalConfig();
+const configSource = `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`;
+// Audience and backend can change without a source commit. Preserve each configuration
+// so an earlier entry point still loads its original settings after rollback.
+const configFile = `config.${createHash('sha256').update(configSource).digest('hex')}.js`;
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
 cpSync(docsBuild, output, {recursive: true});
 cpSync(join(browser, 'favicon.svg'), join(output, 'favicon.svg'));
 
-for (const asset of fingerprintedAssets) {
+for (const asset of fingerprintedAssets.filter((asset) => asset !== 'config')) {
   const extension = stylesheets.includes(asset) ? 'css' : 'js';
   cpSync(join(browser, `${asset}.${extension}`), join(output, `${asset}.${revision}.${extension}`));
 }
-writeFileSync(join(output, `config.${revision}.js`), `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`);
+writeFileSync(join(output, configFile), configSource);
 
 let browserHtml = readFileSync(join(browser, 'index.html'), 'utf8');
 browserHtml = browserHtml
   .replace('href="brand.css"', `href="brand.${revision}.css"`)
   .replace('href="styles.css"', `href="styles.${revision}.css"`)
-  .replace('src="config.js"', `src="config.${revision}.js"`)
+  .replace('src="config.js"', `src="${configFile}"`)
   .replace('src="app.js"', `src="app.${revision}.js"`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
@@ -60,7 +65,7 @@ for (const name of ['component-pipelines', 'reference-metrics']) {
 }
 writeFileSync(apiModule, apiSource);
 
-const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset));
+const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {
   const path = join(output, `${asset}.${revision}.js`);

@@ -410,6 +410,30 @@ def test_assembled_portal_modules_import_only_deployed_files(tmp_path: Path) -> 
             assert (portal / specifier).is_file(), f"{module.name} imports missing {specifier}"
 
 
+def test_portal_config_assets_preserve_audience_and_backend_on_rollback(tmp_path: Path, monkeypatch) -> None:
+    deployments = []
+    for index, (environment, audience) in enumerate([
+        ("production", "developer"), ("production", "customer"),
+        ("staging", "developer"), ("production", "developer"),
+    ]):
+        root = tmp_path / str(index)
+        shutil.copytree(BROWSER, root / "artifact-browser")
+        monkeypatch.setenv("MODEL_BROWSER_ENVIRONMENT", environment)
+        monkeypatch.setenv("MODEL_BROWSER_UI_MODE", audience)
+        result = assemble_portal(root)
+        assert result.returncode == 0, result.stderr
+        portal = root / "website" / "portal-build"
+        html = (portal / "index.html").read_text()
+        filename = re.search(r'src="(config\.[a-f0-9]+\.js)"', html).group(1)
+        deployments.append((filename, (portal / filename).read_text()))
+    assert len({name for name, _ in deployments[:3]}) == 3
+    assert deployments[0] == deployments[3]
+    # Simulate retained S3 assets: each old entry point must retain its exact config.
+    retained = dict(deployments)
+    for name, content in deployments:
+        assert retained[name] == content
+
+
 def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> None:
     shutil.copytree(BROWSER, tmp_path / "artifact-browser")
     assert assemble_portal(tmp_path).returncode == 0
