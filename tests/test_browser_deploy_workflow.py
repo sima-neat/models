@@ -67,3 +67,11 @@ def test_non_owner_approval_or_rerun_cannot_deploy(approver, attempt):
     harness = 'process.env.DEPLOY_ENV="staging"; process.env.DEPLOY_AUDIENCE="developer"; process.env.GITHUB_TRIGGERING_ACTOR="owner"; process.env.GITHUB_RUN_ATTEMPT="1"; const context={repo:{},sha:"fixture",actor:"owner",runAttempt:' + str(attempt) + '}; process.env.GITHUB_RUN_ATTEMPT=String(context.runAttempt); const core={notice:()=>{}}; const github={request:async()=>({data:' + json.dumps(approvals) + '}),rest:{repos:{getEnvironment:async()=>({data:' + json.dumps(data) + '})}}};'
     result = subprocess.run(['node','--input-type=module','-e',harness+script],capture_output=True)
     assert result.returncode != 0
+
+
+@pytest.mark.parametrize('job', ['resolve-vulcan-config', 'build', 'publish'])
+def test_partial_reruns_cannot_reuse_completed_authorization(job):
+    # A failed-job rerun can retain a successful authorize result. Each reusable
+    # workflow call must reject that attempt independently, before issuing OIDC.
+    jobs = workflow('deploy-model-browser.yml')['jobs']
+    assert jobs[job]['if'] == 'github.run_attempt == 1 && github.actor == github.triggering_actor'

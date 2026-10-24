@@ -134,7 +134,9 @@ publication. From `main` or `develop`, select `staging` or `production` and the
 `developer` or `customer` audience. The `authorize` job waits on the
 `model-browser-deploy` environment's sole reviewer team, `owners-models`, with
 administrator bypass disabled. The dispatching owner must approve their own run;
-reruns must be replaced by a new dispatch. The named authorization script verifies
+reruns must be replaced by a new dispatch. Every downstream job independently
+requires attempt 1 and the original triggering actor, so rerunning only failed
+jobs cannot reuse a completed authorization job. The named authorization script verifies
 the gate and approval before configuration resolution or deployment credentials.
 The reusable docs workflow builds and smoke-tests the selected frontend, then the
 shared static publisher uploads only `models/`, retains old assets, and invalidates

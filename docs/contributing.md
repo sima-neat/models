@@ -164,7 +164,9 @@ Browser & Docs** from `main` or `develop`, chooses the destination (`staging` or
 `production`) and audience (`developer` for branch selection, `customer` for Main
 only), and approves their own run at the `model-browser-deploy` environment gate.
 Only `owners-models` can approve; administrator bypass is disabled. Dispatch a new
-run to retry because previous approvals cannot authorize reruns. The workflow must
+run to retry because previous approvals cannot authorize reruns. Configuration
+resolution, build, and publication each reject later attempts independently,
+including retries of only failed or individual jobs. The workflow must
 be present on default branch `main` for GitHub to expose its Run workflow button.
 
 This workflow builds and smoke-tests the frontend, publishes only `models/`, retains

@@ -47,6 +47,7 @@ jobs:
             await require('./scripts/authorize-model-browser-deployment.cjs')({github, context, core});
 
   resolve-vulcan-config:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
     needs: authorize
     permissions:
       contents: read
@@ -56,6 +57,7 @@ jobs:
       vulcan_env: ${{ inputs.environment }}
 
   build:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
     needs: authorize
     uses: ./.github/workflows/developer-docs.yml
     with:
@@ -63,6 +65,7 @@ jobs:
       ui_mode: ${{ inputs.audience }}
 
   publish:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
     needs: [authorize, resolve-vulcan-config, build]
     concurrency:
       group: ${{ github.repository }}-model-browser-${{ inputs.environment }}
