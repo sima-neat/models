@@ -129,6 +129,26 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
 
+Manual **Deploy Model Browser & Docs** is independent of model builds and tooling
+publication. From `main` or `develop`, select `staging` or `production` and the
+`developer` or `customer` audience. The `authorize` job waits on the
+`model-browser-deploy` environment's sole reviewer team, `owners-models`, with
+administrator bypass disabled. The dispatching owner must approve their own run;
+reruns must be replaced by a new dispatch. The named authorization script verifies
+the gate and approval before configuration resolution or deployment credentials.
+The reusable docs workflow builds and smoke-tests the selected frontend, then the
+shared static publisher uploads only `models/`, retains old assets, and invalidates
+`/models` and `/models/*`. Its publish concurrency group is
+`${{ github.repository }}-model-browser-${{ inputs.environment }}`, with
+`cancel-in-progress: false`; staging shares the automatic publisher's group so
+manual and automatic uploads cannot run concurrently. Automatic staging publication
+on `main`/`develop` remains enabled when staging is selected; production frontend
+publication requires this manual dispatch. See [browser deployment](../docs/model-browser.md).
+
+**Vulcan Model Registry** tooling publication selects repository `VULCAN_ENV`
+(default `staging`) for both pushes and manual runs. It has no separate environment
+input and publishes to the selected Vulcan backend independently of frontend deployment.
+
 Manual **Promote model** takes a model ID and build profile, resolves the newest matching
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
