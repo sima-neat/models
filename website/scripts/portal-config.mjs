@@ -19,6 +19,7 @@ export function portalConfig(env = process.env) {
   }
   return {
     uiMode,
+    deploymentEnvironment: environment,
     heroCdnBaseUrl,
     apiBase: apiBase.replace(/\/$/, ''),
     environment: production ? 'Production' : 'Staging',

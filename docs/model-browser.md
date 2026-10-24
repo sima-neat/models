@@ -333,3 +333,12 @@ source revision. Roll back by restoring that index version and invalidating
 the newly created root index to disable the entry point. Restore the previous
 full build from its source revision if documentation routes also need rollback.
 Model registry contents and publisher environment selections are unchanged.
+
+## Staging release notice
+
+Staging builds show an unofficial-release notice above the browser navigation,
+including the connected backend environment and the frontend's source branch and
+commit. These are the browser build's details, independent of the selected model
+catalog branch. A staging browser previewing production data keeps the notice
+and identifies the production backend. Local builds with uncommitted changes
+say so beside the commit. Production builds omit the staging notice.

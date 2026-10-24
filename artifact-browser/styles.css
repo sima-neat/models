@@ -844,3 +844,26 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-order-toggle button[aria-pressed="true"] { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px #0002; font-weight: 600; }
 
 :root[data-branches="0"] .branch-filter { display: none; }
+
+/* Staging provenance remains visible in either audience and on small screens. */
+.release-notice[hidden] { display: none; }
+.release-notice {
+  color: #62420c;
+  background: #fff4d6;
+  border-bottom: 1px solid #e6ca87;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.release-notice-inner { max-width: 1440px; margin: 0 auto; padding: 12px 32px; }
+.release-notice strong { font-size: 14px; font-weight: 700; }
+.release-notice-description { margin-left: 10px; }
+.release-notice-meta { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 3px; }
+.release-notice-meta > span { overflow-wrap: anywhere; min-width: 0; }
+.release-notice-meta b { font-weight: 600; }
+.release-notice code { color: inherit; background: transparent; font-size: 12px; }
+[data-theme="dark"] .release-notice { color: #f4d79b; background: #31291b; border-color: #625031; }
+@media (max-width: 700px) {
+  .release-notice-inner { padding: 12px 20px; }
+  .release-notice-description { display: block; margin-left: 0; }
+  .release-notice-meta { flex-direction: column; gap: 3px; margin-top: 6px; }
+}
