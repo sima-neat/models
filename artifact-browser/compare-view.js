@@ -35,6 +35,7 @@ const PERFORMANCE_ROWS = [
   ["avg_power_watts", "SoM power"],
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
+  ["ev74_memory_peak_mib", "Peak EV74 memory"],
 ];
 
 function catalogVariants() {

@@ -167,9 +167,9 @@ const DETAIL_CARDS = [
     ...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key)).map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1]),
   ]],
   ["memory", "Memory", "memory", ["Average", "Peak"], [
-    ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Memory allocated to the MLA."],
-    ["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"], "Contiguous memory in use, shared with other drivers."],
-    ["Linux", ["avg_linux_memory_mib", "peak_linux_memory_mib"], "Memory used by Linux and its processes."],
+    ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Buffers the MLA holds: weights, working memory, and inputs only the MLA reads."],
+    ["EV74", ["ev74_memory_avg_mib", "ev74_memory_peak_mib"], "Buffers EV74 holds, such as the frames it preprocesses for the MLA.\nMLA plus EV74 is the model's accelerator memory."],
+    ["Linux (board)", ["avg_linux_memory_mib", "peak_linux_memory_mib"], "Memory the whole board uses, every process included.\nIt includes EV74 buffers, so do not add it to the rows above."],
   ]],
 ];
 // Performance, heat, and CPU fill the left column; power, memory, and any other measurements the right.

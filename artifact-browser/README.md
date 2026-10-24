@@ -220,7 +220,7 @@ and metric identities separate. A multi-component model shows its whole-model re
 shows the model name, variant, throughput and accuracy.
 
 Select up to three points or use **Add model** to inspect exact measurements
-in a table. It includes throughput, latency, power, energy, peak MLA memory and
+in a table. It includes throughput, latency, power, energy, peak MLA and EV74 memory and
 accuracy. Bold marks the best value.
 Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
 Links preserve the task and selected builds with `compare_task` and repeated

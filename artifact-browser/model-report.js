@@ -25,8 +25,8 @@ const TELEMETRY_METRICS = {
   peak_cpu_core_usage_pct: ["cpu_cores_usage_pct", "maximum"],
   mla_memory_avg_mib: ["mla_memory_mib", "mean"],
   mla_memory_peak_mib: ["mla_memory_mib", "maximum"],
-  avg_cma_memory_mib: ["cma_memory_mib", "mean"],
-  peak_cma_memory_mib: ["cma_memory_mib", "maximum"],
+  ev74_memory_avg_mib: ["ev74_memory_mib", "mean"],
+  ev74_memory_peak_mib: ["ev74_memory_mib", "maximum"],
   avg_linux_memory_mib: ["linux_memory_used_mib", "mean"],
   peak_linux_memory_mib: ["linux_memory_used_mib", "maximum"],
 };
@@ -91,6 +91,9 @@ function cpuCores(telemetry) {
     .map((core) => ({ mean: core.mean, maximum: finite(core.maximum) }));
 }
 
+// Reports from before EV74 memory carry the whole CMA pool in use, which is not the model's memory.
+const RETIRED_METRICS = new Set(["avg_cma_memory_mib", "peak_cma_memory_mib"]);
+
 // A performance report measures the whole model, however many components it runs, and records each
 // component's layer timings and execution plan in the order the model runs them.
 export function readPerformance(benchmarkRun) {
@@ -98,7 +101,7 @@ export function readPerformance(benchmarkRun) {
     const telemetry = report.telemetry || {};
     return {
       measurements: Object.fromEntries(Object.entries(report.metrics)
-        .filter(([, value]) => Number.isFinite(value))
+        .filter(([key, value]) => Number.isFinite(value) && !RETIRED_METRICS.has(key))
         .map(([key, value]) => [key, measurement(key, value, telemetry)])),
       workload: typeof report.workload === "string" ? report.workload : "",
       tool: pyneatVersion(report),

@@ -42,6 +42,18 @@ test('leaves out a metric the report did not measure as a number', () => {
   assert.equal(measurements.throughput_fps.value, report.metrics.throughput_fps);
 });
 
+test('reads EV74 memory and drops the CMA pool of earlier reports', () => {
+  const report = fixture('performance');
+  const {measurements} = performance(report).value;
+  assert.equal(measurements.ev74_memory_peak_mib.value, report.telemetry.ev74_memory_mib.maximum);
+  assert.equal(measurements.ev74_memory_peak_mib.sampleCount, 15);
+
+  Object.assign(report.metrics, {avg_cma_memory_mib: 863.8, peak_cma_memory_mib: 867.2});
+  const earlier = performance(report).value.measurements;
+  assert.equal(earlier.avg_cma_memory_mib, undefined);
+  assert.equal(earlier.peak_cma_memory_mib, undefined);
+});
+
 test('names the model, build, runtime, and time of the run that measured it', () => {
   const benchmark = performance().value;
   assert.equal(benchmark.modelId, 'resnet_50');

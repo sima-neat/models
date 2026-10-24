@@ -293,12 +293,12 @@
       "samples": 15,
       "unit": "MiB"
     },
-    "cma_memory_mib": {
-      "key": "ev74_cma_used_mb",
-      "label": "EV74 CMA used",
-      "maximum": 867.1796875,
-      "mean": 863.8244791666667,
-      "minimum": 856.515625,
+    "ev74_memory_mib": {
+      "key": "ev74_mem_allocated_mb",
+      "label": "EV74 memory allocated",
+      "maximum": 0.5703125,
+      "mean": 0.5703125,
+      "minimum": 0.5703125,
       "samples": 15,
       "unit": "MiB"
     },

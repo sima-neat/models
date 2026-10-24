@@ -91,6 +91,23 @@ def test_a_value_core_did_not_measure_is_absent(tmp_path):
     assert "avg_power_watts" not in metrics and "energy_per_inference_joules" not in metrics
 
 
+def test_memory_is_mla_and_ev74_memory_and_never_the_cma_pool():
+    telemetry = CORE_REPORT["telemetry"]
+    metrics = model_report.from_performance(Saved(CORE_REPORT), {"model": Model("m")}, workload="w").document["metrics"]
+
+    assert metrics["mla_memory_peak_mib"] == telemetry["mla_memory_mib"]["maximum"]
+    assert metrics["ev74_memory_avg_mib"] == telemetry["ev74_memory_mib"]["mean"]
+    assert metrics["ev74_memory_peak_mib"] == telemetry["ev74_memory_mib"]["maximum"]
+
+    # A Core from before EV74 memory reports the whole CMA pool in use instead, which is not the model's.
+    earlier = {key: value for key, value in telemetry.items() if key != "ev74_memory_mib"}
+    earlier["cma_memory_mib"] = {**telemetry["mla_memory_mib"], "key": "ev74_cma_used_mb", "mean": 863.8}
+    metrics = model_report.from_performance(
+        Saved({**CORE_REPORT, "telemetry": earlier}), {"model": Model("m")}, workload="w").document["metrics"]
+
+    assert not any("ev74" in name or "cma" in name for name in metrics)
+
+
 def test_a_script_timed_model_passes_its_telemetry_and_each_components_mla_stats(tmp_path):
     # A hand-filled BenchmarkReport holds no MLA stats; each component's come from its own Core benchmark.
     measured = {**CORE_REPORT, "telemetry": {}, "mla_layer_stats": {"status": "not requested", "layers": []},

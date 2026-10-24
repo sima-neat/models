@@ -227,12 +227,19 @@ throughput pass:
 | `avg_board_temperature_c`, `peak_board_temperature_c` | SoM temperature: the hotter of the top-side and bottom-side board sensors |
 | `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage averaged over all cores |
 | `avg_cpu_core_usage_pct`, `peak_cpu_core_usage_pct` | The busiest CPU core: the highest per-core average, and the highest per-core peak, which can be different cores |
-| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory |
-| `avg_cma_memory_mib`, `peak_cma_memory_mib` | The contiguous memory (CMA) pool in use |
-| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Linux memory in use |
+| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory: buffers from the MLA memory pool, plus shared buffers only the MLA uses |
+| `ev74_memory_avg_mib`, `ev74_memory_peak_mib` | EV74 memory: buffers EV74 holds, such as the frames it preprocesses for the MLA |
+| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Memory the whole board uses (Linux `MemTotal - MemAvailable`) |
 
-The CMA reading covers the whole pool, which EV74 and other drivers share and
-Linux lends to other memory, so it is not the model's memory alone. The
+Sentinel gives each buffer one owner, so MLA and EV74 memory add up to the
+model's accelerator memory: a shared buffer EV74 also uses counts as EV74, and
+frames a video decoder or camera ISP produced count as neither. Linux memory
+covers every process on the board and includes EV74's buffers, so it is board
+context, not the model's memory, and does not add to the other two. EV74
+memory needs Sentinel with `ev74_mem_allocated_mb`; with an older daemon the
+report has no EV74 memory. Reports measured before that change carried the
+whole contiguous memory (CMA) pool in use instead; the browser no longer shows
+it, and their MLA memory also counted the buffers EV74 hands to the MLA. The
 individual temperature sensors and CPU cores are not registry metrics; they
 stay in the report's `telemetry`, where the browser reads the per-core load.
 

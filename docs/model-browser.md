@@ -180,8 +180,8 @@ in this order:
    add up to SoC power indented under SoC: MLA and Non-MLA (the rest of the
    SoC). Rails peak at different moments, so the SoC peak is the sum of the
    two peaks, an upper bound. The other SoM rails follow at the SoC's level,
-   each coloured like its part of the bar. **Memory** has MLA, CMA
-   pool, and Linux memory. Readings other than latency and throughput cover
+   each coloured like its part of the bar. **Memory** has MLA and
+   EV74 memory, which add up, and the board's Linux memory. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
    Sentinel version and the samples behind the board readings, or why they

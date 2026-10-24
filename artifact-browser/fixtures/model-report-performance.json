@@ -27,8 +27,8 @@
     "peak_cpu_core_usage_pct": 48.5,
     "mla_memory_avg_mib": 29.65234375,
     "mla_memory_peak_mib": 29.65234375,
-    "avg_cma_memory_mib": 863.8244791666667,
-    "peak_cma_memory_mib": 867.1796875,
+    "ev74_memory_avg_mib": 0.5703125,
+    "ev74_memory_peak_mib": 0.5703125,
     "avg_linux_memory_mib": 600.32421875,
     "peak_linux_memory_mib": 607.53125,
     "energy_per_inference_joules": 0.012759431930679747
@@ -317,12 +317,12 @@
       "samples": 15,
       "unit": "MiB"
     },
-    "cma_memory_mib": {
-      "key": "ev74_cma_used_mb",
-      "label": "EV74 CMA used",
-      "maximum": 867.1796875,
-      "mean": 863.8244791666667,
-      "minimum": 856.515625,
+    "ev74_memory_mib": {
+      "key": "ev74_mem_allocated_mb",
+      "label": "EV74 memory allocated",
+      "maximum": 0.5703125,
+      "mean": 0.5703125,
+      "minimum": 0.5703125,
       "samples": 15,
       "unit": "MiB"
     },

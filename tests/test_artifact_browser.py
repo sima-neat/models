@@ -1304,7 +1304,9 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
     assert "repeating-linear-gradient(135deg, var(--red) 0 2px" in script
     assert ".detail-card tbody tr.depth-2 th" in styles
     assert '["SoM", ["avg_board_temperature_c", "peak_board_temperature_c"]' in script
-    assert '["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"]' in script
+    assert '["EV74", ["ev74_memory_avg_mib", "ev74_memory_peak_mib"]' in script
+    assert '["Linux (board)", ["avg_linux_memory_mib", "peak_linux_memory_mib"]' in script
+    assert "cma_memory" not in script
     assert "power: { lead: railSplit(measurements) }" in script
     assert 'power_rail_mla_watts: ["MLA core (0.68 V)"' in script
     assert ".rail-split" in styles
