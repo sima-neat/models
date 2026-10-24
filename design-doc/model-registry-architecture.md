@@ -167,7 +167,7 @@ overrides it for that run. Concurrency and the run title use the same selection.
 The repository variable is currently staging, so merging this support preserves
 staging builds. Changing it to production switches subsequent default builds and
 publication to production. The selected configuration
-supplies the runner environment, artifact bucket and dataset bucket; compile
+supplies the compiler runner environment, artifact bucket and dataset bucket; compile
 workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
 
 The `plan` job requests `id-token: write` and waits for configuration resolution
@@ -190,9 +190,20 @@ authentication. Pull-request validation does not acquire this planning identity.
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
 compile fingerprint, or when a maintainer forces a rebuild. A reused build is
 queued for the benchmarks whose fingerprints have no completed run. Benchmarks
-run only in staging, only for Modalix targets, and only after the profile's
+run on staging DevKits for either registry environment, only for Modalix targets, and only after the profile's
 package publishes. On-demand models compile only on the explicit manual
 selection described below, and their builds are not benchmarked.
+
+Benchmark dispatch passes the parent build's resolved `VULCAN_ENV` explicitly.
+Standalone benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
+staging fallback and per-run override. Registry reads, datasets, and report
+publication use that selection; DevKit discovery independently requests
+`vulcan-staging`, and execution consumes the resolver's labels. Production
+registry restoration and report publication use the production GitHub environment
+on hosted runners. The board receives staged artifacts and dataset-reader access.
+Benchmark concurrency includes the registry environment so staging and production
+runs do not share a concurrency group. This routing does not change model or
+benchmark fingerprints.
 
 ### Branches, merges, and concurrent pushes
 

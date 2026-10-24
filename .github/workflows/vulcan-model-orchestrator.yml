@@ -571,7 +571,6 @@ jobs:
       !cancelled() &&
       needs.initialize-catalog.result == 'success' &&
       needs.select.outputs.publishable == 'true' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
       needs.plan.outputs.benchmark_count != '0'
     runs-on: ubuntu-latest
     permissions:
@@ -584,6 +583,7 @@ jobs:
       - name: Start the benchmarks reused builds still lack
         env:
           GH_TOKEN: ${{ github.token }}
+          VULCAN_ENV: ${{ needs.select.outputs.vulcan_environment }}
           BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
         run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
 
@@ -595,7 +595,6 @@ jobs:
       !cancelled() &&
       needs.plan.outputs.compile_count == '0' &&
       needs.publish-catalog.result == 'success' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
       needs.plan.outputs.benchmark_count != '0'
     runs-on: ubuntu-latest
     permissions:
@@ -608,6 +607,7 @@ jobs:
       - name: Start the benchmarks reused builds still lack
         env:
           GH_TOKEN: ${{ github.token }}
+          VULCAN_ENV: ${{ needs.select.outputs.vulcan_environment }}
           BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
         run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
 

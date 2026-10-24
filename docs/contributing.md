@@ -217,6 +217,15 @@ then publishes each result as its own registry run under the build profile's
 package run, with the test outcome. A failed test fails the run after
 publication.
 
+The benchmark workflow's `environment=default` resolves repository `VULCAN_ENV`
+(with staging as the fallback); explicit staging/production overrides are supported.
+Automatic dispatch pins the parent build's resolved environment so artifacts,
+datasets, credentials, and report publication stay in the same registry even if
+the repository default changes before the benchmark starts. DevKit discovery and
+scheduling independently use the checked-in `vulcan-staging` runner label.
+Production registry reads and report writes run on GitHub-hosted runners; the
+DevKit receives staged model artifacts and only dataset-reader credentials.
+
 The compile and the benchmarks are separate GitHub Actions runs. A
 successful compile does not by itself mean the dispatched benchmark succeeded;
 inspect the `Vulcan Model Benchmarking` run of each build and the model's
@@ -224,7 +233,7 @@ selected environment's registry record. If trusted compilation or measurement fa
 up with a focused manifest, recipe, or script change and reproducible evidence.
 
 Production can be selected through `VULCAN_ENV` or a manual override; its
-GitHub environment and IAM protections still apply. Benchmarks run only in staging. A manual dispatch can name models, build profiles, or
+GitHub environment and IAM protections still apply. Benchmarks use staging DevKits for either registry environment. A manual dispatch can name models, build profiles, or
 components and can force every selected build to recompile, which also
 applies a changed model test at once; otherwise a changed test applies the next
 time its stage runs. A dispatch that

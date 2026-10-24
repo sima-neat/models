@@ -487,7 +487,7 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
     [
         ("push", "staging", "true", "success", "1", True),
         ("workflow_dispatch", "staging", "true", "success", "3", True),
-        ("push", "production", "true", "success", "1", False),
+        ("push", "production", "true", "success", "1", True),
         # A feature branch publishes a pending catalog for on-demand candidates only.
         ("push", "staging", "false", "success", "1", False),
         ("push", "staging", "true", "failure", "1", False),
@@ -522,7 +522,7 @@ def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
         ("staging", "0", "success", "1", True),
         # With compiles, the benchmark job already started them after the pending catalog.
         ("staging", "2", "success", "1", False),
-        ("production", "0", "success", "1", False),
+        ("production", "0", "success", "1", True),
         ("staging", "0", "failure", "1", False),
         ("staging", "0", "skipped", "1", False),
         ("staging", "0", "success", "0", False),
@@ -554,6 +554,7 @@ def test_reused_builds_start_their_benchmarks_from_one_job(job_id) -> None:
     assert job["permissions"] == {"actions": "write", "contents": "read"}
     assert "strategy" not in job
     assert job["steps"][0]["uses"] == "actions/checkout@v6"
+    assert start["env"]["VULCAN_ENV"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert start["env"]["BENCHMARK_MATRIX"] == "${{ needs.plan.outputs.benchmark_matrix }}"
     # An empty source run restores each reused build from the registry at this catalog revision.
     assert start["run"] == 'scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"'
@@ -801,7 +802,7 @@ def test_published_package_receipt_travels_with_the_build() -> None:
         (True, False, "1", "staging", "modalix", "performanceaccuracy", True),
         (True, False, "1", "staging", "modalix", "accuracy", True),
         (True, False, "1", "staging", "modalix", "", False),
-        (True, False, "1", "production", "modalix", "performance", False),
+        (True, False, "1", "production", "modalix", "performance", True),
         (True, False, "1", "staging", "davinci", "performance", False),
         # A benchmark runs under the profile's published package.
         (False, False, "1", "staging", "modalix", "performance", False),
@@ -830,6 +831,7 @@ def test_new_build_starts_its_stages_with_the_shared_script() -> None:
 
     # A failed dispatch leaves the build published; the next run plans the missing stages.
     assert start["continue-on-error"] == "true"
+    assert start["env"]["VULCAN_ENV"] == "${{ inputs.vulcan_environment }}"
     assert start["env"]["ENTRY"] == "${{ inputs.entry }}"
     # The benchmark downloads this compile run's output.
     assert start["run"] == 'scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"'
@@ -838,7 +840,9 @@ def test_new_build_starts_its_stages_with_the_shared_script() -> None:
 START_SCRIPT = ROOT / "scripts" / "start_benchmarks.sh"
 
 
-def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.CompletedProcess, Path, Path]:
+def run_start_script(
+    tmp_path: Path, gh: str, *args: str, environment: str = "staging",
+) -> tuple[subprocess.CompletedProcess, Path, Path]:
     """Run the start script with a fake gh that records each call's arguments."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -853,6 +857,7 @@ def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.Co
         "GITHUB_REPOSITORY": "sima-neat/models",
         "GITHUB_SHA": "0" * 40,
         "GITHUB_REF_NAME": "develop",
+        "VULCAN_ENV": environment,
     }
     result = subprocess.run(["bash", str(START_SCRIPT), *args], env=env, capture_output=True, text=True)
     return result, summary, calls
@@ -1066,3 +1071,16 @@ def test_compile_dataset_mirror_uses_the_selected_environment_config() -> None:
     assert caller["with"]["dataset_bucket"] == "${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}"
     assert build["on"]["workflow_call"]["inputs"]["dataset_bucket"]["required"] == "true"
     assert build["jobs"]["compile"]["env"]["SIMA_DATASET_S3_URI"] == "s3://${{ inputs.dataset_bucket }}"
+
+
+@pytest.mark.parametrize('environment', ['staging', 'production', '', 'invalid'])
+def test_benchmark_dispatch_pins_parent_registry_environment(tmp_path, environment):
+    result, _, calls = run_start_script(
+        tmp_path, 'true', json.dumps(build('alpha', ['performance'])), environment=environment,
+    )
+    if environment in ('staging', 'production'):
+        assert result.returncode == 0, result.stderr
+        assert f'-f environment={environment} ' in calls.read_text()
+    else:
+        assert result.returncode == 2
+        assert not calls.exists()

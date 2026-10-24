@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Vulcan environment used to benchmark the compiled model
+        description: Registry and dataset environment; default uses repository VULCAN_ENV (DevKits remain on staging)
         required: true
-        default: staging
+        default: default
         type: choice
-        options: [staging]
+        options: [default, staging, production]
       source_run_id:
         description: Source workflow run containing the compiled-model artifact
         required: false
@@ -48,7 +48,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
   cancel-in-progress: false
 
 jobs:
@@ -57,12 +57,11 @@ jobs:
     needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.source_branch == github.ref_name &&
-      inputs.environment == 'staging' &&
       inputs.source_sha != '' && inputs.source_branch != '' &&
       inputs.model_id != '' && inputs.build_profile_id != '' &&
       inputs.compile_invocation_id != '' && inputs.stages != ''
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
       actions: read
       contents: read
@@ -148,10 +147,26 @@ jobs:
       - name: Require the measured revision's board-stage tooling
         run: scripts/require_source_board_tooling.sh _source
 
+      - name: Configure authenticated production registry reads
+        if: inputs.source_run_id == '' && (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
+        id: registry-reader-credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-benchmark-input-${{ github.run_id }}
+          output-credentials: true
+          output-env-credentials: false
+
       - name: Restore the current immutable compilation from the registry
         if: inputs.source_run_id == ''
         env:
-          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_ACCESS_KEY_ID: ${{ steps.registry-reader-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.registry-reader-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.registry-reader-credentials.outputs.aws-session-token }}
+          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          REGISTRY_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
         run: |
           set -euo pipefail
@@ -187,28 +202,31 @@ jobs:
 
   resolve-dispatched-benchmark-runner:
     name: Resolve dispatched benchmark DevKit runner
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      # DevKit placement is independent of registry and dataset selection.
+      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "model-registry", "vulcan-staging"]'
 
   resolve-dispatched-benchmark-config:
     name: Resolve dispatched benchmark Vulcan config
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name
     permissions:
       contents: read
       id-token: write
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
-      vulcan_env: ${{ inputs.environment }}
+      vulcan_env: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     secrets: inherit
 
   benchmark-dispatched-model:
     name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner, resolve-dispatched-benchmark-config]
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
-    environment: ${{ inputs.environment }}
+    if: inputs.source_branch == github.ref_name
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, model-registry, "vulcan-${{ inputs.environment }}"]
+      labels: ${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}
     timeout-minutes: 45
     permissions:
       actions: read
@@ -304,7 +322,7 @@ jobs:
       - name: Install trusted dataset tooling
         if: steps.stages.outputs.accuracy == 'true'
         env:
-          DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
+          DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
           scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
 
@@ -399,7 +417,7 @@ jobs:
       (needs.benchmark-dispatched-model.outputs.performance == 'success' ||
       needs.benchmark-dispatched-model.outputs.accuracy == 'success')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
       actions: read
       contents: read
@@ -458,6 +476,7 @@ jobs:
           ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
           KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
           AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          VULCAN_ENV: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           MODEL_ID: ${{ inputs.model_id }}
@@ -478,7 +497,7 @@ jobs:
               --aws-region "$AWS_REGION" \
               --bucket "$ARTIFACT_BUCKET" \
               --kms-key-id "$KMS_KEY_ID" \
-              --environment staging \
+              --environment "$VULCAN_ENV" \
               --branch "$SOURCE_BRANCH" \
               --git-sha "$SOURCE_SHA" \
               --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
