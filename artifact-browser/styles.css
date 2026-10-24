@@ -758,6 +758,9 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-summary strong small { font-size: 15px; font-weight: 500; }
 .layer-summary span, .layer-explanation, .layer-results { color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
 .layer-explanation { max-width: 850px; margin: 0 0 24px; }
+/* MLA utilization reuses the layer summary with one column per tile; w16a16 has no utilization tile. */
+.layer-summary.mla-summary { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.mla-utilization .tensor-table { margin-bottom: 20px; }
 .layer-controls { display: flex; gap: 20px; align-items: end; flex-wrap: wrap; }
 .layer-controls label { display: flex; flex-direction: column; gap: 8px; color: var(--ink-soft); font-size: 13px; font-weight: 600; }
 .layer-controls input[type="search"] { box-sizing: border-box; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
@@ -816,6 +819,8 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
   .layer-summary > div:first-child { grid-column: 1 / -1; }
   .layer-summary strong { font-size: 20px; }
   .layer-summary span { font-size: 12px; }
+  .layer-summary.mla-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
+  .layer-summary.mla-summary > div:first-child { grid-column: auto; }
   .layer-controls { gap: 12px; }
   .layer-search { flex-basis: 100%; }
   .layer-threshold { flex: 1; }
