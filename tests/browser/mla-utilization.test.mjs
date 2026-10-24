@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {matchMlaStages, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops} from '../../artifact-browser/mla-utilization.js';
+import {matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops} from '../../artifact-browser/mla-utilization.js';
 
 // resnet_50 w8a8: mla-msim's counts for its one MLA stage, and a board latency for it.
 const simulated = {status: 'ok', stages: [{stage_index: 0, effective_ops: 8213719016, total_ops: 10445905152, simulated_latency_us: 678.432}]};
@@ -31,9 +31,9 @@ test('says why stages cannot be compared', () => {
   assert.equal(matchMlaStages(shifted, simulated).stages, undefined);
 });
 
-test('rates each stage from its measured latency, with utilization at INT8 only', () => {
+test('rates each stage from its measured latency, with utilization against the peak', () => {
   const {stages} = matchMlaStages(measured, simulated);
-  const [stage] = mlaUtilizationMetrics(stages, {int8: true}).stages;
+  const [stage] = mlaUtilizationMetrics(stages, {peakTops: 50}).stages;
   assert.ok(Math.abs(stage.effectiveTops - 10.0) < 0.01);
   assert.ok(Math.abs(stage.packing - 0.7863) < 0.0001);
   assert.ok(Math.abs(stage.utilization - 0.2) < 0.001);
@@ -46,12 +46,18 @@ test('totals the stages of a component', () => {
     {index: 2, measuredUs: 300, simulatedUs: 250, effectiveOps: 3e9, totalOps: 4e9},
     {index: 3, measuredUs: 0, simulatedUs: 0, effectiveOps: 0, totalOps: 0},
   ];
-  const {stages: rated, total} = mlaUtilizationMetrics(stages, {int8: true});
+  const {stages: rated, total} = mlaUtilizationMetrics(stages, {peakTops: 50});
   assert.deepEqual(rated.map(stage => stage.effectiveTops), [10, 10, null]);
   assert.equal(rated[2].packing, null);
   assert.deepEqual([total.measuredUs, total.simulatedUs, total.effectiveOps, total.totalOps], [400, 340, 4e9, 6e9]);
   assert.equal(total.effectiveTops, 10);
   assert.equal(total.utilization, 0.2);
+});
+
+test('peaks at the BF16 rate whenever activations are 16-bit', () => {
+  assert.deepEqual(mlaPeakTops('w8a8'), {tops: 50, datatype: 'INT8'});
+  for (const precision of ['w16a16', 'w8a16', 'w4a16']) assert.deepEqual(mlaPeakTops(precision), {tops: 12.5, datatype: 'BF16'});
+  assert.equal(mlaPeakTops(undefined), null);
 });
 
 test('sustains one MLA run per batch', () => {

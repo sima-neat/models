@@ -184,8 +184,10 @@ as the `performance/mla-stage-simulation` test result.
 The model browser's developer mode compares it with the measured
 `mla_stage_stats` as **MLA Utilization**. Effective TOPS divides a stage's
 effective operations by its measured latency; packing is
-`effective_ops / total_ops`; and a w8a8 stage's utilization is its effective TOPS
-as a share of the MLA's 50 TOPS INT8 peak.
+`effective_ops / total_ops`; and utilization is its effective TOPS as a share of
+the MLA's peak: 50 TOPS at INT8, and 12.5 TOPS for a stage with BF16
+activations (w16a16, w8a16, w4a16), because the MLA multiplies only INT8 or
+BF16 operands and a BF16 multiply takes four times the cycles.
 
 The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer
 count, and share in the ten slowest layers. **Duration** displays a ranked chart

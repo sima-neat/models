@@ -2,8 +2,18 @@
 // the operations the Model Compiler's simulator counts for it (mla-stage-simulation.json, which the package run
 // publishes as a test result). Both number a component's stages as Core does, so the stage index pairs them.
 
-// The MLA's peak rate at INT8; utilization is the effective rate as a share of it, so only w8a8 components have one.
+// The MLA's peak rate at INT8. Its multiplier takes INT8 or BF16 operands, and a BF16 multiply takes four times the
+// cycles of an INT8 one (the Gen2 ISA's MMUL latency), so a component with BF16 activations peaks at a quarter of it.
 export const MLA_PEAK_INT8_TOPS = 50;
+export const MLA_PEAK_BF16_TOPS = MLA_PEAK_INT8_TOPS / 4;
+
+// The peak a component's precision runs at: its activations set the multiplier's operands, so w8a16 and w4a16 run
+// at the BF16 rate too. Null when the precision is unknown.
+export function mlaPeakTops(precision) {
+  if (/a8$/.test(precision || "")) return { tops: MLA_PEAK_INT8_TOPS, datatype: "INT8" };
+  if (/a16$/.test(precision || "")) return { tops: MLA_PEAK_BF16_TOPS, datatype: "BF16" };
+  return null;
+}
 
 // The simulation document the package run's test results carry, or null.
 export function mlaStageSimulation(tests = []) {
@@ -38,15 +48,16 @@ export function sustainedEffectiveTops(total, throughputFps, batch) {
 }
 
 // Rates in TOPS from the measured latency: the effective rate counts only operations that contribute to the result,
-// and packing is the share of the MLA's executed operations that do.
-export function mlaUtilizationMetrics(stages, { int8 = false } = {}) {
+// packing is the share of the MLA's executed operations that do, and utilization is the effective rate as a share
+// of the peak.
+export function mlaUtilizationMetrics(stages, { peakTops = null } = {}) {
   const metrics = (stage) => {
     const effectiveTops = stage.measuredUs > 0 ? stage.effectiveOps / stage.measuredUs / 1e6 : null;
     return {
       ...stage,
       effectiveTops,
       packing: stage.totalOps > 0 ? stage.effectiveOps / stage.totalOps : null,
-      utilization: int8 && effectiveTops !== null ? effectiveTops / MLA_PEAK_INT8_TOPS : null,
+      utilization: peakTops && effectiveTops !== null ? effectiveTops / peakTops : null,
     };
   };
   const sum = (field) => stages.reduce((total, stage) => total + stage[field], 0);
