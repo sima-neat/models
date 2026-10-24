@@ -1,0 +1,106 @@
+name: Deploy Model Browser & Docs
+
+run-name: Deploy Model Browser & Docs (${{ inputs.environment }}, ${{ inputs.audience }}) — ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Frontend destination and registry backend
+        type: choice
+        options: [staging, production]
+        default: staging
+        required: true
+      audience:
+        description: Developer exposes branch selection; customer shows Main only
+        type: choice
+        options: [developer, customer]
+        default: developer
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Models owners approval
+    if: github.repository == 'sima-neat/models' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: model-browser-deploy
+    permissions:
+      contents: read
+      deployments: read
+      actions: read
+    steps:
+      - name: Verify the owner protection is configured
+        uses: actions/github-script@v8
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOY_AUDIENCE: ${{ inputs.audience }}
+        with:
+          script: |
+            if (!['staging', 'production'].includes(process.env.DEPLOY_ENV) ||
+                !['developer', 'customer'].includes(process.env.DEPLOY_AUDIENCE)) {
+              throw new Error('Unsupported deployment environment or audience.');
+            }
+            const {data} = await github.rest.repos.getEnvironment({
+              ...context.repo, environment_name: 'model-browser-deploy'
+            });
+            const gate = data.protection_rules?.find(rule => rule.type === 'required_reviewers');
+            const reviewers = gate?.reviewers || [];
+            if (data.can_admins_bypass !== false || reviewers.length !== 1 ||
+                reviewers[0].type !== 'Team' || reviewers[0].reviewer?.id !== 20041032) {
+              throw new Error('Deployment requires the owners-models approval gate with admin bypass disabled.');
+            }
+            if (Number(process.env.GITHUB_RUN_ATTEMPT) !== 1 || context.actor !== process.env.GITHUB_TRIGGERING_ACTOR) {
+              throw new Error('Dispatch a new run; reruns cannot reuse an earlier owner approval.');
+            }
+            const {data: approvals} = await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/approvals', {
+              ...context.repo, run_id: context.runId
+            });
+            const ownApproval = approvals.some(review => review.state === 'approved' &&
+              review.user?.login === context.actor &&
+              review.environments?.some(environment => environment.name === 'model-browser-deploy'));
+            if (!ownApproval) {
+              throw new Error('Only the dispatching models owner may approve this deployment. Ask an owner to dispatch a new run.');
+            }
+            core.notice(`Owner-approved deployment of ${context.sha}; destination ${process.env.DEPLOY_ENV}.`);
+
+  resolve-vulcan-config:
+    needs: authorize
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ inputs.environment }}
+
+  build:
+    needs: authorize
+    uses: ./.github/workflows/developer-docs.yml
+    with:
+      environment: ${{ inputs.environment }}
+      ui_mode: ${{ inputs.audience }}
+
+  publish:
+    needs: [authorize, resolve-vulcan-config, build]
+    concurrency:
+      group: ${{ github.repository }}-model-browser-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
+    with:
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      site_key: DOCS
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}
+      artifact_pattern: model-browser-site
+      s3_prefix: models
+      cloudfront_paths: "/models /models/*"
+      delete_removed: false
