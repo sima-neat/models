@@ -738,7 +738,7 @@ def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
     portal_build = next(step for step in build["steps"] if step.get("run") == "npm run build:portal")
     assert portal_build["env"] == {
-        "DOCS_SITE_URL": "https://developer-stg.sima.ai",
+        "DOCS_SITE_URL": "${{ inputs.environment == 'production' && 'https://developer.sima.ai' || 'https://developer-stg.sima.ai' }}",
         "DOCS_BASE_URL": "/models/",
     }
     assert not any("pages" in step.get("uses", "") for step in build["steps"])

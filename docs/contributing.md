@@ -157,6 +157,27 @@ from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
+Merging does not deploy the model browser frontend to production. Automatic
+browser publication still targets staging on `main`/`develop` when staging is
+selected. For an explicit frontend release, a Models owner runs **Deploy Model
+Browser & Docs** from `main` or `develop`, chooses the destination (`staging` or
+`production`) and audience (`developer` for branch selection, `customer` for Main
+only), and approves their own run at the `model-browser-deploy` environment gate.
+Only `owners-models` can approve; administrator bypass is disabled. Dispatch a new
+run to retry because previous approvals cannot authorize reruns. Configuration
+resolution, build, and publication each reject later attempts independently,
+including retries of only failed or individual jobs. The workflow must
+be present on default branch `main` for GitHub to expose its Run workflow button.
+
+This workflow builds and smoke-tests the frontend, publishes only `models/`, retains
+prior assets for rollback, and invalidates the model browser paths. Its per-environment
+publish concurrency group is shared with automatic staging publication and does not
+cancel an active publication, so the two upload paths cannot overlap. It does not
+build models, promote catalogs, or publish registry tooling. Tooling publication in
+**Vulcan Model Registry** follows repository `VULCAN_ENV` (default `staging`) on both
+pushes and manual runs. See [model browser deployment](model-browser.md) for release
+and rollback instructions.
+
 On-demand candidates require a separate manual **Promote model** dispatch to become approved
 on Develop. Enter the model folder ID and a build profile ID from its `model.yaml`;
 the workflow resolves the newest matching candidate receipt and pins it for review.
