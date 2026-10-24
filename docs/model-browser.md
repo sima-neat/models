@@ -306,3 +306,30 @@ The preview does not replace your saved branch preference. Omit the parameter
 (or use `branches=1`) to restore the normal branch behavior; customer UI remains
 Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
 production Main. That catalog must be published before it can display models.
+
+## Production frontend
+
+The production browser is hosted at [developer.sima.ai/models](https://developer.sima.ai/models/) and
+uses `https://models-registry.neat.sima.ai`. Build with
+`MODEL_BROWSER_ENVIRONMENT=production` to select both production origins and
+the Production label. Audience selection is independent: developer mode exposes
+branch selection; customer mode shows Main only. Deploying the frontend does
+not publish, promote, or rebuild model catalogs. An unpublished branch remains
+empty; the browser never substitutes staging data.
+
+From a clean committed checkout, with AWS production operator credentials,
+Node dependencies, Chromium and the Python registry dependencies available:
+
+```bash
+AWS_PROFILE=vulcan-prod scripts/deploy-production-model-browser.sh developer
+```
+
+Use `customer` for Main-only presentation. The script builds and smoke-tests the
+portal, publishes only the production docs bucket's `models/` prefix, and
+invalidates only `/models` paths. It retains old assets and uploads the entry
+point last. Before deployment, record the prior root index object version and
+source revision. Roll back by restoring that index version and invalidating
+`/models` and `/models/*`; for a first deployment with no prior page, remove only
+the newly created root index to disable the entry point. Restore the previous
+full build from its source revision if documentation routes also need rollback.
+Model registry contents and publisher environment selections are unchanged.

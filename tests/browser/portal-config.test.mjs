@@ -36,3 +36,17 @@ test('Local previews can build either UI against a local API', () => {
   assert.equal(config.apiBase, 'http://localhost:8767');
   assert.throws(() => portalConfig({MODEL_BROWSER_UI_MODE: 'typo'}), /Unsupported/);
 });
+
+
+test('Production selects its public reader and site independently of audience', () => {
+  for (const uiMode of ['customer', 'developer']) {
+    const config = portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_BROWSER_UI_MODE: uiMode});
+    assert.equal(config.apiBase, 'https://models-registry.neat.sima.ai');
+    assert.equal(config.siteUrl, 'https://developer.sima.ai');
+    assert.equal(config.environment, 'Production');
+    assert.equal(config.allowProductionPreview, false);
+    assert.equal(config.heroCdnBaseUrl, '');
+    assert.equal(config.defaultBranch, uiMode === 'customer' ? 'main' : 'develop');
+  }
+  assert.throws(() => portalConfig({MODEL_BROWSER_ENVIRONMENT: 'prodution'}), /Unsupported/);
+});

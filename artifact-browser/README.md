@@ -408,3 +408,10 @@ The preview does not replace your saved branch preference. Omit the parameter
 (or use `branches=1`) to restore the normal branch behavior; customer UI remains
 Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
 production Main. That catalog must be published before it can display models.
+
+## Production deployment
+
+`MODEL_BROWSER_ENVIRONMENT=production` selects the production public registry,
+Developer Center origin and environment label. Audience remains independent.
+See [production frontend deployment](../docs/model-browser.md#production-frontend)
+for the tested, prefix-scoped operator deployment and rollback procedure.
