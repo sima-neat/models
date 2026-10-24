@@ -249,7 +249,7 @@ telemetry statistic it comes from. Add a reading by adding a row there and its
 display entry in the browser's `metrics.js`; a test keeps the labels, units,
 and directions of the two in step. It appears under **Other measurements**
 until `DETAIL_CARDS` in `model-view.js` gives it a row in one of the
-Performance details cards.
+Performance Details cards.
 
 Initialization timings and MLA memory before and after the run are not exported
 by this Core API, so reports do not carry them. Adding them belongs in Core

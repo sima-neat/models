@@ -156,19 +156,21 @@ in this order:
    denominator. These timings come from a separate profiling pass; they are not
    a partition of headline latency. Compiled layer names may differ from ONNX
    operators. Historical reports without stats omit this section.
-   In developer mode, **MLA Utilization** follows Runtime Layer Analysis. For each
-   MLA stage it shows the latency Core measured on the board, the latency the
-   Model Compiler's simulator estimated, the simulator's count of effective
-   operations (those that contribute to the result), packing (their share of all
-   operations the MLA executes), and effective TOPS: effective operations divided by
-   the measured latency. A w8a8 component also shows utilization, its effective TOPS
-   as a share of the MLA's 50 TOPS INT8 peak. For a single-component model, the
-   summary gives the effective TOPS the model sustains at its measured throughput,
-   counting one MLA run per batch in the execution plan.
+   In developer mode, **MLA Utilization** follows Runtime Layer Analysis. Like the
+   layer summary, it shows each component's totals as tiles, each explained behind
+   an (i) mark: utilization (a w8a8 component's effective TOPS as a share of the
+   MLA's 50 TOPS INT8 peak), effective TOPS (the simulator's count of operations
+   that contribute to the result, divided by the MLA time Core measured on the
+   board), packing (their share of all operations the MLA executes), and the
+   measured MLA time. **Details** opens a table of each MLA stage's measured and
+   simulated latency, effective operations, packing, effective TOPS, and
+   utilization. For a single-component model, the summary gives the effective TOPS
+   the model sustains at its measured throughput, counting one MLA run per batch in
+   the execution plan.
    A component whose stages were not
    measured or simulated, or whose board and simulator stages differ, says so instead.
    Customers do not see this section, because its rates rest on a simulator estimate.
-   **Performance details** has three cards on the left:
+   **Performance Details** has three cards on the left:
    **Performance** with the throughput, the mean latency, and the p50, p95,
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
    and **CPU** with the core count, the load over all cores and on the
@@ -190,7 +192,7 @@ in this order:
    every metric, every SoM rail, every CPU core, and all compiled layer timings.
    A metric the browser does not place in the tiles or the cards appears under **Other measurements**,
    so a new metric shows up without a browser change.
-   Runtime Layer Analysis sits below Performance details, followed by an **Execution graph** disclosure that
+   Runtime Layer Analysis sits below Performance Details, followed by an **Execution Graph** disclosure that
    draws the steps the component runs, from input to output, each tagged with the
    processor it runs on; the step on the MLA is the **Compiled Model**. Its summary
    lists those processors. The diagram uses the available width, with equal-width
@@ -203,10 +205,10 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
-   The tiles, context line, and **Performance details** are the
+   The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
    components and CPU step running together. **Runtime Layer Analysis** and
-   **Execution graph** each switch between the components, **MLA Utilization** shows
+   **Execution Graph** each switch between the components, **MLA Utilization** shows
    one table per component, and **Download CSV**
    lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:

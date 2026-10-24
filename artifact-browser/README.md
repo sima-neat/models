@@ -185,7 +185,7 @@ everything longer sits in one expandable row.
   inference for the whole model, one number per tile, from the build profile's
   performance run. A multi-component model is measured with its components
   running together, and its layer analysis and execution graph switch between
-  the components. **Performance details** is
+  the components. **Performance Details** is
   performance, heat, and CPU cards, with power (SoM; SoC as the sum of its
   MLA and Non-MLA rails; and each other power rail) and memory cards beside
   them,

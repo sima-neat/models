@@ -333,7 +333,7 @@ async function checkExecutionTooltips(browser, url) {
       await stage.blur();
       await stage.focus();
       await tooltip.waitFor();
-      await page.locator('.execution-details').first().focus();
+      await page.locator('.execution-graph .execution-details').first().focus();
       if (await tooltip.isVisible()) throw new Error('stage tooltip survived focus moving away');
       console.log(`ok  Execution stage tooltip · ${width}px ${theme}`);
     } finally { await page.close(); }

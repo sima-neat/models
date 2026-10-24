@@ -760,6 +760,11 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .layer-explanation { max-width: 850px; margin: 0 0 24px; }
 /* MLA utilization reuses the layer summary with one column per tile; w16a16 has no utilization tile. */
 .layer-summary.mla-summary { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.mla-summary .info-mark { color: var(--ink-faint); font-size: 10px; line-height: 1; }
+/* Tooltips of the right-hand tiles open leftward so they stay on screen. */
+.mla-summary > div:nth-last-child(-n+2) .info-mark::after { left: auto; right: -8px; }
+.mla-summary-row { display: flex; align-items: center; gap: 20px; }
+.mla-summary-row .mla-summary { flex: 1; }
 .mla-utilization .tensor-table { margin-bottom: 20px; }
 .layer-controls { display: flex; gap: 20px; align-items: end; flex-wrap: wrap; }
 .layer-controls label { display: flex; flex-direction: column; gap: 8px; color: var(--ink-soft); font-size: 13px; font-weight: 600; }
@@ -821,6 +826,10 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
   .layer-summary span { font-size: 12px; }
   .layer-summary.mla-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
   .layer-summary.mla-summary > div:first-child { grid-column: auto; }
+  .mla-summary-row { flex-direction: column; align-items: stretch; gap: 0; }
+  .mla-summary-row .execution-details { align-self: flex-end; margin-bottom: 16px; }
+  .mla-summary > div:nth-last-child(-n+2) .info-mark::after { left: -8px; right: auto; }
+  .mla-summary > div:nth-child(even) .info-mark::after { left: auto; right: -8px; }
   .layer-controls { gap: 12px; }
   .layer-search { flex-basis: 100%; }
   .layer-threshold { flex: 1; }

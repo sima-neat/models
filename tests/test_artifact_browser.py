@@ -1292,9 +1292,9 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
     assert 'item.suite === stage && item.name === "model"' in script
     assert "This result format is not supported by this browser." in script
     assert '<p class="muted-message">Not measured at this revision.</p>' in script
-    # Each headline tile shows one number; Performance details has three cards on the left and two on the right.
+    # Each headline tile shows one number; Performance Details has three cards on the left and two on the right.
     assert "KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key]))" in script
-    assert 'disclosure(`performance:${run.id}`, "Performance details", details.markup' in script
+    assert 'disclosure(`performance:${run.id}`, "Performance Details", details.markup' in script
     for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
                  '["memory", "Memory"']:
         assert card in script
@@ -1788,7 +1788,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert utilization.split("\n", 2)[1].strip().startswith("if (customerView ||")
     assert "performanceSummary(result.value, run, modelId)" in model_performance
     graphs = script.split("function executionGraphSection(", 1)[1].split("\nexport function ", 1)[0]
-    assert 'disclosure(`graphs:${key}`, "Execution graph"' in graphs
+    assert 'disclosure(`graphs:${key}`, "Execution Graph"' in graphs
     assert 'componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component")' in graphs
     select = script.split("export function selectExecutionGraph(", 1)[1].split("\n}\n", 1)[0]
     assert 'item.hidden = item.dataset.graphPanel !== button.value;' in select
