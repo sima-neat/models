@@ -10,10 +10,11 @@ export function portalConfig(env = process.env) {
   if (!/^https:\/\/[^/]+\/?$/.test(apiBase) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(apiBase)) {
     throw new Error('The model registry API URL must be an HTTPS origin (or localhost for previews).');
   }
-  // Staging first. Empty override rolls back to API image URLs; custom origins
-  // and customer builds remain disabled unless explicitly configured.
-  const heroCdnBaseUrl = env.MODEL_HERO_CDN_BASE_URL ?? (!customer && apiBase.replace(/\/$/, '') === 'https://models-registry.stg.neat.sima.ai'
-    ? 'https://models-registry.stg.neat.sima.ai/images/sha256' : '');
+  // Standard developer deployments use their own validated image CDN.
+  // Empty override rolls back to API URLs; customer/custom-origin builds stay opt-in.
+  const standardHeroOrigins = ['https://models-registry.stg.neat.sima.ai', 'https://models-registry.neat.sima.ai'];
+  const heroCdnBaseUrl = env.MODEL_HERO_CDN_BASE_URL ?? (!customer && standardHeroOrigins.includes(apiBase.replace(/\/$/, ''))
+    ? `${apiBase.replace(/\/$/, '')}/images/sha256` : '');
   if (heroCdnBaseUrl && !/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/.test(heroCdnBaseUrl)) {
     throw new Error('Hero CDN base URL must be HTTPS without a query or fragment.');
   }

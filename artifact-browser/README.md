@@ -357,7 +357,7 @@ pages use only the compiled layer timings in each published model report.
 
 ### Staging hero CDN
 
-Staging developer builds use the existing public-reader hostname's
+Staging and production developer builds use their own public-reader hostname's
 `/images/sha256/<hero artifact SHA-256>.png` path. The hash comes from catalog
 metadata; no signed URLs or extra per-image API resolution are needed. Vulcan
 publishes validated hero derivatives into a private S3 origin when documentation
@@ -365,8 +365,8 @@ runs finish. Deploy that infrastructure and backfill current images **before**
 merging/deploying this browser change. See the companion Vulcan
 `docs/artifact-registry-hero-cdn.md` runbook.
 
-`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the staging
-CDN path for developer builds using the standard staging API; customer builds and
+`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the matching environment
+CDN path for developer builds using either standard registry API; customer builds and
 custom API origins default to disabled. Set it to an empty string and rebuild to
 roll back to API image URLs. The source preview `config.js` selects staging CDN.
 Image loading retries twice on the CDN and then uses the existing API URL with

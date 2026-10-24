@@ -45,7 +45,7 @@ test('Production selects its public reader and site independently of audience', 
     assert.equal(config.siteUrl, 'https://developer.sima.ai');
     assert.equal(config.environment, 'Production');
     assert.equal(config.allowProductionPreview, false);
-    assert.equal(config.heroCdnBaseUrl, '');
+    assert.equal(config.heroCdnBaseUrl, uiMode === 'developer' ? 'https://models-registry.neat.sima.ai/images/sha256' : '');
     assert.equal(config.defaultBranch, uiMode === 'customer' ? 'main' : 'develop');
   }
   assert.throws(() => portalConfig({MODEL_BROWSER_ENVIRONMENT: 'prodution'}), /Unsupported/);

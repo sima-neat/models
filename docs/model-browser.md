@@ -378,3 +378,7 @@ policies are exact branch names `develop` and `main` (no tags or wildcard refs).
 The workflow must reach the default branch (`main`) before GitHub exposes its
 Run workflow button; merge through the normal reviewed branch promotion. The environment gate is configured
 separately through repository administration and checked again at runtime.
+
+Developer deployments serve model hero illustrations from the matching registry
+environment’s CDN. Existing production illustrations are backfilled before browser
+cutover; image loading retains bounded retries and the registry API fallback.
