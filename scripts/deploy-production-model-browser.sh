@@ -18,7 +18,7 @@ export DOCS_SITE_URL=https://developer.sima.ai DOCS_BASE_URL=/models/
 unset MODEL_REGISTRY_API_URL MODEL_HERO_CDN_BASE_URL GITHUB_SHA
 npm ci --prefix website
 npm run typecheck --prefix website
-node --experimental-default-type=module --test tests/browser/*.test.mjs
+node --test tests/browser/*.test.mjs
 npm run build:portal --prefix website
 npm run smoke:portal --prefix website
 # Keep prior fingerprinted assets for cached pages and rollback. Switch the entry

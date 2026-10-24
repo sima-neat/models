@@ -327,7 +327,9 @@ AWS_PROFILE=vulcan-prod scripts/deploy-production-model-browser.sh developer
 Use `customer` for Main-only presentation. The script builds and smoke-tests the
 portal, publishes only the production docs bucket's `models/` prefix, and
 invalidates only `/models` paths. It retains old assets and uploads the entry
-point last. Before deployment, record the prior root index object version and
+point last. The generated configuration filename hashes its contents, so changing
+audience or backend at the same source revision preserves the previous settings
+for cached pages and index rollback. Before deployment, record the prior root index object version and
 source revision. Roll back by restoring that index version and invalidating
 `/models` and `/models/*`; for a first deployment with no prior page, remove only
 the newly created root index to disable the entry point. Restore the previous
