@@ -365,8 +365,11 @@ def _add_mla_stage_simulation(packages: Path, status: str = "ok") -> Path:
     return path
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
 @pytest.mark.parametrize(("status", "test_status"), [("ok", "passed"), ("mla-msim not found", "skipped")])
-def test_staging_package_publishes_the_mla_stage_simulation(tmp_path: Path, status: str, test_status: str) -> None:
+def test_package_publishes_the_mla_stage_simulation(
+    tmp_path: Path, status: str, test_status: str, environment: str,
+) -> None:
     packages, _ = _assembled_package(tmp_path)
     simulation_path = _add_mla_stage_simulation(packages, status)
     calls: list[tuple[str, str, dict | None, str]] = []
@@ -380,7 +383,7 @@ def test_staging_package_publishes_the_mla_stage_simulation(tmp_path: Path, stat
         return {"ok": True}
 
     store = FakeStore()
-    _publish_packages(packages, request, store)
+    _publish_packages(packages, request, store, environment=environment)
 
     bodies = {path: body for _, path, body, _ in calls}
     artifact = bodies["/v1/runs/package-run/artifacts/mla-stage-simulation"]
@@ -406,20 +409,6 @@ def test_package_carries_the_profile_mla_stage_simulation(tmp_path: Path) -> Non
 
     copied = tmp_path / "packages/resnet_50/w16a16/packages/default/mla-stage-simulation.json"
     assert copied.read_text(encoding="utf-8") == '{"simulated": true}'
-
-
-def test_production_package_leaves_the_mla_stage_simulation_unpublished(tmp_path: Path) -> None:
-    packages, _ = _assembled_package(tmp_path)
-    _add_mla_stage_simulation(packages)
-    calls: list[str] = []
-
-    def request(method: str, path: str, body: dict | None, key: str) -> dict:
-        calls.append(path)
-        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
-
-    _publish_packages(packages, request, FakeStore(), environment="production")
-
-    assert not any("mla-stage-simulation" in path for path in calls)
 
 
 def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path: Path) -> None:

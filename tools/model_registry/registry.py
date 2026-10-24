@@ -1877,14 +1877,13 @@ def publish_packages(
             build_profile_id=profile_id,
             config=model["numerical_fidelity"],
         ) if fidelity_path.is_file() else None
-        # Staging alone shows the simulation, in the model browser's developer mode.
         simulation_path = result_path.parent / SIMULATION_FILE
         simulation = _mla_stage_simulation_result(
             simulation_path,
             root / "schemas" / "mla-stage-simulation.schema.json",
             model_id=model_id,
             build_profile_id=profile_id,
-        ) if environment == "staging" and simulation_path.is_file() else None
+        ) if simulation_path.is_file() else None
 
         manifest_sha = canonical_sha256(manifest)
         parameters = {

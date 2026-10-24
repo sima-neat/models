@@ -81,7 +81,7 @@ this table. Modules marked CI only are removed from the author package by
 | `compile_matrix.py` | the compile matrix: one entry per build profile's compile invocation, with the benchmarks that measure it (`build_matrix`) |
 | `fingerprints.py` | the fingerprints (`compile_fingerprint`, `benchmark_fingerprint`), the files each one hashes, and each benchmark's run type |
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
-| `registry.py` | publishing compile runs, packages (with, in staging, their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
+| `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
 | `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
