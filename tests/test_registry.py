@@ -750,12 +750,16 @@ def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() ->
     assert all(set(build["model"]) == {
         "build_profile_id", "compile_invocation_id", "component_id", "compile_fingerprint", "artifact_sha256", "run_id",
     } for build in builds.values())
-    # Each profile records one fingerprint per stage it benchmarks; only w8a8 declares accuracy.
+    # Each profile records one fingerprint per stage it benchmarks; w16a16 declares no accuracy.
     assert resnet["benchmark_fingerprints"] == {
         "w16a16": {"performance": benchmark_fingerprint(ROOT, model, "w16a16", builds["w16a16"], "performance")},
         "w8a8": {
             "performance": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "performance"),
             "accuracy": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "accuracy"),
+        },
+        "w8a16": {
+            "performance": benchmark_fingerprint(ROOT, model, "w8a16", builds["w8a16"], "performance"),
+            "accuracy": benchmark_fingerprint(ROOT, model, "w8a16", builds["w8a16"], "accuracy"),
         },
     }
     w8a8 = resnet["benchmark_fingerprints"]["w8a8"]

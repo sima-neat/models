@@ -551,10 +551,11 @@ def test_catalog_model_is_valid() -> None:
         "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     )
     profiles = {profile["id"]: profile for profile in model["build_profiles"]}
-    assert set(profiles) == {"w16a16", "w8a8"}
+    assert set(profiles) == {"w16a16", "w8a8", "w8a16"}
     assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
     assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
     assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert profiles["w8a16"]["components"][0]["parameters"]["precision"] == "w8a16"
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
         "variant": "mini",
