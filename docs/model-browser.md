@@ -207,10 +207,9 @@ in this order:
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
    The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
-   components and CPU step running together. **Runtime Layer Analysis** and
-   **Execution Graph** each switch between the components, **MLA Utilization** shows
-   each component's tiles and **Details** table, and **Download CSV**
-   lists each component's layer timings.
+   components and CPU step running together. **Runtime Layer Analysis**,
+   **MLA Utilization**, and **Execution Graph** each switch between the
+   components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,
    sampled otherwise), the first four metrics, the evaluated sample count, and

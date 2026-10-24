@@ -1789,10 +1789,15 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert "performanceSummary(result.value, run, modelId)" in model_performance
     graphs = script.split("function executionGraphSection(", 1)[1].split("\nexport function ", 1)[0]
     assert 'disclosure(`graphs:${key}`, "Execution Graph"' in graphs
-    assert 'componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component")' in graphs
-    select = script.split("export function selectExecutionGraph(", 1)[1].split("\n}\n", 1)[0]
-    assert 'item.hidden = item.dataset.graphPanel !== button.value;' in select
-    assert 'elements["detail-pane"].addEventListener("click", selectExecutionGraph);' in _browser_source("app.js")
+    # Execution Graph and MLA Utilization switch between components the same way.
+    assert "componentPanels(graphed.map(({ label }) => label)," in graphs
+    assert "componentPanels(results.map(({ label }) => label), panels)" in utilization
+    assert "<h4>" not in utilization
+    panels = script.split("function componentPanels(", 1)[1].split("\n}\n", 1)[0]
+    assert 'componentSwitch(labels, 0, "data-component-switch")' in panels
+    select = script.split("export function selectComponentPanel(", 1)[1].split("\n}\n", 1)[0]
+    assert 'item.hidden = item.dataset.componentPanel !== button.value;' in select
+    assert 'elements["detail-pane"].addEventListener("click", selectComponentPanel);' in _browser_source("app.js")
     # Switching component re-renders the panel and restarts the minimum time on the new scale.
     update = script.split("export function updateLayerAnalysis(", 1)[1].split("\nexport function ", 1)[0]
     assert 'if (field === "component") {' in update

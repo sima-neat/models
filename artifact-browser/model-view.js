@@ -506,20 +506,26 @@ function layerAnalysisPanel({ sources, selected, view }) {
 function executionGraphSection(components, key) {
   const graphed = components.filter(({ graph }) => graph);
   if (!graphed.length) return "";
-  const panels = graphed.map(({ id, graph }, index) => `<div data-graph-panel="${index}"${index ? " hidden" : ""}>${executionGraphDiagram(graph, id)}</div>`).join("");
-  const switcher = graphed.length > 1 ? componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component") : "";
   const meta = graphed.length > 1
     ? graphed.map(({ label }) => label).join(" · ")
     : graphed[0].graph.steps.filter((step) => step.runsOn).map((step) => step.runsOn).join(" · ");
-  return disclosure(`graphs:${key}`, "Execution Graph", `<div data-execution-graphs>${switcher}${panels}</div>`, meta);
+  return disclosure(`graphs:${key}`, "Execution Graph",
+    componentPanels(graphed.map(({ label }) => label), graphed.map(({ id, graph }) => executionGraphDiagram(graph, id))), meta);
 }
 
-export function selectExecutionGraph(event) {
-  const button = event.target.closest("[data-graph-component]");
+// Every component's panel, with a switch that shows one at a time when there are several.
+function componentPanels(labels, panels) {
+  const switcher = labels.length > 1 ? componentSwitch(labels, 0, "data-component-switch") : "";
+  return `<div data-component-panels>${switcher}${panels.map((markup, index) =>
+    `<div data-component-panel="${index}"${index ? " hidden" : ""}>${markup}</div>`).join("")}</div>`;
+}
+
+export function selectComponentPanel(event) {
+  const button = event.target.closest("[data-component-switch]");
   if (!button) return;
-  const panel = button.closest("[data-execution-graphs]");
-  panel.querySelectorAll("[data-graph-component]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-  panel.querySelectorAll("[data-graph-panel]").forEach((item) => { item.hidden = item.dataset.graphPanel !== button.value; });
+  const panel = button.closest("[data-component-panels]");
+  panel.querySelectorAll("[data-component-switch]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+  panel.querySelectorAll("[data-component-panel]").forEach((item) => { item.hidden = item.dataset.componentPanel !== button.value; });
 }
 
 function layerAnalysisSection(sources, key) {
@@ -641,10 +647,12 @@ function renderMlaUtilization(components, simulation, precisions, throughputFps,
       <div id="${escapeHtml(detailsKey)}" class="tensor-table"${open ? "" : " hidden"}><table><thead><tr>${headings.map((heading) => `<th scope="col">${heading}</th>`).join("")}</tr></thead>
       <tbody>${metrics.stages.map(row).join("")}</tbody></table></div>`;
   };
-  const body = results.map((result) => `${results.length > 1 ? `<h4>${escapeHtml(result.label)}</h4>` : ""}
-    ${result.metrics ? stageDetails(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`}`).join("");
-  return disclosure(`mla-utilization:${key}`, "MLA Utilization", `<div class="mla-utilization">
-    ${body}</div>`, compared ? `${number(sustainedTops, 2)} effective TOPS sustained` : "");
+  const panels = results.map((result) => (result.metrics
+    ? stageDetails(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`));
+  const meta = compared ? `${number(sustainedTops, 2)} effective TOPS sustained`
+    : results.length > 1 ? results.map(({ label }) => label).join(" · ") : "";
+  return disclosure(`mla-utilization:${key}`, "MLA Utilization",
+    `<div class="mla-utilization">${componentPanels(results.map(({ label }) => label), panels)}</div>`, meta);
 }
 
 // The build profile's numbers for the whole model, with each component's layer analysis, MLA utilization and
