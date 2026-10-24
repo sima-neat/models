@@ -50,3 +50,14 @@ test('Production selects its public reader and site independently of audience', 
   }
   assert.throws(() => portalConfig({MODEL_BROWSER_ENVIRONMENT: 'prodution'}), /Unsupported/);
 });
+
+
+test('Deployment identity survives a staging preview of production data', async () => {
+  const {resolveEnvironment} = await import('../../artifact-browser/environment.js');
+  const staged = {...portalConfig({}), build: {branch: 'feature/browser', commit: 'abc123'}};
+  const preview = resolveEnvironment(staged, '?env=prod&branch=main');
+  assert.equal(preview.deploymentEnvironment, 'staging');
+  assert.equal(preview.environment, 'Production');
+  assert.equal(preview.build.branch, 'feature/browser');
+  assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'}).deploymentEnvironment, 'production');
+});

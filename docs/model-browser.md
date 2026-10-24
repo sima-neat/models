@@ -335,3 +335,44 @@ source revision. Roll back by restoring that index version and invalidating
 the newly created root index to disable the entry point. Restore the previous
 full build from its source revision if documentation routes also need rollback.
 Model registry contents and publisher environment selections are unchanged.
+
+## Staging release notice
+
+Staging builds show an unofficial-release notice above the browser navigation,
+including the connected backend environment and the frontend's source branch and
+commit. These are the browser build's details, independent of the selected model
+catalog branch. A staging browser previewing production data keeps the notice
+and identifies the production backend. Local builds with uncommitted changes
+say so beside the commit. Production builds omit the staging notice.
+
+## Manual frontend deployment in GitHub Actions
+
+Run **Deploy Model Browser & Docs** from the protected `develop` or `main`
+branch. Select `staging` or `production` and the developer or customer audience.
+The selected workflow commit is the frontend source revision. This workflow
+builds and tests the browser and bundled docs, then publishes only `models/`
+using that environment's Terraform-managed bucket, KMS key, identity and CDN.
+It neither builds models nor publishes the registry tooling package. Existing
+production Basic Auth is infrastructure-managed and stays enabled.
+
+The dispatching user must belong to `owners-models` and approve their own
+`model-browser-deploy` environment gate. GitHub's Run button is visible to other
+writers, but their runs cannot deploy, even if a different owner approves them.
+The gate allows only that team, disables administrator bypass, and restricts
+workflow refs to `develop` and `main`. The authorization job verifies the gate
+and the dispatcher's approval before build/configuration/AWS jobs. Reruns are
+rejected to avoid reusing historical authorization; dispatch a fresh run instead.
+No additional organization-read token is needed.
+
+Automatic staging frontend publication remains as configured in the model
+orchestrator; production frontend publication is manual. Tooling publication
+(**Build and Publish Model Registry**) follows repository `VULCAN_ENV` on both
+push and manual invocation, defaulting to staging only when unset. Its destination
+is independent of this frontend workflow's environment selector.
+
+The environment protection payload is versioned in
+`config/model-browser-deployment-environment.json`. Its two deployment branch
+policies are exact branch names `develop` and `main` (no tags or wildcard refs).
+The workflow must reach the default branch (`main`) before GitHub exposes its
+Run workflow button; merge through the normal reviewed branch promotion. The environment gate is configured
+separately through repository administration and checked again at runtime.

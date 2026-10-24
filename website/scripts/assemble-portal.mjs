@@ -23,7 +23,18 @@ const fingerprintedAssets = [
   'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment',
 ];
 const stylesheets = ['brand', 'styles'];
-const config = portalConfig();
+function gitMetadata(args) {
+  try { return execFileSync('git', args, {cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim(); }
+  catch { return null; } // Source archives may have CI metadata but no Git directory.
+}
+const config = {
+  ...portalConfig(),
+  build: {
+    commit: process.env.GITHUB_SHA || execFileSync('git', ['rev-parse', 'HEAD'], {cwd: repository, encoding: 'utf8'}).trim(),
+    branch: process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || gitMetadata(['branch', '--show-current']) || 'Branch unavailable',
+    modified: Boolean(gitMetadata(['status', '--porcelain'])),
+  },
+};
 const configSource = `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`;
 // Audience and backend can change without a source commit. Preserve each configuration
 // so an earlier entry point still loads its original settings after rollback.

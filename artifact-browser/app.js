@@ -437,6 +437,14 @@ async function initialize() {
   else showEmptyDetail();
   state.urlBranch = !branchSelectionEnabled || link.has("branch");
   state.preferredBranch = !branchSelectionEnabled ? DEFAULT_BRANCH : state.urlBranch ? link.get("branch") : readBranchPreference();
+  const releaseNotice = document.getElementById("release-notice");
+  if (releaseNotice) {
+    releaseNotice.hidden = config.deploymentEnvironment !== "staging";
+    document.getElementById("release-backend").textContent = config.environment || "Custom";
+    document.getElementById("release-branch").textContent = config.build?.branch || "Source preview";
+    document.getElementById("release-commit").textContent = config.build?.commit
+      ? `${config.build.commit.slice(0, 12)}${config.build.modified ? " (local changes)" : ""}` : "Build revision unavailable";
+  }
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   // Returning to the catalog keeps the cards on screen while they reload, so the restored scroll position holds.
   if (!elements["result-list"].querySelector(".model-card, .run-entry")) {
