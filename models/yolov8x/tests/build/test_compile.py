@@ -181,6 +181,8 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
+    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
+    assert compile_module._parameters("w8a16") == {"precision": "w8a16"}
     assert compile_module._parameters("w8a8") == {
         "precision": "w8a8",
         "calibration_bins": 2048,
@@ -193,7 +195,7 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
 def test_model_preserves_compilation_and_quality_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",

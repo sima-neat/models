@@ -19,8 +19,37 @@ accuracy:
         coco_ar_small: 0.5039
         coco_ar_medium: 0.7413
         coco_ar_large: 0.8313
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.4863
+        coco_ap50: 0.6585
+        coco_ap75: 0.5259
+        coco_ap_small: 0.2998
+        coco_ap_medium: 0.5473
+        coco_ap_large: 0.6585
+        coco_ar1: 0.3753
+        coco_ar10: 0.6263
+        coco_ar100: 0.6777
+        coco_ar_small: 0.5039
+        coco_ar_medium: 0.7413
+        coco_ar_large: 0.8313
+    w8a16:
+      coco-2017-val:
+        coco_map: 0.4863
+        coco_ap50: 0.6585
+        coco_ap75: 0.5259
+        coco_ap_small: 0.2998
+        coco_ap_medium: 0.5473
+        coco_ap_large: 0.6585
+        coco_ar1: 0.3753
+        coco_ar10: 0.6263
+        coco_ar100: 0.6777
+        coco_ar_small: 0.5039
+        coco_ar_medium: 0.7413
+        coco_ar_large: 0.8313
 performance:
-  run_tests: true
+  run_tests: false
+  skip_reason: The w16a16 and w8a16 builds have no published report to expect values from yet.
   expected:
     w8a8:
       throughput_fps: 379.4

@@ -20,6 +20,7 @@ from afe.apis.defines import (
     HistogramMSEMethod,
     InputName,
     RequantizationMode,
+    SkipCalibration,
     bfloat16_scheme,
     default_quantization,
     gen2_target,
@@ -53,12 +54,13 @@ def _parameters(profile_id: str) -> dict[str, Any]:
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> Any:
+    int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     if precision == "w8a8":
         config = (
             default_quantization.with_activation_quantization(
                 quantization_scheme(asymmetric=True, per_channel=False, bits=8)
             )
-            .with_weight_quantization(quantization_scheme(asymmetric=False, per_channel=True, bits=8))
+            .with_weight_quantization(int8_weights)
             .with_calibration(HistogramMSEMethod(calibration_bins))
             .with_bias_correction(BiasCorrectionType.REGULAR)
         )
@@ -66,6 +68,14 @@ def _quantization(precision: str, calibration_bins: int | None) -> Any:
         config = (
             default_quantization.with_activation_quantization(bfloat16_scheme())
             .with_weight_quantization(bfloat16_scheme())
+        )
+    elif precision == "w8a16":
+        # BF16 activations need no calibrated ranges, and bias correction would measure the placeholder sample.
+        config = (
+            default_quantization.with_activation_quantization(bfloat16_scheme())
+            .with_weight_quantization(int8_weights)
+            .with_calibration(SkipCalibration())
+            .with_bias_correction(BiasCorrectionType.NONE)
         )
     else:
         raise ValueError(f"unsupported precision: {precision}")
