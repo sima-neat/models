@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     pairs = prefetched(lambda path: image_pair(path.read_bytes(), int(path.stem)), selected)
     metrics, totals = evaluate(pairs, len(selected), features_of)
-    report = model_report.accuracy({
+    report = model_report.from_accuracy({
         dataset_id: {
             "metrics": metrics,
             "split": IMAGES, "evaluated_samples": len(selected), "available_samples": AVAILABLE_IMAGES,
