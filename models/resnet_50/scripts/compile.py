@@ -90,6 +90,8 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
             calibration_method=CalibrationMethod.from_str("mse"),
             activation_quantization_scheme=activation_scheme,
             weight_quantization_scheme=weight_scheme,
+            # W8A16 scales each token's activations on its own before an INT8-weight operation.
+            per_token_quant=precision == "w8a16",
         ),
         model_name=model_name,
     )
