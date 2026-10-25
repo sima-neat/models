@@ -170,7 +170,10 @@ The Model Browser shows variant IDs in uppercase, while
 `sima-cli models download --variant` takes the lowercase ID.
 
 Each component's `parameters.precision` is its precision token, and the
-recipe maps it to compiler settings. The target is `modalix`.
+recipe maps it to compiler settings. A W8A16 component also declares
+`per_token: true`, as in `{precision: w8a16, per_token: true}`, and the recipe
+passes it to the compiler's per-token activation quantization. The target is
+`modalix`.
 
 | Runner field | Values | Default | Access requirement |
 | --- | --- | --- | --- |

@@ -163,7 +163,8 @@ the profile. The recipe calibrates the first component on the profile's
 `calibration_dataset` and later components on its outputs. The build target is
 `modalix`; keep runner class and graph-changing parameters explicit.
 Mixed-precision profiles still declare each component's precision rather than
-deriving it from the profile ID.
+deriving it from the profile ID. A W8A16 component also declares
+`per_token: true`, such as `parameters: {precision: w8a16, per_token: true}`.
 
 ONNX recipes use the following interface. For Hugging Face checkpoints, use the
 [LLiMa recipe](#llima-language-and-vision-language-models) instead:

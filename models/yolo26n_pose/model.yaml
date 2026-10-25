@@ -51,7 +51,7 @@ build_profiles:
   w8a16:
     components:
       model:
-        parameters: {precision: w8a16}
+        parameters: {precision: w8a16, per_token: true}
 
 accuracy:
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
