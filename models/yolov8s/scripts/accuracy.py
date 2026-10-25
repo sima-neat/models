@@ -235,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = coco_stats(scorer)
     scoring_seconds = time.monotonic() - started
 
-    report = model_report.accuracy({
+    report = model_report.from_accuracy({
         dataset_id: {
             "metrics": stats,
             "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
