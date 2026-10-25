@@ -15,12 +15,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-import yaml
 from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
     InputName,
     RequantizationMode,
+    SkipCalibration,
     bfloat16_scheme,
     default_quantization,
     gen2_target,
@@ -32,6 +32,7 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import IMAGE_SIZE, calibration_tiles
 from model_registry.dependencies import resolve_model_compiler
+from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, prepare_model
 
@@ -45,7 +46,7 @@ OUTPUT_BYTES = [math.prod(OUTPUT_SHAPES[name]) * 4 for name in OUTPUTS]
 
 
 def _parameters(profile_id: str) -> dict[str, Any]:
-    model = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))
+    model = load_metadata(MODEL_DIR)
     profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
@@ -53,24 +54,33 @@ def _parameters(profile_id: str) -> dict[str, Any]:
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> Any:
-    if precision == "int8":
+    int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+    if precision == "w8a8":
         config = (
             default_quantization.with_activation_quantization(
                 quantization_scheme(asymmetric=True, per_channel=False, bits=8)
             )
-            .with_weight_quantization(quantization_scheme(asymmetric=False, per_channel=True, bits=8))
+            .with_weight_quantization(int8_weights)
             .with_calibration(HistogramMSEMethod(calibration_bins))
             .with_bias_correction(BiasCorrectionType.REGULAR)
         )
-    elif precision == "bf16":
+    elif precision == "w16a16":
         config = (
             default_quantization.with_activation_quantization(bfloat16_scheme())
             .with_weight_quantization(bfloat16_scheme())
         )
+    elif precision == "w8a16":
+        # BF16 activations need no calibrated ranges, and bias correction would measure the placeholder sample.
+        config = (
+            default_quantization.with_activation_quantization(bfloat16_scheme())
+            .with_weight_quantization(int8_weights)
+            .with_calibration(SkipCalibration())
+            .with_bias_correction(BiasCorrectionType.NONE)
+        )
     else:
         raise ValueError(f"unsupported precision: {precision}")
-    # with_activation_quantization turns per-token quantization on for BF16; this recipe keeps it off.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
+    # with_activation_quantization turns per-token quantization on for BF16; only W8A16 keeps it.
+    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(precision == "w8a16")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -120,9 +130,9 @@ def audit_mpk(archive: Path) -> None:
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
     parameters = _parameters(profile_id)
     precision = str(parameters["precision"])
-    calibration_bins = int(parameters["calibration_bins"]) if precision == "int8" else None
+    calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
     quantization = _quantization(precision, calibration_bins)
-    if precision == "int8":
+    if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 build requires --dataset from dataset-registry")
         samples = calibration_tiles(dataset, int(parameters["calibration_samples"]))
@@ -172,8 +182,8 @@ def main() -> int:
     parser.add_argument("--compile-invocation", required=True)
     parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
     args = parser.parse_args()
-    if args.compile_invocation != COMPONENT_ID:
-        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
+    if args.compile_invocation != args.build_profile:
+        parser.error("a build profile compiles in one invocation named after it")
     source = args.model.expanduser().resolve()
     if source.suffix != ".onnx":
         parser.error("--model must be the verified ONNX from the conversion workflow")

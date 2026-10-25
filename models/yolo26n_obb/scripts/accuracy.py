@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import model_report
 import numpy as np
 import pyneat
 import shapely
@@ -294,13 +295,15 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", type=Path, required=True, help="extracted dota-v1-0/val directory")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dataset", required=True, help="dota-v1-0-val=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    dataset = Path(dataset_dir)
 
     model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
-    image_dir = args.dataset / IMAGES
+    image_dir = dataset / IMAGES
     available = sorted(path.name for path in image_dir.glob("*.jpg"))
     if len(available) != VAL_IMAGES:
         raise SystemExit(f"expected {VAL_IMAGES} DOTA-v1.0 val images, found {len(available)}")
@@ -332,24 +335,25 @@ def main(argv: list[str] | None = None) -> int:
     if not any(len(boxes) for boxes in detections.values()):
         raise SystemExit("the model produced no detections")
     started = time.monotonic()
-    metrics, class_ap50 = score(detections, args.dataset / LABELS)
+    metrics, class_ap50 = score(detections, dataset / LABELS)
     scoring_seconds = time.monotonic() - started
 
-    result = {
-        "core_version": pyneat.__version__,
-        "dataset": {"split": "val", "evaluated_samples": len(names), "available_samples": len(available)},
-        "metrics": {name: {"value": metrics[name], "unit": "ratio", "direction": "higher"} for name in METRICS},
-        "details": {
-            "tiles": tiles,
-            "detections": sum(len(boxes) for boxes in detections.values()),
-            "class_ap50": class_ap50,
-            "inference_seconds": round(inference_seconds, 1),
-            "scoring_seconds": round(scoring_seconds, 1),
+    report = model_report.from_accuracy({
+        dataset_id: {
+            "metrics": {name: metrics[name] for name in METRICS},
+            "split": "val", "evaluated_samples": len(names), "available_samples": len(available),
+            "details": {
+                "tiles": tiles,
+                "detections": sum(len(boxes) for boxes in detections.values()),
+                "class_ap50": class_ap50,
+                "inference_seconds": round(inference_seconds, 1),
+                "scoring_seconds": round(scoring_seconds, 1),
+            },
         },
-    }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: round(item["value"], 4) for name, item in result["metrics"].items()}))
+    })
+    report.save(args.output)
+    measured = report.document["datasets"][dataset_id]["metrics"]
+    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 
 

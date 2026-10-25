@@ -53,6 +53,7 @@ COMPILER_AND_BOARD_MODULES = (
     "pyneat",
     "faster_coco_eval",
     "faster_coco_eval.core",
+    "shapely",
 )
 MISSING_MODULES = [
     name for name in COMPILER_AND_BOARD_MODULES if importlib.util.find_spec(name.partition(".")[0]) is None

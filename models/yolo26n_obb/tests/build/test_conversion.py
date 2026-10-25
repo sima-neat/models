@@ -1,17 +1,20 @@
 """Small checks for conversion failures that a synthetic smoke input can miss."""
 
-import importlib.util
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import onnx
 import pytest
-import yaml
+from model_registry.model import load_model as load_metadata
 
-ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("yolo26n_obb_convert", ROOT / "models/yolo26n_obb/scripts/convert.py")
-converter = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(converter)
+ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.fixture
+def converter(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script("convert")
 
 
 class Reference:
@@ -38,7 +41,7 @@ def _heads():
 
 
 @pytest.mark.parametrize("case", ["valid", "level_order", "angle_order", "shape", "nan"])
-def test_head_agreement(case):
+def test_head_agreement(case, converter: ModuleType):
     expected, actual = _heads()
     error, match = ValueError, "Unexpected or non-finite"
     if case == "level_order":
@@ -61,7 +64,7 @@ def test_head_agreement(case):
 
 
 @pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])
-def test_fixed_onnx_interface(tmp_path, case):
+def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
     helper = onnx.helper
     values = [
         helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape)
@@ -90,8 +93,8 @@ def test_fixed_onnx_interface(tmp_path, case):
             converter.validate_export(path)
 
 
-def test_source_must_be_the_pinned_checkpoint():
-    model = yaml.safe_load((ROOT / "models/yolo26n_obb/model.yaml").read_text(encoding="utf-8"))
+def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
+    model = load_metadata(ROOT / "models/yolo26n_obb")
     converter.validate_source(model["conversion"]["default"]["source"])
     for other in ("yolo26n.pt", "yolo26n-pose.pt"):
         with pytest.raises(ValueError, match="yolo26n-obb.pt"):
