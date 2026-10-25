@@ -1,10 +1,13 @@
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The w8a16 build has no published report to expect values from yet.
+  run_tests: true
   expected:
     w8a8:
+      imagenet-2012-mini:
+        top1_accuracy: 0.7764
+        top5_accuracy: 0.9356
+    w8a16:
       imagenet-2012-mini:
         top1_accuracy: 0.7764
         top5_accuracy: 0.9356

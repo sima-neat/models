@@ -254,7 +254,8 @@ def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
     authored["accuracy"]["datasets"].append({**authored["accuracy"]["datasets"][0], "variant": "small"})
     (model_dir / "model.yaml").write_text(yaml.safe_dump(authored, sort_keys=False), encoding="utf-8")
     tests = yaml.safe_load((model_dir / "tests" / "tests.yaml").read_text(encoding="utf-8"))
-    tests["accuracy"]["expected"]["w8a8"]["imagenet-2012-small"] = tests["accuracy"]["expected"]["w8a8"][IMAGENET]
+    for expected in tests["accuracy"]["expected"].values():
+        expected["imagenet-2012-small"] = expected[IMAGENET]
     (model_dir / "tests" / "tests.yaml").write_text(yaml.safe_dump(tests), encoding="utf-8")
     builds = registered_build(tmp_path / "_compiled", "resnet_50", "w8a8", ["model"])
     report = accuracy_report({
