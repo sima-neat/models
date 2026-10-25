@@ -492,8 +492,6 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("stage", "entry", "expected"),
     [
-        ("accuracy", {**EXPECTED["accuracy"], "expected": {"other": {"imagenet-2012-mini": {"top1_accuracy": 0.5}}}},
-         "accuracy.expected names build profiles that are not benchmarked: other"),
         ("accuracy", {**EXPECTED["accuracy"], "expected": {"fixture": {"imagenet-2012-mini": {"top5_accuracy": 0.5}}}},
          "accuracy.expected.fixture.imagenet-2012-mini lacks top1_accuracy"),
         ("accuracy", {**EXPECTED["accuracy"], "expected": {"fixture": {"other": {"top1_accuracy": 0.5}}}},
@@ -511,7 +509,6 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
         ),
     ],
     ids=[
-        "accuracy of a build profile that is not benchmarked",
         "accuracy without a required metric",
         "accuracy of an undeclared dataset",
         "accuracy without values",

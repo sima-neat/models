@@ -33,6 +33,20 @@ accuracy:
         coco_ar_small: 0.5657
         coco_ar_medium: 0.7764
         coco_ar_large: 0.8687
+    w8a16:
+      coco-2017-val:
+        coco_map: 0.5353
+        coco_ap50: 0.7040
+        coco_ap75: 0.5856
+        coco_ap_small: 0.3633
+        coco_ap_medium: 0.5779
+        coco_ap_large: 0.6918
+        coco_ar1: 0.3951
+        coco_ar10: 0.6646
+        coco_ar100: 0.7254
+        coco_ar_small: 0.5682
+        coco_ar_medium: 0.7746
+        coco_ar_large: 0.8646
 performance:
   run_tests: false
   skip_reason: The w8a16 build has no published report to expect values from yet.

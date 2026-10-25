@@ -48,6 +48,12 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
+  # Disabled until the compiler passes its W8A16 simulator check (#456); uncomment to build it again.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
 accuracy:
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
   datasets:

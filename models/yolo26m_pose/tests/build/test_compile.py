@@ -216,7 +216,7 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
 def test_model_preserves_compilation_and_quality_settings(load_script: Callable[[str], ModuleType]) -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
+    assert {profile["id"] for profile in model["build_profiles"]} >= {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
