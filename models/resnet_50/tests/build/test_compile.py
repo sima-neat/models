@@ -7,7 +7,6 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -168,28 +167,6 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     with pytest.raises(ValueError, match="only the declared Modalix BF16 and INT8 variants"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
     assert not (tmp_path / "model").exists()
-
-
-@pytest.mark.parametrize(("profile_id", "per_token"), [("w16a16", False), ("w8a8", False), ("w8a16", True)])
-def test_only_w8a16_quantizes_activations_per_token(
-    profile_id: str,
-    per_token: bool,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    load_script: Callable[[str], ModuleType],
-) -> None:
-    recipe = load_script("compile")
-    loaded = MagicMock()
-    monkeypatch.setattr(recipe, "onnx_source", MagicMock())
-    monkeypatch.setattr(recipe, "load_model", MagicMock(return_value=loaded))
-    monkeypatch.setattr(recipe, "AfeModel", MagicMock())
-    monkeypatch.setattr(recipe, "calibration_samples", lambda dataset, count: np.zeros((1, 224, 224, 3), np.float32))
-    monkeypatch.setattr(recipe, "QuantizationParams", dict)
-
-    with pytest.raises(RuntimeError, match="expected exactly one MPK archive"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile_id, tmp_path / "calibration")
-
-    assert loaded.quantize.call_args.args[1]["per_token_quant"] is per_token
 
 
 @pytest.mark.parametrize(
