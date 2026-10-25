@@ -20,8 +20,7 @@ benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
 benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
-# YOLO26 expects letterboxed input; without this, Neat labels the synthetic
-# input stretched and the YOLO26 box decoder rejects it.
+# YOLO26 expects letterboxed inputs.
 benchmark_options.resize_mode = pyneat.ResizeMode.Letterbox
 postprocess = model.info().selection.selected_post_kind
 report = model_report.from_performance(
