@@ -414,11 +414,11 @@ async function checkTaskComparison(browser, base) {
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();
-        if (choices.length !== 3 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
+        if (choices.length !== 4 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
         const dataset = await page.locator('.compare-chart-dataset').innerText();
         if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
         // The FP16 classification variant has no accuracy result; it stays available in Add model.
-        if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
+        if (await page.locator('.compare-point').count() !== 2 || await page.locator('.compare-point[data-compare-toggle="resnet_50.w16a16"]').count()) throw new Error('chart included a variant without measured accuracy');
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('variant without accuracy is no longer selectable');
         if (await page.locator('.compare-legend button').count()) throw new Error('selection without measured accuracy appears in the legend');
