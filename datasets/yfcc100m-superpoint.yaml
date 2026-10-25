@@ -1,0 +1,3 @@
+# What every model evaluating its accuracy on SuperPoint features of the YFCC100M test pairs must report, by task.
+required_metrics:
+  feature_matching: [pose_auc_5, pose_auc_10, pose_auc_20]
