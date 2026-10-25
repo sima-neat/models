@@ -111,7 +111,10 @@ def _undeclared_profile(item: pytest.Item) -> str | None:
     """The `profile_id` a test is parametrized with, when the model.yaml of its models/<id> folder leaves it out."""
     callspec = getattr(item, "callspec", None)
     profile_id = callspec.params.get("profile_id") if callspec else None
-    model_dir = next((parent for parent in item.path.parents if parent.parent.name == "models"), None)
+    model_dir = next(
+        (parent for parent in item.path.parents if parent.parent.name == "models" and (parent / MODEL_FILE).is_file()),
+        None,
+    )
     if profile_id is None or model_dir is None:
         return None
     return None if profile_id in _declared_profiles(model_dir) else profile_id
