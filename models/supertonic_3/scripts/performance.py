@@ -5,7 +5,7 @@ one sentence at the longest length the model takes: eight denoising steps of the
 classifier-free guidance and Euler update on the CPU between them, then the vocoder. A batch-2 vector
 estimator runs both guidance branches of a step in one call; a batch-1 one runs them as two calls. Each
 sentence depends on its own previous step, so sentences run one after another and throughput is sentences
-per second. It also records each MPK's layer timings and execution plan.
+per second. It also records each MPK's MLA layer and stage stats and its execution plan.
 """
 
 from __future__ import annotations
@@ -42,15 +42,20 @@ def percentile_ms(seconds: list[float], percentile: float) -> float:
     return float(np.percentile(seconds, percentile) * 1000)
 
 
-def layer_stats(mpk: Path) -> list[dict[str, object]]:
-    """Core's MLA layer timings for one MPK. Its throughput is not the model's, so Core's default run serves."""
+def mla_stats(mpk: Path) -> tuple[dict[str, object], dict[str, object]]:
+    """Core's MLA layer and stage stats for one MPK, in the shape Core saves them. Their throughput is not the
+    model's, so Core's default run serves."""
     options = pyneat.BenchmarkOptions()
-    options.include_layer_stats = True
+    options.include_mla_layer_stats = True
+    options.include_mla_stage_stats = True
     report = pyneat.Model(str(mpk)).benchmark(options)
-    return [
-        {"name": layer.name, "stage_index": layer.stage_index, "total_execution_time_us": layer.total_execution_time_us}
-        for layer in report.layer_stats
+    layer_stats, stage_stats = report.mla_layer_stats, report.mla_stage_stats
+    layers = [
+        {"stage_index": layer.stage_index, "name": layer.name, "latency_us": layer.latency_us}
+        for layer in layer_stats.layers
     ]
+    stages = [{"stage_index": stage.stage_index, "latency_us": stage.latency_us} for stage in stage_stats.stages]
+    return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
 def tensor(value: np.ndarray) -> pyneat.Tensor:
@@ -139,7 +144,9 @@ def measure(sentence: Sentence) -> tuple[list[float], float, pyneat.Telemetry]:
 
 
 def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
-    timings = {name: layer_stats(mpk) for name, mpk in mpks.items()}
+    mla_layer_stats, mla_stage_stats = {}, {}
+    for name, mpk in mpks.items():
+        mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
     models = {name: pyneat.Model(str(mpk)) for name, mpk in mpks.items()}
     sentence = Sentence(models)
     try:
@@ -155,7 +162,7 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
     benchmark.throughput_duration_ms = span * 1000
     benchmark.throughput_samples = len(latencies)
     calls = "one batch-2 call" if sentence.batch == 2 else "two batch-1 calls"
-    report = model_report.performance(
+    report = model_report.from_performance(
         benchmark,
         models,
         workload=(
@@ -163,7 +170,8 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
             "the Euler update on the CPU, then the vocoder; throughput is sentences per second"
         ),
         telemetry=telemetry,
-        layer_stats=timings,
+        mla_layer_stats=mla_layer_stats,
+        mla_stage_stats=mla_stage_stats,
     )
     report.save(output)
     print(f"{benchmark.fps:.2f} sentences/s over {len(latencies)} sentences in {span:.1f} s; "
