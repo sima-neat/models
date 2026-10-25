@@ -3,8 +3,29 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The expected values are recorded from the first DevKit accuracy run (#363 follow-up).
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        keypoint_repeatability: 0.7995
+        matching_accuracy: 0.9539
+        homography_accuracy: 0.9920
+    w8a8:
+      coco-2017-val:
+        keypoint_repeatability: 0.8007
+        matching_accuracy: 0.9562
+        homography_accuracy: 0.9930
+    w8a16:
+      coco-2017-val:
+        keypoint_repeatability: 0.7823
+        matching_accuracy: 0.9434
+        homography_accuracy: 0.9870
 performance:
-  run_tests: false
-  skip_reason: The expected throughput is recorded from the first DevKit performance run (#363 follow-up).
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 131.2
+    w8a8:
+      throughput_fps: 341.3
+    w8a16:
+      throughput_fps: 130.7
