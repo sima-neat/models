@@ -1,0 +1,264 @@
+name: Promote model
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Develop operation in VULCAN_ENV (Main release is not supported)
+        type: choice
+        options: [promote, status, cancel, reject]
+        default: promote
+        required: true
+      model_id:
+        description: "Promote only. Model folder under models/ (e.g. qwen3_5_0_8b); also the top-level id in model.yaml."
+        type: string
+      build_profile:
+        description: "Promote only. ID under build_profiles in models/<model_id>/model.yaml (e.g. w4a16). Selects the newest candidate receipt."
+        type: string
+      deployment_id:
+        description: "Exact finalized candidate UUID in VULCAN_ENV. Required for production; optional override in staging. Find it in that environment's build candidate.json."
+        type: string
+      promotion_id:
+        description: Existing promotion UUID (status, cancel, reject)
+        type: string
+      reason:
+        description: Reason and validation evidence links for the request or decision
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Different requests must not cancel each other's review gates.
+concurrency:
+  group: model-promotion-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: ${{ vars.VULCAN_ENV }}
+    outputs:
+      vulcan_environment: ${{ steps.config.outputs.vulcan_environment }}
+      api_url: ${{ steps.config.outputs.api_url }}
+      read_api_url: ${{ steps.config.outputs.read_api_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - name: Resolve the selected environment's writer and reader APIs
+        id: config
+        env:
+          VULCAN_ENV: ${{ vars.VULCAN_ENV }}
+          VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+        run: python scripts/model_promotion.py configure
+
+  prepare:
+    needs: configure
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      id-token: write
+    outputs:
+      operation: ${{ steps.prepare.outputs.operation }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Prepare or restore the immutable request plan
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_OPERATION: ${{ inputs.operation }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE: ${{ inputs.build_profile }}
+          PROMOTION_ID: ${{ inputs.promotion_id }}
+          PROMOTION_REASON: ${{ inputs.reason }}
+        run: python scripts/model_promotion.py prepare
+      # Persist the exact body/key BEFORE the first backend mutation.
+      - uses: actions/upload-artifact@v7
+        if: steps.prepare.outputs.upload_plan == 'true'
+        with:
+          name: promotion-plan
+          path: _promotion/plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  request:
+    needs: [configure, prepare]
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      record_artifact: ${{ steps.request.outputs.record_artifact }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Request promotion or inspect/cancel the existing request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_VULCAN_EVENT_CHANNEL_ID: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
+        run: python scripts/model_promotion.py request
+      - name: Notify model owners in Slack
+        if: steps.request.outputs.review_ready == 'true'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: _promotion/slack-review.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-record-${{ github.run_attempt }}
+          path: _promotion/record.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  approve:
+    needs: [configure, prepare, request]
+    if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject'
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ format('{0}-promote-develop', needs.configure.outputs.vulcan_environment) }}
+      url: https://github.com/sima-neat/models/actions/runs/${{ github.run_id }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.request.outputs.record_artifact }}
+          path: _promotion
+      - name: Assume the separately authorized promotion role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN }}
+      - name: Decide the exact reviewed request
+        run: python scripts/model_promotion.py approve
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-decision-${{ github.run_attempt }}
+          path: _promotion/decision.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  report:
+    needs: [configure, request, approve]
+    if: always() && needs.request.result == 'success'
+    env:
+      VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
+      VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
+      VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.configure.outputs.vulcan_environment }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install .
+      - uses: actions/download-artifact@v7
+        with:
+          name: promotion-plan
+          path: _promotion
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.request.outputs.record_artifact }}
+          path: _promotion
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+      - name: Report authoritative backend state
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_VULCAN_EVENT_CHANNEL_ID: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
+          APPROVAL_RESULT: ${{ needs.approve.result }}
+        run: python scripts/model_promotion.py report
+      - name: Notify promotion outcome in Slack
+        if: always() && steps.report.outputs.completion_ready == 'true'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: _promotion/slack-completion.json

@@ -13,19 +13,21 @@ complete the entire loop before submitting a model pull request.
 
 ## Local-first qualification loop
 
-For each supported build, meaning each compile invocation of each build
-profile, complete this sequence before opening a pull request:
+For each supported build, meaning each build profile, complete this sequence
+before opening a pull request:
 
-1. Validate the model directory and the complete catalog.
+1. Validate the model directory and the complete catalog, and run the
+   model's tests.
 2. Fetch and checksum the declared source, calibration, and fidelity inputs.
 3. Confirm the pinned compiler and the builds the matrix derives from
    `model.yaml`.
 4. Compile the build in the pinned Model Compiler environment.
 5. Validate the compile outputs and each MPK, and read the fidelity report when
    one is declared.
-6. Run the performance stage for every benchmarked component on a DevKit.
-7. Run the accuracy stage on a DevKit when the build profile declares DevKit
-   accuracy.
+6. Run the performance stage on a DevKit when the model declares performance
+   for the build profile.
+7. Run the accuracy stage on a DevKit when the model declares accuracy for the
+   build profile.
 8. Review the results and keep them, and the logs, outside the repository.
 
 ## Install the contributor tool
@@ -69,10 +71,9 @@ model-registry validate models/<model-id>
 ```
 
 This checks the JSON Schema, taxonomy references, the immutable source policy,
-matching directory and model IDs, component and build-profile references,
-compile invocations, packages, the `fidelity`, `accuracy`, and `benchmark`
-entries, the model folder layout, and every referenced recipe and surgery
-hook. A declared `conversion` also needs `scripts/convert.py` and
+the build profiles' components and calibration datasets, the `pipeline`, the
+`numerical_fidelity`, `accuracy`, and `performance` sections and their
+scripts, `reference_metrics`, the model folder layout, and the recipe. A declared `conversion` also needs `scripts/convert.py` and
 `scripts/requirements-convert.txt`. Fix the reported field in `model.yaml`; do
 not weaken a declaration just to pass validation.
 
@@ -81,6 +82,26 @@ Then validate every model:
 ```bash
 model-registry validate-models --repository .
 ```
+
+Run the model's tests from a virtual environment with this checkout's
+development extra installed. The extra holds the test dependencies, such as
+pytest and OpenCV, and matches what CI installs:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install '.[dev]'
+.venv/bin/python -m pytest models/<model-id>/tests
+```
+
+`.venv/bin/python -m pytest` with no path runs the whole repository suite.
+
+Run a stage's tests on an output you produced with
+`scripts/run_model_tests.sh <stage> models/<model-id> <output> [<profile-id>]`,
+where the output is a build's compile output directory or a DevKit
+`model-report.json`, the profile is the one that report measured, and
+`REGISTRY_PYTHON` names that environment's Python. [Write the model's
+tests](adding-a-model.md#10-write-the-models-tests) explains the files and
+where each test runs.
 
 ## Fetch and verify immutable inputs
 
@@ -94,9 +115,9 @@ model-registry fetch-fidelity-dataset models/<model-id> \
 
 `fetch` checks the exact byte size and SHA-256 before installing the source
 into a checksum-addressed cache. `fetch-calibration` does the same for a
-`ready` calibration, and `fetch-fidelity-dataset` for the dataset of a
-`fidelity` entry that applies to the build. Both report `kind: none` when the
-build needs no such input.
+`ready` calibration, which belongs to the profile's first component, and
+`fetch-fidelity-dataset` for the `numerical_fidelity` dataset. Both report
+`kind: none` when the build needs no such input.
 
 The default cache is `~/.cache/model-registry`. For an isolated cache, use
 either form:
@@ -106,10 +127,10 @@ export MODEL_REGISTRY_CACHE="$PWD/.model-registry-cache"
 model-registry fetch models/<model-id> --cache-dir "$PWD/.model-registry-cache"
 ```
 
-`HF_TOKEN` and `GITHUB_TOKEN` are used when present and never printed. Do not
+`HF_TOKEN` is used when present and never printed. Do not
 put tokens, signed URLs, or cache content in model metadata or Git.
 
-## Inspect builds and stage keys
+## Inspect builds and fingerprints
 
 Confirm the repository compiler pin and the builds `model.yaml` declares:
 
@@ -119,22 +140,22 @@ model-registry matrix --repository . --models <model-id>
 ```
 
 `resolve-compiler` prints the pinned compiler `identity`, `label`, and
-`version`. The matrix is deterministic JSON with one entry per build. Each
-entry names its `compile_invocation_id`, `component_ids`, the
-`benchmark_component_ids` of its performance stage, and the `accuracy_id` of
-its accuracy stage, or `null`. Narrow it with `--profiles` and `--components`.
+`version`. The matrix is deterministic JSON with one entry per build profile.
+Each entry names its `compile_invocation_id`, which is the profile ID, its
+`component_ids`, and the benchmark `stages` that measure it. Narrow it with
+`--profiles` and `--components`.
 
-Pass the compiler identity to see each build's compile key:
+Pass the compiler identity to see each build's compile fingerprint:
 
 ```bash
 model-registry matrix --repository . --models <model-id> \
   --compiler-version <identity>
 ```
 
-The key appears as `build_fingerprint`. Compare it before and after an edit:
-an unchanged key means CI reuses the published compilation. [What a change
-reruns](adding-a-model.md#9-know-what-a-change-reruns) lists the inputs of each
-stage key.
+The fingerprint appears as `compile_fingerprint`. Compare it before and after
+an edit: an unchanged fingerprint means CI reuses the published compilation.
+[What a change reruns](adding-a-model.md#9-know-what-a-change-reruns) lists the
+inputs of each fingerprint.
 
 ## Compile locally from `model.yaml`
 
@@ -156,11 +177,12 @@ does not provide a public compile command.
 `scripts/run_model_compilation.sh` runs one build the way CI does:
 
 ```bash
-scripts/run_model_compilation.sh models/<model-id> <profile-id> <invocation-id> <output-root>
+scripts/run_model_compilation.sh models/<model-id> <profile-id> <profile-id> <output-root>
 ```
 
-It fetches the source of the invocation's first component, resolves the
-calibration and fidelity datasets, runs `scripts/compile.py`, writes
+The third argument is the compile invocation, which is named after the
+profile. The script fetches the source, resolves the calibration and fidelity
+datasets, runs `scripts/compile.py`, writes
 `compile-outputs.json` for a single-component recipe that did not, and
 validates every declared MPK. Results land in
 `<output-root>/<model-id>/<profile-id>/`, with one directory per component.
@@ -179,14 +201,13 @@ fidelity_path="$(model-registry fetch-fidelity-dataset \
   models/<model-id> --build-profile <profile-id> --component <component-id> --json | jq -r .path)"
 ```
 
-For a grouped invocation, fetch the source of its first component and resolve
-the datasets for each component; the runner script does this and rejects an
-invocation whose components resolve different datasets.
+For several components, fetch the source with the first component and
+resolve the datasets for each component; the runner script does this and
+rejects a profile whose components resolve different datasets.
 
-A calibration resolves to either a registered dataset archive or the
-immutable file of a calibration `source`; either way the recipe receives it as
-`--dataset`. An empty path means the build needs no such input. Then invoke the
-recipe once per compile invocation, with a new output directory:
+A calibration resolves to a registered dataset archive, which the recipe
+receives as `--dataset`. An empty path means the build needs no such input. Then invoke the
+recipe once for the profile, with a new output directory:
 
 ```bash
 recipe_args=()
@@ -201,14 +222,14 @@ python models/<model-id>/scripts/compile.py \
   --model "$source_path" \
   --output-dir <new-output-directory> \
   --build-profile <profile-id> \
-  --compile-invocation <invocation-id> \
+  --compile-invocation <profile-id> \
   "${recipe_args[@]}"
 ```
 
 In short, the interface is `compile.py --model <verified-entrypoint>
 --output-dir <directory> --build-profile <profile-id> --compile-invocation
-<invocation-id>`, plus the optional dataset flags. A grouped invocation runs
-once and writes every component's MPK.
+<profile-id>`, plus the optional dataset flags. The recipe runs once and
+writes every component's MPK.
 
 ### Check the compile outputs
 
@@ -220,22 +241,22 @@ model-registry verify-mpk <output-directory>/<component-id>
 ```
 
 For a manual single-component compile, record the outputs before validating
-them; a grouped recipe writes its own `compile-outputs.json`, which must also
-list each component's `derived_graphs` digest and the `correctness` entry that
-points at the result component's `fidelity.json`:
+them; a multi-component recipe writes its own `compile-outputs.json`, which
+must also list each component's `derived_graphs` digest:
 
 ```bash
 model-registry record-compile-outputs <output-directory> \
   --model-id <model-id> --build-profile-id <profile-id> \
-  --compile-invocation-id <invocation-id> --components <component-id>
+  --compile-invocation-id <profile-id> --components <component-id>
 model-registry validate-compile-outputs <output-directory>/compile-outputs.json \
   --output-root <output-directory> --model-id <model-id> \
-  --build-profile-id <profile-id> --compile-invocation-id <invocation-id> \
+  --build-profile-id <profile-id> --compile-invocation-id <profile-id> \
   --components <component-a>,<component-b>
 ```
 
-When a `fidelity` entry applies, read `<result-component>/fidelity.json` and
-confirm its metrics are what the entry's status claims. See [Accuracy and
+When `model.yaml` declares `numerical_fidelity`, read
+`<output-directory>/fidelity.json` and confirm its metrics are what the
+section's status claims. See [Accuracy and
 fidelity](local-accuracy-development.md#compile-time-fidelity).
 
 To check a download package, assemble it from the compiled output:
@@ -247,12 +268,12 @@ model-registry assemble-package \
   --output-dir <package-output> \
   --model <model-id> \
   --build-profile <profile-id> \
-  --package <package-id>
+  --package default
 ```
 
-Confirm the bundle contains every declared component MPK, resource path, and
-`manifest.json`. Package assembly does not replace MPK validation or
-application testing.
+A single-component package is that component's MPK. Otherwise, confirm the
+ZIP holds every component MPK at its top level. Package assembly does not replace MPK
+validation or application testing.
 
 Keep MPKs and compiler intermediates outside the repository or in an ignored
 directory, and never commit them. If the pinned compiler is not installed, get
@@ -260,35 +281,41 @@ access to it before continuing; validation alone is not enough to submit.
 
 ## Benchmark locally on a Modalix DevKit
 
-The performance stage runs the model's `scripts/performance.py` once for each
-component listed in the build's `benchmark_component_ids`. It measures the
-compiled model with Neat Core's default synthetic workload; it does not
-measure accuracy or application preprocessing and postprocessing.
+The performance stage runs the model's standalone `scripts/performance.py`
+once per benchmarked build profile, with every component's MPK, and measures
+the whole model. Scripts of single-component models use Neat Core's default
+synthetic workload;
+the stage does not measure accuracy or application preprocessing.
 
 Complete the DevKit setup in [DevKit performance](benchmarking.md#set-up-a-devkit)
-once. Then copy the exact compiled MPK and the model's `scripts/performance.py`
-to the DevKit and run:
+once. Then copy the exact compiled MPKs, the model folder, and
+`tools/model_report` to the DevKit and run the script:
 
 ```bash
-~/pyneat/bin/python models/resnet_50/scripts/performance.py \
-  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/core-benchmark.json \
-  2>&1 | tee /workspace/benchmark.log
+PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
+  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/performance \
+  2>&1 | tee /workspace/performance.log
 ```
 
-The same command with `python models/resnet_50/scripts/performance.py` works
-inside an activated PyNeat environment. Confirm a successful exit and check the
-report's `core_version`, `latency_ms`, `fps`, and power fields.
-Keep the report and log outside Git. Run each component of a multi-component
-model separately.
+A multi-component model takes one `--mpk <component>=<path>` per component;
+see [Multi-component models](benchmarking.md#multi-component-models). Confirm
+a successful exit and check the saved `performance/model-report.json` for
+`latency_avg_ms`, `throughput_fps`, and the power metrics under `metrics`, and
+its `runtime.pyneat` version. For the script's settings, follow [DevKit
+performance](benchmarking.md#the-performance-script).
+Keep the report and log outside Git.
 
-`scripts/run_model_performance.sh` is the CI wrapper around this script. It
-needs the registry publication record of a published compilation, so it does
-not run on a local compile.
+`scripts/run_model_performance.sh <model-dir> <profile-id> <output-root>
+<result-directory>` runs the stage the way CI does against a local compile
+output: it also sets the MLA and CPU clocks and runs `model-registry
+check-report`. It needs a full Model Registry install from this checkout
+(`python -m pip install .`), named by `REGISTRY_PYTHON`, and passwordless
+`sudo` for the clocks.
 
 ## Measure declared accuracy locally
 
-Run this step when the build profile has an `accuracy` entry with `engine:
-devkit_script`; the matrix shows it as `accuracy_id`.
+Run this step when `model.yaml` declares `accuracy` for the build profile; the
+matrix lists `accuracy` in the profile's `stages`.
 
 `scripts/run_model_accuracy.sh` runs the accuracy stage on a DevKit against a
 local compile output:
@@ -299,27 +326,28 @@ scripts/run_model_accuracy.sh models/<model-id> <profile-id> <output-root> <resu
 
 It needs a full Model Registry install from this checkout (`python -m pip
 install .`) with Dataset Registry, named by `REGISTRY_PYTHON`, and PyNeat,
-named by `PYNEAT_PYTHON`. It writes `script-output.json`, `accuracy.log`, and
-`accuracy-result.json`. For a short smoke test, run `accuracy.py` directly with
+named by `PYNEAT_PYTHON`. It writes `model-report.json`, `accuracy.log`, and
+`environment.json`. For a short smoke test, run `accuracy.py` directly with
 `--limit`. [Accuracy and fidelity](local-accuracy-development.md#accuracy-on-the-devkit)
-covers both forms and the result contract.
+covers both forms and the report.
 
 ## Finish the local review
 
 Before leaving the local workflow, confirm that:
 
-- the model and the complete catalog validate;
+- the model and the complete catalog validate, and the model's tests pass,
+  including each stage's tests on its local output;
 - every intended build appears in the matrix;
 - every build compiles and its compile outputs and MPKs validate;
 - each declared fidelity report has the expected metrics;
-- the performance stage succeeds for every benchmarked component of that exact
-  MPK;
+- the performance stage succeeds when declared, on those exact MPKs, with the
+  required metrics;
 - the accuracy stage succeeds when declared, with the expected sample count and
   required metrics; and
-- fetched inputs, MPKs, result JSON, and logs remain outside the repository.
+- fetched inputs, MPKs, reports, and logs remain outside the repository.
 
 Summarize each stage in the pull request. A compact record such as `validate:
-pass`, `compile modalix_int8/model: pass`, `performance: pass`, and `accuracy:
+pass`, `compile w8a8/model: pass`, `performance: pass`, and `accuracy:
 not declared` is clearer than a broad claim that local testing passed.
 
 When this checklist passes, continue to [Submit for review](contributing.md).
@@ -331,8 +359,41 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | `id must match directory name` | Rename the directory or correct `id`; both use the same snake-case value. |
 | Unknown or incompatible taxonomy ID | Select an ID from the canonical taxonomy or propose a reviewed taxonomy change. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
-| Source host or URL rejected | Use a full-commit Hugging Face resource, an approved GitHub release asset, or another approved checksum-verified host. |
+| Source host or URL rejected | Use a full-commit Hugging Face resource or another approved checksum-verified host; GitHub release assets are not accepted. |
 | Referenced file does not exist | Keep recipe and surgery paths under the model's `scripts/`; a declared `conversion` also needs `scripts/convert.py` and `scripts/requirements-convert.txt`. |
-| Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, and `scripts/`. |
-| Build missing from the matrix | Check the component binding `status`, the requested IDs, and the build profile's `compile_invocations`. |
-| Unexpected MPK count | Start from an empty output directory. An invocation writes exactly one MPK per component. |
+| Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, `scripts/`, and `tests/`. |
+| `set up exactly the stages this model has` or `unexpected test files` | Give `tests/tests.yaml` one entry per stage the model has, and keep only `tests.yaml`, the stage test files, and `fixtures/` under `tests/` ([write the model's tests](adding-a-model.md#10-write-the-models-tests)). |
+| `tests run but tests/<group>/test_<stage>.py is missing` | Add the stage's test file, or set the stage's `run_tests: false` with a `skip_reason`. |
+| `accuracy.expected.<profile> lacks` or `performance.expected.<profile> lacks` | Add the build profile's latest published value under `expected` ([set up `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). |
+| Build missing from the matrix | Check the requested model, profile, and component IDs against `model.yaml`. |
+| Unexpected MPK count | Start from an empty output directory. A build writes exactly one MPK per component. |
+
+
+## Compile an LLM or VLM with LLiMa
+
+For a Hugging Face language or vision-language model, use the LLiMa runner:
+
+```bash
+scripts/run_llima_compilation.sh models/<model-id> <profile-id> <profile-id> /path/to/output
+model-registry verify-artifact /path/to/output/<model-id>/<profile-id>/<component-id> --write-manifest
+```
+
+Activate the matching LLiMa and pinned Model Compiler tools first. The recipe
+calls `llima-compile` and saves its complete arguments in a standalone `compile.sh`.
+The runner verifies the pinned checkpoint download,
+calls that recipe, and runs `llima-deploy`. It writes
+`<model-id>/<profile-id>/<component-id>/deployment/` with `devkit/`, `elf_files/`,
+any `npy_files/`, and that script. Verification writes `deployment-manifest.json` beside
+the folder. `compile-outputs.json` points to `<component-id>/deployment-manifest.json`
+and hashes that index; it does not point to an archive.
+
+A profile is a named compilation configuration in `model.yaml`. Its component
+parameters explicitly set `max_num_tokens: 4096` and `language_group_size`.
+Add `input_height` and `input_width` only for VLMs needing a resolution override;
+omit them for LLMs and fixed-resolution VLMs. The runner forwards declared
+settings to the recipe. Additional compiled configurations use separate profiles.
+
+See [on-demand builds](adding-a-model.md#on-demand-builds)
+for manual build and publication instructions.
+See [LLiMa model definitions](adding-a-model.md#llima-language-and-vision-language-models)
+for the source and package contracts.

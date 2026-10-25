@@ -27,15 +27,17 @@ ROOT = Path(__file__).resolve().parents[1]
 BROWSER = ROOT / "artifact-browser"
 sys.path.insert(0, str(ROOT / "tools"))
 
-from model_registry.accuracy_config import find_devkit_accuracy_config  # noqa: E402
+from model_registry.benchmark_declarations import benchmarked_profiles, reference_metrics_by_model  # noqa: E402
 from model_registry.compile_matrix import build_matrix  # noqa: E402
-from model_registry.dependencies import resolve_model_compiler  # noqa: E402
+from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
-from model_registry.fidelity_config import find_fidelity_config  # noqa: E402
-from model_registry.model import load_models, profile_component_for  # noqa: E402
+from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
+from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
+from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 
-BRANCH = "develop"
+UI_MODE = os.environ.get("MODEL_BROWSER_UI_MODE", "developer")
+BRANCH = "main" if UI_MODE == "customer" else "develop"
 GIT_REF = f"refs/heads/{BRANCH}"
 # Two catalog revisions, so every variant has an older build in its build history.
 REVISIONS = (
@@ -73,7 +75,24 @@ def _repository() -> dict[str, Any]:
     }
     revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
     runs = sorted((run for revision in revisions for run in revision["runs"]), key=lambda run: run["created_at"])
+    runs = _old_layout_runs(runs[0]) + runs
     return {"models": models, "compiler": compiler, "revisions": revisions, "runs": runs[::-1]}
+
+
+# Compile runs older Models revisions wrote, keyed by the field they lack; build history hides them.
+OLD_LAYOUT_RUN_IDS = {
+    "build_profile_id": "00000000-0000-4000-8000-0000000000a1",
+    "compile_timing": "00000000-0000-4000-8000-0000000000a2",
+}
+
+
+def _old_layout_runs(run: dict) -> list[dict]:
+    day = REVISIONS[0][0]
+    return [{
+        **run, "id": run_id, "created_at": f"{day}T00:00:00+00:00",
+        "started_at": f"{day}T00:00:00+00:00", "finished_at": f"{day}T00:00:42+00:00",
+        "metadata": {**{key: value for key, value in run["metadata"].items() if key != field}, "github_run_id": run_id},
+    } for field, run_id in OLD_LAYOUT_RUN_IDS.items()]
 
 
 def _documentation_receipt(model_id: str, documentation: dict[str, Any], sha: str) -> dict[str, Any]:
@@ -102,7 +121,7 @@ def _documentation_receipt(model_id: str, documentation: dict[str, Any], sha: st
 
 
 def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, Any]:
-    """A previous catalog whose builds match every compile key, as if each invocation had been published."""
+    """A previous catalog whose builds match every compile fingerprint, as if each invocation had been published."""
     builds: dict[str, list[dict]] = {model_id: [] for model_id in models}
     packages: dict[str, list[dict]] = {model_id: [] for model_id in models}
     for entry in matrix:
@@ -110,7 +129,8 @@ def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, A
             builds[entry["model_id"]].append({
                 "build_profile_id": entry["build_profile_id"],
                 "component_id": component_id,
-                "compile_fingerprint": entry["build_fingerprint"],
+                "compile_fingerprint": entry["compile_fingerprint"],
+                "compile_invocation_id": entry["compile_invocation_id"],
                 "run_id": _id("compile", sha, entry["model_id"], entry["build_profile_id"], component_id),
                 "artifact_sha256": _sha256("mpk", sha, entry["model_id"], entry["build_profile_id"], component_id),
             })
@@ -202,7 +222,12 @@ def _compile_run(model: dict, entry: dict, build: dict, compiler: dict, day: str
         "build_profile_id": build["build_profile_id"],
         "component_id": build["component_id"],
         "compile_invocation_id": build["compile_invocation_id"],
-        "artifact_kind": "mpk",
+        "compile_timing": {
+            "scope": "compile_recipe", "started_at": run["started_at"], "finished_at": run["finished_at"],
+        },
+        "artifact_kind": "llima" if next(
+            item for item in model["components"] if item["id"] == build["component_id"]
+        )["interface"]["format"] == "huggingface" else "mpk",
     })
     return run
 
@@ -235,6 +260,9 @@ def _models_list(document: dict, runs: dict[str, dict], compiler: str) -> list[d
             **{key: model[key] for key in ("display_name", "description", "maturity", "license", "categories")},
             **_model_fields(model),
             "documentation": model["documentation"],
+            **({"build_on_demand": True} if model.get("build_on_demand") else {}),
+            **({"benchmark_fingerprints": model["benchmark_fingerprints"]}
+               if model.get("benchmark_fingerprints") else {}),
             "catalog_revision": document["catalog_revision"],
             "taxonomy_sha256": document["taxonomy_sha256"],
             "builds": builds,
@@ -255,7 +283,7 @@ def _provenance(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
     return {
         "inputs": [{
             "name": "source-component",
-            "input_type": source.get("media_type", "application/octet-stream").removeprefix("application/"),
+            "input_type": source.get("media_type", "application/onnx").removeprefix("application/"),
             "source_reference": source.get("uri"),
             "sha256": source.get("sha256"),
             "size_bytes": source.get("size_bytes"),
@@ -280,103 +308,191 @@ def _provenance(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
             "build_fingerprint": build["compile_fingerprint"],
             "recipe": component.get("recipe"),
             "compile_parameters": binding.get("parameters", {}),
-            "shape_profile": binding.get("shape_profile"),
             "calibration": binding.get("calibration"),
         }},
     }
 
 
 @cache
-def _benchmark_template() -> dict[str, Any]:
-    return json.loads((BROWSER / "fixtures" / "performance-result-v4.json").read_text(encoding="utf-8"))
+def _report_template(stage: str) -> dict[str, Any]:
+    # Performance is a ResNet-50 DevKit Core benchmark converted to a model report, so board telemetry keeps
+    # real proportions.
+    return json.loads((BROWSER / "fixtures" / f"model-report-{stage}.json").read_text(encoding="utf-8"))
 
 
-def _benchmark_result(model: dict, build: dict, compiler: dict) -> dict[str, Any]:
-    result = copy.deepcopy(_benchmark_template())
-    key = (model["id"], build["build_profile_id"], build["component_id"])
-    result["model"].update({
-        "id": model["id"], "build_profile_id": key[1], "component_id": key[2], "sha256": build["artifact_sha256"],
-    })
-    result["compatibility"]["actual_platform_version"] = compiler["version"]
+# Synthetic compiler-style names cover the ten recognized families in one profiling panel.
+# The first ten entries show one of each; nested transforms and helpers exercise
+# classification without substituting measured data or model-specific graph metadata.
+_PREVIEW_LAYER_NAMES = (
+    "MLA_{stage}/conv2d_add_relu_0",
+    "MLA_{stage}/swish_1",
+    "MLA_{stage}/reshape_2/reshape_channel/pad_c",
+    "MLA_{stage}/tuple_einsum_3",
+    "MLA_{stage}/max_pool2d_4",
+    "MLA_{stage}/add_relu_5",
+    "MLA_{stage}/softmax_6",
+    "MLA_{stage}/image.resize2d_7/0",
+    "MLA_{stage}/sum_8",
+    "MLA_{stage}/conv2d_add_9_output",
+    "MLA_{stage}/multiply_10",
+    "MLA_{stage}/reshape_11/reshape_spatial",
+    "MLA_{stage}/reshape_12/reshape_channel/split_and_concat",
+    "MLA_{stage}/reshape_13",
+    "MLA_{stage}/reshape_14",
+    "MLA_{stage}/reshape_15",
+    "MLA_{stage}/reshape_16",
+    "MLA_{stage}/reshape_17",
+    "slice_MLA_{stage}/transpose_20_0_MLA_{stage}/tuple_einsum_3_0",
+    "concat_MLA_{stage}/softmax_6_MLA_{stage}/transpose_20_1",
+    "MLA_{stage}/transpose_20",
+    "MLA_{stage}/copy_21",
+    "MLA_{stage}/conv2d_add_22_output",
+    "MLA_{stage}/copy_23",
+)
+# Nonconsecutive, as when an A65 stage runs between two MLA stages.
+_PREVIEW_MLA_STAGES = (0, 2)
+
+
+def _components_in_order(model: dict) -> list[str]:
+    """The model's components in the order its pipeline runs them."""
+    pipeline = [stage["component"] for stage in model.get("pipeline", []) if "component" in stage]
+    return pipeline or [component["id"] for component in model["components"]]
+
+
+def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
+    """A whole-model performance report: the template's DevKit readings at a latency of this build's own.
+
+    A multi-component model, such as RF-DETR, reports each component's layers and execution plan in the
+    order its pipeline runs them, and names that pipeline as its workload.
+    """
+    report = copy.deepcopy(_report_template("performance"))
+    # Readings vary per build profile of the whole model.
+    key = (model["id"], profile_id, "model")
+    metrics = report["metrics"]
     latency = round(2.5 + _fraction("latency", *key) * 40.0, 3)
-    power = round(6.5 + _fraction("power", *key) * 4.0, 3)
-    model_load = round(90.0 + _fraction("load", *key) * 600.0, 1)
-    baseline = round(64.0 + _fraction("baseline", *key) * 160.0, 1)
-    delta = round(64.0 + _fraction("memory", *key) * 960.0, 1)
-    samples = result["configuration"]["samples"]
-    values = {
-        "latency_avg_ms": latency,
-        "throughput_fps": round(1000.0 / latency, 1),
-        "avg_power_watts": power,
-        "energy_joules": round(power * latency * samples / 1000.0, 2),
-        "energy_per_inference_joules": round(power * latency / 1000.0, 5),
-        "model_load_ms": model_load,
-        "time_to_first_inference_ms": round(model_load + 180.0 + latency * 4, 1),
-        "mla_memory_baseline_mib": baseline,
-        "mla_memory_peak_mib": round(baseline + delta, 1),
-        "mla_memory_peak_delta_mib": delta,
-        "mla_memory_final_mib": round(baseline + delta * 0.85, 1),
-    }
-    # Trials keep the template's spread around the synthetic means, so trial and summary values agree.
-    for trial in result["trials"]:
-        for name, value in trial.items():
-            template = result["metrics"].get(name, {}).get("value")
-            if name in values and isinstance(value, (int, float)) and template:
-                trial[name] = round(value * values[name] / template, 5)
-    for name, value in values.items():
-        metric = result["metrics"][name]
-        scale = value / metric["value"]
-        metric.update({
-            "value": value,
-            "minimum": round(metric["minimum"] * scale, 5),
-            "maximum": round(metric["maximum"] * scale, 5),
-            "standard_deviation": round(metric["standard_deviation"] * scale, 5),
-        })
-    return result
+    scale = latency / metrics["latency_avg_ms"]
+    # Pipelining makes throughput exceed one input per mean latency; keep the template's ratio.
+    metrics["throughput_fps"] = round(metrics["throughput_fps"] / scale, 1)
+    for name in ("latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+        metrics[name] = round(metrics[name] * scale, 3)
+    metrics["energy_per_inference_joules"] = metrics["avg_power_watts"] / metrics["throughput_fps"]
+    memory = report["telemetry"]["mla_memory_mib"]
+    memory_scale = (16.0 + _fraction("memory", *key) * 240.0) / memory["maximum"]
+    memory.update({name: round(memory[name] * memory_scale, 1) for name in ("mean", "minimum", "maximum")})
+    metrics.update({"mla_memory_avg_mib": memory["mean"], "mla_memory_peak_mib": memory["maximum"]})
+    components = _components_in_order(model)
+    if len(components) > 1:
+        stages = model.get("pipeline") or [{"component": component} for component in components]
+        workload = ", ".join(stage.get("component") or f"{stage['cpu']} on the CPU" for stage in stages)
+        report["workload"] = workload[:1].upper() + workload[1:]
+    plan = report["components"]["model"]["execution_plan"]
+    # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
+    # Preview timings are generated, not published measurements of these model definitions.
+    report["components"] = {}
+    for component in components:
+        layers = [
+            {"stage_index": stage,
+             "name": name.format(stage=stage),
+             "latency_us": 0.0 if index in (21, 23) else round(
+                 latency / len(components) * 1000 * (0.065 / (1 + index / 4))
+                 * (0.8 + _fraction("layer", *key, component, str(index))), 2)}
+            for stage in _PREVIEW_MLA_STAGES for index, name in enumerate(_PREVIEW_LAYER_NAMES)
+        ]
+        # A stage's measured latency also holds the time between its layers.
+        stages = [{"stage_index": stage, "latency_us": round(1.05 * sum(
+            layer["latency_us"] for layer in layers if layer["stage_index"] == stage), 2)}
+            for stage in _PREVIEW_MLA_STAGES]
+        report["components"][component] = {
+            "execution_plan": plan,
+            "mla_layer_stats": {"status": "ok", "layers": layers},
+            "mla_stage_stats": {"status": "ok", "stages": stages},
+        }
+    # The rest of the board telemetry keeps the template's DevKit readings.
+    return report
 
 
-def _accuracy_result(model: dict, build: dict) -> dict[str, Any]:
-    """A DevKit accuracy result for the metrics, dataset, and reference the model's accuracy entry declares."""
-    config = find_devkit_accuracy_config(model, build["build_profile_id"])
-    reference = config.get("reference", {}).get("metrics", {})
-    key = (model["id"], build["build_profile_id"])
-    metrics = {}
-    for name in config["metrics"]:
-        expected = reference.get(name, 0.3 + _fraction("reference", *key, name) * 0.6)
-        metric = {"value": round(expected * (0.9 + _fraction("accuracy", *key, name) * 0.08), 4)}
-        metrics[name] = {**metric, "unit": "ratio", "direction": "higher", **(
-            {"reference": reference[name]} if name in reference else {}
-        )}
-    samples = 500 + int(_fraction("samples", *key) * 4500)
+def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
+    """A whole-model accuracy report on each dataset the model declares, for the metrics its tests expect there,
+    else the ones the dataset requires.
+
+    Each metric lands a little below the source model's reference score on that dataset, when there is one.
+    One profile in two evaluates a sampled subset of each split, so both coverages appear.
+    """
+    template = _report_template("accuracy")
+    sample = next(iter(template["datasets"].values()))
+    key = (model["id"], profile_id)
+    tests = load_model_tests(ROOT / "models" / model["id"])
+    expected = tests.get("accuracy", {}).get("expected", {}).get(profile_id, {})
+    datasets = {}
+    for name, dataset in model["accuracy"]["datasets"].items():
+        reference = {
+            metric: value
+            for entry in model.get("reference_metrics", [])
+            if entry["dataset"]["id"] == dataset["id"]
+            for metric, value in entry["metrics"].items()
+        }
+        available = 500 + int(_fraction("samples", *key, name) * 4500)
+        datasets[name] = {
+            **copy.deepcopy(sample),
+            "evaluated_samples": available if _fraction("coverage", *key) < 0.5 else available // 5,
+            "available_samples": available,
+            "metrics": {
+                metric: round(reference.get(metric, 0.3 + _fraction("reference", *key, metric) * 0.6)
+                              * (0.9 + _fraction("accuracy", *key, name, metric) * 0.08), 4)
+                for metric in expected.get(name) or dataset["required_metrics"]
+            },
+        }
+    return {**copy.deepcopy(template), "datasets": datasets}
+
+
+def _benchmark_parameters(model: dict, benchmark: dict) -> dict[str, Any]:
+    """The run parameters report publication stores: the stage's declaration, the builds it benchmarked, and the
+    runtime it ran on."""
     return {
-        "schema_version": 2,
-        "model": {
-            "id": model["id"],
-            "build_profile_id": build["build_profile_id"],
-            "component_id": build["component_id"],
-            "package_id": None,
-            "artifacts": {build["component_id"]: build["artifact_sha256"]},
-        },
-        "validation": {"id": config["id"], "engine": config["engine"], "status": config["status"]},
-        "dataset": {
-            **{field: config["dataset"][field] for field in ("id", "variant", "sha256")},
-            "split": "validation",
-            "evaluated_samples": samples,
-            "available_samples": samples,
-        },
-        "metrics": metrics,
-        "execution": {"core_version": "3.0.0", "script_sha256": _sha256("script", config["id"]), "models_commit": ""},
+        benchmark["stage"]: model[benchmark["stage"]],
+        "builds": {build["component_id"]: {"run_id": build["run_id"], "artifact_sha256": build["artifact_sha256"]}
+                   for build in benchmark["builds"]},
+        "runtime": resolve_benchmark_runtime(ROOT),
     }
 
 
-def _fidelity_test(model: dict, build: dict) -> dict[str, Any] | None:
-    config = find_fidelity_config(
-        ROOT / "models" / model["id"], model,
-        build_profile_id=build["build_profile_id"], component_id=build["component_id"],
-    )
-    if config is None or config["result_component"] != build["component_id"]:
+def _mla_stage_simulation_test(model: dict, package: dict) -> dict[str, Any] | None:
+    """The MLA stage simulation a package run carries: each preview stage at a fraction of its measured latency.
+    A LLiMa build has no MPK to simulate."""
+    if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
         return None
-    key = (model["id"], build["build_profile_id"])
+    profile_id = package["build_profile_id"]
+    report = _performance_report(model, profile_id)
+    components = {}
+    for component, stats in report["components"].items():
+        stages = []
+        for stage in stats["mla_stage_stats"]["stages"]:
+            key = (model["id"], profile_id, component, str(stage["stage_index"]))
+            effective_tops = 4.0 + _fraction("tops", *key) * 20.0
+            effective_ops = round(stage["latency_us"] * 1e-6 * effective_tops * 1e12)
+            stages.append({
+                "stage_index": stage["stage_index"],
+                "effective_ops": effective_ops,
+                "total_ops": round(effective_ops / (0.7 + _fraction("packing", *key) * 0.25)),
+                "simulated_latency_us": round(stage["latency_us"] * (0.8 + _fraction("simulated", *key) * 0.18), 3),
+            })
+        components[component] = {"status": "ok", "stages": stages}
+    return {
+        "suite": "performance",
+        "name": "mla-stage-simulation",
+        "status": "passed",
+        "version": "1",
+        "summary": {"schema_version": 1, "model_id": model["id"], "build_profile_id": profile_id,
+                    "components": components},
+    }
+
+
+def _fidelity_test(model: dict, package: dict) -> dict[str, Any] | None:
+    """The numerical fidelity a package run carries when model.yaml declares it."""
+    config = model.get("numerical_fidelity")
+    if config is None:
+        return None
+    key = (model["id"], package["build_profile_id"])
     return {
         "suite": "correctness",
         "name": "numerical-fidelity",
@@ -385,13 +501,12 @@ def _fidelity_test(model: dict, build: dict) -> dict[str, Any] | None:
         "summary": {
             "schema_version": 1,
             "model_id": model["id"],
-            "build_profile_id": build["build_profile_id"],
-            "component_id": build["component_id"],
-            "scope": "full_pipeline",
+            "build_profile_id": package["build_profile_id"],
             "status": config["status"],
             "reference": "Original ONNX (ONNX Runtime)",
             "candidate": "Quantized AFE network (JAX execute)",
-            "dataset": {field: config["dataset"][field] for field in ("id", "variant")},
+            "dataset": {field: config["dataset"][field] for field in ("id", "variant", "sha256")},
+            "selection": config["selection"],
             "samples": config["selection"]["samples"],
             "metrics": [{
                 "name": output,
@@ -404,31 +519,86 @@ def _fidelity_test(model: dict, build: dict) -> dict[str, Any] | None:
     }
 
 
+_UNBENCHMARKED = {("yolo26n", "w16a16")}
+
+
 @cache
 def _index() -> dict[str, Any]:
     """Lookups from every identifier the API serves to what it describes."""
     repository = _repository()
     runs = {run["id"]: run for run in repository["runs"]}
-    builds, packages, documentation, accuracy = {}, {}, {}, {}
+    builds, packages, documentation, benchmarks = {}, {}, {}, {}
     for revision in repository["revisions"]:
         for model in revision["document"]["models"]:
             source = repository["models"][model["id"]]
             documentation[model["documentation"]["run_id"]] = model["id"]
             for build in model["builds"]:
                 builds[build["run_id"]] = (source, build)
-                if build["validation_fingerprint"]:
-                    accuracy[build["validation_fingerprint"]] = (source, build)
             for package in model["packages"]:
                 packages[package["run_id"]] = (source, package)
+            # Each stage of a profile the catalog lists a benchmark fingerprint for is one DevKit run, except one
+            # the DevKit has not benchmarked yet, which the browser shows as not measured.
+            for profile_id, fingerprints in model.get("benchmark_fingerprints", {}).items():
+                for stage, fingerprint in fingerprints.items():
+                    if (profile_id not in benchmarked_profiles(source, stage)
+                            or (model["id"], profile_id) in _UNBENCHMARKED):
+                        continue
+                    profile_builds = [build for build in model["builds"] if build["build_profile_id"] == profile_id]
+                    package = next((item for item in model["packages"] if item["build_profile_id"] == profile_id), None)
+                    benchmarks[fingerprint] = {
+                        "model": source, "profile": profile_id, "stage": stage, "builds": profile_builds,
+                        "parent_run_id": (package or profile_builds[0])["run_id"],
+                    }
     return {
         "runs": runs,
         "builds": builds,
         "packages": packages,
         "documentation": documentation,
-        "accuracy": accuracy,
-        "benchmarks": {_id("benchmark", run_id): run_id for run_id in builds},
-        "accuracy_runs": {_id("accuracy", key): key for key in accuracy},
+        "benchmarks": benchmarks,
+        "benchmark_run_fingerprints": {
+            _id(entry["stage"], fingerprint): fingerprint for fingerprint, entry in benchmarks.items()
+        },
     }
+
+
+def _benchmark_run(run_id: str) -> dict:
+    """A DevKit run that benchmarked a profile at the latest revision, as CI benchmarks a reused build, under the
+    profile's package run."""
+    fingerprint = _index()["benchmark_run_fingerprints"][run_id]
+    benchmark = _index()["benchmarks"][fingerprint]
+    workflow = int(_fraction("workflow", run_id) * 10**11)
+    return {
+        **_index()["runs"][benchmark["parent_run_id"]],
+        "id": run_id,
+        "run_type": BENCHMARK_RUN_TYPES[benchmark["stage"]],
+        "parent_run_id": benchmark["parent_run_id"],
+        "run_fingerprint": fingerprint,
+        "commit_sha": _repository()["revisions"][-1]["sha"],
+        "ci_run_url": f"https://github.com/sima-neat/models/actions/runs/{workflow}",
+        "metadata": {
+            "model_id": benchmark["model"]["id"], "build_profile_id": benchmark["profile"],
+            "stage": benchmark["stage"], "package_run_id": benchmark["parent_run_id"],
+        },
+    }
+
+
+def _deployment_artifacts(archive: dict, run_id: str) -> list[dict]:
+    """Native deployments use a small JSON index and separate path-preserving payload files."""
+    paths = ["model.json", "weights/model.bin", "runtime/config.json"]
+    total = archive["size_bytes"]
+    files = [{
+        "name": f"file-{hashlib.sha256(path.encode()).hexdigest()}",
+        "artifact_type": "model-file", "media_type": "application/octet-stream",
+        "sha256": _sha256("deployment-file", run_id, path),
+        "size_bytes": total // len(paths) + (total % len(paths) if index == 0 else 0),
+        "metadata": {"path": path},
+    } for index, path in enumerate(paths)]
+    return [{
+        **archive, "name": "package" if archive["artifact_type"] == "model-package" else "llima",
+        "size_bytes": 2048, "media_type": "application/json",
+        "metadata": {**archive.get("metadata", {}), "layout": "directory", "storage_backend": "s3",
+                     "file_count": len(files), "deployment_size_bytes": total},
+    }, *files]
 
 
 class PreviewHandler(SimpleHTTPRequestHandler):
@@ -460,9 +630,15 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._bytes(
                 b"window.MODEL_REGISTRY_CONFIG = Object.freeze({"
                 b'apiBase: location.origin, environment: "Local preview", '
-                b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
+                + f'uiMode: "{UI_MODE}", '.encode()
+                + b'repository: Object.freeze({organization: "sima-neat", name: "models"})});\n',
                 "text/javascript",
             )
+        elif path == "/reference-metrics.json":
+            self._json(reference_metrics_by_model(_repository()["models"]))
+        elif path == "/component-pipelines.json":
+            # The unbuilt sources request this name; an assembled portal requests the file it ships.
+            self._json(component_pipelines(_repository()["models"]))
         elif path.startswith(f"{REPOSITORY_API}/"):
             self._repository_api(path.removeprefix(REPOSITORY_API), query)
         elif path.startswith("/v1/runs/"):
@@ -500,10 +676,12 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 self._json({"catalog": {
                     "git_ref": GIT_REF, "catalog_revision": match["sha"], "document": match["document"],
                 }})
-        elif path == "/resolve" and query.get("run_type") == ["model_accuracy"]:
-            key = query.get("fingerprint", [""])[0]
-            if key in _index()["accuracy"]:
-                self._json({"run": {"id": _id("accuracy", key), "run_type": "model_accuracy"}})
+        elif path == "/resolve":
+            fingerprint = query.get("fingerprint", [""])[0]
+            benchmark = _index()["benchmarks"].get(fingerprint)
+            run_type = query.get("run_type", [""])[0]
+            if benchmark and BENCHMARK_RUN_TYPES[benchmark["stage"]] == run_type:
+                self._json({"run": {"id": _id(benchmark["stage"], fingerprint), "run_type": run_type}})
             else:
                 self._not_found("fingerprint_not_found")
         elif path in {"/models", "/resolve"} or path.startswith("/catalogs/"):
@@ -523,29 +701,20 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                 return
             name, media_type = files[rest[1]]
             self._bytes((ROOT / "models" / model_id / name).read_bytes(), media_type)
-        elif run_id in index["benchmarks"] and rest == ["test-results"]:
-            self._json({"run_id": run_id, "test_results": [
-                {"suite": "performance", "name": "model-synthetic", "status": "passed"},
-            ]})
-        elif run_id in index["accuracy_runs"] and rest == ["accuracy", "latest"]:
-            model, build = index["accuracy"][index["accuracy_runs"][run_id]]
-            result = _accuracy_result(model, build)
-            self._json({
-                "accuracy_test": {"name": result["validation"]["id"], "status": "passed", "attempt": 1},
-                "result": result,
-                "result_artifact_url": None,
-            })
+        elif run_id in index["benchmark_run_fingerprints"]:
+            self._benchmark_run_api(run_id, rest)
         elif run_id in index["builds"]:
             self._compile_run_api(run_id, rest, *index["builds"][run_id], compiler)
         elif run_id in index["packages"] and not rest:
             model, package = index["packages"][run_id]
+            _, media_type = _package_file(model, package)
             # The same artifact shape the registry publisher records for a full package.
-            self._json({"run": index["runs"][run_id], "artifacts": [{
-                "name": f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip",
+            artifact = {
+                "name": "package",
                 "artifact_type": "model-package",
                 "sha256": package["artifact_sha256"],
                 "size_bytes": package["size_bytes"],
-                "media_type": "application/zip",
+                "media_type": media_type,
                 "metadata": {
                     "model_id": model["id"],
                     "build_profile_id": package["build_profile_id"],
@@ -553,56 +722,78 @@ class PreviewHandler(SimpleHTTPRequestHandler):
                     "manifest_sha256": package["package_fingerprint"],
                     "component_run_ids": package["component_run_ids"],
                 },
-            }]})
+            }
+            artifacts = _deployment_artifacts(artifact, run_id) if media_type == "application/json" else [artifact]
+            self._json({"run": index["runs"][run_id], "artifacts": artifacts})
+        elif run_id in index["packages"] and rest == ["test-results"]:
+            fidelity = _fidelity_test(*index["packages"][run_id])
+            simulation = _mla_stage_simulation_test(*index["packages"][run_id])
+            self._json({"run_id": run_id, "test_results": [test for test in (fidelity, simulation) if test]})
+        elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
+            model, package = index["packages"][run_id]
+            filename, _ = _package_file(model, package)
+            path = f"{model['id']}/{package['build_profile_id']}/packages/{package['package_id']}/{filename}"
+            self._download_link(f"models/develop/{path}")
         elif run_id in index["runs"] and len(rest) == 2 and rest[0] == "artifacts":
             self._download_link()
         else:
             self._not_found("run_not_found")
 
-    def _compile_run_api(self, run_id: str, rest: list[str], model: dict, build: dict, compiler: dict) -> None:
-        run = _index()["runs"][run_id]
+    def _benchmark_run_api(self, run_id: str, rest: list[str]) -> None:
+        benchmark = _index()["benchmarks"][_index()["benchmark_run_fingerprints"][run_id]]
+        model, stage = benchmark["model"], benchmark["stage"]
+        run = _benchmark_run(run_id)
         if not rest:
-            _, binding = profile_component_for(model, build["build_profile_id"], build["component_id"])
-            suffix = binding.get("artifact_suffix", build["build_profile_id"])
-            self._json({"run": run, "artifacts": [{
-                "name": f"{model['id']}_{suffix}_mpk.tar.gz",
-                "artifact_type": "model-pack",
-                "sha256": build["artifact_sha256"],
-                "size_bytes": 8_000_000 + int(_fraction("mpk-size", run_id) * 300_000_000),
-                "media_type": "application/gzip",
-            }]})
+            self._json({"run": run, "artifacts": []})
         elif rest == ["provenance"]:
-            self._json({"run": run, **_provenance(model, build, compiler)})
+            parameters = _benchmark_parameters(model, benchmark)
+            self._json({"run": run, "inputs": [], "parameters": {"parameters": parameters}})
         elif rest == ["test-results"]:
-            fidelity = _fidelity_test(model, build)
+            read = _performance_report if stage == "performance" else _accuracy_report
+            report = read(model, benchmark["profile"])
+            # The model browser reads the whole report from the stage's model test result.
             self._json({"run_id": run_id, "test_results": [
-                {"suite": "model", "name": "manifest-validation", "status": "passed", "duration_ms": 82},
-                {"suite": "model", "name": "mpk-validation", "status": "passed", "duration_ms": 418},
-                *([fidelity] if fidelity else []),
+                {"suite": stage, "name": "model", "status": "passed", "version": "1", "summary": report},
             ]})
-        elif rest == ["metrics"]:
-            self._json({"run_id": run_id, "measurements": [
-                {"name": "compile.duration", "numeric_value": round(180.0 + _fraction("compile", run_id) * 900.0, 1)},
-            ]})
-        elif rest == ["benchmarks", "latest"] and build["benchmark_fingerprint"]:
-            self._json({
-                "benchmark_run": {"id": _id("benchmark", run_id)},
-                "result": _benchmark_result(model, build, compiler),
-                "result_artifact_url": "/fixtures/performance-result-v4.json",
-            })
-        elif rest == ["benchmarks", "latest"]:
-            self._not_found("benchmark_not_found")
-        elif rest == ["accuracy", "latest"]:
-            # Accuracy lives on its own model_accuracy run, resolved by the build's accuracy key.
-            self._not_found("accuracy_not_found")
         elif len(rest) == 2 and rest[0] == "artifacts":
             self._download_link()
         else:
             self._not_found("not_found")
 
-    def _download_link(self) -> None:
+    def _compile_run_api(self, run_id: str, rest: list[str], model: dict, build: dict, compiler: dict) -> None:
+        run = _index()["runs"][run_id]
+        native = run["metadata"].get("artifact_kind") == "llima"
+        if not rest:
+            artifact = {
+                "name": "llima" if native else "mpk",
+                "artifact_type": "model-pack",
+                "sha256": build["artifact_sha256"],
+                "size_bytes": 8_000_000 + int(_fraction("mpk-size", run_id) * 300_000_000),
+                "media_type": "application/zip" if native else "application/gzip",
+            }
+            self._json({"run": run, "artifacts": _deployment_artifacts(artifact, run_id) if native else [artifact]})
+        elif rest == ["provenance"]:
+            self._json({"run": run, **_provenance(model, build, compiler)})
+        elif rest == ["test-results"]:
+            self._json({"run_id": run_id, "test_results": [
+                {"suite": "model", "name": "manifest-validation", "status": "passed", "duration_ms": 82},
+                {"suite": "model", "name": "deployment-validation" if native else "mpk-validation",
+                 "status": "passed", "duration_ms": 418},
+            ]})
+        elif rest == ["metrics"]:
+            self._json({"run_id": run_id, "measurements": [
+                {"name": "compile.duration", "numeric_value": round(180.0 + _fraction("compile", run_id) * 900.0, 1)},
+            ]})
+        elif len(rest) == 2 and rest[0] == "artifacts":
+            filename = mpk_filename(model, build["build_profile_id"], build["component_id"])
+            self._download_link(f"models/develop/{model['id']}/{build['build_profile_id']}/{build['component_id']}/{filename}")
+        else:
+            self._not_found("not_found")
+
+    def _download_link(self, s3_key: str | None = None) -> None:
         self._json({"artifact": {
-            "download_url": "/fixtures/performance-result-v4.json", "download_url_expires_in": 300,
+            "download_url": "/fixtures/model-report-performance.json", "download_url_expires_in": 300,
+            **({"s3_key": s3_key} if s3_key else {}),
         }})
 
     def translate_path(self, path: str) -> str:
@@ -615,6 +806,16 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, message: str, *args: object) -> None:
         print(f"preview: {message % args}")
+
+
+def _package_file(model: dict, package: dict) -> tuple[str, str]:
+    """The published path and media type of a native folder index, a single-component model's MPK, or ZIP."""
+    if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
+        return "deployment/manifest.json", "application/json"
+    declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
+    if len(declaration["components"]) == 1:
+        return mpk_filename(model, package["build_profile_id"], declaration["components"][0]), "application/gzip"
+    return f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip", "application/zip"
 
 
 def first_variant_run_id() -> str:

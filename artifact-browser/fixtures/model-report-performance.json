@@ -1,0 +1,458 @@
+{
+  "schema": "sima.model-report",
+  "schema_version": 1,
+  "stage": "performance",
+  "runtime": {
+    "pyneat": "0.6.0+feat-benchmark-sentinel-telemetry.82d758ef18ee",
+    "build": {}
+  },
+  "workload": "Model.benchmark with default options",
+  "metrics": {
+    "latency_avg_ms": 2.4093143350000013,
+    "latency_p50_ms": 2.391,
+    "latency_p95_ms": 2.512,
+    "latency_p99_ms": 2.704,
+    "throughput_fps": 886.925587921827,
+    "avg_power_watts": 11.316666666666666,
+    "peak_power_watts": 11.65625,
+    "avg_mla_power_watts": 1.9333333333333333,
+    "peak_mla_power_watts": 2.0,
+    "avg_die_temperature_c": 42.34066666666667,
+    "peak_die_temperature_c": 43.28,
+    "avg_board_temperature_c": 43.9,
+    "peak_board_temperature_c": 44.625,
+    "avg_cpu_usage_pct": 7.807634778718893,
+    "peak_cpu_usage_pct": 8.703878902554397,
+    "avg_cpu_core_usage_pct": 39.7,
+    "peak_cpu_core_usage_pct": 48.5,
+    "mla_memory_avg_mib": 29.65234375,
+    "mla_memory_peak_mib": 29.65234375,
+    "ev74_memory_avg_mib": 0.5703125,
+    "ev74_memory_peak_mib": 0.5703125,
+    "avg_linux_memory_mib": 600.32421875,
+    "peak_linux_memory_mib": 607.53125,
+    "energy_per_inference_joules": 0.012759431930679747
+  },
+  "telemetry": {
+    "status": "ok",
+    "trace_id": "20260413T195341.552Z-neat-benchmark-20260413t195341-389z",
+    "sentinel_version": "main:766066b74f49",
+    "sample_interval_ms": 1999,
+    "samples": 15,
+    "power_som_watts": {
+      "key": "power_current_watts",
+      "label": "Current board power",
+      "maximum": 11.65625,
+      "mean": 11.316666666666666,
+      "minimum": 10.875,
+      "samples": 15,
+      "unit": "W"
+    },
+    "power_mla_watts": {
+      "key": "power_rail_mla_watts",
+      "label": "MLA 0.68V",
+      "maximum": 2.0,
+      "mean": 1.9333333333333333,
+      "minimum": 1.75,
+      "samples": 15,
+      "unit": "W"
+    },
+    "power_rails_watts": [
+      {
+        "key": "power_rail_soc_ddr_vdd_watts",
+        "label": "SoC and DDR VDD",
+        "maximum": 3.75,
+        "mean": 3.5,
+        "minimum": 3.25,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_hdmi_watts",
+        "label": "HDMI 1.2V",
+        "maximum": 0.59375,
+        "mean": 0.59375,
+        "minimum": 0.59375,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_soc_ddr_vddq_watts",
+        "label": "SoC and DDR VDDQ",
+        "maximum": 0.125,
+        "mean": 0.1,
+        "minimum": 0.09375,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_soc_ddr_vdd2h_watts",
+        "label": "SoC and DDR VDD2H",
+        "maximum": 1.40625,
+        "mean": 1.3479166666666667,
+        "minimum": 1.3125,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_mla_watts",
+        "label": "MLA 0.68V",
+        "maximum": 2.0,
+        "mean": 1.9333333333333333,
+        "minimum": 1.75,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_pcie_eth_watts",
+        "label": "PCIe and ETH VP",
+        "maximum": 0.6875,
+        "mean": 0.6625,
+        "minimum": 0.65625,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_platform_1v8_watts",
+        "label": "SOM Platform 1.8V",
+        "maximum": 1.5,
+        "mean": 1.4145833333333333,
+        "minimum": 1.375,
+        "samples": 15,
+        "unit": "W"
+      },
+      {
+        "key": "power_rail_platform_3v3_watts",
+        "label": "SOM Platform 3.3V",
+        "maximum": 1.84375,
+        "mean": 1.7645833333333334,
+        "minimum": 1.6875,
+        "samples": 15,
+        "unit": "W"
+      }
+    ],
+    "die_temperatures_c": [
+      {
+        "key": "rtsn_0",
+        "label": "MLA RTSN-0",
+        "maximum": 42.73,
+        "mean": 41.85266666666667,
+        "minimum": 39.83,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_1",
+        "label": "MLA RTSN-1",
+        "maximum": 43.28,
+        "mean": 42.211999999999996,
+        "minimum": 40.38,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_2",
+        "label": "MLA RTSN-2",
+        "maximum": 42.45,
+        "mean": 41.408666666666676,
+        "minimum": 39.69,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_3",
+        "label": "MLA RTSN-3",
+        "maximum": 42.45,
+        "mean": 41.464666666666666,
+        "minimum": 39.41,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_4",
+        "label": "APU RTSN-4",
+        "maximum": 42.45,
+        "mean": 41.68600000000001,
+        "minimum": 40.24,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_5",
+        "label": "CVU RTSN-5",
+        "maximum": 41.48,
+        "mean": 40.63533333333334,
+        "minimum": 39.0,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "rtsn_6",
+        "label": "TOP RTSN-6",
+        "maximum": 43.0,
+        "mean": 42.275999999999996,
+        "minimum": 41.07,
+        "samples": 15,
+        "unit": "C"
+      }
+    ],
+    "die_temperature_max_c": {
+      "key": "die_max",
+      "label": "Die max",
+      "maximum": 43.28,
+      "mean": 42.34066666666667,
+      "minimum": 41.07,
+      "samples": 15,
+      "unit": "C"
+    },
+    "board_temperatures_c": [
+      {
+        "key": "lm96163_temp1",
+        "label": "LM96163 temp1",
+        "maximum": 42.0,
+        "mean": 40.93333333333333,
+        "minimum": 40.0,
+        "samples": 15,
+        "unit": "C"
+      },
+      {
+        "key": "lm96163_temp2",
+        "label": "LM96163 temp2",
+        "maximum": 44.625,
+        "mean": 43.9,
+        "minimum": 43.125,
+        "samples": 15,
+        "unit": "C"
+      }
+    ],
+    "cpu_usage_pct": {
+      "key": "cpu_usage_pct",
+      "label": "CPU usage",
+      "maximum": 8.703878902554397,
+      "mean": 7.807634778718893,
+      "minimum": 5.271415123941015,
+      "samples": 15,
+      "unit": "%"
+    },
+    "cpu_cores_usage_pct": [
+      {
+        "key": "cpu0_usage_pct",
+        "label": "CPU 0 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 18.0,
+        "minimum": 9.0,
+        "maximum": 31.0
+      },
+      {
+        "key": "cpu1_usage_pct",
+        "label": "CPU 1 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 21.1,
+        "minimum": 10.0,
+        "maximum": 33.5
+      },
+      {
+        "key": "cpu2_usage_pct",
+        "label": "CPU 2 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 24.2,
+        "minimum": 11.0,
+        "maximum": 36.0
+      },
+      {
+        "key": "cpu3_usage_pct",
+        "label": "CPU 3 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 27.3,
+        "minimum": 12.0,
+        "maximum": 38.5
+      },
+      {
+        "key": "cpu4_usage_pct",
+        "label": "CPU 4 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 30.4,
+        "minimum": 13.0,
+        "maximum": 41.0
+      },
+      {
+        "key": "cpu5_usage_pct",
+        "label": "CPU 5 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 33.5,
+        "minimum": 14.0,
+        "maximum": 43.5
+      },
+      {
+        "key": "cpu6_usage_pct",
+        "label": "CPU 6 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 36.6,
+        "minimum": 15.0,
+        "maximum": 46.0
+      },
+      {
+        "key": "cpu7_usage_pct",
+        "label": "CPU 7 usage",
+        "unit": "%",
+        "samples": 15,
+        "mean": 39.7,
+        "minimum": 16.0,
+        "maximum": 48.5
+      }
+    ],
+    "mla_memory_mib": {
+      "key": "mla_mem_allocated_mb",
+      "label": "MLA memory allocated",
+      "maximum": 29.65234375,
+      "mean": 29.65234375,
+      "minimum": 29.65234375,
+      "samples": 15,
+      "unit": "MiB"
+    },
+    "ev74_memory_mib": {
+      "key": "ev74_mem_allocated_mb",
+      "label": "EV74 memory allocated",
+      "maximum": 0.5703125,
+      "mean": 0.5703125,
+      "minimum": 0.5703125,
+      "samples": 15,
+      "unit": "MiB"
+    },
+    "linux_memory_used_mib": {
+      "key": "linux_mem_used_mb",
+      "label": "Linux memory used MB",
+      "maximum": 607.53125,
+      "mean": 600.32421875,
+      "minimum": 590.6875,
+      "samples": 15,
+      "unit": "MiB"
+    }
+  },
+  "components": {
+    "model": {
+      "execution_plan": {
+        "schema": "sima.neat.execution_plan",
+        "schema_version": 1,
+        "model": {
+          "name": "resnet_50_mpk",
+          "batch": 1,
+          "memory": {
+            "per_frame_bytes": 155648,
+            "type": "CMA"
+          }
+        },
+        "nodes": [
+          {
+            "id": "p0",
+            "kind": "Input",
+            "runs_on": "A65"
+          },
+          {
+            "id": "p1",
+            "kind": "QuantTess",
+            "runs_on": "EV74",
+            "kernel": "quantizetessellate"
+          },
+          {
+            "id": "p2",
+            "kind": "ModelFragment",
+            "runs_on": "MLA"
+          },
+          {
+            "id": "p3",
+            "kind": "DetessDequant",
+            "runs_on": "A65",
+            "kernel": "detessdequant"
+          },
+          {
+            "id": "p4",
+            "kind": "Output",
+            "runs_on": "A65"
+          }
+        ],
+        "edges": [
+          {
+            "from": "p0",
+            "to": "p1",
+            "tensors": [
+              {
+                "name": "data",
+                "shape": [
+                  1,
+                  224,
+                  224,
+                  3
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          {
+            "from": "p1",
+            "to": "p2",
+            "tensors": [
+              {
+                "name": "output_tensor",
+                "shape": [
+                  1,
+                  224,
+                  224,
+                  3
+                ],
+                "dtype": "int8",
+                "quant": {
+                  "scale": 53.62121217871723,
+                  "zero_point": -14
+                }
+              }
+            ]
+          },
+          {
+            "from": "p2",
+            "to": "p3",
+            "tensors": [
+              {
+                "name": "MLA_0",
+                "shape": [
+                  1,
+                  1,
+                  1,
+                  1000
+                ],
+                "dtype": "int8",
+                "quant": {
+                  "scale": 7.26249308476883,
+                  "zero_point": -67
+                }
+              }
+            ]
+          },
+          {
+            "from": "p3",
+            "to": "p4",
+            "tensors": [
+              {
+                "name": "dequantize_1/resnetv17_dense0_fwd",
+                "shape": [
+                  1,
+                  1000
+                ],
+                "dtype": "float32"
+              }
+            ]
+          }
+        ]
+      },
+      "mla_layer_stats": {"status": "not requested", "layers": []},
+      "mla_stage_stats": {"status": "not requested", "stages": []}
+    }
+  }
+}

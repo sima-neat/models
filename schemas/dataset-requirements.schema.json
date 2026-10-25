@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.neat.sima.ai/model-registry/dataset-requirements.schema.json",
+  "title": "SiMa Neat Model Registry dataset requirements",
+  "description": "datasets/<id>.yaml, one file per Dataset Registry dataset: the accuracy metrics a model must report on it, by the model's task. A model with several tasks reports the metrics of each.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["required_metrics"],
+  "properties": {
+    "required_metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"}
+  }
+}

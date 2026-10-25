@@ -1,171 +1,67 @@
-id: yolo26n
 display_name: YOLO26n-det
 description: The smallest YOLO26 detector for COCO objects.
 model_type: vision
-tasks:
-- object_detection
+tasks: [object_detection]
+
 modalities:
-  inputs:
-  - image
-  outputs:
-  - bounding_boxes
-  - class_scores
-architecture:
-  id: yolo_26
-  variant: n_coco_640x640
-owners:
-- '@sima-neat/models'
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolo
+
 license:
   spdx: AGPL-3.0-only
   redistribution: restricted
   attribution: YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.
+
 upstream:
   repository: https://huggingface.co/Ultralytics/YOLO26
   revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
-  model_card: https://huggingface.co/Ultralytics/YOLO26
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
 conversion:
-  default:
-    source:
-      type: file
-      uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26n.pt
-      sha256: 9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef
-      size_bytes: 5544453
-components:
-- id: model
-  role: inference
   source:
-    type: file
+    uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26n.pt
+    sha256: 9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef
+    size_bytes: 5544453
+
+compilation:
+  format: onnx
+  source:
     uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
     sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
     size_bytes: 9917015
-    media_type: application/onnx
-  interface:
-    format: onnx
-    opset: 12
-    entrypoints:
-    - id: default
-      inputs:
-      - name: images
-        dtype: float32
-        shape: [1, 3, 640, 640]
-        layout: NCHW
-        description: RGB image letterboxed to 640x640 and scaled to [0, 1].
-      outputs:
-      - name: bbox_0
-        dtype: float32
-        shape: [1, 4, 80, 80]
-        layout: NCHW
-        description: Box side distances in grid cells, stride 8.
-      - name: bbox_1
-        dtype: float32
-        shape: [1, 4, 40, 40]
-        layout: NCHW
-        description: Box side distances in grid cells, stride 16.
-      - name: bbox_2
-        dtype: float32
-        shape: [1, 4, 20, 20]
-        layout: NCHW
-        description: Box side distances in grid cells, stride 32.
-      - name: class_logit_0
-        dtype: float32
-        shape: [1, 80, 80, 80]
-        layout: NCHW
-        description: COCO class logits, stride 8.
-      - name: class_logit_1
-        dtype: float32
-        shape: [1, 80, 40, 40]
-        layout: NCHW
-        description: COCO class logits, stride 16.
-      - name: class_logit_2
-        dtype: float32
-        shape: [1, 80, 20, 20]
-        layout: NCHW
-        description: COCO class logits, stride 32.
-    shape_profiles: []
-  preprocessing:
-    pipeline:
-    - op: decode_image
-      parameters: {color_space: RGB}
-    - op: letterbox
-      parameters: {width: 640, height: 640, fill: 114, resample: bilinear}
-    - op: rescale
-      parameters: {factor: 0.00392156862745098}
-    - op: transpose
-      parameters: {from: HWC, to: CHW}
-  postprocessing:
-    pipeline: []
-  surgery:
-    type: python
-    entrypoint: scripts/surgery.py:prepare_model
-    parameters: {}
-  recipe: scripts/compile.py
-resources: []
+
 calibrations:
-- id: coco_images
-  status: ready
-  dataset:
-    id: coco-2017
-    variant: mini
-    sha256: abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78
-    size_bytes: 462182592
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
 build_profiles:
-- id: modalix_bf16
-  target: modalix
-  components:
-  - id: model
-    artifact_suffix: bf16
-    parameters:
-      precision: bf16
-- id: modalix_int8
-  target: modalix
-  components:
-  - id: model
-    artifact_suffix: int8_mse_h2048_bcr
-    calibration: coco_images
-    parameters:
-      precision: int8
-      calibration_bins: 2048
-      calibration_samples: 50
-compositions:
-- id: default
-  type: single
-  component: model
-  entrypoint: default
-packages:
-- id: default
-  default: true
-  components: [model]
-  resources: []
-  build_profiles: [modalix_bf16, modalix_int8]
-  composition: default
-  maturity: experimental
-fidelity: []
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
 accuracy:
-- id: coco_accuracy
-  scope: {type: package, package: default}
-  build_profiles: [modalix_bf16, modalix_int8]
-  engine: devkit_script
-  status: ready
-  result_component: model
-  dataset:
-    id: coco-2017
-    variant: mini
-    sha256: abb616d0eaf3d55d98d44ed092e05e2df6f87264d7f8426550d62402ef222e78
-    size_bytes: 462182592
-  metrics: [coco_map, coco_ap50, coco_ap75, coco_ap_small, coco_ap_medium, coco_ap_large,
-    coco_ar1, coco_ar10, coco_ar100, coco_ar_small, coco_ar_medium, coco_ar_large]
-  required_metrics: [coco_map]
-  reference:
-    source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
-    metrics: {coco_map: 0.401}
-benchmark:
-- id: modalix_latency
-  scope: {type: component, component: model}
-  build_profiles: [modalix_bf16, modalix_int8]
-  status: pending
-  target: modalix
-  reason: Establish a Core API baseline for the default MPK workload.
-  metrics: [latency_avg_ms, throughput_fps, avg_power_watts, energy_joules, energy_per_inference_joules]
-  required_metrics: [avg_power_watts, energy_per_inference_joules]
-maturity: experimental
+  # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS-free one-to-one head
+  metrics: {coco_map: 0.401}

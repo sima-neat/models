@@ -1,0 +1,67 @@
+display_name: YOLO26n-seg
+description: The smallest YOLO26 instance segmenter for COCO objects.
+model_type: vision
+tasks: [instance_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores, masks]
+
+architecture: yolo
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://huggingface.co/Ultralytics/YOLO26
+  revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26n-seg.pt
+    sha256: 361fbfabab285c3237700b6bb91d7ecfa602cd945fffda8dbe1242829b71e73f
+    size_bytes: 6719965
+
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n_seg/1d77a261f40d5dcd4910be2318d66bcf80f175824fa286eb368b304a89dc0cd9/38232646630-1/model.onnx
+    sha256: 1d77a261f40d5dcd4910be2318d66bcf80f175824fa286eb368b304a89dc0cd9
+    size_bytes: 11190640
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 1024, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS-free one-to-one head
+  metrics: {coco_mask_map: 0.339, coco_box_map: 0.396}

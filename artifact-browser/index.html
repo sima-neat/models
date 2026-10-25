@@ -14,38 +14,67 @@
         }
         let stored = null;
         try {
-          stored = localStorage.getItem("theme") || localStorage.getItem("sima-neat-artifact-theme");
+          stored = localStorage.getItem("portal-theme") || localStorage.getItem("theme") || localStorage.getItem("sima-neat-artifact-theme");
         } catch {
           // Storage is optional; use the system preference when unavailable.
         }
-        const theme = stored || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        const cookie = document.cookie.split("; ").find((entry) => entry.startsWith("sima-neat-theme="))?.split("=")[1];
+        const theme = [cookie, stored].find((value) => value === "light" || value === "dark")
+          || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
         document.documentElement.dataset.theme = theme;
       })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="brand.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to artifact results</a>
-    <header class="topbar">
+    <div id="developer-center-shell"></div>
+    <header class="topbar portal-fallback">
       <div class="topbar-primary">
-        <a class="brand" href="./" aria-label="SiMa.ai Model Registry home">
+        <a class="brand" href="https://developer.sima.ai/" aria-label="Developer Portal home">
           <img class="brand-mark" src="favicon.svg" alt="" aria-hidden="true" />
-          <span>Model Registry</span>
+          <span>Developer Portal</span>
         </a>
-        <nav class="product-nav" aria-label="Model Registry">
-          <a id="nav-models" href="./" aria-current="page">Models</a>
-          <a id="nav-compare" href="./?view=compare">Compare</a>
-          <a href="./docs">Developer docs</a>
+        <nav id="portal-navigation" class="portal-nav" aria-label="Developer Portal">
+          <a href="https://developer.sima.ai/tools/qsg/index.html">Quick Start Guide</a>
+          <a href="https://developer.sima.ai/hardware/">Hardware</a>
+          <a href="https://developer.sima.ai/software/">Software</a>
+          <a href="https://developer.sima.ai/examples/">Examples</a>
+          <a href="./" aria-current="page">Models</a>
+          <a href="https://community.sima.ai/">Community</a>
         </nav>
       </div>
       <div class="topbar-actions">
-        <span class="environment"><i></i> <span id="environment-name">Registry</span></span>
+        <button class="icon-button portal-menu-toggle" type="button" aria-label="Toggle portal navigation" aria-expanded="false" aria-controls="portal-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg></button>
         <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch color theme"></button>
       </div>
     </header>
+
+    <aside id="release-notice" class="release-notice" aria-label="Model browser release information" hidden>
+      <div class="release-notice-inner">
+        <strong>Unofficial release of the model browser</strong>
+        <span class="release-notice-description">You’re viewing a staging build. Features may change before release.</span>
+        <div class="release-notice-meta">
+          <span>Backend <b id="release-backend"></b></span>
+          <span>Browser build <code id="release-branch"></code> <span aria-hidden="true">·</span> <code id="release-commit"></code></span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="sectionbar">
+      <div class="sectionbar-inner">
+        <nav class="product-nav" aria-label="Models">
+          <a id="nav-models" href="./" aria-current="page">Browse models</a>
+          <a id="nav-compare" href="./?view=compare">Compare</a>
+          <a class="developer-only" href="./docs"><span class="nav-long">Developer docs</span><span class="nav-short">Docs</span></a>
+        </nav>
+        <span class="environment developer-only"><i></i> <span id="environment-name">Registry</span></span>
+      </div>
+    </div>
 
     <main id="main">
       <h1 class="sr-only">Model Registry</h1>
@@ -61,8 +90,7 @@
             <label class="search-field">
               <span class="sr-only">Search models</span>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15A7.5 7.5 0 1 1 4 11.5a7.5 7.5 0 0 1 15 0Z" /></svg>
-              <input id="search" type="search" placeholder="Search models, tasks, or architectures…" autocomplete="off" />
-              <kbd>/</kbd>
+              <input id="search" type="search" placeholder="Search models, tasks, or families…" autocomplete="off" />
             </label>
             <button id="filter-toggle" class="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-drawer">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10m-7 5h4" /></svg>
@@ -73,30 +101,28 @@
           <div class="catalog-layout">
             <aside id="filter-drawer" class="filter-drawer" data-open="false" aria-label="Filters">
               <label><span>Task</span><select id="task-filter"><option value="">Any task</option></select></label>
-              <label><span>Architecture</span><select id="architecture-filter"><option value="">Any architecture</option></select></label>
-              <details id="more-filters" class="more-filters disclosure">
-                <summary><span class="disclosure-label">More filters</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
-                <div class="more-filters-body disclosure-body">
-                  <label><span>Model type</span><select id="model-type-filter"><option value="">Any type</option></select></label>
-                  <label><span>Paradigm</span><select id="paradigm-filter"><option value="">Any paradigm</option></select></label>
-                  <label><span>Input</span><select id="input-modality-filter"><option value="">Any input</option></select></label>
-                  <label><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
-                  <label><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
-                  <div class="toggle-filter">
-                    <span>Build history</span>
-                    <label class="switch-row">
-                      <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
-                      <i aria-hidden="true"></i><b>Show build history</b>
-                    </label>
-                    <small id="history-filter-help">Switches from models to chronological build runs.</small>
-                  </div>
-                </div>
-              </details>
+              <label><span>Model family</span><select id="architecture-filter"><option value="">Any family</option></select></label>
+              <label class="developer-only branch-filter"><span>Branch</span><select id="branch-filter"><option value="">All branches</option></select></label>
+              <label class="developer-only"><span>Compiler</span><select id="compiler-filter"><option value="">Any version</option></select></label>
+              <div class="toggle-filter developer-only">
+                <span>Build history</span>
+                <label class="switch-row">
+                  <input id="history-filter" type="checkbox" role="switch" aria-describedby="history-filter-help" />
+                  <i aria-hidden="true"></i><b>Show build history</b>
+                </label>
+                <small id="history-filter-help">Switches from models to chronological build runs.</small>
+              </div>
               <button id="clear-filters" class="text-button" type="button">Clear filters</button>
             </aside>
 
             <div class="results-pane">
-              <p id="result-count" class="result-count" aria-live="polite">—</p>
+              <div class="results-header">
+                <p id="result-count" class="result-count" aria-live="polite">—</p>
+                <div id="catalog-layout-toggle" class="catalog-layout-toggle" role="group" aria-label="Model view" hidden>
+                  <button type="button" data-catalog-layout="cards" aria-pressed="true"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="5" rx="1"/><rect x="12" y="3" width="5" height="5" rx="1"/><rect x="3" y="12" width="5" height="5" rx="1"/><rect x="12" y="12" width="5" height="5" rx="1"/></svg>Cards</button>
+                  <button type="button" data-catalog-layout="table" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="1"/><path d="M3 8h14M3 12.5h14M8 3v14"/></svg>Table</button>
+                </div>
+              </div>
               <div id="result-list" class="result-list" aria-busy="true"></div>
               <button id="load-more" class="load-more" type="button" hidden>Load more models</button>
             </div>
@@ -116,11 +142,13 @@
       <p class="download-note">Files download separately and in parallel. Your browser may ask you to allow multiple downloads.</p>
       <p id="download-status" role="status"></p>
       <div class="download-actions">
-        <button id="download-cancel" class="text-button" type="button" autofocus>Cancel</button>
+        <button id="download-cancel" class="download-cancel-button" type="button" autofocus>Cancel</button>
+        <button id="download-copy-cli" class="download-copy-button" type="button" hidden>Copy CLI command</button>
         <button id="download-confirm" class="download-button" type="button" disabled>Download all files</button>
       </div>
     </dialog>
 
+    <div id="execution-tooltip" class="execution-tooltip" role="tooltip" hidden></div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <script src="config.js"></script>
     <script type="module" src="app.js"></script>

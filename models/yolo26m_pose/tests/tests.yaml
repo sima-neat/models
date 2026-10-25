@@ -1,0 +1,57 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_keypoint_map: 0.6864
+        coco_keypoint_ap50: 0.8939
+        coco_keypoint_ap75: 0.7560
+        coco_keypoint_ap_medium: 0.6352
+        coco_keypoint_ap_large: 0.7744
+        coco_keypoint_ar: 0.7448
+        coco_keypoint_ar50: 0.9262
+        coco_keypoint_ar75: 0.8092
+        coco_keypoint_ar_medium: 0.6842
+        coco_keypoint_ar_large: 0.8307
+        coco_person_box_map: 0.5630
+        coco_person_box_ap50: 0.7265
+    w8a8:
+      coco-2017-val:
+        coco_keypoint_map: 0.6375
+        coco_keypoint_ap50: 0.8883
+        coco_keypoint_ap75: 0.7134
+        coco_keypoint_ap_medium: 0.5789
+        coco_keypoint_ap_large: 0.7274
+        coco_keypoint_ar: 0.7022
+        coco_keypoint_ar50: 0.9216
+        coco_keypoint_ar75: 0.7731
+        coco_keypoint_ar_medium: 0.6343
+        coco_keypoint_ar_large: 0.7977
+        coco_person_box_map: 0.5540
+        coco_person_box_ap50: 0.7327
+    w8a16:
+      coco-2017-val:
+        coco_keypoint_map: 0.6795
+        coco_keypoint_ap50: 0.8850
+        coco_keypoint_ap75: 0.7484
+        coco_keypoint_ap_medium: 0.6288
+        coco_keypoint_ap_large: 0.7667
+        coco_keypoint_ar: 0.7374
+        coco_keypoint_ar50: 0.9169
+        coco_keypoint_ar75: 0.8011
+        coco_keypoint_ar_medium: 0.6774
+        coco_keypoint_ar_large: 0.8224
+        coco_person_box_map: 0.5574
+        coco_person_box_ap50: 0.7192
+performance:
+  run_tests: false
+  skip_reason: The w8a16 build has no published report to expect values from yet.
+  expected:
+    w16a16:
+      throughput_fps: 78.1
+    w8a8:
+      throughput_fps: 340.4

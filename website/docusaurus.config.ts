@@ -1,8 +1,10 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import {portalConfig} from './scripts/portal-config.mjs';
 
-const siteUrl = process.env.DOCS_SITE_URL?.trim() || 'http://localhost:4173';
+const portal = portalConfig();
+const siteUrl = process.env.DOCS_SITE_URL?.trim() || portal.siteUrl;
 const basePath = process.env.DOCS_BASE_URL?.trim().replace(/^\/+|\/+$/g, '') ?? '';
 const baseUrl = basePath ? `/${basePath}/` : '/';
 
@@ -27,6 +29,7 @@ const config: Config = {
     type: 'localStorage',
     namespace: false,
   },
+  clientModules: ['./src/clientModules/developer-portal.js'],
 
   i18n: {
     defaultLocale: 'en',
@@ -75,20 +78,25 @@ const config: Config = {
           type: 'html',
           position: 'left',
           className: 'navbar__catalog-item',
-          value: `<a class="navbar__link" href="${baseUrl}">Models</a>`,
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'developerGuide',
-          position: 'left',
-          label: 'Developer docs',
+          value: `<a class="navbar__link" href="${baseUrl}">Browse models</a>`,
         },
         {
           type: 'html',
-          position: 'right',
+          position: 'left',
+          className: 'navbar__catalog-item',
+          value: `<a class="navbar__link" href="${baseUrl}?view=compare">Compare</a>`,
+        },
+        ...(portal.uiMode === 'developer' ? [{
+          type: 'docSidebar' as const,
+          sidebarId: 'developerGuide',
+          position: 'left' as const,
+          label: 'Developer docs',
+        }, {
+          type: 'html' as const,
+          position: 'right' as const,
           className: 'navbar__environment-item',
           value: '<span class="navbar__environment"><i></i>Staging registry</span>',
-        },
+        }] : []),
       ],
     },
     footer: {

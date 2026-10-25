@@ -1,13 +1,14 @@
 .venv/
 .venv-*/
-.venv-qat/
-.qat-tools/
 .pytest_cache/
 *.egg-info/
 __pycache__/
 *.py[cod]
 .model-registry-cache/
 build/
+# Each model's build-stage tests, including the fixture model's.
+!models/*/tests/build/
+!tests/fixtures/*/tests/build/
 dist/
 node_modules/
 .docusaurus/

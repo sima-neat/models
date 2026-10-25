@@ -606,12 +606,12 @@ def _merge_query_sine_embedding(model: onnx.ModelProto) -> onnx.ModelProto:
     return _finish(model)
 
 
-def graph_paths(output_dir: Path) -> tuple[Path, Path, Path]:
-    """Return where prepare_model writes the full, backbone, and transformer graphs."""
-    return tuple(output_dir / f"rf_detr_medium_{part}.onnx" for part in ("full", "backbone", "transformer"))
+def graph_paths(output_dir: Path) -> tuple[Path, Path]:
+    """Return where prepare_model writes the backbone and decoder graphs."""
+    return tuple(output_dir / f"rf_detr_medium_{part}.onnx" for part in ("backbone", "decoder"))
 
 
-def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
+def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path]:
     from onnxsim import simplify
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -630,14 +630,15 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     full.ir_version = 8
     onnx.checker.check_model(full)
 
-    full_path, backbone_path, transformer_path = graph_paths(output_dir)
+    full_path = output_dir / "rf_detr_medium_full.onnx"
+    backbone_path, decoder_path = graph_paths(output_dir)
     onnx.save(full, full_path)
     onnx.utils.extract_model(str(full_path), str(backbone_path), [INPUT], [FEATURES, SCORES, BOXES])
-    onnx.utils.extract_model(str(full_path), str(transformer_path), [FEATURES, PROPOSALS], OUTPUTS)
+    onnx.utils.extract_model(str(full_path), str(decoder_path), [FEATURES, PROPOSALS], OUTPUTS)
 
-    transformer = onnx.load(transformer_path)
-    transformer, valid = simplify(
-        transformer,
+    decoder = onnx.load(decoder_path)
+    decoder, valid = simplify(
+        decoder,
         overwrite_input_shapes={
             FEATURES: BOUNDARY_SHAPES[FEATURES],
             PROPOSALS: BOUNDARY_SHAPES[PROPOSALS],
@@ -645,14 +646,14 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
         dynamic_input_shape=False,
     )
     if not valid:
-        raise RuntimeError("RF-DETR transformer simplification failed validation")
+        raise RuntimeError("RF-DETR decoder simplification failed validation")
     # onnxsim turns the singleton feature-level axis of the reference points into a Gather.
-    transformer = _remove_identities(transformer, {"Gather": 1})
-    transformer = _optimize_decoder_attention(transformer, DECODER_LAYERS)
-    transformer = _merge_query_sine_embedding(transformer)
-    transformer.ir_version = 8
-    onnx.checker.check_model(transformer)
-    onnx.save(transformer, transformer_path)
+    decoder = _remove_identities(decoder, {"Gather": 1})
+    decoder = _optimize_decoder_attention(decoder, DECODER_LAYERS)
+    decoder = _merge_query_sine_embedding(decoder)
+    decoder.ir_version = 8
+    onnx.checker.check_model(decoder)
+    onnx.save(decoder, decoder_path)
 
     backbone = _optimize_window_attention(onnx.load(backbone_path), WINDOW_BLOCKS)
     backbone = _fold_backbone_score_scale(backbone, BACKBONE_BLOCKS)
@@ -660,24 +661,23 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path, Path]:
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)
-    return full_path, backbone_path, transformer_path
+    return backbone_path, decoder_path
 
 
 def validate_float_split(
     source: Path,
     backbone: Path,
-    transformer: Path,
+    decoder: Path,
     image: np.ndarray,
 ) -> None:
     import onnxruntime as ort
-    from calibration import stable_topk_gather
 
     reference_model = onnx.load(source)
     (topk,) = [node for node in reference_model.graph.node if node.op_type == "TopK"]
     reference_model.graph.output.append(helper.make_empty_tensor_value_info(topk.output[1]))
     reference = ort.InferenceSession(reference_model.SerializeToString(), providers=["CPUExecutionProvider"])
     backbone_session = ort.InferenceSession(str(backbone), providers=["CPUExecutionProvider"])
-    transformer_session = ort.InferenceSession(str(transformer), providers=["CPUExecutionProvider"])
+    decoder_session = ort.InferenceSession(str(decoder), providers=["CPUExecutionProvider"])
     sample = image[None]
     features, scores, boxes = backbone_session.run(None, {INPUT: sample})
     *expected, selected = reference.run(None, {INPUT: sample})
@@ -687,9 +687,8 @@ def validate_float_split(
     if gaps.max() > 1e-5:
         raise RuntimeError(f"RF-DETR split selects different proposals; largest score gap {gaps.max():.2e}")
     # Compare the decoder on TopK's own order so a tie swap cannot pair queries with other boxes.
-    np.testing.assert_array_equal(stable_topk_gather(scores, boxes), np.take_along_axis(boxes, bridge[..., None], 1))
     proposals = np.take_along_axis(boxes, selected[..., None], 1).astype(np.float32)
-    actual = transformer_session.run(None, {FEATURES: features, PROPOSALS: proposals})
+    actual = decoder_session.run(None, {FEATURES: features, PROPOSALS: proposals})
     for name, expected_value, actual_value in zip(OUTPUTS, expected, actual, strict=True):
         # The rewrites change float32 rounding (accumulation order, folded GELU scales). The decoder
         # amplifies one-ulp backbone weight noise to about 1e-3, so the tolerance sits above that.

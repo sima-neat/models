@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import model_report
 import numpy as np
 import pyneat
 from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
@@ -184,14 +185,16 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/keypoints directory")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    dataset = Path(dataset_dir)
 
     model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
     with contextlib.redirect_stdout(io.StringIO()):
-        ground_truth = COCO(str(args.dataset / ANNOTATIONS))
+        ground_truth = COCO(str(dataset / ANNOTATIONS))
     available = scored_image_ids(ground_truth)
     image_ids = sorted(random.Random(0).sample(available, args.limit)) if args.limit else available
     records = ground_truth.loadImgs(image_ids)
@@ -202,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     runner = None
     detections: list[dict] = []
     started = time.monotonic()
-    image_dir = args.dataset / IMAGES
+    image_dir = dataset / IMAGES
     images = prefetched(lambda record: preprocess_image((image_dir / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         tensor = pyneat.Tensor.from_numpy(image, copy=False)
@@ -222,19 +225,20 @@ def main(argv: list[str] | None = None) -> int:
     stats = score(ground_truth, results, "keypoints", image_ids) | score(ground_truth, results, "bbox", image_ids)
     scoring_seconds = time.monotonic() - started
 
-    result = {
-        "core_version": pyneat.__version__,
-        "dataset": {"split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available)},
-        "metrics": {name: {"value": stats[name], "unit": "ratio", "direction": "higher"} for name in METRICS},
-        "details": {
-            "detections": len(detections),
-            "inference_seconds": round(inference_seconds, 1),
-            "scoring_seconds": round(scoring_seconds, 1),
+    report = model_report.from_accuracy({
+        dataset_id: {
+            "metrics": {name: stats[name] for name in METRICS},
+            "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
+            "details": {
+                "detections": len(detections),
+                "inference_seconds": round(inference_seconds, 1),
+                "scoring_seconds": round(scoring_seconds, 1),
+            },
         },
-    }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: round(item["value"], 4) for name, item in result["metrics"].items()}))
+    })
+    report.save(args.output)
+    measured = report.document["datasets"][dataset_id]["metrics"]
+    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 
 

@@ -1,11 +1,12 @@
 # Accuracy and fidelity
 
-`model.yaml` declares two kinds of quality evidence for a build:
+`model.yaml` declares two kinds of quality evidence for a build profile's
+whole model:
 
 | Section | Question it answers | Measured by | Stage |
 | --- | --- | --- | --- |
-| `fidelity` | Does the compiled graph produce the same numbers as the source model? | `scripts/compile.py` | compile |
-| `accuracy` | How well does the compiled model do its task? | `scripts/accuracy.py` on a DevKit, or recorded results | accuracy |
+| `numerical_fidelity` | Does the compiled model produce the same numbers as the source model? | `scripts/compile.py` | compile |
+| `accuracy` | How well does the compiled model do its task? | `scripts/accuracy.py` on a DevKit | accuracy |
 
 Fidelity is a numerical diagnostic, not task accuracy. Neither is calibration:
 calibration data feeds quantization and proves nothing about quality.
@@ -16,88 +17,58 @@ Artifactory access.
 
 ## Compile-time fidelity
 
-A `fidelity` entry asks the recipe to compare the compiled candidate with the
-source model on a fixed sample of a registered dataset:
+`numerical_fidelity` asks the recipe to compare every build profile's compiled
+model with the source model on a fixed sample of a registered dataset:
 
 ```yaml
-fidelity:
-  - id: logits_fidelity
-    scope: {type: package, package: default}
-    build_profiles: [modalix_bf16, modalix_int8]
-    status: diagnostic
-    result_component: model
-    dataset: {id: imagenet-2012, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
-    selection:
-      method: seeded_random_without_replacement
-      seed: 42
-      offset: 0
-      samples: 50
-    outputs: [logits]
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
 ```
 
-The rules:
-
-- `scope` must be a package, and `result_component` must be one of its
-  components.
-- `outputs` names outputs of the result component's entrypoints.
-- `status` is `diagnostic`, `provisional`, or `ready`.
-- At most one fidelity entry covers a component in a build profile.
-
-The fidelity entries of a build profile are compile inputs: changing one
-recompiles the affected builds.
+`dataset` pins a Dataset Registry archive, `outputs` names outputs of the model, and
+`status` is `diagnostic`, `provisional`, or `ready`; see
+[`numerical_fidelity`](metadata-schema.md#numerical_fidelity). The section is
+a compile input: changing it recompiles the model's builds.
 
 `scripts/run_model_compilation.sh` resolves the dataset with
 `model-registry fetch-fidelity-dataset` and passes it to the recipe as
 `--fidelity-dataset`. The recipe selects the declared samples, runs the
-reference and the candidate, and writes `fidelity.json` beside the result
-component's MPK. A grouped invocation also lists that file as the
-`correctness` entry of its `compile-outputs.json`.
+reference and the candidate, and writes `fidelity.json` in the profile's
+output directory, beside the component directories.
 
 The report follows
 [`numerical-fidelity.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/numerical-fidelity.schema.json).
 For each declared output it records cosine similarity, normalized RMSE, and
-mean and maximum absolute error. CI rejects a compilation whose result
-component lacks the report, or whose other components carry one. It publishes
-the report on the compile run as a `numerical-fidelity` artifact, a
+mean and maximum absolute error. Package assembly carries the report into the
+profile's `default` package, and CI rejects a package that lacks it when
+`numerical_fidelity` is declared, or carries one when it is not. CI publishes
+the report on the profile's package run as a `numerical-fidelity` artifact, a
 `correctness/numerical-fidelity` test result, and measurements of each metric.
 
 ## Accuracy on the DevKit
 
 Use DevKit accuracy when a task metric needs the model's own decoding and
 scoring, such as top-1 accuracy for a classifier or COCO mAP for a detector.
-The model's `scripts/accuracy.py` runs the compiled MPKs on a DevKit with
-PyNeat. Declare it as an `accuracy` entry with `engine: devkit_script`:
+The model's `scripts/accuracy.py` runs every compiled MPK of a build profile
+on a DevKit with PyNeat, on each dataset `accuracy` names:
 
 ```yaml
 accuracy:
-  - id: coco_accuracy
-    scope: {type: package, package: default}
-    build_profiles: [modalix_int8_bf16]
-    engine: devkit_script
-    status: ready
-    result_component: transformer
-    dataset: {id: coco-2017, variant: mini, sha256: <archive sha256>, size_bytes: <bytes>}
-    metrics: [coco_map, coco_ap50, coco_ap75]
-    required_metrics: [coco_map]
-    reference:
-      source: https://github.com/roboflow/rf-detr/blob/<commit>/README.md
-      metrics: {coco_map: 0.530, coco_ap50: 0.721}
+  datasets:
+  - {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
 ```
 
-The optional `reference` records the source model's published scores, copied
-by hand from a pinned page, so each measurement can be compared with them. Give
-each value in the unit `accuracy.py` reports.
-
-The rules:
-
-- A build profile has at most one `devkit_script` entry.
-- `result_component` must be in the scope.
-- Every scoped component must compile in one compile invocation of each listed
-  build profile, so the accuracy stage runs on the MPKs of one build.
-- `status` is `ready` or `provisional`.
-- `required_metrics` must be listed in `metrics`.
-- `reference.metrics` must be listed in `metrics`, and `reference.source` is an
-  HTTPS URL.
+Each `datasets` entry pins a Dataset Registry archive, which goes by its
+source ID, here `imagenet-2012-mini`. The metrics the report must hold come from
+`datasets/<registry id>.yaml` for the model's `tasks`; see
+[Required accuracy metrics](datasets.md#required-accuracy-metrics).
+Without `build_profiles`, every build profile is measured; see
+[`accuracy`](metadata-schema.md#accuracy). Record the source model's published
+scores in the top-level [`reference_metrics`](metadata-schema.md#reference-metrics),
+not in `accuracy`, so the model page shows them before the first DevKit run.
 
 Optional `scripts/requirements-accuracy.txt` pins extra wheels. They install
 into a separate folder beside PyNeat's environment, never into it.
@@ -106,24 +77,38 @@ into a separate folder beside PyNeat's environment, never into it.
 
 `scripts/accuracy.py` receives:
 
-- `--mpk <component>=<path>` once for each scoped component;
-- `--dataset <directory>`, the extracted dataset archive; and
-- `--output <file>`.
+- `--mpk <component>=<path>` once for each component, `model=<path>` for a
+  single-component model;
+- `--dataset <source id>=<directory>` for each dataset `accuracy` pins, the
+  extracted archive; and
+- `--output <directory>`.
 
-It writes:
+It scores the whole model on each dataset and hands the scores to
+`tools/model_report`, keyed by the dataset source IDs. `model_report` writes
+`model-report.json` into the output directory:
 
-```json
-{
-  "core_version": "3.0.0",
-  "dataset": {"split": "val2017", "evaluated_samples": 5000, "available_samples": 5000},
-  "metrics": {"coco_map": {"value": 0.469, "unit": "ratio", "direction": "higher"}},
-  "details": {"inference_seconds": 187.7}
-}
+```python
+dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-mini, <directory>
+...
+report = model_report.from_accuracy({
+    dataset_id: {
+        "metrics": {"top1_accuracy": top1 / len(names), "top5_accuracy": top5 / len(names)},
+        "split": VALIDATION_SPLIT,
+        "evaluated_samples": len(names),
+        "available_samples": len(available),
+        "details": {"inference_seconds": round(time.monotonic() - started, 1)},
+    },
+})
+report.save(args.output)
 ```
 
-Every metric must be declared in the entry, and every required metric must be
-present. Existing scripts also accept `--limit <images>` to evaluate a subset
-for a quick local check; CI never passes it.
+How the script evaluates each dataset is up to the model. Every score is a
+ratio from 0 to 1, named as an accuracy metric in
+[`tools/model_report/metrics.json`](../tools/model_report/metrics.json), and
+each dataset's result must hold every metric its requirements file lists for
+the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
+`--limit <images>` to evaluate a subset for a quick local check; CI never
+passes it.
 
 ### Run it on a DevKit
 
@@ -139,56 +124,65 @@ PYNEAT_PYTHON=~/pyneat/bin/python \
 `<compile-output-root>` holds `<model-id>/<build-profile>/compile-outputs.json`
 and the MPKs it lists. The script:
 
-1. resolves the declared dataset into `DATASET_CACHE` (default
+1. resolves each declared dataset into `DATASET_CACHE` (default
    `/media/nvme/datasets/artifacts`), holding a lock so concurrent runs share
    one download;
-2. extracts it under `WORK_DIR` (default `/media/nvme/neat-tests/`) and
-   removes that directory when it exits;
-3. installs `requirements-accuracy.txt` beside PyNeat;
-4. runs `accuracy.py` and writes `script-output.json` and `accuracy.log`; and
-5. checks the output against the entry and writes `accuracy-result.json`.
+2. lists each component's MPK with `model-registry model-component-mpks`;
+3. extracts each dataset under `WORK_DIR` (default `/media/nvme/neat-tests/`)
+   and removes that directory when it exits;
+4. installs `requirements-accuracy.txt` beside PyNeat;
+5. runs `accuracy.py` with `--dataset <source id>=<directory>` for each dataset
+   and `PYTHONPATH` including `tools`, which writes
+   `model-report.json`, and saves its output to `accuracy.log`; and
+6. runs `model-registry check-report`, which validates the report against
+   [`model-report.schema.json`](../schemas/model-report.schema.json), requires
+   a result for exactly the declared datasets, each with its required metrics,
+   and writes the board's installation to
+   `environment.json`.
 
 `REGISTRY_PYTHON` needs the full Model Registry tooling from this checkout
 (`python -m pip install .`) and Dataset Registry, because the dataset
-resolution and result checks are not in the author-only `model-registry`
-package. It exits without running anything when the build profile declares no
-DevKit accuracy.
+resolution and report checks are not in the author-only `model-registry`
+package. It exits without running anything when the build profile is not
+measured.
 
 For a quicker check, resolve the dataset with Dataset Registry, extract it, and
 run the script directly:
 
 ```bash
-~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
-  --mpk model=<path to MPK> --dataset <extracted dataset> \
-  --output /tmp/resnet50-accuracy.json --limit 500
+PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
+  --mpk model=<path to MPK> --dataset imagenet-2012-mini=<extracted dataset> \
+  --output /tmp/resnet50-accuracy --limit 500
 ```
 
 A model whose `accuracy.py` imports another file under `scripts/`, such as
 ResNet-50's `calibration.py`, needs that file beside it.
 
-### Result and publication
+### Report and publication
 
-`accuracy-result.json` follows
-[`accuracy-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/accuracy-result.schema.json).
-It wraps the script output with the model, build profile, entry, the SHA-256 of
-each MPK, the dataset identity, the SHA-256 of `accuracy.py`, and the source
-revision. Each metric named in the entry's `reference` carries that published
-score as its `reference`.
+`model-report.json` follows
+[`model-report.schema.json`](../schemas/model-report.schema.json): the stage,
+the PyNeat version and build, and `datasets`, which gives for each dataset source
+ID its evaluated split and sample counts, one number per metric, and free-form
+`details`. The model, build profile, MPK
+digests, and board are not report fields; publication records them on the run.
 
-CI publishes it as a `model_accuracy` registry run under the result
-component's compile run. The run records the accuracy stage key and carries an
-`accuracy-result` artifact, an `accuracy/<entry-id>` test result, and one
-`model.accuracy.<metric>` measurement per metric. The model browser shows the
-first four metrics as tiles and lists the rest in a table, each with its
-published score when the entry records one, and the evaluated sample count.
-
-## Recorded accuracy
-
-An `accuracy` entry without `engine` records results measured outside the
-registry stages. It needs only `id`, `scope`, and `build_profiles`; other
-fields are free-form. No stage runs it and it has no stage key. SSD-MobileNet
-uses such an entry to record its quantization evaluation.
-
-A recipe that reads settings from a recorded entry, as the SSD-MobileNet
-recipes read `compiler_raw_head_thresholds`, does not recompile when those
-settings change, because `accuracy` entries are not compile inputs.
+On the DevKit, `scripts/run_model_tests.sh` runs the model's
+`tests/benchmark/test_accuracy.py` on the report, which compares each dataset's
+metrics with the build profile's expected values for that dataset in
+`tests/tests.yaml` ([set up
+`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). CI publishes the
+report with `model-registry publish-report` as one `model_accuracy` registry
+run under the build profile's `model_package` run. Its `run_fingerprint` is the
+accuracy benchmark fingerprint, and the run carries one `compiled-model-<component>`
+input per component, the `model-report` and log artifacts, an `accuracy/model`
+test result whose summary is the whole report and whose status is the test
+outcome (`passed`, `failed`, or `skipped`), and one measurement per dataset
+and metric, with a `dataset` dimension. A
+failed test still publishes the report, then fails the workflow run. See [CI
+and registry publication](benchmarking.md#ci-and-registry-publication) for the
+shared flow. The model browser shows each dataset's result in the accuracy
+section: its first four metrics as tiles and the rest in a table, each with its
+reference score when `reference_metrics` records one for the same dataset, and
+the evaluated sample count. The catalog and the Compare page use the first
+declared dataset.

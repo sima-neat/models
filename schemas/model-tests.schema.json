@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sima-neat/models/schemas/model-tests.schema.json",
+  "title": "SiMa Neat model tests",
+  "description": "One model's tests/tests.yaml: whether each stage's test file runs, and what the model is expected to deliver on a DevKit. build/ checks conversion and compilation; benchmark/ checks accuracy and performance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["compile"],
+  "properties": {
+    "conversion": {"$ref": "#/$defs/buildStage"},
+    "compile": {"$ref": "#/$defs/buildStage"},
+    "accuracy": {
+      "$ref": "#/$defs/benchmarkStage",
+      "unevaluatedProperties": false,
+      "properties": {
+        "expected": {
+          "description": "Per build profile and dataset name from model.yaml's accuracy, the value of every metric the accuracy report gives on that dataset.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+            "additionalProperties": {"$ref": "#/$defs/metricValues"}
+          }
+        }
+      }
+    },
+    "performance": {
+      "$ref": "#/$defs/benchmarkStage",
+      "unevaluatedProperties": false,
+      "properties": {
+        "expected": {
+          "description": "Per build profile, the whole model's throughput and any other performance metric its report gives.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/metricValues",
+            "required": ["throughput_fps"],
+            "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "runTests": {
+      "description": "true runs the stage's test file; false skips it and needs a skip_reason.",
+      "type": "boolean"
+    },
+    "skipReason": {"type": "string", "minLength": 1},
+    "buildStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_tests"],
+      "properties": {
+        "run_tests": {"$ref": "#/$defs/runTests"},
+        "skip_reason": {"$ref": "#/$defs/skipReason"}
+      },
+      "if": {"properties": {"run_tests": {"const": false}}},
+      "then": {"required": ["skip_reason"]},
+      "else": {"not": {"required": ["skip_reason"]}}
+    },
+    "benchmarkStage": {
+      "type": "object",
+      "required": ["run_tests"],
+      "properties": {
+        "run_tests": {"$ref": "#/$defs/runTests"},
+        "skip_reason": {"$ref": "#/$defs/skipReason"}
+      },
+      "if": {"properties": {"run_tests": {"const": false}}},
+      "then": {"required": ["skip_reason"]},
+      "else": {"required": ["expected"], "not": {"required": ["skip_reason"]}}
+    },
+    "metricValues": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"type": "number"}
+    }
+  }
+}

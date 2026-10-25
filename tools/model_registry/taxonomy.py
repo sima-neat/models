@@ -149,35 +149,17 @@ def validate_model_categorization(model: dict[str, Any], taxonomy: dict[str, Any
             if modality_id not in taxonomy["modalities"]:
                 raise ValidationError(f"{field} references unknown taxonomy ID {modality_id!r}")
 
-    architecture = model["architecture"]
-    architecture_id = architecture["id"]
+    architecture_id = model["architecture"]["id"]
     architecture_entry = taxonomy["architectures"].get(architecture_id)
     if architecture_entry is None:
         raise ValidationError(f"architecture.id references unknown taxonomy ID {architecture_id!r}")
     if model_type not in architecture_entry["allowed_model_types"]:
         raise ValidationError(f"architecture {architecture_id!r} is not compatible with model_type {model_type!r}")
 
-    component_roles: set[str] = set()
-    for index, component in enumerate(architecture.get("components", [])):
-        role = component["role"]
-        if role in component_roles:
-            raise ValidationError(f"architecture.components[{index}].role duplicates {role!r}")
-        component_roles.add(role)
-        component_id = component["architecture_id"]
-        if component_id not in taxonomy["architectures"]:
-            raise ValidationError(
-                f"architecture.components[{index}].architecture_id references unknown taxonomy ID {component_id!r}"
-            )
-
     return {
         "model_type": model_type,
         "tasks": list(task_ids),
         "modalities": {"inputs": list(inputs), "outputs": list(outputs)},
-        "architecture": {
-            "id": architecture_id,
-            "paradigm": architecture_entry["paradigm"],
-            **({"variant": architecture["variant"]} if architecture.get("variant") else {}),
-            **({"components": list(architecture["components"])} if architecture.get("components") else {}),
-        },
+        "architecture": {"id": architecture_id, "paradigm": architecture_entry["paradigm"]},
         "tags": list(model.get("tags", [])),
     }

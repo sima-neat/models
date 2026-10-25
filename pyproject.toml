@@ -14,10 +14,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# What a stage runner needs to run a model's tests on that stage's output.
+tests = [
+  "numpy>=1.26,<3",
+  "pytest>=8,<9",
+]
 dev = [
   "build>=1.2,<2",
   "numpy>=1.26,<3",
   "onnx>=1.16,<2",
+  "opencv-python-headless>=4.10,<5",
   "Pillow>=10,<13",
   "pytest>=8,<9",
   "ruff>=0.12,<1",
@@ -34,10 +40,14 @@ where = ["tools"]
 
 [tool.setuptools.package-data]
 model_registry = ["py.typed"]
+model_report = ["metrics.json"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
-testpaths = ["tests"]
+addopts = "-ra --import-mode=importlib"
+testpaths = ["tests", "models/*/tests"]
+# pytest's default list without "build", which would skip every model's tests/build/, and with fixtures/,
+# whose model folders hold test files that are data.
+norecursedirs = ["*.egg", ".*", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}", "fixtures"]
 
 [tool.ruff]
 line-length = 120

@@ -1,14 +1,17 @@
 // Shared page state, configuration, DOM elements, and the readers of that state.
-export const config = window.MODEL_REGISTRY_CONFIG || {};
+import {resolveEnvironment, branchPolicy} from "./environment.js";
+export const config = resolveEnvironment(window.MODEL_REGISTRY_CONFIG || {}, location.search);
 const configuredApiBase = String(config.apiBase || "").replace(/\/$/, "");
 const configuredRepository = config.repository || {};
-export const DEFAULT_BRANCH = "develop";
+export const customerView = config.uiMode === "customer";
+const branches = branchPolicy(config, location.search);
+export const branchSelectionEnabled = branches.enabled;
+export const DEFAULT_BRANCH = branches.defaultBranch;
+document.documentElement.dataset.branches = branchSelectionEnabled ? "1" : "0";
+document.documentElement.dataset.uiMode = customerView ? "customer" : "developer";
 export const CATEGORY_QUERY_FIELDS = {
-  "model-type-filter": "model_type",
   "task-filter": "task",
   "architecture-filter": "architecture_id",
-  "paradigm-filter": "architecture_paradigm",
-  "input-modality-filter": "input_modality",
 };
 const initialQuery = new URLSearchParams(location.search);
 
@@ -21,6 +24,7 @@ export const state = {
   packageRuns: [],
   catalogDefinitions: [],
   catalogMode: "runs",
+  catalogLayout: "cards",
   cursor: null,
   hasMore: false,
   availableBranches: [],
@@ -36,11 +40,14 @@ export const state = {
   selectedVariantKey: null,
   // Keys of the disclosure rows the reader opened on the current model page.
   openDisclosures: new Set(),
+  layerViews: new Map(),
   historicalCatalogModels: new Map(),
   documentationCache: new Map(),
   documentationRequestId: 0,
-  // The Compare page's three pickers, each `<model id>.<build profile>` or empty.
+  // The Compare page's selected builds, each `<model id>.<build profile>` or empty.
   comparePicks: ["", "", ""],
+  compareTask: initialQuery.get("compare_task") || "",
+  compareAxis: "",
   activeProfileByModel: new Map(),
   taxonomy: null,
   categorySelection: Object.fromEntries(
@@ -51,12 +58,12 @@ export const state = {
 export const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "search", "filter-toggle",
-    "filter-count", "filter-drawer", "more-filters", "branch-filter", "compiler-filter", "history-filter", "model-type-filter", "task-filter",
-    "architecture-filter", "paradigm-filter", "input-modality-filter", "clear-filters", "result-title",
-    "result-count", "result-list", "load-more", "detail-pane", "compare-pane", "toast-region", "workspace",
+    "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "task-filter",
+    "architecture-filter", "clear-filters", "result-title",
+    "result-count", "result-list", "catalog-layout-toggle", "load-more", "detail-pane", "compare-pane", "toast-region", "workspace",
     "nav-models", "nav-compare",
     "download-dialog", "download-title", "download-description", "download-package-info",
-    "download-list", "download-confirm", "download-cancel", "download-status",
+    "download-list", "download-confirm", "download-copy-cli", "download-cancel", "download-status", "execution-tooltip",
   ].map((id) => [id, document.getElementById(id)]),
 );
 

@@ -1,29 +1,31 @@
-"""Benchmark one compiled MPK with Neat's YOLO26 pose decoder and write its report."""
+"""Benchmark one compiled MPK with Neat's YOLO26 pose decoder and save its report."""
 
 import argparse
-import json
 
+import model_report
 import pyneat
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--output", required=True, help="benchmark report JSON to write")
+parser.add_argument("--output", required=True, help="directory for model-report.json")
 args = parser.parse_args()
 
 options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.YoloV26Pose
 options.top_k = 100
 model = pyneat.Model(args.mpk, options)
-report = model.benchmark()
-with open(args.output, "w", encoding="utf-8") as output:
-    json.dump({
-        "core_version": pyneat.__version__,
-        "latency_ms": report.latency_ms,
-        "fps": report.fps,
-        "avg_power_watts": report.avg_power_watts,
-        "energy_joules": report.energy_joules,
-        "workload": {
-            "selection": "YoloV26Pose box decoder, top 100",
-            "postprocess": model.info().selection.selected_post_kind,
-        },
-    }, output, allow_nan=False)
+# Request 1000 samples and a 60 s minimum measurement duration.
+benchmark_options = pyneat.BenchmarkOptions()
+benchmark_options.num_samples = 1000
+benchmark_options.min_duration_ms = 60000
+benchmark_options.include_mla_layer_stats = True
+benchmark_options.include_mla_stage_stats = True
+# YOLO26 expects letterboxed inputs.
+benchmark_options.resize_mode = pyneat.ResizeMode.Letterbox
+postprocess = model.info().selection.selected_post_kind
+report = model_report.from_performance(
+    model.benchmark(benchmark_options),
+    {"model": model},
+    workload=f"YoloV26Pose box decoder, top 100, {postprocess} post-processing",
+)
+report.save(args.output)

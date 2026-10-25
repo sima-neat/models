@@ -2,26 +2,25 @@
 
 [`schemas/model.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/model.schema.json)
 is the authoritative contract. JSON Schema rejects unknown fields; semantic
-validation then checks references, dependency cycles, taxonomy compatibility,
-source policy, and model-local paths.
+validation then checks references, taxonomy compatibility, source policy, and
+model-local paths.
 
-`model.yaml` describes a deployable model product rather than assuming that
-one catalog entry always produces one MPK. A product can contain several compiled
-components, support several build profiles, include runtime resources, define
-how the pieces compose, and publish one or more downloadable packages.
+`model.yaml` describes a deployable model: the source it compiles, the build
+profiles users choose between, and what each profile's whole model must
+measure on a DevKit.
 
 ```text
 model
-├── conversion ───── optional named upstream sources for scripts/convert.py
-├── components ───── independently compiled ONNX units
-├── resources ────── packaged non-compiled files
-├── calibrations ─── reusable compile-time data
-├── build_profiles ─ target-wide settings plus component bindings
-├── compositions ─── how component entrypoints form an application
-├── packages ─────── what a user downloads
-├── fidelity ─────── numerical comparisons the compile stage computes
-├── accuracy ─────── DevKit task accuracy, or recorded results
-└── benchmark ────── DevKit performance measurements scoped to a component
+├── conversion ───────────── optional upstream source for scripts/convert.py
+├── compilation ──────────── the source the recipe compiles, and its components
+├── datasets ─────────────── immutable dataset pins shared across stages
+├── calibrations ─────────── Dataset Registry archives build profiles calibrate on
+├── build_profiles ───────── each variant's per-component build parameters
+├── pipeline ─────────────── optional run order, for the model browser
+├── numerical_fidelity ───── compiled outputs compared during compilation
+├── accuracy ─────────────── whole-model DevKit accuracy
+├── performance ──────────── whole-model DevKit performance
+└── reference_metrics ────── scores the source model's authors published
 ```
 
 `model.yaml` is the model's only configuration file. Every stage reads its own
@@ -32,346 +31,296 @@ models/<model-id>/
   model.yaml
   README.md
   hero.png      1200x480 catalog card image
-  scripts/      compile.py, performance.py, accuracy.py, convert.py, and helpers
+  scripts/      compile.py (or compile.sh for LLiMa), performance.py, accuracy.py, convert.py, and helpers
+  tests/        tests.yaml and the model's stage tests
 ```
 
 Validation rejects any other entry in the model directory.
 
 ## Product identity and provenance
 
-The identity, taxonomy, ownership, license, `upstream`, and `maturity` fields
-are product metadata. `id` must match the model directory. See [Model taxonomy](model-taxonomy.md) for the
-sanctioned taxonomy values.
+Keep the display name, description, taxonomy, license and provenance. The model
+directory supplies `id`, and `architecture` is a plain ID such as `qwen`.
+Ownership lives in `CODEOWNERS`.
+See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 
-`upstream` records human-reviewable provenance. Downloadable inputs belong in
-a `conversion`, component, or resource `source`, where exact bytes are pinned.
+`upstream` records human-reviewable provenance. It defaults to the checkpoint's
+Hugging Face repository and revision; `model_card` defaults to its repository
+URL. Keep an explicit `upstream` when it identifies a different original model.
+Downloadable inputs belong in a `conversion` or `compilation` `source`, where
+exact bytes are pinned.
+
+Optional top-level `build-on-demand` is a boolean, default `false`, for any
+model requiring explicit build selection. When `true`, pushes validate the
+model and publish its metadata but never compile or measure it. Manual
+selection requires model and profile IDs. This field changes scheduling and
+catalog metadata only; it is excluded from compilation fingerprints. See
+[on-demand builds](adding-a-model.md#on-demand-builds).
 
 ## Conversion
 
-`conversion` is optional. It names the upstream checkpoints that
-`scripts/convert.py` exports to ONNX; each entry holds one `source`:
+`conversion` is optional. It names the upstream checkpoint that
+`scripts/convert.py` exports to ONNX:
 
 ```yaml
 conversion:
-  default:
-    source:
-      type: file
-      uri: https://github.com/owner/repo/releases/download/v1.0/checkpoint.pth
-      sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      size_bytes: 123456
+  source:
+    uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/checkpoint.pth
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    size_bytes: 123456
 ```
 
-Conversion sources follow the same source policy and file-set rules as
-component sources. A model that declares `conversion` must also provide
-`scripts/convert.py` and `scripts/requirements-convert.txt`, which the
-**Vulcan Model Convert** workflow runs through
-`scripts/run_model_conversion.sh` in a fresh Python environment for the
-selected entry. The workflow publishes `model.onnx` and prints the source pin
-to copy into the component `source` after surgery and compiler validation.
+A model that declares `conversion` must also provide `scripts/convert.py` and
+`scripts/requirements-convert.txt`, which the **Vulcan Model Convert** workflow
+runs through `scripts/run_model_conversion.sh` in a fresh Python environment.
+The workflow publishes `model.onnx` and prints the source pin to copy into
+`compilation.source` after surgery and compiler validation.
 
-## Components and source sets
+## Compilation and sources
 
-Each member of `components` is independently compiled and has its own source,
-interface, preprocessing, postprocessing, surgery, and recipe:
+`compilation` names the one source the recipe compiles and its format:
 
 ```yaml
-components:
-  - id: encoder
-    role: encoder
-    source:
-      type: file
-      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder.onnx
-      sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      size_bytes: 123456
-      media_type: application/onnx
-    interface:
-      format: onnx
-      opset: 17
-      entrypoints:
-        - id: default
-          inputs: [{name: input, dtype: float32, shape: [1, 80, frames]}]
-          outputs: [{name: state, dtype: float32, shape: [1, 512]}]
-      shape_profiles: []
-    preprocessing: {pipeline: []}
-    postprocessing: {pipeline: []}
-    surgery: {type: none}
-    recipe: scripts/compile.py
+compilation:
+  format: onnx
+  source:
+    uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/model.onnx
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    size_bytes: 123456
 ```
 
-A source may be one `file` or a `file_set`. Use a file set when one recipe input
-consists of an entrypoint plus related files:
+The recipe is `scripts/compile.py` for `onnx` and `scripts/compile.sh` for
+`huggingface`. A single-component model produces one component, `model`. A
+multi-component model lists its components in run order:
+
+```yaml
+compilation:
+  format: onnx
+  source: {uri: ..., sha256: ..., size_bytes: ...}
+  components: [backbone, decoder]
+```
+
+`entrypoint` names the package's public entrypoint when it is not `default`:
+`generate` for Qwen and Gemma, `transcribe` for Whisper. Preprocessing,
+postprocessing and surgery live in executable code, with application
+instructions in the README. Tensor details come from Core execution plans
+rather than a copied inventory.
+
+A source is one file, as above, or a set of files with the `main_file` the
+recipe opens. Files in one Hugging Face repository share its `repository` and
+`revision`:
 
 ```yaml
 source:
-  type: file_set
-  entrypoint: encoder/model.onnx
+  repository: owner/repo
+  revision: 0123456789abcdef0123456789abcdef01234567
+  main_file: config.json
   files:
-    - path: encoder/model.onnx
-      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder/model.onnx
-      sha256: 1111111111111111111111111111111111111111111111111111111111111111
-      size_bytes: 1000
-      media_type: application/onnx
-    - path: encoder/model.onnx.data
-      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/encoder/model.onnx.data
-      sha256: 2222222222222222222222222222222222222222222222222222222222222222
-      size_bytes: 2000
-      media_type: application/octet-stream
+    config.json: {sha256: 1111111111111111111111111111111111111111111111111111111111111111, size_bytes: 1000}
+    model.safetensors: {sha256: 2222222222222222222222222222222222222222222222222222222222222222, size_bytes: 2000}
 ```
 
-Every member is verified separately. The tool materializes the declared
-relative layout in a content-addressed cache and passes the entrypoint to the
-recipe. `depends_on` may express ordering between components; cycles and
-unknown component IDs are rejected.
+A member's own `uri` overrides the shared repository and revision. Every
+member is verified separately; the tool materializes the declared layout in a
+content-addressed cache and passes the main file to the recipe.
 
-An interface contains named `entrypoints`. Each entrypoint declares its input
-and output tensors and may declare state and streaming behavior. Symbolic
-dimensions are allowed. Put supported concrete bindings in `shape_profiles`,
-then select one from a build-profile component binding.
+## Datasets and calibration
 
-## Resources and calibrations
-
-`resources` are files shipped with a package but not compiled into an MPK—for
-example tokenizers, vocabularies, labels, or configuration:
-
-```yaml
-resources:
-  - id: tokenizer
-    source:
-      type: file
-      uri: hf://models/owner/repo@0123456789abcdef0123456789abcdef01234567/tokenizer.json
-      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      size_bytes: 4096
-      media_type: application/json
-    install_path: resources/tokenizer.json
-```
-
-A resource can carry its own license when it differs from the model license.
-For a single-file source, `install_path` is the installed filename. For a file
-set, it is a directory prefix and the declared member layout is preserved
-below it. Packages list resources explicitly, so a resource is not shipped
-merely because it is declared.
-
-`calibrations` are named compile-time inputs. A ready calibration uses either
-an immutable `source` or a Dataset Registry reference. A pending calibration
-has a reason. A component binding references calibration by ID only when that
-build needs it:
+Each stage pins the Dataset Registry archive it uses. A pin gives the
+dataset `id`, `variant`, `sha256`, and `size_bytes`, and the archive goes by
+its Registry source ID, `<id>-<variant>`. Calibration archives are
+`calibrations` entries:
 
 ```yaml
 calibrations:
-  - id: representative_images
-    status: ready
-    dataset:
-      id: imagenet-2012
-      variant: mini
-      sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
-      size_bytes: 356052889
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84…, size_bytes: 187510866}
 ```
 
-The recipe receives the verified calibration as `--dataset` and chooses its
-samples. Calibration prepares quantization ranges; it is not a quality
-measurement. `fidelity` and `accuracy` entries measure quality separately.
-See [Datasets for local model development](datasets.md).
+A build profile that needs calibration names its entry with
+`calibration_dataset`. The recipe receives the verified archive as
+`--dataset`, calibrates the first component, and calibrates later components
+on its outputs. Calibration prepares quantization ranges; it is not a
+quality measurement. See [Datasets for local model
+development](datasets.md).
 
 ## Build profiles
 
-A build profile names one product-wide target configuration. Its component
-bindings say how each component is built under that profile:
+A build profile is one variant users can select. It gives each component's
+build parameters:
 
 ```yaml
 build_profiles:
-  - id: modalix_int8
-    target: modalix
+  w8a8_w16a16:
+    calibration_dataset: coco-2017-cal
     components:
-      - id: encoder
-        shape_profile: batch_1
-        calibration: representative_audio
-        parameters: {precision: int8}
-      - id: decoder
-        parameters: {precision: int8}
+      backbone:
+        parameters: {precision: w8a8, calibration_samples: 50}
+      decoder:
+        parameters: {precision: w16a16, calibration_samples: 50}
 ```
 
-This avoids a Cartesian product of unrelated component configurations. Each
-supported binding is its own compile invocation, named after its component,
-unless the profile declares `compile_invocations`:
+Compose the profile ID from the precision tokens in
+[`naming-conventions.yaml`](../naming-conventions.yaml): one token per
+component in component order, with a repeated token written once. Both
+components W8A8 is `w8a8`; an INT8 backbone followed by a BF16 decoder is
+`w8a8_w16a16`. Leave the target out of the ID. If two profiles of one model
+would share an ID, append the first vocabulary tokens that tell them apart.
+The Model Browser shows variant IDs in uppercase, while
+`sima-cli models download --variant` takes the lowercase ID.
 
-```yaml
-compile_invocations:
-  - id: detector
-    components: [backbone, transformer]
-```
+Each component's `parameters.precision` is its precision token, and the
+recipe maps it to compiler settings. The target is `modalix`.
 
-An invocation has only an `id` and its `components`. Every supported binding
-belongs to exactly one invocation. Grouped components must share their source
-content and effective runner class. They use at most one calibration, which
-the first component must select; CI passes it to the recipe. A package or a `devkit_script`
-accuracy entry must compile all its components in one invocation.
+| Runner field | Values | Default | Access requirement |
+| --- | --- | --- | --- |
+| `runner_class` | `default`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
+| `runner_market` | `spot`, `on-demand` | `spot` | On-demand requires an independent v3 `allow_on_demand: true` grant, including at default size. |
 
-A grouped recipe runs once and writes a `compile-outputs.json` with
+Both fields belong on the profile or a component binding, outside `parameters`.
+Bindings inherit from the profile; prefer profile-level settings because all its
+components compile on one runner. Effective markets must agree across that grouped
+invocation. Neither field changes a compile fingerprint. `build-on-demand` is a
+separate top-level scheduling flag, not a purchasing market. See [runner access
+and approval](runner-class-requests.md) for eligibility, evidence and usage.
+
+The recipe compiles a profile's components together in one compile
+invocation, named after the profile, and writes a `compile-outputs.json` with
 `model_id`, `build_profile_id`, `compile_invocation_id`, an `outputs` list
-naming each component's MPK and SHA-256, a `derived_graphs` list with the
-SHA-256 of each component's derived graph, and a `correctness` entry pointing
-at the result component's `fidelity.json`. For a single-component invocation,
-`scripts/run_model_compilation.sh` writes the file with `outputs` only when the
-recipe does not.
-
-`runner_class` may be set on the profile or overridden on a binding. A binding
-proven incompatible may use `status: unsupported` with a reason; untested work
-is not unsupported.
+naming each component's MPK and SHA-256, and a `derived_graphs` list with the
+SHA-256 of each component's derived graph. For a single-component model,
+`scripts/run_model_compilation.sh` writes the file with `outputs` only when
+the recipe does not.
 
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
 
-A component binding may also declare `artifact_suffix` outside `parameters`.
-It uses the identifier syntax and controls the browser download filename:
-`<model_id>_<artifact_suffix>_mpk.tar.gz`. Include the component name in the suffix
-when useful. For example, RF-DETR uses `backbone_int8_mse_bcr` and `transformer_bf16` under
-one `modalix_int8_bf16` profile. The suffix is explicit and is not inferred from
-precision. The complete download basename must fit within 255 characters.
-Omitting or removing the suffix preserves the original download filename.
+Each compiled MPK is named after its model and variant:
+`<model_id>_<profile_id>_mpk.tar.gz`, or
+`<model_id>_<profile_id>_<component_id>_mpk.tar.gz` when the model has
+several components. `scripts/compile.py` passes the name without
+`_mpk.tar.gz` to the compiler as the model name, and publication rejects an
+MPK with any other name. For example, RF-DETR's `w8a8_w16a16` profile
+produces `rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz` and
+`rf_detr_nano_w8a8_w16a16_decoder_mpk.tar.gz`. The stored MPK, the
+package, and the browser and CLI downloads all use this name.
 
-Suffix changes update catalog metadata while retaining existing compiled
-artifacts. The suffix is not a compile key input, so changing it reruns no
-stage and renames no stored object or MPK content.
+## Packages and pipeline
 
-Use [`naming-conventions.yaml`](../naming-conventions.yaml) to compose suffixes
-from the shared vocabulary, for example `int8_mse_tmio` or
-`int8_mse_h1024_bci_l2e`. Prefix the component ID for multi-component models.
-The model ID and `_mpk.tar.gz` are added by the download path. Keep the target,
-versions, calibration sample counts, dataset identities, and seeds out of the
-suffix. Add a token to the vocabulary when a new option needs a name.
+Every build profile publishes one package, `default`, holding all its
+components. A single-component package is that component's MPK,
+`<model_id>_<profile_id>_mpk.tar.gz`. A multi-component package is a
+deterministic `<model_id>_<profile_id>_default.zip` holding the MPKs at its
+top level. Trusted assembly keeps each MPK intact and records the package
+manifest in `package-result.json`, validated against
+[`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
+the manifest is not shipped inside the package.
 
-This vocabulary is an author reference, with no token parser or automatic name
-generation. Write `artifact_suffix` explicitly and check its meaning against the
-recipe. It does not select compiler settings or replace existing parameters;
-`compile.py` continues to own the AFE calls.
-
-## Compositions and packages
-
-A composition explains how the compiled pieces are used together. A
-single-component model uses the built-in form:
+A multi-component model can add `pipeline` so the model browser shows the
+order its components run in. List each component once, in run order, and
+name any CPU step between them:
 
 ```yaml
-compositions:
-  - id: default
-    type: single
-    component: model
-    entrypoint: default
+pipeline:
+- {component: backbone}
+- {cpu: Top 300 proposals}
+- {component: decoder}
 ```
 
-A multi-component product uses `type: declarative` and declares its graph
-inline. Packaging writes the graph into the package as
-`composition/composition.yaml`, validated against
-[`composition.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/composition.schema.json):
+The browser reads `pipeline` only for display; the model's scripts run the
+components.
 
-```yaml
-compositions:
-  - id: pipeline
-    type: declarative
-    components:
-      - {id: encoder, component: encoder, entrypoint: default}
-      - {id: decoder, component: decoder, entrypoint: default}
-    connections:
-      - from: {component: encoder, output: state}
-        to: {component: decoder, input: state}
-    inputs:
-      - {name: audio, to: {component: encoder, input: input}}
-    outputs:
-      - {name: text, from: {component: decoder, output: tokens}}
-```
+## Quality and performance
 
-A package is the retrieval unit visible to users:
+Omit a section when its stage is not implemented. Each covers the whole
+model, every component of a build profile together.
 
-```yaml
-packages:
-  - id: default
-    default: true
-    components: [encoder, decoder]
-    resources: [tokenizer]
-    build_profiles: [modalix_int8]
-    composition: pipeline
-```
+### `numerical_fidelity`
 
-Exactly one package is the default. Validation ensures each package includes
-the components required by its composition and declares only profiles that
-build all of them in one compile invocation. Trusted assembly preserves each MPK intact inside one
-deterministic bundle with a manifest, the selected resources, and the
-declarative composition document when one is used.
-The embedded manifest is validated against
-[`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json).
-
-## Fidelity, accuracy, and benchmark entries
-
-These three sections declare the quality and performance evidence of each
-build. Every entry has an `id`, a `scope` (`{type: component, component: <id>}`
-or `{type: package, package: <id>}`), and the `build_profiles` it covers. IDs
-are unique within each section, and an entry may cover only components and
-packages that are available in each listed build profile.
-
-### `fidelity`
-
-Computed by `scripts/compile.py` during the compile stage and written as
-`fidelity.json` beside the result component's MPK.
+Computed by the compile recipe and written as `fidelity.json` beside the
+profile's MPKs. The package run publishes it.
 
 | Field | Meaning |
 | --- | --- |
-| `scope` | A package. |
 | `status` | `diagnostic`, `provisional`, or `ready`. |
-| `result_component` | The package component whose outputs are compared and whose directory holds the report. |
-| `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
+| `dataset` | The Dataset Registry pin it compares on. |
 | `selection` | `method: seeded_random_without_replacement`, with `seed`, `offset`, and `samples`. |
-| `outputs` | Output names of the result component's entrypoints to compare. |
+| `outputs` | Output names of the model to compare. |
 
 The report follows
 [`numerical-fidelity.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/numerical-fidelity.schema.json).
-Fidelity entries are compile inputs.
+The section is a compile input.
 
 ### `accuracy`
 
-An entry with `engine: devkit_script` is measured by `scripts/accuracy.py` in
-the accuracy stage:
-
-| Field | Meaning |
-| --- | --- |
-| `engine` | `devkit_script`. |
-| `status` | `ready` or `provisional`. |
-| `result_component` | A scoped component; its compile run is the parent of the published result. |
-| `dataset` | `id`, `variant`, `sha256`, and `size_bytes` of a registered dataset. |
-| `metrics` | Metric names the script may report. |
-| `required_metrics` | Optional subset of `metrics` that every result must contain. |
-| `reference` | Optional published scores of the source model: an HTTPS `source` and `metrics`, a map from metric names in `metrics` to values in the script's units. Each value is published as that metric's `reference`. |
-
-A build profile has at most one `devkit_script` entry, and its scoped
-components must compile in one invocation.
-
-An entry without `engine` records results measured elsewhere. It needs only
-`id`, `scope`, and `build_profiles` and may carry any other fields. No stage
-runs it.
-
-### `benchmark`
-
-Measured by `scripts/performance.py` in the performance stage, once for each
-covered component:
-
-| Field | Meaning |
-| --- | --- |
-| `status` | A lowercase identifier such as `provisional`; a status starting with `pending` needs a `reason` or `note`. |
-| `metrics` | Metric names, as strings or `{name: ...}` objects. |
-| `required_metrics` | Optional subset of `metrics` that must be measured for publication. |
-| `target`, `reason`, `note` | Optional descriptive fields. |
+Measured on a DevKit by `scripts/accuracy.py` in the accuracy stage:
 
 ```yaml
-benchmark:
-  - id: encoder_latency
-    scope: {type: component, component: encoder}
-    build_profiles: [modalix_int8]
-    status: provisional
-    metrics: [latency_avg_ms, throughput_fps]
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  build_profiles: [w8a8]
 ```
 
+| Field | Meaning |
+| --- | --- |
+| `datasets` | Dataset Registry pins; the stage resolves each on the DevKit and evaluates the model on all of them in one run. Each goes by its source ID, such as `imagenet-2012-mini`. |
+| `build_profiles` | Optional; the profiles measured. Omitted, every profile is measured. |
+
+The metrics each dataset's result must hold come from
+`datasets/<registry id>.yaml` for the model's `tasks`; see [Required accuracy
+metrics](datasets.md#required-accuracy-metrics). Metric names come from
+[`tools/model_report/metrics.json`](../tools/model_report/metrics.json).
+`tests/tests.yaml` supplies the expected values per build profile and dataset;
+a missing expected measurement fails.
+
+### `performance`
+
+Measured on a DevKit by `scripts/performance.py` in the performance stage:
+
+```yaml
+performance: {}
+```
+
+It takes only the optional `build_profiles`, as `accuracy` does. Every report
+must hold the metrics
+[`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
+customers can copy and run with PyNeat; YAML does not duplicate them.
+
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
-performance](benchmarking.md) for the scripts and results, and [what a change
+performance](benchmarking.md) for the scripts and reports, and [what a change
 reruns](adding-a-model.md#9-know-what-a-change-reruns) for how each section
-feeds the stage keys.
+feeds the fingerprints.
+
+## Reference metrics
+
+`reference_metrics` lists the scores the source model's authors published for
+these weights, copied by hand from a pinned page. The model page shows them
+beside the measured scores, and on their own when no build has an accuracy
+report yet. Each entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `source` | HTTPS URL of the page that prints the scores, pinned to a commit or revision. |
+| `dataset` | `id` and `split` of the evaluation set, such as `{id: coco-2017, split: val}`. |
+| `conditions` | How the authors measured, such as input size, preprocessing, and precision. |
+| `note` | Optional caveat a reader needs, such as a split the source does not name. |
+| `metrics` | A map from metric names to values. |
+
+```yaml
+reference_metrics:
+- source: https://huggingface.co/Ultralytics/YOLO26/blob/<revision>/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS-free one-to-one head
+  metrics: {coco_keypoint_map: 0.572, coco_keypoint_ap50: 0.833}
+```
+
+Metric names are accuracy metrics from `tools/model_report/metrics.json`, the
+names `accuracy.py` reports, and every value is a ratio from 0 to 1. Record
+only numbers the source prints, not values derived from them. Two entries may
+not give the same metric for the same dataset. A reference score appears
+beside a measured one only when both name the same dataset `id`. The field
+feeds no fingerprint, so editing it reruns nothing.
 
 ## Validation
 
@@ -385,3 +334,44 @@ model-registry validate-models --repository .
 Validation proves that the source-controlled contract is coherent. Developers
 must still compile and measure every supported build locally before submitting
 it.
+
+
+## LLiMa checkpoint and deployment formats
+
+A Hugging Face model uses `compilation.format: huggingface` and the
+conventional `scripts/compile.sh`. Its source is a file set with `config.json`
+as `main_file`. Declare the public `entrypoint: generate` or `transcribe`
+separately; do not copy prompt/image/text tensor inventories into YAML. A
+complete LLiMa deployment is one component, `model`, including its vision
+encoder when present.
+
+The compiled component contains `deployment/` and a sibling
+`deployment-manifest.json`. `compile-outputs.json` carries `artifact_path`
+(`model/deployment-manifest.json` for the `model` component) and
+`artifact_sha256`, the SHA-256 of that JSON index. `compile-result.json`
+marks `format: llima` and `layout: directory`; its `size_bytes` is the sum
+of deployment file sizes.
+
+A native full package is a deployment folder with `manifest.json` at its
+root. Its component uses `format: llima`, `path: .`, and the compile index's
+checksum. Both manifests list deployment files with exactly these fields:
+
+```text
+files: [{path, artifact, sha256, size_bytes}]
+```
+
+`path` is relative to the deployment root. `artifact` is the stable logical
+name `file-<sha256(relative POSIX path)>`; it does not encode a storage URL.
+In a published package, every reference names a `model-file` artifact on
+that same package run. The root artifact is `package`, type `model-package`,
+media type `application/json`. Native compile runs use root artifact `llima`,
+type `model-pack`, also a JSON index. Their artifact metadata includes
+`layout: directory`, `storage_backend: s3`, `deployment_size_bytes`, and
+`file_count`.
+
+Files use content-addressed S3 storage, reused between compile and package
+publication. Each file must be at most 5 GiB until multipart uploads
+([#292](https://github.com/sima-neat/models/issues/292)); aggregate deployment
+size has no limit. Retrieval uses public resolved artifact URLs to preserve
+the directory and verify each file's size and SHA-256. Existing ONNX/MPK
+metadata and packages retain their format.

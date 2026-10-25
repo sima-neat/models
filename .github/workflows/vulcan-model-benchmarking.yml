@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Vulcan environment used to benchmark the compiled model
+        description: Registry and dataset environment; default uses repository VULCAN_ENV (DevKits remain on staging)
         required: true
-        default: staging
+        default: default
         type: choice
-        options: [staging]
+        options: [default, staging, production]
       source_run_id:
         description: Source workflow run containing the compiled-model artifact
         required: false
@@ -35,13 +35,8 @@ on:
         description: Compile invocation that produced the components
         required: true
         type: string
-      component_ids:
-        description: Comma-separated component IDs whose performance to measure, in declared order
-        required: false
-        default: ""
-        type: string
       stages:
-        description: Comma-separated DevKit stages to run (performance, accuracy)
+        description: Comma-separated benchmarks to run (performance, accuracy)
         required: false
         default: performance,accuracy
         type: string
@@ -53,7 +48,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
   cancel-in-progress: false
 
 jobs:
@@ -62,12 +57,11 @@ jobs:
     needs: resolve-dispatched-benchmark-config
     if: >-
       inputs.source_branch == github.ref_name &&
-      inputs.environment == 'staging' &&
       inputs.source_sha != '' && inputs.source_branch != '' &&
       inputs.model_id != '' && inputs.build_profile_id != '' &&
       inputs.compile_invocation_id != '' && inputs.stages != ''
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
       actions: read
       contents: read
@@ -85,7 +79,6 @@ jobs:
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
           COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
-          COMPONENT_IDS: ${{ inputs.component_ids }}
           STAGES: ${{ inputs.stages }}
         run: |
           set -euo pipefail
@@ -93,18 +86,12 @@ jobs:
           for stage in "${stages[@]}"; do
             [[ "$stage" == performance || "$stage" == accuracy ]]
           done
-          # Performance measures named components; accuracy alone measures none.
-          [[ ",$STAGES," != *",performance,"* || -n "$COMPONENT_IDS" ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ -z "$SOURCE_RUN_ID" || "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
           git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$BUILD_PROFILE_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$COMPILE_INVOCATION_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
-          IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          for component in "${components[@]}"; do
-            [[ "$component" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
-          done
           if [[ -z "$SOURCE_RUN_ID" ]]; then
             echo "branch=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
             echo "attempt=1" >> "$GITHUB_OUTPUT"
@@ -160,10 +147,26 @@ jobs:
       - name: Require the measured revision's board-stage tooling
         run: scripts/require_source_board_tooling.sh _source
 
+      - name: Configure authenticated production registry reads
+        if: inputs.source_run_id == '' && (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
+        id: registry-reader-credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-benchmark-input-${{ github.run_id }}
+          output-credentials: true
+          output-env-credentials: false
+
       - name: Restore the current immutable compilation from the registry
         if: inputs.source_run_id == ''
         env:
-          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+          AWS_ACCESS_KEY_ID: ${{ steps.registry-reader-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.registry-reader-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.registry-reader-credentials.outputs.aws-session-token }}
+          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
         run: |
           set -euo pipefail
@@ -178,82 +181,16 @@ jobs:
             --build-profile-id "${{ inputs.build_profile_id }}" \
             --compile-invocation-id "${{ inputs.compile_invocation_id }}"
 
-      - name: Check whether the compilation is already registered
-        id: publication
+      # A benchmark runs under the profile's published package, so the build must be registered whole.
+      - name: Verify the registered build and its package
         env:
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-        run: |
-          for component_dir in "_compiled/$MODEL_ID/$BUILD_PROFILE_ID"/*/; do
-            publication="${component_dir}registry-publication.json"
-            [[ -f "$publication" ]] || { echo "required=true" >> "$GITHUB_OUTPUT"; exit 0; }
-          done
-          echo "required=false" >> "$GITHUB_OUTPUT"
-
-      - name: Verify the dispatched component set
-        env:
-          MODEL_ID: ${{ inputs.model_id }}
-          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
-          COMPONENT_IDS: ${{ inputs.component_ids }}
-        run: |
-          python - "$MODEL_ID" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$COMPONENT_IDS" <<'PY'
-          import pathlib
-          import sys
-
-          from model_registry.benchmark_manifest import validate_benchmark_components
-
-          model_id, profile_id, invocation_id, raw_components = sys.argv[1:]
-          validate_benchmark_components(
-              pathlib.Path("_source"), pathlib.Path("_compiled"),
-              model_id, profile_id, invocation_id, [item for item in raw_components.split(",") if item],
-          )
-          PY
-
-      - name: Configure artifact-registry publisher credentials
-        id: artifact-publisher-credentials
-        if: steps.publication.outputs.required == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
-          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-          role-session-name: models-registry-${{ github.run_id }}-${{ github.run_attempt }}
-          output-credentials: true
-          output-env-credentials: false
-
-      - name: Register an unpublished compilation for benchmarking
-        if: inputs.source_run_id != '' && steps.publication.outputs.required == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ steps.artifact-publisher-credentials.outputs.aws-access-key-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.artifact-publisher-credentials.outputs.aws-secret-access-key }}
-          AWS_SESSION_TOKEN: ${{ steps.artifact-publisher-credentials.outputs.aws-session-token }}
-          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
-          KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
-          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
-          SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
-          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.attempt }}
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          MODEL_ID: ${{ inputs.model_id }}
-          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-          COMPONENT_IDS: ${{ inputs.component_ids }}
         run: |
           set -euo pipefail
-          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
-          model-registry publish \
-            --repository _source \
-            --dist-dir _compiled \
-            --api-url "$REGISTRY_API_URL" \
-            --aws-region "$AWS_REGION" \
-            --bucket "$ARTIFACT_BUCKET" \
-            --kms-key-id "$KMS_KEY_ID" \
-            --environment staging \
-            --branch "$SOURCE_BRANCH" \
-            --git-sha "$SOURCE_SHA" \
-            --github-run-id "$SOURCE_RUN_ID" \
-            --github-run-attempt "$SOURCE_RUN_ATTEMPT" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID"
+          model-registry model-component-mpks _compiled --repository _source \
+            --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"
+          test -f "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"
 
       - name: Retain benchmark input independently of compile-run cleanup
         uses: actions/upload-artifact@v7
@@ -265,46 +202,47 @@ jobs:
 
   resolve-dispatched-benchmark-runner:
     name: Resolve dispatched benchmark DevKit runner
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      # DevKit placement is independent of registry and dataset selection.
+      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "model-registry", "vulcan-staging"]'
 
   resolve-dispatched-benchmark-config:
     name: Resolve dispatched benchmark Vulcan config
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
+    if: inputs.source_branch == github.ref_name
     permissions:
       contents: read
       id-token: write
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
-      vulcan_env: ${{ inputs.environment }}
+      vulcan_env: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     secrets: inherit
 
   benchmark-dispatched-model:
     name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner, resolve-dispatched-benchmark-config]
-    if: inputs.source_branch == github.ref_name && inputs.environment == 'staging'
-    environment: ${{ inputs.environment }}
+    if: inputs.source_branch == github.ref_name
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ inputs.environment }}"]
+      labels: ${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}
     timeout-minutes: 45
     permissions:
       actions: read
       contents: read
       id-token: write
-    # Each stage publishes on its own outcome, so one stage's failure does not discard the other's result.
+    # Each stage publishes on its own outcome, so one stage's failure does not discard the other's result. A
+    # stage's tests run only on its measured result and succeed once they record passed, failed or skipped.
     outputs:
-      performance: ${{ steps.performance.outcome }}
-      accuracy: ${{ steps.accuracy.outcome }}
+      performance: ${{ steps.performance-tests.outcome }}
+      accuracy: ${{ steps.accuracy-tests.outcome }}
     env:
       MODEL_ID: ${{ inputs.model_id }}
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-      COMPONENT_IDS: ${{ inputs.component_ids }}
       SOURCE_BRANCH: ${{ needs.stage-dispatched-benchmark.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
-      MEASURE_PERFORMANCE: ${{ contains(format(',{0},', inputs.stages), ',performance,') }}
-      MEASURE_ACCURACY: ${{ contains(format(',{0},', inputs.stages), ',accuracy,') }}
     steps:
       - name: Check out trusted tooling from the protected workflow revision
         uses: actions/checkout@v6
@@ -327,9 +265,32 @@ jobs:
 
       - name: Install registry tooling in an isolated environment
         run: |
+          # Platform 3.0.0 images ship without python3-venv; Core's installer adds it, but Core installs later.
+          python3 -c 'import ensurepip' 2>/dev/null || sudo -n apt-get install -y python3-venv
           python3 -m venv "$RUNNER_TEMP/model-registry-tools"
-          "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install .
+          "$RUNNER_TEMP/model-registry-tools/bin/python" -m pip install '.[tests]'
           echo "REGISTRY_PYTHON=$RUNNER_TEMP/model-registry-tools/bin/python" >> "$GITHUB_ENV"
+
+      # A manual dispatch requests both stages by default; a stage the profile does not declare is skipped.
+      - name: Select the requested stages the profile declares
+        id: stages
+        env:
+          STAGES: ${{ inputs.stages }}
+        run: |
+          set -euo pipefail
+          "$REGISTRY_PYTHON" - "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" "$STAGES" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys
+          from model_registry.benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles
+          from model_registry.model import load_model
+
+          model_dir, profile, stages = sys.argv[1:]
+          model, requested = load_model(model_dir), stages.split(",")
+          for stage in BENCHMARK_STAGES:
+              declared = profile in benchmarked_profiles(model, stage)
+              if stage in requested and not declared:
+                  print(f"{profile} declares no {stage} benchmark; skipping it.", file=sys.stderr)
+              print(f"{stage}={str(stage in requested and declared).lower()}")
+          PY
 
       - name: Resolve and verify benchmark runtime
         id: runtime
@@ -359,15 +320,15 @@ jobs:
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
 
       - name: Install trusted dataset tooling
-        if: env.MEASURE_ACCURACY == 'true'
+        if: steps.stages.outputs.accuracy == 'true'
         env:
-          DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment }}
+          DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
           scripts/install_dataset_registry.sh "$REGISTRY_PYTHON" "$DATASET_REGISTRY_ENVIRONMENT"
 
       - name: Configure dataset reader credentials
         id: dataset-credentials
-        if: env.MEASURE_ACCURACY == 'true'
+        if: steps.stages.outputs.accuracy == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
@@ -378,7 +339,7 @@ jobs:
 
       - name: Cache the accuracy dataset on NVMe
         id: dataset-cache
-        if: env.MEASURE_ACCURACY == 'true'
+        if: steps.stages.outputs.accuracy == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.dataset-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.dataset-credentials.outputs.aws-secret-access-key }}
@@ -397,35 +358,48 @@ jobs:
           target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
           sima-cli neat install --env production --type minimal "$target"
           "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
-          dpkg-query -W '*neat*'
+          dpkg-query -W '*neat*' 'simaai-*'
 
       - name: Measure performance on DevKit
         id: performance
-        if: ${{ !cancelled() && steps.core.outcome == 'success' && env.MEASURE_PERFORMANCE == 'true' }}
-        run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _benchmark "$COMPONENT_IDS"
+        if: ${{ !cancelled() && steps.core.outcome == 'success' && steps.stages.outputs.performance == 'true' }}
+        run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance
+
+      # Publication sends each recorded outcome with its report and then fails the run on a failed one.
+      - name: Test the performance report with the model's performance tests
+        id: performance-tests
+        if: ${{ !cancelled() && steps.performance.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          scripts/run_model_tests.sh performance "_source/models/$MODEL_ID" _performance/model-report.json \
+            "$BUILD_PROFILE_ID" > _performance/test-status.txt || [[ "$(<_performance/test-status.txt)" == failed ]]
 
       - name: Measure accuracy on DevKit
         id: accuracy
         if: >-
           ${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' &&
-          env.MEASURE_ACCURACY == 'true' }}
+          steps.stages.outputs.accuracy == 'true' }}
         run: scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy
 
-      - name: Retain benchmark evidence
-        if: always() && env.MEASURE_PERFORMANCE == 'true'
+      - name: Test the accuracy report with the model's accuracy tests
+        id: accuracy-tests
+        if: ${{ !cancelled() && steps.accuracy.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          scripts/run_model_tests.sh accuracy "_source/models/$MODEL_ID" _accuracy/model-report.json \
+            "$BUILD_PROFILE_ID" > _accuracy/test-status.txt || [[ "$(<_accuracy/test-status.txt)" == failed ]]
+
+      - name: Retain performance evidence
+        if: always() && steps.stages.outputs.performance == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
-          path: |
-            _benchmark/*/performance-result.json
-            _benchmark/*/core-benchmark.json
-            _benchmark/*/performance-test.json
-            _benchmark/*/benchmark.log
+          name: performance-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+          path: _performance/
           if-no-files-found: error
           retention-days: 14
 
       - name: Retain accuracy evidence
-        if: always() && env.MEASURE_ACCURACY == 'true'
+        if: always() && steps.stages.outputs.accuracy == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
@@ -443,7 +417,7 @@ jobs:
       (needs.benchmark-dispatched-model.outputs.performance == 'success' ||
       needs.benchmark-dispatched-model.outputs.accuracy == 'success')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
       actions: read
       contents: read
@@ -470,16 +444,15 @@ jobs:
         if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}
         uses: actions/download-artifact@v7
         with:
-          name: benchmark-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
-          path: _benchmarks
+          name: performance-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+          path: _performance
       - name: Download accuracy evidence
         if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
         uses: actions/download-artifact@v7
         with:
           name: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _accuracy
-      - name: Download the registered compilation the accuracy measured
-        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
+      - name: Download the registered build the stages measured
         uses: actions/download-artifact@v7
         with:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
@@ -492,8 +465,9 @@ jobs:
           role-session-name: models-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
           output-credentials: true
           output-env-credentials: false
-      - name: Publish each component's performance run
-        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}
+      # Each measured stage publishes on its own, so one stage's failure does not discard the other's report.
+      - name: Publish each measured stage's run
+        if: ${{ !cancelled() }}
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.benchmark-publisher-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.benchmark-publisher-credentials.outputs.aws-secret-access-key }}
@@ -502,61 +476,49 @@ jobs:
           ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
           KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
           AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
+          VULCAN_ENV: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
-          COMPONENT_IDS: ${{ inputs.component_ids }}
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
         run: |
           set -euo pipefail
-          model-registry validate-benchmark-set \
-            --repository _source \
-            --result-root _benchmarks \
-            --model-id "${{ inputs.model_id }}" \
-            --build-profile-id "${{ inputs.build_profile_id }}" \
-            --components "$COMPONENT_IDS" \
-            --git-sha "$SOURCE_SHA"
-          IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          for component in "${components[@]}"; do
-            model-registry publish-benchmark \
+          failed=0
+          for stage in performance accuracy; do
+            # Only a stage whose tests ran downloaded its evidence.
+            [[ -f "_$stage/test-status.txt" ]] || continue
+            model-registry publish-report "_$stage" \
+              --stage "$stage" \
               --repository _source \
-              --result "_benchmarks/$component/performance-result.json" \
-              --log "_benchmarks/$component/benchmark.log" \
-              --schema schemas/performance-result.schema.json \
+              --compiled-dir _compiled \
+              --model "$MODEL_ID" \
+              --build-profile "$BUILD_PROFILE_ID" \
               --api-url "$REGISTRY_API_URL" \
               --aws-region "$AWS_REGION" \
               --bucket "$ARTIFACT_BUCKET" \
               --kms-key-id "$KMS_KEY_ID" \
-              --environment staging \
+              --environment "$VULCAN_ENV" \
               --branch "$SOURCE_BRANCH" \
               --git-sha "$SOURCE_SHA" \
-              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --test-status "$(<"_$stage/test-status.txt")" || failed=1
           done
-      - name: Publish the accuracy run
-        if: ${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ steps.benchmark-publisher-credentials.outputs.aws-access-key-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.benchmark-publisher-credentials.outputs.aws-secret-access-key }}
-          AWS_SESSION_TOKEN: ${{ steps.benchmark-publisher-credentials.outputs.aws-session-token }}
-          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-          ARTIFACT_BUCKET: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_bucket }}
-          KMS_KEY_ID: ${{ needs.resolve-dispatched-benchmark-config.outputs.artifact_kms_key_id }}
-          AWS_REGION: ${{ needs.resolve-dispatched-benchmark-config.outputs.aws_region }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          exit "$failed"
+      # The results are published either way; a failed test still fails the run, which keeps its evidence.
+      - name: Fail the run on a failed model test
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          model-registry publish-accuracy \
-            --repository _source \
-            --compiled-dir _compiled \
-            --result _accuracy/accuracy-result.json \
-            --log _accuracy/accuracy.log \
-            --api-url "$REGISTRY_API_URL" \
-            --aws-region "$AWS_REGION" \
-            --bucket "$ARTIFACT_BUCKET" \
-            --kms-key-id "$KMS_KEY_ID" \
-            --environment staging \
-            --branch "$SOURCE_BRANCH" \
-            --git-sha "$SOURCE_SHA" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          failed=()
+          for status in _performance/test-status.txt _accuracy/test-status.txt; do
+            if [[ -f "$status" && "$(<"$status")" == failed ]]; then
+              failed+=("$status")
+            fi
+          done
+          if (( ${#failed[@]} )); then
+            echo "The model's tests failed on the published results: ${failed[*]}" >&2
+            exit 1
+          fi
 
   cleanup-dispatched-benchmark-artifacts:
     name: Clean up dispatched benchmark artifacts
@@ -580,7 +542,7 @@ jobs:
         run: |
           set -euo pipefail
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"benchmark-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"accuracy-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
+            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"performance-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"accuracy-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
           while read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"

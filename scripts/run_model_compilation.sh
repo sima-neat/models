@@ -4,8 +4,8 @@
 # Usage: run_model_compilation.sh <model_dir> <build_profile> <compile_invocation> <output_root>
 #
 # Run inside an activated Model Compiler environment with model-registry installed. Outputs land in
-# <output_root>/<model_id>/<build_profile>/: one directory per component, compile-outputs.json and
-# compile-timing.json.
+# <output_root>/<model_id>/<build_profile>/: one directory per component, compile-outputs.json,
+# compile-timing.json, and mla-stage-simulation.json.
 
 set -euo pipefail
 
@@ -43,7 +43,7 @@ resolve_single_dataset() {
   DATASET=""
   for component in "${components[@]}"; do
     result="$("$PYTHON" -m model_registry "$command" "$MODEL_DIR" --build-profile "$BUILD_PROFILE_ID" \
-      --component "$component" "${cache_args[@]}" --json)"
+      --component "$component" ${cache_args[@]+"${cache_args[@]}"} --json)"
     candidate="$(json_field path <<< "$result")"
     if [[ -n "$candidate" && -n "$DATASET" && "$candidate" != "$DATASET" ]]; then
       echo "$command resolves different datasets within $COMPILE_INVOCATION_ID; compile.py takes one" >&2
@@ -66,7 +66,7 @@ IFS=',' read -ra components <<< "$COMPONENT_IDS"
 
 # compile.py receives the first component's source; multi-component recipes derive the rest from it.
 source_path="$("$PYTHON" -m model_registry fetch "$MODEL_DIR" --component "${components[0]}" \
-  "${cache_args[@]}" --json | json_field path)"
+  ${cache_args[@]+"${cache_args[@]}"} --json | json_field path)"
 dataset_args=()
 resolve_single_dataset fetch-calibration
 if [[ -n "$DATASET" ]]; then
@@ -86,7 +86,7 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --output-dir "$PROFILE_OUTPUT_DIR" \
   --build-profile "$BUILD_PROFILE_ID" \
   --compile-invocation "$COMPILE_INVOCATION_ID" \
-  "${dataset_args[@]}"
+  ${dataset_args[@]+"${dataset_args[@]}"}
 if [[ ! -d "$PROFILE_OUTPUT_DIR" ]]; then
   echo "$MODEL_DIR/scripts/compile.py wrote no output directory $PROFILE_OUTPUT_DIR" >&2
   exit 1
@@ -101,3 +101,5 @@ if [[ ! -f "$PROFILE_OUTPUT_DIR/compile-outputs.json" ]]; then
 fi
 "$PYTHON" -m model_registry validate-compile-outputs "$PROFILE_OUTPUT_DIR/compile-outputs.json" \
   --output-root "$PROFILE_OUTPUT_DIR" "${identity[@]}"
+# A missing or failing mla-msim is recorded in the simulation's status rather than failing the build.
+"$PYTHON" -m model_registry simulate-mla-stages "$PROFILE_OUTPUT_DIR" >/dev/null

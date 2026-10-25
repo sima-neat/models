@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neat.sima.ai/schemas/model-report.schema.json",
+  "title": "SiMa Neat model report",
+  "description": "A model's whole-model performance, or its accuracy on each dataset it evaluates, written by tools/model_report from Neat Core's results. tools/model_report/metrics.json names each metric's unit and direction.",
+  "type": "object",
+  "required": ["schema", "schema_version", "stage", "runtime"],
+  "properties": {
+    "schema": {"const": "sima.model-report"},
+    "schema_version": {"const": 1},
+    "stage": {"enum": ["performance", "accuracy"]},
+    "runtime": {
+      "type": "object",
+      "required": ["pyneat", "build"],
+      "properties": {
+        "pyneat": {"type": "string", "minLength": 1},
+        "build": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "metrics": {"$ref": "#/$defs/metrics"}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "stage": {"const": "performance"},
+        "schema": true, "schema_version": true, "runtime": true, "metrics": true,
+        "workload": {"type": "string", "minLength": 1},
+        "telemetry": {"type": "object"},
+        "components": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["execution_plan", "mla_layer_stats", "mla_stage_stats"],
+            "properties": {
+              "execution_plan": {"type": "object"},
+              "mla_layer_stats": {"$ref": "#/$defs/mla_layer_stats"},
+              "mla_stage_stats": {"$ref": "#/$defs/mla_stage_stats"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["metrics", "workload", "telemetry", "components"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "stage": {"const": "accuracy"},
+        "schema": true, "schema_version": true, "runtime": true,
+        "datasets": {
+          "description": "Each dataset model.yaml's accuracy lists, by its Dataset Registry source ID such as coco-2017-val.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["split", "evaluated_samples", "available_samples", "metrics", "details"],
+            "properties": {
+              "split": {"type": "string", "minLength": 1},
+              "evaluated_samples": {"type": "integer", "minimum": 1},
+              "available_samples": {"type": "integer", "minimum": 1},
+              "metrics": {"$ref": "#/$defs/metrics", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}},
+              "details": {"type": "object"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["datasets"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "metrics": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+      "additionalProperties": {"type": "number"}
+    },
+    "mla_layer_stats": {
+      "description": "Core's BenchmarkReport.mla_layer_stats: each compiled MLA layer's hardware run time in one profiling pass. status is \"ok\", \"not requested\", or why the stats were not collected.",
+      "type": "object",
+      "required": ["status", "layers"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["stage_index", "name", "latency_us"],
+            "properties": {
+              "stage_index": {"type": "integer", "minimum": 0},
+              "name": {"type": "string"},
+              "latency_us": {"type": "number", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mla_stage_stats": {
+      "description": "Core's BenchmarkReport.mla_stage_stats: each MLA stage's mean latency over 200 uninterrupted mla-rt runs. stage_index numbers MLA and A65 stages in execution order, as in mla_layer_stats.",
+      "type": "object",
+      "required": ["status", "stages"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["stage_index", "latency_us"],
+            "properties": {
+              "stage_index": {"type": "integer", "minimum": 0},
+              "latency_us": {"type": "number", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

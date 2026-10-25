@@ -36,9 +36,11 @@ BUILD_ROOT="$(mktemp -d)"
 trap 'rm -rf "${BUILD_ROOT}"' EXIT
 SOURCE_ROOT="${BUILD_ROOT}/source"
 mkdir -p "${SOURCE_ROOT}"
+# Validation reads the metric vocabulary from model_report.
 cp -R "${ROOT_DIR}/tools/model_registry" "${SOURCE_ROOT}/model_registry"
-find "${SOURCE_ROOT}/model_registry" -type d -name __pycache__ -prune -exec rm -rf {} +
-for ci_module in benchmark_manifest benchmark_publication registry; do
+cp -R "${ROOT_DIR}/tools/model_report" "${SOURCE_ROOT}/model_report"
+find "${SOURCE_ROOT}" -type d -name __pycache__ -prune -exec rm -rf {} +
+for ci_module in report_publication registry candidates promotions; do
   rm "${SOURCE_ROOT}/model_registry/${ci_module}.py"
 done
 install -m 0644 "${ROOT_DIR}/packaging/model-registry/__main__.py" \

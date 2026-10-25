@@ -15,16 +15,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
+import model_report
 import numpy as np
 import pyneat
-from calibration import MEAN, STD, stable_topk_gather
+from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, select_top_proposals
 from faster_coco_eval import COCO, COCOeval_faster
 from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
 IMAGES = "val2017"
-SIZE = 512
-QUERIES = 300
 CLASSES = 91
 TOP_K = 300
 SCORE_THRESHOLD = 0.001
@@ -65,7 +64,7 @@ def tensor_options() -> pyneat.ModelOptions:
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the backbone's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
-        resized = image.convert("RGB").resize((SIZE, SIZE), Image.Resampling.BILINEAR)
+        resized = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
     return cv2.LUT(np.asarray(resized), NORMALIZE)
 
 
@@ -107,8 +106,8 @@ def decode(
     dets: np.ndarray, labels: np.ndarray, image_id: int, width: int, height: int, valid: np.ndarray
 ) -> np.ndarray:
     """Return COCO result rows [image_id, x, y, w, h, score, category_id] for one image."""
-    if dets.shape != (1, QUERIES, 4) or labels.shape != (1, QUERIES, CLASSES):
-        raise ValueError(f"unexpected transformer outputs: dets={dets.shape}, labels={labels.shape}")
+    if dets.shape != (1, QUERY_COUNT, 4) or labels.shape != (1, QUERY_COUNT, CLASSES):
+        raise ValueError(f"unexpected decoder outputs: dets={dets.shape}, labels={labels.shape}")
     if not (np.isfinite(dets).all() and np.isfinite(labels).all()):
         raise ValueError("MPK output contains non-finite values")
     scores = (1.0 / (1.0 + np.exp(-np.clip(labels[0], -80, 80)))).ravel()
@@ -137,8 +136,8 @@ def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
     mpks = dict(value.split("=", 1) for value in values)
-    if set(mpks) != {"backbone", "transformer"}:
-        raise SystemExit("--mpk must name exactly backbone=<path> and transformer=<path>")
+    if set(mpks) != {"backbone", "decoder"}:
+        raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
 
 
@@ -148,29 +147,31 @@ def log(*values: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mpk", action="append", required=True, help="component=path, for backbone and transformer")
-    parser.add_argument("--dataset", type=Path, required=True, help="extracted coco-2017/mini directory")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mpk", action="append", required=True, help="component=path, for backbone and decoder")
+    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    dataset = Path(dataset_dir)
 
     mpks = parse_mpks(args.mpk)
     with contextlib.redirect_stdout(io.StringIO()):
-        ground_truth = COCO(str(args.dataset / ANNOTATIONS))
+        ground_truth = COCO(str(dataset / ANNOTATIONS))
     available = sorted(ground_truth.getImgIds())
     image_ids = sorted(random.Random(0).sample(available, args.limit)) if args.limit else available
     records = ground_truth.loadImgs(image_ids)
     valid = np.isin(np.arange(CLASSES), ground_truth.getCatIds())
 
-    backbone, transformer = ModelArtifact(mpks["backbone"]), ModelArtifact(mpks["transformer"])
+    backbone, decoder = ModelArtifact(mpks["backbone"]), ModelArtifact(mpks["decoder"])
     rows: list[np.ndarray] = []
     started = time.monotonic()
-    images = prefetched(lambda record: preprocess((args.dataset / IMAGES / record["file_name"]).read_bytes()), records)
+    images = prefetched(lambda record: preprocess((dataset / IMAGES / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
-        # The feature tensor goes to the transformer as is; only the proposals pass through NumPy.
-        proposals = stable_topk_gather(view(scores), view(boxes), QUERIES)
-        dets, labels = (view(output) for output in transformer(features, proposals))
+        # The feature tensor goes to the decoder as is; only the proposals pass through NumPy.
+        proposals = select_top_proposals(view(scores), view(boxes))
+        dets, labels = (view(output) for output in decoder(features, proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
@@ -190,21 +191,20 @@ def main(argv: list[str] | None = None) -> int:
     stats = coco_stats(scorer)
     scoring_seconds = time.monotonic() - started
 
-    result = {
-        "core_version": pyneat.__version__,
-        "dataset": {"split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available)},
-        "metrics": {
-            name: {"value": value, "unit": "ratio", "direction": "higher"} for name, value in stats.items()
+    report = model_report.from_accuracy({
+        dataset_id: {
+            "metrics": stats,
+            "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
+            "details": {
+                "detections": len(detections),
+                "inference_seconds": round(inference_seconds, 1),
+                "scoring_seconds": round(scoring_seconds, 1),
+            },
         },
-        "details": {
-            "detections": len(detections),
-            "inference_seconds": round(inference_seconds, 1),
-            "scoring_seconds": round(scoring_seconds, 1),
-        },
-    }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: round(item["value"], 4) for name, item in result["metrics"].items()}))
+    })
+    report.save(args.output)
+    measured = report.document["datasets"][dataset_id]["metrics"]
+    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 
 

@@ -1,4 +1,4 @@
-"""Prepare representative images and RF-DETR transformer boundary tensors."""
+"""Select and preprocess RF-DETR images, and select the decoder's top proposals."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import numpy as np
 from PIL import Image
 
 IMAGE_SIZE = 512
-FEATURE_SIZE = IMAGE_SIZE // 16
 QUERY_COUNT = 300
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)[:, None, None]
@@ -36,24 +35,15 @@ def _image_names(dataset: Path) -> list[str]:
     raise ValueError(f"unsupported image dataset input: {dataset}")
 
 
-def select_images(
-    dataset: Path,
-    calibration_count: int,
-    fidelity_count: int,
-    seed: int,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def select_images(dataset: Path, seed: int, start: int, count: int) -> tuple[str, ...]:
+    """Return images start to start + count of the dataset's seeded shuffle."""
     names = _image_names(dataset)
-    required = calibration_count + fidelity_count
-    if calibration_count < 1 or fidelity_count < 1:
-        raise ValueError("calibration and fidelity sample counts must be positive")
-    if len(names) < required:
-        raise ValueError(f"dataset contains {len(names)} images, but {required} are required")
+    if start < 0 or count < 1:
+        raise ValueError("an image selection needs a non-negative start and a positive count")
+    if len(names) < start + count:
+        raise ValueError(f"dataset contains {len(names)} images, but {start + count} are required")
     random.Random(seed).shuffle(names)
-    calibration = tuple(names[:calibration_count])
-    fidelity = tuple(names[calibration_count:required])
-    if set(calibration) & set(fidelity):
-        raise RuntimeError("calibration and fidelity image selections overlap")
-    return calibration, fidelity
+    return tuple(names[start : start + count])
 
 
 def _image_bytes(dataset: Path, names: Sequence[str]) -> Iterator[bytes]:
@@ -92,7 +82,8 @@ def to_afe_layout(array: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
-def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY_COUNT) -> np.ndarray:
+def select_top_proposals(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY_COUNT) -> np.ndarray:
+    """Return the boxes of the highest-scoring proposals, keeping equal scores in their original order."""
     if scores.ndim != 2 or boxes.ndim != 3 or boxes.shape[2] != 4:
         raise ValueError(f"unexpected proposal shapes: scores={scores.shape}, boxes={boxes.shape}")
     if scores.shape != boxes.shape[:2]:
@@ -103,31 +94,3 @@ def stable_topk_gather(scores: np.ndarray, boxes: np.ndarray, count: int = QUERY
         raise ValueError("proposal scores and boxes must be finite")
     indices = np.argsort(-scores, axis=1, kind="stable")[:, :count]
     return np.take_along_axis(boxes, indices[..., None], axis=1).astype(np.float32)
-
-
-def normalize_features(feature: np.ndarray) -> np.ndarray:
-    if feature.shape == (1, FEATURE_SIZE, FEATURE_SIZE, 256):
-        return feature.transpose(0, 3, 1, 2)
-    if feature.shape != (1, 256, FEATURE_SIZE, FEATURE_SIZE):
-        raise RuntimeError(f"unexpected backbone feature shape: {feature.shape}")
-    return feature
-
-
-def execute_backbone(backbone: object, image: np.ndarray, input_name: object) -> tuple[np.ndarray, ...]:
-    outputs = backbone.execute(inputs={input_name("input"): to_afe_layout(image[None])}, use_jax=True)
-    feature, scores, boxes = (np.asarray(output) for output in outputs)
-    return normalize_features(feature), scores, boxes
-
-
-def transformer_inputs(
-    backbone: object,
-    images: np.ndarray,
-    input_name: object,
-) -> tuple[np.ndarray, np.ndarray]:
-    features = []
-    proposals = []
-    for image in images:
-        feature, scores, boxes = execute_backbone(backbone, image, input_name)
-        features.append(feature[0].astype(np.float32))
-        proposals.append(stable_topk_gather(scores, boxes)[0])
-    return np.stack(features), np.stack(proposals)

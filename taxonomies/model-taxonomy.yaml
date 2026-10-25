@@ -1,5 +1,7 @@
 
 model_types:
+  audio:
+    display_name: Audio
   vision:
     display_name: Vision
   llm:
@@ -29,87 +31,73 @@ modalities:
   landmarks:
     display_name: Landmarks
 
+# An architecture is the network design a family is built on. Keep it coarse.
 architecture_paradigms:
   cnn:
     display_name: CNN
-  encoder_transformer:
-    display_name: Encoder Transformer
-  decoder_transformer:
-    display_name: Decoder Transformer
-  multimodal_transformer:
-    display_name: Multimodal Transformer
+  transformer:
+    display_name: Transformer
 
+# A family is the upstream model line, named without generation or size
+# (YOLO, not YOLO26n). The model's id and display_name carry those.
 architectures:
-  resnet_50:
-    display_name: ResNet-50
+  clip:
+    display_name: CLIP
+    paradigm: transformer
+    allowed_model_types: [vlm]
+  depthart:
+    display_name: DepthART
+    paradigm: transformer
+    allowed_model_types: [vision]
+  gemma:
+    display_name: Gemma
+    paradigm: transformer
+    allowed_model_types: [llm]
+  lfm:
+    display_name: LFM
+    paradigm: transformer
+    allowed_model_types: [llm]
+  llama:
+    display_name: Llama
+    paradigm: transformer
+    allowed_model_types: [llm]
+  llava:
+    display_name: LLaVA
+    paradigm: transformer
+    allowed_model_types: [vlm]
+  mistral:
+    display_name: Mistral
+    paradigm: transformer
+    allowed_model_types: [llm]
+  phi:
+    display_name: Phi
+    paradigm: transformer
+    allowed_model_types: [llm]
+  qwen:
+    display_name: Qwen
+    paradigm: transformer
+    allowed_model_types: [llm, vlm]
+  resnet:
+    display_name: ResNet
     paradigm: cnn
     allowed_model_types: [vision]
   rf_detr:
     display_name: RF-DETR
-    paradigm: encoder_transformer
+    paradigm: transformer
     allowed_model_types: [vision]
-  ssd_mobilenet_v1:
-    display_name: SSD-MobileNet V1
+  whisper:
+    display_name: Whisper
+    paradigm: transformer
+    allowed_model_types: [audio]
+  yolo:
+    display_name: YOLO
     paradigm: cnn
     allowed_model_types: [vision]
-  ssd_mobilenet_v2:
-    display_name: SSD-MobileNet V2
-    paradigm: cnn
-    allowed_model_types: [vision]
-  ssdlite_mobilenet_v3_large:
-    display_name: SSDLite-MobileNet V3 Large
-    paradigm: cnn
-    allowed_model_types: [vision]
-  yolo_26:
-    display_name: YOLO26
-    paradigm: cnn
-    allowed_model_types: [vision]
-  depthart:
-    display_name: DepthART
-    paradigm: encoder_transformer
-    allowed_model_types: [vision]
-  gemma_3:
-    display_name: Gemma 3
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  lfm2:
-    display_name: LFM2
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  llama_2:
-    display_name: Llama 2
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  llama_3_1:
-    display_name: Llama 3.1
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  llava_1_5:
-    display_name: LLaVA 1.5
-    paradigm: multimodal_transformer
-    allowed_model_types: [vlm]
-  mistral_1:
-    display_name: Mistral 1
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  phi_3_5_mini:
-    display_name: Phi 3.5 Mini
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  qwen_2_5:
-    display_name: Qwen 2.5
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  qwen_3:
-    display_name: Qwen 3
-    paradigm: decoder_transformer
-    allowed_model_types: [llm]
-  clip_vit_l_14:
-    display_name: CLIP ViT-L/14
-    paradigm: encoder_transformer
-    allowed_model_types: [vlm]
 
 tasks:
+  automatic_speech_recognition:
+    display_name: Automatic Speech Recognition
+    allowed_model_types: [audio]
   anomaly_detection:
     display_name: Anomaly Detection
     allowed_model_types: [vision]

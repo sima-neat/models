@@ -1,25 +1,26 @@
 @import '@fontsource-variable/roboto';
+@import '../../../artifact-browser/brand.css';
 
 :root {
-  --portal-canvas: #f7f8f9;
+  --portal-canvas: #f5f5f7;
   --portal-surface: #f1f3f5;
   --portal-raised: #ffffff;
-  --portal-ink: #20262c;
+  --portal-ink: #0b1220;
   --portal-ink-soft: #5f6972;
   --portal-ink-faint: #646d76;
   --portal-line: #dfe3e6;
   --portal-line-strong: #c7cdd2;
-  --portal-blue: #376f9f;
-  --portal-blue-soft: #e9f0f6;
-  --portal-green: #197451;
-  --portal-green-soft: #e1f1e9;
+  --portal-blue: var(--sima-blue);
+  --portal-blue-soft: color-mix(in srgb, var(--sima-blue) 15%, var(--portal-raised));
+  --portal-green: var(--sima-green);
+  --portal-green-soft: color-mix(in srgb, var(--sima-green) 15%, var(--portal-raised));
   --ifm-color-primary: var(--portal-blue);
-  --ifm-color-primary-dark: #30638f;
-  --ifm-color-primary-darker: #2d5d87;
-  --ifm-color-primary-darkest: #254d70;
-  --ifm-color-primary-light: #427dab;
-  --ifm-color-primary-lighter: #4a84b0;
-  --ifm-color-primary-lightest: #6c9cbe;
+  --ifm-color-primary-dark: color-mix(in srgb, var(--sima-blue) 90%, black);
+  --ifm-color-primary-darker: color-mix(in srgb, var(--sima-blue) 85%, black);
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--sima-blue) 70%, black);
+  --ifm-color-primary-light: color-mix(in srgb, var(--sima-blue) 90%, white);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--sima-blue) 85%, white);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--sima-blue) 70%, white);
   --ifm-background-color: var(--portal-canvas);
   --ifm-background-surface-color: var(--portal-raised);
   --ifm-font-color-base: var(--portal-ink);
@@ -50,16 +51,6 @@
   --portal-ink-faint: #909b9d;
   --portal-line: #323a3d;
   --portal-line-strong: #4a5558;
-  --portal-blue: #82b8ec;
-  --portal-blue-soft: #203b52;
-  --portal-green: #75cda5;
-  --portal-green-soft: #1b3b30;
-  --ifm-color-primary-dark: #6da8df;
-  --ifm-color-primary-darker: #63a1dc;
-  --ifm-color-primary-darkest: #3f89ce;
-  --ifm-color-primary-light: #97c5ef;
-  --ifm-color-primary-lighter: #a1caf1;
-  --ifm-color-primary-lightest: #c5dff7;
   --ifm-background-color: var(--portal-canvas);
   --ifm-background-surface-color: var(--portal-raised);
 }
@@ -286,8 +277,24 @@ body {
   }
 }
 
+html.developer-center-shell-enabled { --ifm-navbar-height: 3.25rem; }
+html.developer-center-shell-enabled #__docusaurus { padding-top: 60px; }
+html.developer-center-shell-enabled .navbar--fixed-top { top: 60px; }
+html.developer-center-shell-enabled .navbar--fixed-top .navbar__brand,
+html.developer-center-shell-enabled .navbar--fixed-top .navbar__items--right { display: none; }
+html.developer-center-shell-enabled .navbar-sidebar { top: 112px; height: calc(100vh - 112px); }
+.developer-center-shell .navbar__link--active::after { content: none; }
+.developer-center-shell .navbar__inner { flex-wrap: nowrap; }
+@media (max-width: 996px) {
+  .developer-center-shell .navbar__items:not(.navbar__items--right) { flex: 0 0 auto; }
+  html.developer-center-shell-enabled .navbar--fixed-top { padding-inline: 16px; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__item { display: flex; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__catalog-item { margin-right: 0; }
+  html.developer-center-shell-enabled .navbar--fixed-top .navbar__link { font-size: 0.92rem; margin-right: 0; padding-inline: 0.4rem; }
+}
+
 .navbar {
-  padding: 0 clamp(22px, 4vw, 70px);
+  padding: 0 1rem;
   border-bottom: 1px solid var(--portal-line);
   background: var(--portal-raised);
 }
@@ -304,17 +311,17 @@ body {
 
 .navbar__catalog-item {
   height: 100%;
-  margin-right: 24px;
+  margin-right: 0;
   padding: 0;
 }
 
 .navbar__catalog-item .navbar__link,
 .theme-layout-navbar-left > .navbar__link {
-  padding: 0;
+  padding: 0 0.75rem;
 }
 
 .theme-layout-navbar-left > .navbar__link {
-  margin-right: 24px;
+  margin-right: 0;
 }
 
 .navbar__logo {
@@ -325,9 +332,8 @@ body {
 
 .navbar__title,
 .navbar__link {
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
 }
 
 .navbar__link {
@@ -335,27 +341,12 @@ body {
   display: flex;
   height: 100%;
   align-items: center;
-  color: var(--portal-ink-soft);
+  color: var(--portal-ink);
 }
 
 .navbar__link:hover,
 .navbar__link--active {
-  color: var(--portal-ink);
-}
-
-.navbar__link--active::after {
-  position: absolute;
-  right: var(--ifm-navbar-item-padding-horizontal);
-  bottom: -1px;
-  left: var(--ifm-navbar-item-padding-horizontal);
-  height: 2px;
-  background: var(--portal-blue);
-  content: '';
-}
-
-.theme-layout-navbar-left > .navbar__link.navbar__link--active::after {
-  right: 0;
-  left: 0;
+  color: var(--portal-blue);
 }
 
 .navbar__environment-item {
