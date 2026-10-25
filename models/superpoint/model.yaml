@@ -49,6 +49,11 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
 accuracy:
   # Each val2017 image is paired with its own warp by a seeded homography; see scripts/accuracy.py.
   datasets:

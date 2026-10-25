@@ -132,6 +132,7 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
     compile_module = load_script("compile")
 
     assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
+    assert compile_module._parameters("w8a16") == {"precision": "w8a16"}
     assert compile_module._parameters("w8a8") == {
         "precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50,
     }
@@ -179,6 +180,6 @@ def test_calibration_draws_seeded_cal2017_images(tmp_path: Path, load_script: Ca
 def test_model_preserves_compilation_and_licence_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"]["redistribution"] == "restricted"
     assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
