@@ -3,6 +3,9 @@
 A test that takes `converted`, `compiled`, `accuracy` or `performance` checks that real stage output and
 runs only where it exists: scripts/run_model_tests.sh passes its path with the option of the same name.
 Without the option pytest deselects the test, so a plain run checks only what needs no stage output.
+
+A test parametrized with `profile_id` is skipped for a build profile its model.yaml leaves out, such as one
+commented out until it builds.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import importlib.util
 import json
 import sys
 from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -18,6 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from model_registry.errors import ValidationError
+from model_registry.model import MODEL_FILE, load_model
 from model_registry.model_tests import STAGE_GROUP, TESTS_FILE, load_model_tests, skip_reason
 
 STAGE_OUTPUTS = {
@@ -72,6 +77,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         reason = _skip_reason(item.path) if runs else None
         if reason:
             item.add_marker(pytest.mark.skip(reason=f"skipped in {TESTS_FILE}: {reason}"))
+        profile_id = _undeclared_profile(item) if runs else None
+        if profile_id:
+            item.add_marker(pytest.mark.skip(reason=f"{MODEL_FILE} does not declare build profile {profile_id}"))
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = selected
@@ -95,6 +103,24 @@ def _skip_reason(path: Path) -> str | None:
         return None
     try:
         return skip_reason(load_model_tests(path.parents[2]), stage)
+    except ValidationError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+
+
+def _undeclared_profile(item: pytest.Item) -> str | None:
+    """The `profile_id` a test is parametrized with, when the model.yaml of its models/<id> folder leaves it out."""
+    callspec = getattr(item, "callspec", None)
+    profile_id = callspec.params.get("profile_id") if callspec else None
+    model_dir = next((parent for parent in item.path.parents if parent.parent.name == "models"), None)
+    if profile_id is None or model_dir is None:
+        return None
+    return None if profile_id in _declared_profiles(model_dir) else profile_id
+
+
+@cache
+def _declared_profiles(model_dir: Path) -> frozenset[str]:
+    try:
+        return frozenset(profile["id"] for profile in load_model(model_dir)["build_profiles"])
     except ValidationError as exc:
         raise pytest.UsageError(str(exc)) from exc
 
