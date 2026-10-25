@@ -120,7 +120,7 @@ in this order:
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
    this revision.**
-   When the report includes layer stats, **Runtime Layer Analysis**
+   When the report includes MLA layer stats, **Runtime Layer Analysis**
    shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
    headings. Each execution-time cell shows its exact value above a thin bar,
    colored by operation family with a compact legend. Families are inferred from
@@ -156,7 +156,22 @@ in this order:
    denominator. These timings come from a separate profiling pass; they are not
    a partition of headline latency. Compiled layer names may differ from ONNX
    operators. Historical reports without stats omit this section.
-   **Performance details** has three cards on the left:
+   In developer mode, **MLA Utilization** follows Runtime Layer Analysis. Like the
+   layer summary, it shows each component's totals as tiles, each explained behind
+   an (i) mark: utilization (effective TOPS as a share of the MLA's peak: 50
+   TOPS for a w8a8 component, and a quarter of that, 12.5 TOPS, for one with
+   BF16 activations, whose multiplies take four times the cycles), effective
+   TOPS (the simulator's count of operations that contribute to the result,
+   divided by the MLA time Core measured on the board), packing (their share of all operations the MLA executes), and the
+   measured MLA time. **Details** opens a table of each MLA stage's measured and
+   simulated latency, effective operations, packing, effective TOPS, and
+   utilization. For a single-component model, the summary gives the effective TOPS
+   the model sustains at its measured throughput, counting one MLA run per batch in
+   the execution plan.
+   A component whose stages were not
+   measured or simulated, or whose board and simulator stages differ, says so instead.
+   Customers do not see this section, because its rates rest on a simulator estimate.
+   **Performance Details** has three cards on the left:
    **Performance** with the throughput, the mean latency, and the p50, p95,
    and p99 latency in one row; **Heat** with the SoC and SoM temperatures;
    and **CPU** with the core count, the load over all cores and on the
@@ -168,8 +183,8 @@ in this order:
    add up to SoC power indented under SoC: MLA and Non-MLA (the rest of the
    SoC). Rails peak at different moments, so the SoC peak is the sum of the
    two peaks, an upper bound. The other SoM rails follow at the SoC's level,
-   each coloured like its part of the bar. **Memory** has MLA, CMA
-   pool, and Linux memory. Readings other than latency and throughput cover
+   each coloured like its part of the bar. **Memory** has MLA and
+   EV74 memory, which add up, and the board's Linux memory. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
    Sentinel version and the samples behind the board readings, or why they
@@ -178,7 +193,7 @@ in this order:
    every metric, every SoM rail, every CPU core, and all compiled layer timings.
    A metric the browser does not place in the tiles or the cards appears under **Other measurements**,
    so a new metric shows up without a browser change.
-   Runtime Layer Analysis sits below Performance details, followed by an **Execution graph** disclosure that
+   Runtime Layer Analysis sits below Performance Details, followed by an **Execution Graph** disclosure that
    draws the steps the component runs, from input to output, each tagged with the
    processor it runs on; the step on the MLA is the **Compiled Model**. Its summary
    lists those processors. The diagram uses the available width, with equal-width
@@ -191,11 +206,11 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
-   The tiles, context line, and **Performance details** are the
+   The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
-   components and CPU step running together. **Runtime Layer Analysis** and
-   **Execution graph** each switch between the components, and **Download CSV**
-   lists each component's layer timings.
+   components and CPU step running together. **Runtime Layer Analysis**,
+   **MLA Utilization**, and **Execution Graph** each switch between the
+   components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,
    sampled otherwise), the first four metrics, the evaluated sample count, and
@@ -264,3 +279,106 @@ selections, including inherited compilation runs and their matching package.
 Newer unselected runs do not replace an explicitly selected deployment.
 Feature branches show finalized on-demand candidates before promotion; metadata
 and unselected runs do not create a card. Develop and Main show approved deployments.
+
+## Preview production data from staging
+
+The staging browser uses staging by default. Open
+[the production preview](https://developer-stg.sima.ai/models?env=prod)
+to run the same staged UI against the public read-only production Models registry.
+The registry label changes to **Production registry**, downloads use production,
+and catalog/branch caches stay separate by API origin. Model navigation retains
+`env=prod`; remove that parameter to return to staging. Select the catalog branch
+you want to inspect; changing backend does not populate or promote a catalog.
+
+The preview uses only the fixed `https://models-registry.neat.sima.ai` reader.
+Other `env` values retain the default backend; query strings cannot set arbitrary
+API origins. Production images use production API reads, never the staging image
+CDN. The preview is enabled only by staging configuration, including customer UI
+builds staged for review. Local custom APIs and production configurations do not
+opt into this override. No AWS credentials are sent by the browser. CORS permits
+cross-origin reads, while registry policy enforces repository and artifact access.
+
+## Hide branch selection
+
+Add `?branches=0` to browse Main with the branch selector hidden. This overrides
+saved branch preferences and any `branch=` parameter, without changing the UI
+audience or the selected backend. Other developer filters remain available.
+Clear filters and in-page navigation keep Main selected and retain `branches=0`.
+The preview does not replace your saved branch preference. Omit the parameter
+(or use `branches=1`) to restore the normal branch behavior; customer UI remains
+Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
+production Main. That catalog must be published before it can display models.
+
+## Production frontend
+
+The production browser is hosted at [developer.sima.ai/models](https://developer.sima.ai/models/) and
+uses `https://models-registry.neat.sima.ai`. Build with
+`MODEL_BROWSER_ENVIRONMENT=production` to select both production origins and
+the Production label. Audience selection is independent: developer mode exposes
+branch selection; customer mode shows Main only. Deploying the frontend does
+not publish, promote, or rebuild model catalogs. An unpublished branch remains
+empty; the browser never substitutes staging data.
+
+From a clean committed checkout, with AWS production operator credentials,
+Node dependencies, Chromium and the Python registry dependencies available:
+
+```bash
+AWS_PROFILE=vulcan-prod scripts/deploy-production-model-browser.sh developer
+```
+
+Use `customer` for Main-only presentation. The script builds and smoke-tests the
+portal, publishes only the production docs bucket's `models/` prefix, and
+invalidates only `/models` paths. It retains old assets and uploads the entry
+point last. The generated configuration filename hashes its contents, so changing
+audience or backend at the same source revision preserves the previous settings
+for cached pages and index rollback. Before deployment, record the prior root index object version and
+source revision. Roll back by restoring that index version and invalidating
+`/models` and `/models/*`; for a first deployment with no prior page, remove only
+the newly created root index to disable the entry point. Restore the previous
+full build from its source revision if documentation routes also need rollback.
+Model registry contents and publisher environment selections are unchanged.
+
+## Staging release notice
+
+Staging builds show an unofficial-release notice above the browser navigation,
+including the connected backend environment and the frontend's source branch and
+commit. These are the browser build's details, independent of the selected model
+catalog branch. A staging browser previewing production data keeps the notice
+and identifies the production backend. Local builds with uncommitted changes
+say so beside the commit. Production builds omit the staging notice.
+
+## Manual frontend deployment in GitHub Actions
+
+Run **Deploy Model Browser & Docs** from the protected `develop` or `main`
+branch. Select `staging` or `production` and the developer or customer audience.
+The selected workflow commit is the frontend source revision. This workflow
+builds and tests the browser and bundled docs, then publishes only `models/`
+using that environment's Terraform-managed bucket, KMS key, identity and CDN.
+It neither builds models nor publishes the registry tooling package. Existing
+production Basic Auth is infrastructure-managed and stays enabled.
+
+The dispatching user must belong to `owners-models` and approve their own
+`model-browser-deploy` environment gate. GitHub's Run button is visible to other
+writers, but their runs cannot deploy, even if a different owner approves them.
+The gate allows only that team, disables administrator bypass, and restricts
+workflow refs to `develop` and `main`. The authorization job verifies the gate
+and the dispatcher's approval before build/configuration/AWS jobs. Reruns are
+rejected to avoid reusing historical authorization; dispatch a fresh run instead.
+No additional organization-read token is needed.
+
+Automatic staging frontend publication remains as configured in the model
+orchestrator; production frontend publication is manual. Tooling publication
+(**Build and Publish Model Registry**) follows repository `VULCAN_ENV` on both
+push and manual invocation, defaulting to staging only when unset. Its destination
+is independent of this frontend workflow's environment selector.
+
+The environment protection payload is versioned in
+`config/model-browser-deployment-environment.json`. Its two deployment branch
+policies are exact branch names `develop` and `main` (no tags or wildcard refs).
+The workflow must reach the default branch (`main`) before GitHub exposes its
+Run workflow button; merge through the normal reviewed branch promotion. The environment gate is configured
+separately through repository administration and checked again at runtime.
+
+Developer deployments serve model hero illustrations from the matching registry
+environment’s CDN. Existing production illustrations are backfilled before browser
+cutover; image loading retains bounded retries and the registry API fallback.

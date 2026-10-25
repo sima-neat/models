@@ -20,6 +20,8 @@ from model_registry.report_publication import (
 )
 from model_report import METRICS, REPORT_FILE
 
+from tests.test_stage_plan import repository_without_w16a16_accuracy
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_RUN = "00000000-0000-4000-8000-00000000000a"
 BENCHMARK_RUN = "00000000-0000-4000-8000-00000000000b"
@@ -73,7 +75,11 @@ def performance_report(components: list[str], **changes: object) -> dict:
         "schema": "sima.model-report", "schema_version": 1, "stage": "performance",
         "runtime": {"pyneat": "3.0.0", "build": {}}, "workload": "MPK default", "metrics": dict(PERFORMANCE_METRICS),
         "telemetry": {},
-        "components": {component: {"execution_plan": {}, "layer_stats": []} for component in components},
+        "components": {component: {
+            "execution_plan": {},
+            "mla_layer_stats": {"status": "not requested", "layers": []},
+            "mla_stage_stats": {"status": "not requested", "stages": []},
+        } for component in components},
         **changes,
     }  # fmt: skip
 
@@ -152,8 +158,6 @@ def test_registered_builds_require_the_package_to_link_the_benchmarked_builds(tm
          "is not valid under any of the given schemas"),
         ("rf_detr_nano", "w8a8_w16a16", "performance", performance_report(["decoder", "backbone"]),
          r"must describe the components \['backbone', 'decoder'\], in order"),
-        # The BF16 build declares no accuracy qualification.
-        ("resnet_50", "w16a16", "accuracy", accuracy_report(), "does not measure accuracy of w16a16"),
     ],
 )  # fmt: skip
 def test_check_report_holds_the_report_to_model_yaml(
@@ -163,6 +167,14 @@ def test_check_report_holds_the_report_to_model_yaml(
 
     with pytest.raises(ValidationError, match=message):
         check_report(tmp_path / REPORT_FILE, ROOT, model_id, profile_id, stage)
+
+
+def test_check_report_rejects_a_stage_the_profile_does_not_measure(tmp_path: Path) -> None:
+    repository = repository_without_w16a16_accuracy(tmp_path)
+    write_json(tmp_path / REPORT_FILE, accuracy_report())
+
+    with pytest.raises(ValidationError, match="does not measure accuracy of w16a16"):
+        check_report(tmp_path / REPORT_FILE, repository, "resnet_50", "w16a16", "accuracy")
 
 
 def publish(
@@ -250,7 +262,8 @@ def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
     authored["accuracy"]["datasets"].append({**authored["accuracy"]["datasets"][0], "variant": "small"})
     (model_dir / "model.yaml").write_text(yaml.safe_dump(authored, sort_keys=False), encoding="utf-8")
     tests = yaml.safe_load((model_dir / "tests" / "tests.yaml").read_text(encoding="utf-8"))
-    tests["accuracy"]["expected"]["w8a8"]["imagenet-2012-small"] = tests["accuracy"]["expected"]["w8a8"][IMAGENET]
+    for expected in tests["accuracy"]["expected"].values():
+        expected["imagenet-2012-small"] = expected[IMAGENET]
     (model_dir / "tests" / "tests.yaml").write_text(yaml.safe_dump(tests), encoding="utf-8")
     builds = registered_build(tmp_path / "_compiled", "resnet_50", "w8a8", ["model"])
     report = accuracy_report({

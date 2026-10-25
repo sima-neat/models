@@ -76,6 +76,8 @@ execution graph in the order its pipeline runs them. These synthetic
 layer names include fused operations, nested reshapes, segmentation helpers,
 outputs and zero-time entries. Input placeholders are omitted, matching the
 benchmark API. These names do not describe the selected model's actual graph.
+Each preview package run also carries a generated MLA stage simulation for the
+same stages, at illustrative rates, so developer mode shows MLA Utilization.
 `fixtures/model-report-accuracy.json` gives each accuracy run its shape; the
 preview fills in the metrics the model's tests expect. YOLO26n W16A16
 keeps its benchmark fingerprint without a run, so its page shows **Not measured at
@@ -183,7 +185,7 @@ everything longer sits in one expandable row.
   inference for the whole model, one number per tile, from the build profile's
   performance run. A multi-component model is measured with its components
   running together, and its layer analysis and execution graph switch between
-  the components. **Performance details** is
+  the components. **Performance Details** is
   performance, heat, and CPU cards, with power (SoM; SoC as the sum of its
   MLA and Non-MLA rails; and each other power rail) and memory cards beside
   them,
@@ -218,7 +220,7 @@ and metric identities separate. A multi-component model shows its whole-model re
 shows the model name, variant, throughput and accuracy.
 
 Select up to three points or use **Add model** to inspect exact measurements
-in a table. It includes throughput, latency, power, energy, peak MLA memory and
+in a table. It includes throughput, latency, power, energy, peak MLA and EV74 memory and
 accuracy. Bold marks the best value.
 Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
 Links preserve the task and selected builds with `compare_task` and repeated
@@ -241,6 +243,8 @@ delegation.
 | `model-view.js` | The model page |
 | `compare-view.js` | The Compare page: pickers and table |
 | `model-report.js` | Reading performance and accuracy model reports |
+| `mla-layer-stats.js` | Analyzing a component's MLA layer stats |
+| `mla-utilization.js` | Comparing measured MLA stages with their simulation |
 | `metrics.js` | Metric labels, units, and formatting |
 | `downloads.js` | Component discovery for downloads |
 | `markdown.js` | The README renderer |
@@ -353,7 +357,7 @@ pages use only the compiled layer timings in each published model report.
 
 ### Staging hero CDN
 
-Staging developer builds use the existing public-reader hostname's
+Staging and production developer builds use their own public-reader hostname's
 `/images/sha256/<hero artifact SHA-256>.png` path. The hash comes from catalog
 metadata; no signed URLs or extra per-image API resolution are needed. Vulcan
 publishes validated hero derivatives into a private S3 origin when documentation
@@ -361,8 +365,8 @@ runs finish. Deploy that infrastructure and backfill current images **before**
 merging/deploying this browser change. See the companion Vulcan
 `docs/artifact-registry-hero-cdn.md` runbook.
 
-`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the staging
-CDN path for developer builds using the standard staging API; customer builds and
+`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the matching environment
+CDN path for developer builds using either standard registry API; customer builds and
 custom API origins default to disabled. Set it to an empty string and rebuild to
 roll back to API image URLs. The source preview `config.js` selects staging CDN.
 Image loading retries twice on the CDN and then uses the existing API URL with
@@ -375,3 +379,39 @@ After deployment, test a fresh catalog load, a model detail page, and an image
 missing from the CDN (API fallback). Inspect image request paths, verify that no
 repeated failure loops occur, and check staging reader throttles. Backend tests
 and local browser tests do not replace this staging acceptance check.
+
+## Preview production data from staging
+
+The staging browser uses staging by default. Open
+[the production preview](https://developer-stg.sima.ai/models?env=prod)
+to run the same staged UI against the public read-only production Models registry.
+The registry label changes to **Production registry**, downloads use production,
+and catalog/branch caches stay separate by API origin. Model navigation retains
+`env=prod`; remove that parameter to return to staging. Select the catalog branch
+you want to inspect; changing backend does not populate or promote a catalog.
+
+The preview uses only the fixed `https://models-registry.neat.sima.ai` reader.
+Other `env` values retain the default backend; query strings cannot set arbitrary
+API origins. Production images use production API reads, never the staging image
+CDN. The preview is enabled only by staging configuration, including customer UI
+builds staged for review. Local custom APIs and production configurations do not
+opt into this override. No AWS credentials are sent by the browser. CORS permits
+cross-origin reads, while registry policy enforces repository and artifact access.
+
+## Hide branch selection
+
+Add `?branches=0` to browse Main with the branch selector hidden. This overrides
+saved branch preferences and any `branch=` parameter, without changing the UI
+audience or the selected backend. Other developer filters remain available.
+Clear filters and in-page navigation keep Main selected and retain `branches=0`.
+The preview does not replace your saved branch preference. Omit the parameter
+(or use `branches=1`) to restore the normal branch behavior; customer UI remains
+Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
+production Main. That catalog must be published before it can display models.
+
+## Production deployment
+
+`MODEL_BROWSER_ENVIRONMENT=production` selects the production public registry,
+Developer Center origin and environment label. Audience remains independent.
+See [production frontend deployment](../docs/model-browser.md#production-frontend)
+for the tested, prefix-scoped operator deployment and rollback procedure.

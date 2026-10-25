@@ -2,7 +2,7 @@
 
 Given --mpk backbone=<path> --mpk decoder=<path>, the script measures the whole model as it runs: the
 backbone, the top 300 proposals on the CPU, and the decoder, each stage working on a different frame at the
-same time. It also records each MPK's layer timings and execution plan.
+same time. It also records each MPK's MLA layer and stage stats and its execution plan.
 """
 
 from __future__ import annotations
@@ -53,15 +53,20 @@ def percentile_ms(seconds: list[float], percentile: float) -> float:
     return float(np.percentile(seconds, percentile) * 1000)
 
 
-def layer_stats(mpk: Path) -> list[dict[str, object]]:
-    """Core's MLA layer timings for one MPK. Its throughput is not the model's, so Core's default run serves."""
+def mla_stats(mpk: Path) -> tuple[dict[str, object], dict[str, object]]:
+    """Core's MLA layer and stage stats for one MPK, in the shape Core saves them. Their throughput is not the
+    model's, so Core's default run serves."""
     options = pyneat.BenchmarkOptions()
-    options.include_layer_stats = True
+    options.include_mla_layer_stats = True
+    options.include_mla_stage_stats = True
     report = pyneat.Model(str(mpk)).benchmark(options)
-    return [
-        {"name": layer.name, "stage_index": layer.stage_index, "total_execution_time_us": layer.total_execution_time_us}
-        for layer in report.layer_stats
+    layer_stats, stage_stats = report.mla_layer_stats, report.mla_stage_stats
+    layers = [
+        {"stage_index": layer.stage_index, "name": layer.name, "latency_us": layer.latency_us}
+        for layer in layer_stats.layers
     ]
+    stages = [{"stage_index": stage.stage_index, "latency_us": stage.latency_us} for stage in stage_stats.stages]
+    return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
 def synthetic_image() -> pyneat.Tensor:
@@ -217,7 +222,8 @@ def write_report(
     latencies: list[float],
     throughput: Throughput,
     models: dict[str, pyneat.Model],
-    timings: dict[str, list[dict[str, object]]],
+    mla_layer_stats: dict[str, dict[str, object]],
+    mla_stage_stats: dict[str, dict[str, object]],
 ) -> None:
     benchmark = pyneat.BenchmarkReport()
     benchmark.latency_ms = float(np.mean(latencies) * 1000)
@@ -227,7 +233,7 @@ def write_report(
     benchmark.fps = throughput.fps
     benchmark.throughput_duration_ms = throughput.seconds * 1000
     benchmark.throughput_samples = throughput.frames
-    report = model_report.performance(
+    report = model_report.from_performance(
         benchmark,
         models,
         workload=(
@@ -235,7 +241,8 @@ def write_report(
             f"on a {IMAGE_SIZE}x{IMAGE_SIZE} FLOAT32 tensor"
         ),
         telemetry=throughput.telemetry,
-        layer_stats=timings,
+        mla_layer_stats=mla_layer_stats,
+        mla_stage_stats=mla_stage_stats,
     )
     report.save(output)
     print(
@@ -245,13 +252,15 @@ def write_report(
 
 
 def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
-    timings = {name: layer_stats(mpk) for name, mpk in mpks.items()}
+    mla_layer_stats, mla_stage_stats = {}, {}
+    for name, mpk in mpks.items():
+        mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
     models = {name: pyneat.Model(str(mpk), tensor_options()) for name, mpk in mpks.items()}
     image = synthetic_image()
     backbone, decoder = build_runners(models, image)
     latencies = measure_latency(backbone, decoder, image)
     throughput = measure_throughput(backbone, decoder, image)
-    write_report(output, latencies, throughput, models, timings)
+    write_report(output, latencies, throughput, models, mla_layer_stats, mla_stage_stats)
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:

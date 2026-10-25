@@ -349,6 +349,8 @@ _PREVIEW_LAYER_NAMES = (
     "MLA_{stage}/conv2d_add_22_output",
     "MLA_{stage}/copy_23",
 )
+# Nonconsecutive, as when an A65 stage runs between two MLA stages.
+_PREVIEW_MLA_STAGES = (0, 2)
 
 
 def _components_in_order(model: dict) -> list[str]:
@@ -386,14 +388,25 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
     plan = report["components"]["model"]["execution_plan"]
     # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
     # Preview timings are generated, not published measurements of these model definitions.
-    report["components"] = {component: {"execution_plan": plan, "layer_stats": [
-        {"name": name.format(stage=stage),
-         "stage_index": stage,
-         "total_execution_time_us": 0.0 if index in (21, 23) else round(
-             latency / len(components) * 1000 * (0.065 / (1 + index / 4))
-             * (0.8 + _fraction("layer", *key, component, str(index))), 2)}
-        for stage in (0, 2) for index, name in enumerate(_PREVIEW_LAYER_NAMES)
-    ]} for component in components}
+    report["components"] = {}
+    for component in components:
+        layers = [
+            {"stage_index": stage,
+             "name": name.format(stage=stage),
+             "latency_us": 0.0 if index in (21, 23) else round(
+                 latency / len(components) * 1000 * (0.065 / (1 + index / 4))
+                 * (0.8 + _fraction("layer", *key, component, str(index))), 2)}
+            for stage in _PREVIEW_MLA_STAGES for index, name in enumerate(_PREVIEW_LAYER_NAMES)
+        ]
+        # A stage's measured latency also holds the time between its layers.
+        stages = [{"stage_index": stage, "latency_us": round(1.05 * sum(
+            layer["latency_us"] for layer in layers if layer["stage_index"] == stage), 2)}
+            for stage in _PREVIEW_MLA_STAGES]
+        report["components"][component] = {
+            "execution_plan": plan,
+            "mla_layer_stats": {"status": "ok", "layers": layers},
+            "mla_stage_stats": {"status": "ok", "stages": stages},
+        }
     # The rest of the board telemetry keeps the template's DevKit readings.
     return report
 
@@ -440,6 +453,37 @@ def _benchmark_parameters(model: dict, benchmark: dict) -> dict[str, Any]:
         "builds": {build["component_id"]: {"run_id": build["run_id"], "artifact_sha256": build["artifact_sha256"]}
                    for build in benchmark["builds"]},
         "runtime": resolve_benchmark_runtime(ROOT),
+    }
+
+
+def _mla_stage_simulation_test(model: dict, package: dict) -> dict[str, Any] | None:
+    """The MLA stage simulation a package run carries: each preview stage at a fraction of its measured latency.
+    A LLiMa build has no MPK to simulate."""
+    if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
+        return None
+    profile_id = package["build_profile_id"]
+    report = _performance_report(model, profile_id)
+    components = {}
+    for component, stats in report["components"].items():
+        stages = []
+        for stage in stats["mla_stage_stats"]["stages"]:
+            key = (model["id"], profile_id, component, str(stage["stage_index"]))
+            effective_tops = 4.0 + _fraction("tops", *key) * 20.0
+            effective_ops = round(stage["latency_us"] * 1e-6 * effective_tops * 1e12)
+            stages.append({
+                "stage_index": stage["stage_index"],
+                "effective_ops": effective_ops,
+                "total_ops": round(effective_ops / (0.7 + _fraction("packing", *key) * 0.25)),
+                "simulated_latency_us": round(stage["latency_us"] * (0.8 + _fraction("simulated", *key) * 0.18), 3),
+            })
+        components[component] = {"status": "ok", "stages": stages}
+    return {
+        "suite": "performance",
+        "name": "mla-stage-simulation",
+        "status": "passed",
+        "version": "1",
+        "summary": {"schema_version": 1, "model_id": model["id"], "build_profile_id": profile_id,
+                    "components": components},
     }
 
 
@@ -683,7 +727,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({"run": index["runs"][run_id], "artifacts": artifacts})
         elif run_id in index["packages"] and rest == ["test-results"]:
             fidelity = _fidelity_test(*index["packages"][run_id])
-            self._json({"run_id": run_id, "test_results": [fidelity] if fidelity else []})
+            simulation = _mla_stage_simulation_test(*index["packages"][run_id])
+            self._json({"run_id": run_id, "test_results": [test for test in (fidelity, simulation) if test]})
         elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
             model, package = index["packages"][run_id]
             filename, _ = _package_file(model, package)

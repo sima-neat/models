@@ -245,10 +245,10 @@ def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
     return packages, assembled
 
 
-def _publish_packages(packages: Path, request, store: FakeStore) -> dict:
+def _publish_packages(packages: Path, request, store: FakeStore, environment: str = "staging") -> dict:
     return publish_packages(
         repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
-        bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+        bucket="artifacts", kms_key_id=None, environment=environment, branch="feature/models", git_sha="a" * 40,
         github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
         request=request, artifact_store=store,
     )
@@ -350,6 +350,80 @@ def test_publish_package_rejects_fidelity_that_does_not_match_the_declaration(
         return {"run_id": "package-run"}
 
     with pytest.raises(ValidationError, match=message):
+        _publish_packages(packages, request, FakeStore())
+    assert calls == []
+
+
+def _add_mla_stage_simulation(packages: Path, status: str = "ok") -> Path:
+    path = packages / "resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    stages = [{"stage_index": 0, "effective_ops": 8213719016, "total_ops": 10445905152,
+               "simulated_latency_us": 678.432}] if status == "ok" else []
+    path.write_text(json.dumps({
+        "schema_version": 1, "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "components": {"model": {"status": status, "stages": stages}},
+    }), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize(("status", "test_status"), [("ok", "passed"), ("mla-msim not found", "skipped")])
+def test_package_publishes_the_mla_stage_simulation(
+    tmp_path: Path, status: str, test_status: str, environment: str,
+) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages, status)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "package-run"}
+        if path.endswith("/artifacts/mla-stage-simulation"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000003"}
+        return {"ok": True}
+
+    store = FakeStore()
+    _publish_packages(packages, request, store, environment=environment)
+
+    bodies = {path: body for _, path, body, _ in calls}
+    artifact = bodies["/v1/runs/package-run/artifacts/mla-stage-simulation"]
+    assert artifact["artifact_type"] == "mla-stage-simulation"
+    assert artifact["s3_key"] == "models/feature%2Fmodels/aaaaaaaaaaaa/resnet_50/w16a16/mla-stage-simulation.json"
+    assert bodies["/v1/runs/package-run/test-results/performance/mla-stage-simulation"] == {
+        "status": test_status,
+        "summary": json.loads(simulation_path.read_text(encoding="utf-8")),
+        "report_artifact_id": "00000000-0000-4000-8000-000000000003",
+    }
+    assert [path for _, path, _, _ in calls][-1] == "/v1/runs/package-run/finalize"
+    assert store.objects[-1][0] == simulation_path
+
+
+def test_package_carries_the_profile_mla_stage_simulation(tmp_path: Path) -> None:
+    compiled = _packaged_result(tmp_path)
+    (compiled / "resnet_50/w16a16/mla-stage-simulation.json").write_text('{"simulated": true}', encoding="utf-8")
+
+    assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+    )
+
+    copied = tmp_path / "packages/resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    assert copied.read_text(encoding="utf-8") == '{"simulated": true}'
+
+
+def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages)
+    simulation = json.loads(simulation_path.read_text(encoding="utf-8"))
+    simulation["build_profile_id"] = "w8a8"
+    simulation_path.write_text(json.dumps(simulation), encoding="utf-8")
+    calls = []
+
+    def request(method, path, *args):
+        calls.append((method, path))
+        return {"run_id": "package-run"}
+
+    with pytest.raises(ValidationError, match="build_profile_id must be 'w16a16'"):
         _publish_packages(packages, request, FakeStore())
     assert calls == []
 
@@ -480,10 +554,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
-    # The fresh build carries its profile's whole-model performance fingerprint; w16a16 has no accuracy.
-    assert resnet["benchmark_fingerprints"] == {"w16a16": {"performance": benchmark_fingerprint(
-        ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, "performance",
-    )}}
+    # The fresh build carries one whole-model fingerprint for each stage its profile benchmarks.
+    assert resnet["benchmark_fingerprints"] == {"w16a16": {
+        stage: benchmark_fingerprint(ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, stage)
+        for stage in ("performance", "accuracy")
+    }}
     package_dir = tmp_path / "packages" / "resnet_50/w16a16/packages/default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
@@ -676,13 +751,13 @@ def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() ->
     assert all(set(build["model"]) == {
         "build_profile_id", "compile_invocation_id", "component_id", "compile_fingerprint", "artifact_sha256", "run_id",
     } for build in builds.values())
-    # Each profile records one fingerprint per stage it benchmarks; only w8a8 declares accuracy.
+    # Each profile records one fingerprint per stage it benchmarks.
     assert resnet["benchmark_fingerprints"] == {
-        "w16a16": {"performance": benchmark_fingerprint(ROOT, model, "w16a16", builds["w16a16"], "performance")},
-        "w8a8": {
-            "performance": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "performance"),
-            "accuracy": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "accuracy"),
-        },
+        profile_id: {
+            stage: benchmark_fingerprint(ROOT, model, profile_id, builds[profile_id], stage)
+            for stage in ("performance", "accuracy")
+        }
+        for profile_id in ("w16a16", "w8a8", "w8a16")
     }
     w8a8 = resnet["benchmark_fingerprints"]["w8a8"]
     assert w8a8["performance"] != w8a8["accuracy"]
@@ -1187,3 +1262,33 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
     assert parameters["provenance"] == result["manifest"]["provenance"]
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
+    import io
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    calls = []
+
+    def signed(self, method, path, body, key):
+        calls.append((self.api_url, self.region, method, path))
+        return {"authenticated": True}
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
+    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
+    assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
+    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+        assert registry._public_registry_json(url) == {"public": True}
+    assert len(calls) == 1
+
+
+def test_iam_registry_reads_require_a_region(monkeypatch):
+    import model_registry.registry as registry
+
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.test")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
+        registry._public_registry_json("https://private.example.test/v1/repositories")

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {analyzeLayers, selectLayers, layerTimeScale, layerFamily} from '../../artifact-browser/layer-stats.js';
+import {analyzeLayers, selectLayers, layerTimeScale, layerFamily} from '../../artifact-browser/mla-layer-stats.js';
 import {readPerformance} from '../../artifact-browser/model-report.js';
 
-const row = (name, time, stage = 0) => ({name, total_execution_time_us: time, stage_index: stage});
+const row = (name, time, stage = 0) => ({stage_index: stage, name, latency_us: time});
 const rows = [row('conv', 20), row('noop', 0), row('conv', 30, 2), row('squeeze', 0, 2), row('tail', 20)];
 
 test('preserves compiler order, duplicate names, zero times and gaps between MLA stages', () => {
@@ -49,9 +49,9 @@ test('missing or malformed data never produces a partially rendered misleading p
 
 test('a model report exposes the layer analysis of each component', () => {
   const report = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/model-report-performance.json', import.meta.url)));
-  report.components.model.layer_stats = rows;
+  report.components.model.mla_layer_stats = {status: 'ok', layers: rows};
   assert.equal(readPerformance({report}).value.components[0].layerAnalysis.totalUs, 70);
-  delete report.components.model.layer_stats;
+  report.components.model.mla_layer_stats = {status: 'not requested', layers: []};
   assert.equal(readPerformance({report}).value.components[0].layerAnalysis, null);
 });
 

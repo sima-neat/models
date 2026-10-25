@@ -51,7 +51,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     variant = _variant(_metadata(), variant_id)
     parameters = variant["parameters"]
     precision = str(parameters.get("precision"))
-    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8"}:
+    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8", "w8a16"}:
         raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
 
     input_name = str(parameters["input_name"])
@@ -75,7 +75,12 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
         # BF16 does not derive quantization ranges from representative data.
         # The API still requires an iterable, so provide one deterministic sample.
         samples = np.zeros((1, 224, 224, 3), dtype=np.float32)
-        activation_scheme = weight_scheme = bfloat16_scheme()
+        activation_scheme = bfloat16_scheme()
+        weight_scheme = (
+            quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+            if precision == "w8a16"
+            else bfloat16_scheme()
+        )
 
     data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
     model_name = f"{MODEL_ID}_{variant_id}"

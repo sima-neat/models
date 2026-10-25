@@ -3,7 +3,14 @@ name: Developer Docs Validation
 # The orchestrator calls this before planning compilations and publishes the site it uploads;
 # Target Branch Checks calls it on every pull request; a manual run checks one ref.
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: staging
+      ui_mode:
+        type: string
+        default: ""
   workflow_dispatch: {}
 
 permissions:
@@ -15,6 +22,9 @@ env:
 jobs:
   build:
     name: Build developer documentation
+    env:
+      MODEL_BROWSER_ENVIRONMENT: ${{ inputs.environment || 'staging' }}
+      MODEL_BROWSER_UI_MODE: ${{ inputs.ui_mode }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -48,7 +58,7 @@ jobs:
       - name: Build unified Model Registry portal
         working-directory: website
         env:
-          DOCS_SITE_URL: https://developer-stg.sima.ai
+          DOCS_SITE_URL: ${{ inputs.environment == 'production' && 'https://developer.sima.ai' || 'https://developer-stg.sima.ai' }}
           DOCS_BASE_URL: /models/
         run: npm run build:portal
 

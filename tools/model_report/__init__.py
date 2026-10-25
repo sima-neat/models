@@ -1,7 +1,7 @@
 """Write a model's report from what Neat Core returned.
 
 A model's scripts/performance.py and scripts/accuracy.py measure the whole model their own way, then hand
-Core's results to performance() or accuracy(). Report.save() writes model-report.json, which the registry
+Core's results to from_performance() or from_accuracy(). Report.save() writes model-report.json, which the registry
 publishes unchanged and the model browser reads. metrics.json names every metric a report may hold, with
 its unit, direction, and the Vulcan measurement name (registry_name) it is published under.
 
@@ -46,21 +46,23 @@ class Report:
         return path
 
 
-def performance(
+def from_performance(
     benchmark: Any,
     models: dict[str, Any],
     *,
     workload: str,
     telemetry: Any | None = None,
-    layer_stats: dict[str, list[dict[str, Any]]] | None = None,
+    mla_layer_stats: dict[str, dict[str, Any]] | None = None,
+    mla_stage_stats: dict[str, dict[str, Any]] | None = None,
 ) -> Report:
     """A performance report from a Core ``BenchmarkReport`` of the whole model.
 
     ``models`` maps each component to the ``pyneat.Model`` that ran it, in execution order. A script that
     times the model itself fills a ``pyneat.BenchmarkReport`` with what it measured, passes the
-    ``TelemetryMonitor.stop()`` result as ``telemetry``, and gives each component's layer timings as
-    ``layer_stats``; otherwise both come from ``benchmark``. Core reports 0 for a value it did not measure,
-    and a metric it did not measure is absent from the report.
+    ``TelemetryMonitor.stop()`` result as ``telemetry``, and gives each component's MLA stats as
+    ``mla_layer_stats`` and ``mla_stage_stats``, in the shape Core saves them; otherwise all three come from
+    ``benchmark``. Core reports 0 for a value it did not measure, and a metric it did not measure is absent
+    from the report.
     """
     if not models:
         raise ValueError("models must name at least one component")
@@ -69,12 +71,8 @@ def performance(
         measured_telemetry = core_report["telemetry"] if telemetry is None else _saved(
             telemetry, Path(scratch) / "telemetry.json"
         )
-    if layer_stats is None:
-        if len(models) != 1:
-            raise ValueError("layer_stats must give each component's layer timings")
-        layer_stats = {component: core_report["layer_stats"] for component in models}
-    if set(layer_stats) != set(models):
-        raise ValueError("layer_stats must name exactly the components in models")
+    layer_stats = _component_stats("mla_layer_stats", mla_layer_stats, core_report, models)
+    stage_stats = _component_stats("mla_stage_stats", mla_stage_stats, core_report, models)
     return Report(
         {
             **_header("performance"),
@@ -84,7 +82,8 @@ def performance(
             "components": {
                 component: {
                     "execution_plan": json.loads(model.execution_plan().to_json()),
-                    "layer_stats": layer_stats[component],
+                    "mla_layer_stats": layer_stats[component],
+                    "mla_stage_stats": stage_stats[component],
                 }
                 for component, model in models.items()
             },
@@ -93,7 +92,7 @@ def performance(
     )
 
 
-def accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
+def from_accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
     """An accuracy report: per dataset, each metric's score as a ratio from 0 to 1 over its evaluated part.
 
     ``datasets`` maps each dataset name model.yaml's accuracy lists to its result: the ``metrics``, the
@@ -105,6 +104,19 @@ def accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
         **_header("accuracy"),
         "datasets": {name: _dataset_result(name, result) for name, result in datasets.items()},
     })
+
+
+def _component_stats(
+    name: str, given: dict[str, dict[str, Any]] | None, core_report: dict[str, Any], models: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Each component's ``name`` stats: the script's, or for a single component, those in Core's report."""
+    if given is None:
+        if len(models) != 1:
+            raise ValueError(f"{name} must give each component's stats")
+        return {component: core_report[name] for component in models}
+    if set(given) != set(models):
+        raise ValueError(f"{name} must name exactly the components in models")
+    return given
 
 
 def _dataset_result(name: str, result: dict[str, Any]) -> dict[str, Any]:

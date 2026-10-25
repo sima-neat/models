@@ -5,7 +5,7 @@ import {
   allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
 } from "./branch-builds.js";
 import {
-  config, customerView, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
+  config, customerView, branchSelectionEnabled, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements,
   categoryFilters, catalogMode, branchSnapshotMode, currentVariant, showView,
 } from "./state.js";
 import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } from "./ui.js";
@@ -21,7 +21,7 @@ import {
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
-  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, selectExecutionGraph, highlightLayerLegend,
+  detailSkeleton, showEmptyDetail, renderDetail, errorPanel, updateLayerAnalysis, selectComponentPanel, highlightLayerLegend,
   showExecutionTooltip, hideExecutionTooltip, keepExecutionTooltip, deferHideExecutionTooltip,
 } from "./model-view.js";
 
@@ -435,8 +435,16 @@ async function initialize() {
     elements["compare-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span></div>`;
   } else if (state.selectedId || linkedVariant) detailSkeleton();
   else showEmptyDetail();
-  state.urlBranch = customerView || link.has("branch");
-  state.preferredBranch = customerView ? DEFAULT_BRANCH : state.urlBranch ? link.get("branch") : readBranchPreference();
+  state.urlBranch = !branchSelectionEnabled || link.has("branch");
+  state.preferredBranch = !branchSelectionEnabled ? DEFAULT_BRANCH : state.urlBranch ? link.get("branch") : readBranchPreference();
+  const releaseNotice = document.getElementById("release-notice");
+  if (releaseNotice) {
+    releaseNotice.hidden = config.deploymentEnvironment !== "staging";
+    document.getElementById("release-backend").textContent = config.environment || "Custom";
+    document.getElementById("release-branch").textContent = config.build?.branch || "Source preview";
+    document.getElementById("release-commit").textContent = config.build?.commit
+      ? `${config.build.commit.slice(0, 12)}${config.build.modified ? " (local changes)" : ""}` : "Build revision unavailable";
+  }
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   // Returning to the catalog keeps the cards on screen while they reload, so the restored scroll position holds.
   if (!elements["result-list"].querySelector(".model-card, .run-entry")) {
@@ -480,12 +488,12 @@ async function initialize() {
   }
 
   try {
-    if (customerView) state.availableBranches = [DEFAULT_BRANCH];
-    const branchResult = await Promise.resolve(customerView ? undefined : loadBranches()).then(
+    if (!branchSelectionEnabled) state.availableBranches = [DEFAULT_BRANCH];
+    const branchResult = await Promise.resolve(!branchSelectionEnabled ? undefined : loadBranches()).then(
       () => ({ status: "fulfilled" }),
       (reason) => ({ status: "rejected", reason }),
     );
-    if (customerView) {
+    if (!branchSelectionEnabled) {
       elements["branch-filter"].innerHTML = `<option value="${DEFAULT_BRANCH}">${DEFAULT_BRANCH}</option>`;
       elements["branch-filter"].value = DEFAULT_BRANCH;
     }
@@ -663,7 +671,7 @@ Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].ad
 }));
 elements["clear-filters"].addEventListener("click", async () => {
   elements.search.value = "";
-  const resetBranch = state.availableBranches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : state.availableBranches[0] || "";
+  const resetBranch = !branchSelectionEnabled || state.availableBranches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : state.availableBranches[0] || "";
   elements["branch-filter"].value = resetBranch;
   state.preferredBranch = resetBranch;
   state.urlBranch = true;
@@ -827,7 +835,7 @@ window.addEventListener("resize", hideExecutionTooltip);
 window.addEventListener("popstate", hideExecutionTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
-elements["detail-pane"].addEventListener("click", selectExecutionGraph);
+elements["detail-pane"].addEventListener("click", selectComponentPanel);
 elements["detail-pane"].addEventListener("click", (event) => {
   const variantTab = event.target.closest("[data-detail-profile-id]");
   if (variantTab) {
@@ -846,7 +854,8 @@ elements["detail-pane"].addEventListener("click", (event) => {
   const download = event.target.closest("[data-download]");
   if (download?.dataset.download === "package") downloadPackage(download.dataset.runId);
   else if (download) downloadArtifact(download.dataset.runId, download.dataset.download, download);
-  // The execution graph's Details button opens its tensors and, like a disclosure row, stays open on re-render.
+  // A Details button, such as the execution graph's tensors or the MLA stages, opens its table and, like a
+  // disclosure row, stays open on re-render.
   const details = event.target.closest("[data-details]");
   if (details) {
     const key = details.dataset.details;

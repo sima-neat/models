@@ -192,7 +192,9 @@ declares `numerical_fidelity`. The recipe:
 - never downloads undeclared data.
 
 For a single-component model, `scripts/run_model_compilation.sh` writes
-`compile-outputs.json` when the recipe does not. Shared download, checksum, MPK
+`compile-outputs.json` when the recipe does not. It then runs
+`model-registry simulate-mla-stages`, which writes `mla-stage-simulation.json`:
+the Model Compiler simulator's operation counts and latency for each MLA stage. Shared download, checksum, MPK
 validation, and publication code belongs in `tools/`, not in model code.
 
 Set `runner_class` and `runner_market` at profile level for the shared compile
@@ -256,7 +258,7 @@ builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
 | --- | --- |
-| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, and the shared model loader |
+| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
 | performance | the compile run and MPK digest of every component, the `performance` declaration, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
@@ -289,6 +291,7 @@ is always benchmarked again.
 | the Model Compiler pin | every build, then every benchmark |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their benchmarks |
 | the shared model loader | ONNX builds, then their benchmarks |
+| `tools/model_registry/mla_stage_simulation.py` | ONNX builds, then their benchmarks |
 | LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class/market | no LLiMa compilation |
 
 The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprint` in
@@ -468,6 +471,9 @@ for a classifier. `model-registry validate-models` checks the structure, the
 word limits, the Building applications text, and the internal terms a README
 leaves out. The writing rules are in
 [`AGENTS.md`](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
+
+Create the hero using the [geometric comic illustration guide](illustration-guide.md),
+which includes the fixed palette, Roboto typography, reference heroes and reusable prompts.
 
 ## 12. Validate the contract
 

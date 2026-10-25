@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .errors import ValidationError
 from .model import load_models
-from .package import FIDELITY_FILE, _link_or_copy, assemble_package
+from .package import PROFILE_RESULT_FILES, _link_or_copy, assemble_package
 from .registry import (
     JsonObject,
     ReadRequest,
@@ -187,7 +187,7 @@ def publish_candidate(
         for run in publication["runs"]:
             path = source / model_id / build_profile_id / run["component_id"] / "registry-publication.json"
             _save(path, {"count": 1, "runs": [run]})
-    # Join the component directories, and the profile's numerical fidelity the package run publishes.
+    # Join the component directories, and the profile results the package run publishes.
     compiled = output / "compiled"
     for item in prepared:
         destination = compiled / model_id / build_profile_id / item["component_id"]
@@ -195,9 +195,10 @@ def publish_candidate(
             shutil.rmtree(destination)
         shutil.copytree(item["result_path"].parent, destination, copy_function=_link_or_copy)
     for source in sources:
-        fidelity = source / model_id / build_profile_id / FIDELITY_FILE
-        if fidelity.is_file():
-            shutil.copyfile(fidelity, compiled / model_id / build_profile_id / FIDELITY_FILE)
+        for name in PROFILE_RESULT_FILES:
+            result_file = source / model_id / build_profile_id / name
+            if result_file.is_file():
+                shutil.copyfile(result_file, compiled / model_id / build_profile_id / name)
     package_root = output / "packages"
     for package in packages:
         assemble_package(

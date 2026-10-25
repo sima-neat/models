@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -7,6 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 from model_registry.fingerprints import ACCURACY_TOOLING, PERFORMANCE_TOOLING
+
+from tests.test_compile_workflow import evaluate
+from tests.test_stage_plan import repository_without_w16a16_accuracy
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
@@ -49,7 +53,8 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["stages"]["default"] == "performance,accuracy"
-    assert inputs["environment"]["options"] == ["staging"]
+    assert inputs["environment"]["options"] == ["default", "staging", "production"]
+    assert inputs["environment"]["default"] == "default"
     assert "operation" not in inputs
     assert "model-benchmark-" in workflow["concurrency"]["group"]
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
@@ -60,7 +65,9 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     stage = workflow["jobs"]["stage-dispatched-benchmark"]
 
     assert stage["needs"] == "resolve-dispatched-benchmark-config"
-    assert stage["environment"] == "${{ inputs.environment }}"
+    assert stage["environment"] == (
+        "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
+    )
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
     assert "inputs.source_branch == github.ref_name" in stage["if"]
@@ -108,7 +115,10 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
         in registered["run"]
     )
     assert all("model-registry publish" not in item.get("run", "") for item in stage["steps"])
-    assert all("credentials" not in item.get("uses", "") for item in stage["steps"])
+    credentials = step(stage["steps"], "Configure authenticated production registry reads")
+    assert credentials["with"]["output-env-credentials"] == "false"
+    assert credentials["with"]["output-credentials"] == "true"
+    assert stage["steps"].index(credentials) < stage["steps"].index(restore)
     upload = next(item for item in stage["steps"] if item.get("uses") == "actions/upload-artifact@v7")
     assert upload["with"]["name"] == (
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
@@ -131,18 +141,18 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "resolve-dispatched-benchmark-runner",
         "resolve-dispatched-benchmark-config",
     ]
-    assert benchmark["environment"] == "${{ inputs.environment }}"
+    assert benchmark["environment"] == (
+        "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
+    )
     assert benchmark["runs-on"]["group"] == (
         "${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
     )
-    assert benchmark["runs-on"]["labels"] == [
-        "self-hosted",
-        "Linux",
-        "ARM64",
-        "modalix",
-        "model-registry",
-        "vulcan-${{ inputs.environment }}",
+    assert json.loads(resolver["with"]["runner-labels"]) == [
+        "self-hosted", "Linux", "ARM64", "modalix", "model-registry", "vulcan-staging",
     ]
+    assert benchmark["runs-on"]["labels"] == (
+        "${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}"
+    )
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
     assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage-dispatched-benchmark.outputs.source_branch }}"
     assert step(steps, "Check out trusted tooling from the protected workflow revision")["with"] == {
@@ -249,7 +259,7 @@ def test_benchmarks_run_only_the_requested_stages_the_profile_declares(
 ) -> None:
     run = step(load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"],
                "Select the requested stages the profile declares")["run"]
-    (tmp_path / "_source").symlink_to(ROOT)
+    (tmp_path / "_source").symlink_to(repository_without_w16a16_accuracy(tmp_path))
     output = tmp_path / "github-output"
     env = {**os.environ, "REGISTRY_PYTHON": sys.executable, "MODEL_ID": "resnet_50", "BUILD_PROFILE_ID": profile,
            "STAGES": stages, "GITHUB_OUTPUT": str(output)}
@@ -535,3 +545,61 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
     result = check()
     assert result.returncode != 0
     assert relative in result.stderr
+
+
+@pytest.mark.parametrize(
+    ('override', 'default', 'expected'),
+    [('default', 'production', 'production'), ('default', 'staging', 'staging'),
+     ('default', '', 'staging'), ('staging', 'production', 'staging'),
+     ('production', 'staging', 'production')],
+)
+def test_registry_selection_is_independent_of_devkit_placement(override, default, expected):
+    jobs = load_workflow()['jobs']
+    values = {'inputs.environment': override, 'vars.VULCAN_ENV': default}
+    for name in ('stage-dispatched-benchmark', 'benchmark-dispatched-model', 'publish-dispatched-benchmark'):
+        assert evaluate(jobs[name]['environment'][3:-3], values) == expected
+        assert "inputs.environment == 'staging'" not in jobs[name]['if']
+    config = jobs['resolve-dispatched-benchmark-config']['with']['vulcan_env']
+    assert evaluate(config[3:-3], values) == expected
+    board = jobs['benchmark-dispatched-model']
+    dataset = step(board['steps'], 'Install trusted dataset tooling')['env']['DATASET_REGISTRY_ENVIRONMENT']
+    assert evaluate(dataset[3:-3], values) == expected
+    assert 'vulcan-staging' in json.loads(jobs['resolve-dispatched-benchmark-runner']['with']['runner-labels'])
+    reader = step(jobs['stage-dispatched-benchmark']['steps'], 'Configure authenticated production registry reads')
+    for source_run in ('', '123'):
+        assert evaluate(reader['if'], {**values, 'inputs.source_run_id': source_run}) == (
+            expected == 'production' and not source_run
+        )
+    restore = step(jobs['stage-dispatched-benchmark']['steps'],
+                   'Restore the current immutable compilation from the registry')
+    urls = {**values, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
+            'vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://public.example'}
+    assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == 'https://public.example'
+    assert evaluate(restore['env']['MODEL_REGISTRY_IAM_READ_API_URL'][3:-3], urls) == (
+        'https://iam.example' if expected == 'production' else ''
+    )
+
+
+@pytest.mark.parametrize('environment', ['staging', 'production'])
+def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, environment):
+    publication = step(load_workflow()['jobs']['publish-dispatched-benchmark']['steps'],
+                       "Publish each measured stage's run")
+    selected = evaluate(publication['env']['VULCAN_ENV'][3:-3],
+                        {'inputs.environment': 'default', 'vars.VULCAN_ENV': environment})
+    executable = tmp_path / 'model-registry'
+    executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')
+    executable.chmod(0o755)
+    for stage_name in ('performance', 'accuracy'):
+        directory = tmp_path / f'_{stage_name}'
+        directory.mkdir()
+        (directory / 'test-status.txt').write_text('passed\n')
+    env = {**os.environ, 'PATH': f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+           'CALLS': str(tmp_path / 'calls'), 'VULCAN_ENV': selected,
+           **dict.fromkeys(('MODEL_ID', 'BUILD_PROFILE_ID', 'REGISTRY_API_URL', 'AWS_REGION',
+                            'ARTIFACT_BUCKET', 'KMS_KEY_ID', 'SOURCE_BRANCH', 'SOURCE_SHA',
+                            'GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID'), 'fixture')}
+    subprocess.run(['bash', '-c', publication['run']], cwd=tmp_path, env=env, check=True)
+    calls = (tmp_path / 'calls').read_text().splitlines()
+    assert len(calls) == 2
+    assert all(f'--environment {environment} ' in call for call in calls)
+    assert all('--compiled-dir _compiled ' in call for call in calls)

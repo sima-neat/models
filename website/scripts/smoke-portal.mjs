@@ -333,7 +333,7 @@ async function checkExecutionTooltips(browser, url) {
       await stage.blur();
       await stage.focus();
       await tooltip.waitFor();
-      await page.locator('.execution-details').first().focus();
+      await page.locator('.execution-graph .execution-details').first().focus();
       if (await tooltip.isVisible()) throw new Error('stage tooltip survived focus moving away');
       console.log(`ok  Execution stage tooltip · ${width}px ${theme}`);
     } finally { await page.close(); }
@@ -414,14 +414,12 @@ async function checkTaskComparison(browser, base) {
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();
-        if (choices.length !== 3 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
+        if (choices.length !== 4 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
         const dataset = await page.locator('.compare-chart-dataset').innerText();
         if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
-        // The FP16 classification variant has no accuracy result; it stays available in Add model.
-        if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
+        if (await page.locator('.compare-point').count() !== 3) throw new Error('chart omitted a measured classification variant');
         await add.selectOption('resnet_50.w16a16');
-        if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('variant without accuracy is no longer selectable');
-        if (await page.locator('.compare-legend button').count()) throw new Error('selection without measured accuracy appears in the legend');
+        if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('selected variant is missing from the table');
         await page.locator('.compare-table .compare-remove').click();
         if (await page.locator('.compare-table, .compare-selected').count()) throw new Error('removing the final variant left an empty table');
         if (new URL(page.url()).searchParams.getAll('build').length) throw new Error('removing the final variant left a selection in the URL');
@@ -447,6 +445,23 @@ try {
       ['variant page', variantUrl, '#components-section .component-performance'],
       ['component pipeline', new URL('/?model=rf_detr_nano&variant=w8a8_w16a16', variantUrl), '#components-section .component-pipeline'],
     ];
+    for (const viewport of [{width: 1440, height: 1000}, {width: 390, height: 844}]) {
+      const page = await browser.newPage({viewport});
+      await page.goto(new URL('/?branches=0&branch=develop', variantUrl).href);
+      // The developer fixture has no Main catalog: selection must stay Main even then.
+      await page.waitForFunction(() => document.querySelector('#branch-filter').value === 'main');
+      if (await page.locator('#branch-filter').isVisible()) throw new Error('branches=0 exposes branch filter');
+      if (await page.locator('#branch-filter').inputValue() !== 'main') throw new Error('branches=0 did not select main');
+      await page.locator('#nav-compare').click();
+      await page.locator('#nav-models').click();
+      if (new URL(page.url()).searchParams.get('branches') !== '0') throw new Error('Navigation lost branches=0');
+      if (!await page.locator('#clear-filters').isVisible()) await page.locator('#filter-toggle').click();
+      await page.locator('#clear-filters').click();
+      if (await page.locator('#branch-filter').inputValue() !== 'main') throw new Error('Clear filters left main');
+      await page.screenshot({path: `/tmp/model-browser-branches-${viewport.width}.png`});
+      await page.close();
+      console.log(`ok  Main-only branches=0 · ${viewport.width}px`);
+    }
     await checkLayerAnalysis(browser, variantUrl);
     await checkExecutionTooltips(browser, variantUrl);
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
