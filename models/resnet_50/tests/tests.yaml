@@ -5,8 +5,8 @@ accuracy:
   expected:
     w16a16:
       imagenet-2012-mini:
-        top1_accuracy: 0.7764
-        top5_accuracy: 0.9356
+        top1_accuracy: 0.8114
+        top5_accuracy: 0.9512
     w8a8:
       imagenet-2012-mini:
         top1_accuracy: 0.7764
