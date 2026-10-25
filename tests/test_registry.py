@@ -554,10 +554,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
-    # The fresh build carries its profile's whole-model performance fingerprint; w16a16 has no accuracy.
-    assert resnet["benchmark_fingerprints"] == {"w16a16": {"performance": benchmark_fingerprint(
-        ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, "performance",
-    )}}
+    # The fresh build carries one whole-model fingerprint for each stage its profile benchmarks.
+    assert resnet["benchmark_fingerprints"] == {"w16a16": {
+        stage: benchmark_fingerprint(ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, stage)
+        for stage in ("performance", "accuracy")
+    }}
     package_dir = tmp_path / "packages" / "resnet_50/w16a16/packages/default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
@@ -750,17 +751,13 @@ def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() ->
     assert all(set(build["model"]) == {
         "build_profile_id", "compile_invocation_id", "component_id", "compile_fingerprint", "artifact_sha256", "run_id",
     } for build in builds.values())
-    # Each profile records one fingerprint per stage it benchmarks; w16a16 declares no accuracy.
+    # Each profile records one fingerprint per stage it benchmarks.
     assert resnet["benchmark_fingerprints"] == {
-        "w16a16": {"performance": benchmark_fingerprint(ROOT, model, "w16a16", builds["w16a16"], "performance")},
-        "w8a8": {
-            "performance": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "performance"),
-            "accuracy": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "accuracy"),
-        },
-        "w8a16": {
-            "performance": benchmark_fingerprint(ROOT, model, "w8a16", builds["w8a16"], "performance"),
-            "accuracy": benchmark_fingerprint(ROOT, model, "w8a16", builds["w8a16"], "accuracy"),
-        },
+        profile_id: {
+            stage: benchmark_fingerprint(ROOT, model, profile_id, builds[profile_id], stage)
+            for stage in ("performance", "accuracy")
+        }
+        for profile_id in ("w16a16", "w8a8", "w8a16")
     }
     w8a8 = resnet["benchmark_fingerprints"]["w8a8"]
     assert w8a8["performance"] != w8a8["accuracy"]

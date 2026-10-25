@@ -66,8 +66,6 @@ numerical_fidelity:
 accuracy:
   datasets:
   - {id: imagenet-2012, variant: mini, sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239, size_bytes: 356052889}
-  # The W16A16 build checks compilation; only the INT8-weight builds have an accuracy qualification.
-  build_profiles: [w8a8, w8a16]
 
 performance: {}
 

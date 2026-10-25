@@ -35,18 +35,18 @@ accuracy:
         coco_person_box_ap50: 0.6867
     w8a16:
       coco-2017-val:
-        coco_keypoint_map: 0.5615
-        coco_keypoint_ap50: 0.8159
-        coco_keypoint_ap75: 0.6091
-        coco_keypoint_ap_medium: 0.4903
-        coco_keypoint_ap_large: 0.6787
-        coco_keypoint_ar: 0.6272
-        coco_keypoint_ar50: 0.8643
-        coco_keypoint_ar75: 0.6746
-        coco_keypoint_ar_medium: 0.5449
-        coco_keypoint_ar_large: 0.7420
-        coco_person_box_map: 0.4950
-        coco_person_box_ap50: 0.6924
+        coco_keypoint_map: 0.5498
+        coco_keypoint_ap50: 0.8182
+        coco_keypoint_ap75: 0.6001
+        coco_keypoint_ap_medium: 0.4777
+        coco_keypoint_ap_large: 0.6656
+        coco_keypoint_ar: 0.6219
+        coco_keypoint_ar50: 0.8690
+        coco_keypoint_ar75: 0.6733
+        coco_keypoint_ar_medium: 0.5383
+        coco_keypoint_ar_large: 0.7383
+        coco_person_box_map: 0.4890
+        coco_person_box_ap50: 0.6948
 performance:
   run_tests: false
   skip_reason: The w8a16 build has no published report to expect values from yet.

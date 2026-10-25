@@ -10,6 +10,7 @@ import yaml
 from model_registry.fingerprints import ACCURACY_TOOLING, PERFORMANCE_TOOLING
 
 from tests.test_compile_workflow import evaluate
+from tests.test_stage_plan import repository_without_w16a16_accuracy
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
@@ -258,7 +259,7 @@ def test_benchmarks_run_only_the_requested_stages_the_profile_declares(
 ) -> None:
     run = step(load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"],
                "Select the requested stages the profile declares")["run"]
-    (tmp_path / "_source").symlink_to(ROOT)
+    (tmp_path / "_source").symlink_to(repository_without_w16a16_accuracy(tmp_path))
     output = tmp_path / "github-output"
     env = {**os.environ, "REGISTRY_PYTHON": sys.executable, "MODEL_ID": "resnet_50", "BUILD_PROFILE_ID": profile,
            "STAGES": stages, "GITHUB_OUTPUT": str(output)}

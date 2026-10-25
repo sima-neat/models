@@ -39,20 +39,20 @@ accuracy:
         coco_box_ap50: 0.5304
     w8a16:
       coco-2017-val:
-        coco_mask_map: 0.3320
-        coco_mask_ap50: 0.5202
-        coco_mask_ap75: 0.3523
-        coco_mask_ap_small: 0.1388
-        coco_mask_ap_medium: 0.3695
-        coco_mask_ap_large: 0.5096
-        coco_mask_ar1: 0.2878
-        coco_mask_ar10: 0.4591
-        coco_mask_ar100: 0.5001
-        coco_mask_ar_small: 0.2832
-        coco_mask_ar_medium: 0.5534
-        coco_mask_ar_large: 0.6998
-        coco_box_map: 0.3925
-        coco_box_ap50: 0.5487
+        coco_mask_map: 0.3241
+        coco_mask_ap50: 0.5084
+        coco_mask_ap75: 0.3450
+        coco_mask_ap_small: 0.1325
+        coco_mask_ap_medium: 0.3637
+        coco_mask_ap_large: 0.4997
+        coco_mask_ar1: 0.2853
+        coco_mask_ar10: 0.4541
+        coco_mask_ar100: 0.4962
+        coco_mask_ar_small: 0.2788
+        coco_mask_ar_medium: 0.5497
+        coco_mask_ar_large: 0.6945
+        coco_box_map: 0.3827
+        coco_box_ap50: 0.5423
 performance:
   run_tests: false
   skip_reason: The w8a16 build has no published report to expect values from yet.

@@ -141,8 +141,10 @@ def test_accuracy_names_each_dataset_by_its_registry_source_and_keeps_measured_b
     [pin] = authored["accuracy"]["datasets"]
 
     assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-mini": pin}}
-    assert benchmarked_profiles(model, "accuracy") == ["w8a8", "w8a16"]
+    assert benchmarked_profiles(model, "accuracy") == ["w16a16", "w8a8", "w8a16"]
     assert benchmarked_profiles(model, "performance") == ["w16a16", "w8a8", "w8a16"]
+    authored["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
+    assert benchmarked_profiles(normalize_model(authored, MODELS / "resnet_50"), "accuracy") == ["w8a8", "w8a16"]
     authored = _authored("yolo26n")
     del authored["accuracy"]
     without_accuracy = normalize_model(authored, MODELS / "yolo26n")

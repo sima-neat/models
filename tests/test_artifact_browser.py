@@ -311,12 +311,10 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
 def test_preview_leaves_a_profile_without_a_benchmark_run(tmp_path: Path) -> None:
     with _preview(tmp_path) as base:
         unmeasured = _benchmark_run(base, "yolo26n", "w16a16", "performance")
-        no_accuracy = _benchmark_run(base, "resnet_50", "w16a16", "accuracy")
         on_demand = _benchmark_run(base, "whisper_small", "w8a16", "performance")
 
-    # A fingerprint without a run reads as not measured at this revision; ResNet measures accuracy on W8A8 only.
+    # A fingerprint without a run reads as not measured at this revision.
     assert unmeasured["run"] is None
-    assert no_accuracy is None
     assert on_demand is None
 
 

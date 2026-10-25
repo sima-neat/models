@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
+import yaml
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
@@ -219,7 +220,23 @@ def test_merge_requires_every_component_fingerprint_of_a_profile() -> None:
     assert [build["run_id"] for build in merged["models"][0]["builds"]] == ["develop", "develop"]
 
 
-# Stage planning runs against a copy of resnet_50: w16a16 measures only performance,
+def repository_without_w16a16_accuracy(tmp_path: Path) -> Path:
+    """A repository holding resnet_50 with accuracy measured on w8a8 and w8a16 only, so w16a16 measures performance."""
+    repository = tmp_path / "repository"
+    for relative in ("schemas", "taxonomies", "datasets", "models/resnet_50"):
+        shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
+    model_yaml = repository / "models" / "resnet_50" / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    tests_yaml = repository / "models" / "resnet_50" / "tests" / "tests.yaml"
+    tests = yaml.safe_load(tests_yaml.read_text(encoding="utf-8"))
+    del tests["accuracy"]["expected"]["w16a16"]
+    tests_yaml.write_text(yaml.safe_dump(tests, sort_keys=False), encoding="utf-8")
+    return repository
+
+
+# Stage planning runs against that copy: w16a16 measures only performance,
 # w8a16 and w8a8 measure performance and accuracy of the whole model.
 PLAN_MODEL = "resnet_50"
 BRANCH = "feat/stages"
@@ -228,9 +245,7 @@ READ_API = "https://reader.example.invalid"
 
 @pytest.fixture
 def stage_repository(tmp_path: Path) -> Path:
-    repository = tmp_path / "repository"
-    for relative in ("schemas", "taxonomies", "datasets", f"models/{PLAN_MODEL}"):
-        shutil.copytree(ROOT / relative, repository / relative)
+    repository = repository_without_w16a16_accuracy(tmp_path)
     for relative in ("deps/manifest.json",
                      *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative

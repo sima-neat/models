@@ -106,7 +106,7 @@ def test_matrix_entries_carry_the_stages_each_profile_benchmarks() -> None:
     assert [(entry["model_id"], entry["compile_invocation_id"], entry["component_ids"], entry["stages"])
             for entry in matrix["include"]] == [
         ("qwen3_5_0_8b", "w4a16", ["model"], []),
-        ("resnet_50", "w16a16", ["model"], ["performance"]),
+        ("resnet_50", "w16a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a8", ["model"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a16_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
