@@ -207,7 +207,7 @@ def test_the_package_needs_only_the_standard_library():
 class BenchmarkOptions:
     """PyNeat's BenchmarkOptions, which rejects a field Core does not have."""
 
-    __slots__ = ("num_samples", "min_duration_ms", "include_mla_layer_stats", "include_mla_stage_stats")
+    __slots__ = ("num_samples", "min_duration_ms", "include_mla_layer_stats", "include_mla_stage_stats", "resize_mode")
 
 
 def performance_scripts(*, components: bool) -> list[Path]:
@@ -242,6 +242,7 @@ def test_every_single_component_script_saves_a_report_from_its_benchmark(script,
         __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
         ModelOptions=types.SimpleNamespace, BenchmarkOptions=BenchmarkOptions,
         BoxDecodeType=types.SimpleNamespace(YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg"),
+        ResizeMode=types.SimpleNamespace(Letterbox="Letterbox"),
     ))
     monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path)])
 
@@ -250,6 +251,11 @@ def test_every_single_component_script_saves_a_report_from_its_benchmark(script,
     assert [args[0] for args in loaded] == ["model.tar.gz"]
     assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
             for r in requests] == [(1000, 60000, True, True)]
+    # Core labels the synthetic input stretched unless told otherwise, and YOLO26's box decoder rejects that.
+    decoder = getattr(loaded[0][1], "decode_type", "") if len(loaded[0]) > 1 else ""
+    assert [getattr(r, "resize_mode", None) for r in requests] == [
+        "Letterbox" if decoder.startswith("YoloV26") else None
+    ]
     report = saved_report(tmp_path)
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
