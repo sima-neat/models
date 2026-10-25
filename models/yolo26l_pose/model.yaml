@@ -48,11 +48,6 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
-  w8a16:
-    components:
-      model:
-        parameters: {precision: w8a16}
-
 accuracy:
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
   datasets:
