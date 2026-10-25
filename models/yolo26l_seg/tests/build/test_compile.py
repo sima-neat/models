@@ -209,8 +209,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     expected = {"precision": profile_id}
-    if profile_id == "w8a16":
-        expected["per_token"] = True
     if profile_id == "w8a8":
         expected |= {"calibration_bins": 1024, "calibration_samples": 50}
 

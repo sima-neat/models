@@ -53,7 +53,7 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
-def _quantization(precision: str, calibration_bins: int | None, per_token: bool) -> Any:
+def _quantization(precision: str, calibration_bins: int | None) -> Any:
     int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     if precision == "w8a8":
         config = (
@@ -79,8 +79,8 @@ def _quantization(precision: str, calibration_bins: int | None, per_token: bool)
         )
     else:
         raise ValueError(f"unsupported precision: {precision}")
-    # with_activation_quantization turns per-token quantization on for BF16; the profile's per_token decides it.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(per_token)
+    # with_activation_quantization turns per-token quantization on for BF16; only W8A16 keeps it.
+    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(precision == "w8a16")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -131,7 +131,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
     parameters = _parameters(profile_id)
     precision = str(parameters["precision"])
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
-    quantization = _quantization(precision, calibration_bins, bool(parameters.get("per_token", False)))
+    quantization = _quantization(precision, calibration_bins)
     if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 build requires --dataset from dataset-registry")

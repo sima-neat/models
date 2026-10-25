@@ -69,11 +69,10 @@ invocation and one `default` package per build profile, derived rather than
 declared. Each stage pins the Dataset Registry archive it uses, named by its
 source ID `<id>-<variant>`; Hugging Face file sets can share a
 repository/revision. Compile recipes call `load_model` instead of parsing
-YAML independently. A W8A16 component declares `per_token: true` in its
-`parameters`, and its recipe passes it to `with_per_token_quant`. Add a
-variant that should not appear in the Model Browser yet as a commented-out
-profile in `model.yaml`: CI neither compiles nor benchmarks it, and its tests
-skip until it is uncommented. A multi-component model lists its components in run order
+YAML independently. Add a variant that should not appear in the Model Browser
+yet as a commented-out profile in `model.yaml`: CI neither compiles nor
+benchmarks it, and its tests skip until it is uncommented. A multi-component
+model lists its components in run order
 and may add a display-only `pipeline`. Preprocessing, decoding and surgery
 belong in executable code and the README; ownership belongs in `CODEOWNERS`.
 Do not add maturity compatibility fields to new authored YAML.
