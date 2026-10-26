@@ -39,4 +39,11 @@ build_profiles:
       model:
         parameters: {precision: w16a16}
 
+  # No w8a8: INT8 activations in the attention layers fail the compile gate (91.4% of FP32's best matches) and
+  # lose 15-34% of each YFCC metric. W8A16 keeps BF16 activations, as RF-DETR's BF16 decoder does.
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
 performance: {}

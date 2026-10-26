@@ -16,7 +16,16 @@ from typing import Any
 
 import numpy as np
 import onnx
-from afe.apis.defines import InputName, RequantizationMode, bfloat16_scheme, default_quantization, gen2_target
+from afe.apis.defines import (
+    BiasCorrectionType,
+    InputName,
+    RequantizationMode,
+    SkipCalibration,
+    bfloat16_scheme,
+    default_quantization,
+    gen2_target,
+    quantization_scheme,
+)
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
@@ -59,13 +68,23 @@ def _parameters(profile_id: str) -> dict[str, Any]:
 
 
 def _quantization(precision: str) -> Any:
-    if precision != "w16a16":
+    if precision == "w16a16":
+        config = (
+            default_quantization.with_activation_quantization(bfloat16_scheme())
+            .with_weight_quantization(bfloat16_scheme())
+        )
+    elif precision == "w8a16":
+        # BF16 activations need no calibrated ranges, and bias correction would measure the placeholder sample.
+        config = (
+            default_quantization.with_activation_quantization(bfloat16_scheme())
+            .with_weight_quantization(quantization_scheme(asymmetric=False, per_channel=True, bits=8))
+            .with_calibration(SkipCalibration())
+            .with_bias_correction(BiasCorrectionType.NONE)
+        )
+    else:
         raise ValueError(f"unsupported precision: {precision}")
-    config = default_quantization.with_activation_quantization(bfloat16_scheme()).with_weight_quantization(
-        bfloat16_scheme()
-    )
-    # with_activation_quantization turns per-token quantization on for BF16; this recipe keeps it off.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
+    # with_activation_quantization turns per-token quantization on for BF16; only W8A16 keeps it.
+    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(precision == "w8a16")
 
 
 def representative_pair() -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
@@ -182,6 +201,8 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
     precision = str(_parameters(profile_id)["precision"])
     quantization = _quantization(precision)
     validate_source(source)
+    # BF16 activations derive nothing from representative data, but quantize() still needs one sample.
+    samples = representative_inputs()
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
@@ -194,10 +215,11 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
             flexible_batch_size=True,
         )
         loaded = load_model(importer, target=gen2_target)
-        samples = {InputName(name): value for name, value in representative_inputs().items()}
-        logging.info("Quantizing %s", precision)
+        logging.info("Quantizing %s with %d sample(s)", precision, len(next(iter(samples.values()))))
         quantized = loaded.quantize(
-            calibration_data=convert_data_generator_to_iterable(DataGenerator(samples)),
+            calibration_data=convert_data_generator_to_iterable(
+                DataGenerator({InputName(name): value for name, value in samples.items()})
+            ),
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
@@ -228,7 +250,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="unused: the BF16 build takes no calibration dataset")
+    parser.add_argument("--dataset", type=Path, help="unused: no build of this model takes a calibration dataset")
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")

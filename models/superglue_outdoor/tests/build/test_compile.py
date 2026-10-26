@@ -117,12 +117,14 @@ def test_quantized_matches_must_follow_fp32(
             compile_module.check_quantized_matches(tmp_path / "model.onnx", quantized)
 
 
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a16"])
+def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    assert load_script("compile")._parameters(profile_id) == {"precision": profile_id}
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w8a8")
+        load_script("compile")._parameters("w8a8")
 
 
 def test_representative_inputs_are_channels_last_per_input(load_script: Callable[[str], ModuleType]) -> None:
@@ -169,6 +171,6 @@ def test_compile_requires_the_converted_interface(
 def test_model_preserves_compilation_and_licence_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a16"]
     assert model["license"]["redistribution"] == "restricted"
     assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
