@@ -320,7 +320,8 @@ jobs:
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
 
       - name: Install trusted dataset tooling
-        if: steps.stages.outputs.accuracy == 'true'
+        # Both stages read the accuracy dataset: accuracy scores it, and performance benchmarks a sample of it.
+        if: steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'
         env:
           DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
@@ -328,7 +329,7 @@ jobs:
 
       - name: Configure dataset reader credentials
         id: dataset-credentials
-        if: steps.stages.outputs.accuracy == 'true'
+        if: steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_aws_region }}
@@ -339,7 +340,7 @@ jobs:
 
       - name: Cache the accuracy dataset on NVMe
         id: dataset-cache
-        if: steps.stages.outputs.accuracy == 'true'
+        if: steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.dataset-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.dataset-credentials.outputs.aws-secret-access-key }}
@@ -351,7 +352,7 @@ jobs:
 
       - name: Install selected Neat Core
         id: core
-        # A failed accuracy dataset step must not stop the performance stage.
+        # Each stage checks the dataset step itself.
         if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
         run: |
           set -euo pipefail
@@ -362,7 +363,9 @@ jobs:
 
       - name: Measure performance on DevKit
         id: performance
-        if: ${{ !cancelled() && steps.core.outcome == 'success' && steps.stages.outputs.performance == 'true' }}
+        if: >-
+          ${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' &&
+          steps.stages.outputs.performance == 'true' }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance
 
       # Publication sends each recorded outcome with its report and then fails the run on a failed one.
