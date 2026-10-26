@@ -1,5 +1,3 @@
-# Temporary: CI validates but does not compile until Vulcan Model Convert publishes the ONNX pinned below.
-build-on-demand: true
 display_name: YOLO11s-det
 description: A compact YOLO11 detector for COCO objects.
 model_type: vision
@@ -29,10 +27,9 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(convert-pin): replace with the Vulcan Model Convert output for this branch.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo11s/978aafe655eeff3f65bfb47884efe7b208e7d123778c5ad37c400d0d995e9b34/0-0/model.onnx
-    sha256: 978aafe655eeff3f65bfb47884efe7b208e7d123778c5ad37c400d0d995e9b34
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo11s/4dd61373b8beba71e4b3abac1178f8d858726908163e869b7bd8f38cb591a00c/40345544862-1/model.onnx
+    sha256: 4dd61373b8beba71e4b3abac1178f8d858726908163e869b7bd8f38cb591a00c
     size_bytes: 38030937
 
 calibrations:
