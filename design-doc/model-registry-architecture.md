@@ -144,8 +144,8 @@ shared static publisher uploads only `models/`, retains old assets, and invalida
 `${{ github.repository }}-model-browser-${{ inputs.environment }}`, with
 `cancel-in-progress: false`; staging shares the automatic publisher's group so
 manual and automatic uploads cannot run concurrently. Automatic staging publication
-on `main`/`develop` remains enabled when staging is selected; production frontend
-publication requires this manual dispatch. See [browser deployment](../docs/model-browser.md).
+on `main`/`develop` uses a separate staging configuration regardless of `VULCAN_ENV`;
+production frontend publication requires this manual dispatch. See [browser deployment](../docs/model-browser.md).
 
 **Vulcan Model Registry** tooling publication selects repository `VULCAN_ENV`
 (default `staging`) for both pushes and manual runs. It has no separate environment
@@ -165,7 +165,7 @@ configuration, retries, and the staging acceptance boundary.
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
-       -> on main and develop, when staging is selected: publish that model browser to staging
+       -> on main and develop: resolve-staging-browser-config + checked portal -> publish-model-browser to staging
   -> resolve-vulcan-config: after select, resolve the selected environment configuration
   -> plan (waits for select, portal and resolve-vulcan-config): compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
@@ -186,9 +186,11 @@ Pushes, including merges to `develop`, select repository variable `VULCAN_ENV`,
 falling back to staging when it is unset. Manual dispatch defaults to `default`
 (use that same repository setting); choosing `staging` or `production` explicitly
 overrides it for that run. Concurrency and the run title use the same selection.
-The repository variable is currently staging, so merging this support preserves
-staging builds. Changing it to production switches subsequent default builds and
-publication to production. The selected configuration
+Selecting production switches model builds and registry publication to production.
+Frontend builds explicitly use staging, and `resolve-staging-browser-config`
+resolves staging publication settings independently of `select` and
+`resolve-vulcan-config`. Frontend publication waits only for this staging resolver
+and the checked portal. The selected model configuration
 supplies the compiler runner environment, artifact bucket and dataset bucket; compile
 workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
 

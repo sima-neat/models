@@ -1,6 +1,7 @@
 """Benchmark RF-DETR Large with Neat Core and save its report.
 
-Given --mpk backbone=<path> --mpk decoder=<path>, the script measures the whole model as it runs: the
+Given --mpk backbone=<path> --mpk decoder=<path> and --dataset coco-2017-val=<extracted directory>, the
+script measures the whole model as it runs on one COCO image in a 720p frame: Neat's preprocessing and the
 backbone, the top 300 proposals on the CPU, and the decoder, each stage working on a different frame at the
 same time. It also records each MPK's MLA layer and stage stats and its execution plan.
 """
@@ -8,12 +9,14 @@ same time. It also records each MPK's MLA layer and stage stats and its executio
 from __future__ import annotations
 
 import argparse
+import random
 import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import model_report
 import numpy as np
 import pyneat
@@ -26,12 +29,28 @@ MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
 # Frames each runner may queue; deeper queues add latency without adding throughput.
 QUEUE_DEPTH = 4
+IMAGES = "val2017"
+# The benchmark input is a 720p camera frame, letterboxed with grey padding.
+FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
+
+
+def image_options() -> pyneat.ModelOptions:
+    """The backbone's: Neat stretches, normalizes, quantizes and tessellates the frame inside the pipeline."""
+    options = pyneat.ModelOptions()
+    options.preprocess.kind = pyneat.InputKind.Image
+    options.preprocess.enable = pyneat.AutoFlag.On
+    options.preprocess.resize.enable = pyneat.AutoFlag.On
+    options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+    options.preprocess.normalize.enable = pyneat.AutoFlag.On
+    # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
+    options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+    return options
 
 
 def tensor_options() -> pyneat.ModelOptions:
+    """The decoder's: its inputs are the backbone's features and the selected proposals."""
     options = pyneat.ModelOptions()
     options.preprocess.kind = pyneat.InputKind.Tensor
-    # The input is already a resized, normalized image; Neat still quantizes and tessellates it.
     options.preprocess.resize.enable = pyneat.AutoFlag.Off
     options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
     options.preprocess.normalize.enable = pyneat.AutoFlag.Off
@@ -69,10 +88,37 @@ def mla_stats(mpk: Path) -> tuple[dict[str, object], dict[str, object]]:
     return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
-def synthetic_image() -> pyneat.Tensor:
-    """One random image, placed once in the memory the backbone reads, reused for every frame."""
-    pixels = np.random.default_rng(0).standard_normal((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-    return pyneat.Tensor.from_numpy(pixels, copy=True, memory=pyneat.TensorMemory.EV74)
+def sample_image(dataset: Path) -> Path:
+    """One val2017 image, chosen with a fixed seed so every run measures the same input."""
+    images = sorted((dataset / IMAGES).glob("*.jpg"))
+    if not images:
+        raise SystemExit(f"{dataset} has no images under {IMAGES}/")
+    return random.Random(0).choice(images)
+
+
+def read_rgb(path: Path) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    if image is None:
+        raise SystemExit(f"could not read {path}")
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
+def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
+    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
+    scale = min(FRAME_WIDTH / image.shape[1], FRAME_HEIGHT / image.shape[0])
+    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
+    left, top = (FRAME_WIDTH - width) // 2, (FRAME_HEIGHT - height) // 2
+    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
+    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+    return frame
+
+
+def frame_tensor(path: Path) -> pyneat.Tensor:
+    """The image's 720p frame, placed once in the memory the backbone reads, reused for every frame."""
+    frame = letterbox_to_720p(read_rgb(path))
+    return pyneat.Tensor.from_numpy(
+        frame, copy=True, image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74
+    )
 
 
 def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor) -> tuple[pyneat.ModelRunner, ...]:
@@ -219,6 +265,7 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
 
 def write_report(
     output: Path,
+    image: str,
     latencies: list[float],
     throughput: Throughput,
     models: dict[str, pyneat.Model],
@@ -237,8 +284,9 @@ def write_report(
         benchmark,
         models,
         workload=(
-            f"Backbone, top {QUERY_COUNT} proposals on the CPU, and decoder, pipelined {QUEUE_DEPTH} frames deep "
-            f"on a {IMAGE_SIZE}x{IMAGE_SIZE} FLOAT32 tensor"
+            f"{image} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
+            f"{IMAGE_SIZE}x{IMAGE_SIZE}, backbone, top {QUERY_COUNT} proposals on the CPU, and decoder, pipelined "
+            f"{QUEUE_DEPTH} frames deep"
         ),
         telemetry=throughput.telemetry,
         mla_layer_stats=mla_layer_stats,
@@ -251,16 +299,20 @@ def write_report(
     )
 
 
-def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
+def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, output: Path) -> None:
     mla_layer_stats, mla_stage_stats = {}, {}
     for name, mpk in mpks.items():
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
-    models = {name: pyneat.Model(str(mpk), tensor_options()) for name, mpk in mpks.items()}
-    image = synthetic_image()
+    models = {
+        "backbone": pyneat.Model(str(mpks["backbone"]), image_options()),
+        "decoder": pyneat.Model(str(mpks["decoder"]), tensor_options()),
+    }
+    path = sample_image(dataset)
+    image = frame_tensor(path)
     backbone, decoder = build_runners(models, image)
     latencies = measure_latency(backbone, decoder, image)
     throughput = measure_throughput(backbone, decoder, image)
-    write_report(output, latencies, throughput, models, mla_layer_stats, mla_stage_stats)
+    write_report(output, f"{dataset_id} {path.name}", latencies, throughput, models, mla_layer_stats, mla_stage_stats)
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
@@ -273,9 +325,11 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
+    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
-    benchmark_pipeline(parse_mpks(args.mpk), Path(args.output))
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    benchmark_pipeline(parse_mpks(args.mpk), dataset_id, Path(dataset_dir), Path(args.output))
 
 
 if __name__ == "__main__":

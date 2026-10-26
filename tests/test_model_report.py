@@ -207,7 +207,75 @@ def test_the_package_needs_only_the_standard_library():
 class BenchmarkOptions:
     """PyNeat's BenchmarkOptions, which rejects a field Core does not have."""
 
-    __slots__ = ("num_samples", "min_duration_ms", "include_mla_layer_stats", "include_mla_stage_stats", "resize_mode")
+    __slots__ = (
+        "num_samples", "min_duration_ms", "include_mla_layer_stats", "include_mla_stage_stats", "resize_mode", "inputs"
+    )
+
+
+class ModelOptions:
+    """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
+
+    def __init__(self):
+        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
+
+
+class Tensor:
+    """A PyNeat tensor made from a NumPy array, keeping the array and the options it was made with."""
+
+    def __init__(self, array, **options):
+        self.array, self.options = array, options
+
+    @classmethod
+    def from_numpy(cls, array, copy=False, **options):
+        return cls(array.copy() if copy else array, **options)
+
+
+# The PyNeat names the performance scripts read, each standing for itself.
+PYNEAT_ENUMS = {
+    "InputKind": ("Image", "Tensor"),
+    "AutoFlag": ("On", "Off"),
+    "ResizeMode": ("Letterbox", "Stretch"),
+    "NormalizePreset": ("ImageNet",),
+    "PixelFormat": ("RGB",),
+    "TensorMemory": ("EV74",),
+    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb"),
+}
+SCRIPT_PYNEAT = {
+    enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
+}
+# A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
+SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+
+
+def write_image(path, value):
+    import cv2
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert cv2.imwrite(str(path), np.full((*SOURCE_SIZE, 3), value, np.uint8))
+
+
+def benchmark_dataset(root):
+    """A dataset with the files each script samples from: COCO val2017 and ImageNet's val split. Only the second
+    COCO image labels a person, so a pose script must pick it."""
+    write_image(root / "val2017/000000000001.jpg", 200)
+    write_image(root / "val2017/000000000002.jpg", 200)
+    write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    keypoints = {
+        "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
+        "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
+    }
+    (root / "annotations").mkdir()
+    (root / "annotations/person_keypoints_val2017.json").write_text(json.dumps(keypoints), encoding="utf-8")
+    return root
+
+
+def assert_letterboxed_frame(tensor):
+    frame = tensor.array
+    assert (frame.shape, str(frame.dtype)) == ((720, 1280, 3), "uint8")
+    assert tensor.options["image_format"] == "RGB"
+    assert (frame[:, : IMAGE_COLUMNS.start] == FILL).all() and (frame[:, IMAGE_COLUMNS.stop :] == FILL).all()
+    assert (frame[:, IMAGE_COLUMNS] == 200).all()
 
 
 def performance_scripts(*, components: bool) -> list[Path]:
@@ -223,7 +291,7 @@ def performance_scripts(*, components: bool) -> list[Path]:
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
-def test_every_single_component_script_saves_a_report_from_its_benchmark(script, monkeypatch, tmp_path):
+def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
     class ScriptModel(Model):
@@ -240,28 +308,39 @@ def test_every_single_component_script_saves_a_report_from_its_benchmark(script,
 
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
         __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
-        ModelOptions=types.SimpleNamespace, BenchmarkOptions=BenchmarkOptions,
-        BoxDecodeType=types.SimpleNamespace(YoloV26="YoloV26", YoloV26Pose="YoloV26Pose", YoloV26Seg="YoloV26Seg",
-                                    YoloV26Obb="YoloV26Obb"),
-        ResizeMode=types.SimpleNamespace(Letterbox="Letterbox"),
+        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
     ))
-    monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path)])
+    dataset = benchmark_dataset(tmp_path / "dataset")
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", [
+        str(script), "--mpk", "model.tar.gz", "--dataset", f"source={dataset}", "--output", str(output),
+    ])
 
     runpy.run_path(str(script), run_name="__main__")
 
     assert [args[0] for args in loaded] == ["model.tar.gz"]
     assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
             for r in requests] == [(1000, 60000, True, True)]
-    # Core labels the synthetic input stretched unless told otherwise, and YOLO26's box decoder rejects that.
-    decoder = getattr(loaded[0][1], "decode_type", "") if len(loaded[0]) > 1 else ""
-    assert [getattr(r, "resize_mode", None) for r in requests] == [
-        "Letterbox" if decoder.startswith("YoloV26") else None
-    ]
-    report = saved_report(tmp_path)
+    # Neat preprocesses the frame inside the measured pipeline.
+    options = loaded[0][1]
+    assert options.preprocess.kind == "Image"
+    assert (options.preprocess.enable, options.preprocess.resize.enable, options.preprocess.normalize.enable) == (
+        "On", "On", "On"
+    )
+    (frame,) = requests[0].inputs
+    assert_letterboxed_frame(frame)
+    report = saved_report(output)
+    if getattr(options, "decode_type", "").startswith("YoloV26"):
+        assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
+        # Pose accuracy scores only images with a labelled person.
+        expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
+        assert expected in report["workload"]
+    else:
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert "ILSVRC2012_val_00000001.webp" in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
-    assert report["workload"]
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
@@ -291,6 +370,25 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     assert [(r.include_mla_layer_stats, r.include_mla_stage_stats) for r in requests] == [(True, True)]
     assert (layer_stats, stage_stats) == (CORE_REPORT["mla_layer_stats"], CORE_REPORT["mla_stage_stats"])
+
+
+@pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
+def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    functions = runpy.run_path(str(script))
+
+    image = functions["sample_image"](benchmark_dataset(tmp_path))
+    frame = functions["frame_tensor"](image)
+
+    assert image.parent.name == "val2017"
+    assert_letterboxed_frame(frame)
+    assert frame.options["memory"] == "EV74"
+    options = functions["image_options"]()
+    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
+        "Image", "Stretch", "ImageNet"
+    )
 
 
 def test_model_code_uses_cores_mla_stats_names():
