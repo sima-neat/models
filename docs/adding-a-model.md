@@ -162,8 +162,8 @@ A profile compiles all its components in one compile invocation, named after
 the profile. The recipe calibrates the first component on the profile's
 `calibration_dataset` and later components on its outputs. The build target is
 `modalix`; keep runner class and graph-changing parameters explicit.
-Mixed-precision profiles still declare each component's precision rather than
-deriving it from the profile ID.
+Profiles whose components differ in precision still declare each component's
+precision rather than deriving it from the profile ID.
 
 ONNX recipes use the following interface. For Hugging Face checkpoints, use the
 [LLiMa recipe](#llima-language-and-vision-language-models) instead:

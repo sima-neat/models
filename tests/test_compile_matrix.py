@@ -110,6 +110,7 @@ def test_matrix_entries_carry_the_stages_each_profile_benchmarks() -> None:
         ("resnet_50", "w8a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a8", ["model"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a16_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
+        ("rf_detr_small", "w8a8_mixed_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
     ]
 

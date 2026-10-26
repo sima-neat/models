@@ -33,10 +33,28 @@ accuracy:
         coco_ar_small: 0.5153
         coco_ar_medium: 0.7810
         coco_ar_large: 0.9062
+    # Lower bounds until the DevKit measures this build: the W8A8 build's accuracy.
+    w8a8_mixed_w16a16:
+      coco-2017-val:
+        coco_map: 0.4816
+        coco_ap50: 0.6691
+        coco_ap75: 0.5198
+        coco_ap_small: 0.2590
+        coco_ap_medium: 0.5298
+        coco_ap_large: 0.6938
+        coco_ar1: 0.3732
+        coco_ar10: 0.6169
+        coco_ar100: 0.6742
+        coco_ar_small: 0.4402
+        coco_ar_medium: 0.7467
+        coco_ar_large: 0.8923
 performance:
   run_tests: true
   expected:
     w8a8_w16a16:
       throughput_fps: 82.4
     w8a16_w16a16:
+      throughput_fps: 56.4
+    # A lower bound until the DevKit measures this build: the W8A16 build's throughput.
+    w8a8_mixed_w16a16:
       throughput_fps: 56.4

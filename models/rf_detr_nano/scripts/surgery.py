@@ -18,6 +18,8 @@ QUERY_COUNT = 300
 CLASS_COUNT = 91
 BACKBONE_BLOCKS = 12
 WINDOW_BLOCKS = 9
+GLOBAL_ATTENTION_BLOCKS = BACKBONE_BLOCKS - WINDOW_BLOCKS
+FEATURE_TAPS = 4
 DECODER_LAYERS = 2
 
 INPUT = "input"
@@ -35,6 +37,11 @@ BOUNDARY_SHAPES = {
     BOXES: [1, PROPOSAL_COUNT, 4],
     PROPOSALS: [1, QUERY_COUNT, 4],
 }
+
+# Backbone regions a mixed build profile can run BF16 in an otherwise INT8 backbone.
+BF16_REGIONS = ("residual", "attention_global", "projector", "head", "outputs")
+# Operations that only move values. AFE gives most of them the precision their inputs share, but runs a Concat INT8.
+LAYOUT_OPS = {"Reshape", "Transpose", "Slice", "Split", "Concat", "Tile"}
 
 
 def _shape(value: onnx.ValueInfoProto) -> list[int]:
@@ -604,6 +611,152 @@ def _merge_query_sine_embedding(model: onnx.ModelProto) -> onnx.ModelProto:
     del model.graph.node[:]
     model.graph.node.extend(rewritten)
     return _finish(model)
+
+
+def _readers(users, value):
+    """Return the operations that read value, looking through layout operations; None is a graph output."""
+    readers = []
+    for user in users[value]:
+        if user is not None and user.op_type in LAYOUT_OPS:
+            for output in user.output:
+                readers.extend(_readers(users, output))
+        else:
+            readers.append(user)
+    return readers
+
+
+def _upstream(producers, values, stops=()):
+    """Return the operations that compute values from the graph inputs, constants and stops."""
+    found, pending = {}, list(values)
+    while pending:
+        value = pending.pop()
+        node = producers.get(value)
+        if value in stops or node is None or node.name in found:
+            continue
+        found[node.name] = node
+        pending.extend(node.input)
+    return list(found.values())
+
+
+def _backbone_blocks(model):
+    """Find each encoder block's attention, normalizations, LayerScales and residual Adds by structure."""
+    shapes, constants, producers, users = _index(onnx.shape_inference.infer_shapes(model))
+    blocks = []
+    for softmax in model.graph.node:
+        if softmax.op_type != "Softmax" or "/backbone/" not in softmax.name:
+            continue
+        qk = _producer(producers, softmax.input[0], "MatMul")
+        pv = _next(users, softmax, "MatMul")
+        # Q = Transpose(Reshape(Add(bias, MatMul(norm1(x), weight)))).
+        q_heads = _producer(producers, _producer(producers, qk.input[0], "Transpose").input[0], "Reshape")
+        q_bias = _producer(producers, q_heads.input[0], "Add")
+        q_projection = _producer(producers, next(name for name in q_bias.input if name not in constants), "MatMul")
+        norm1 = _producer(producers, q_projection.input[0], "LayerNormalization")
+        (dense,) = _readers(users, pv.output[0])
+        _require(dense is not None and dense.op_type == "MatMul", f"attention output projection after {pv.name}")
+        (scale1,) = _readers(users, _next(users, dense, "Add").output[0])
+        _require(scale1 is not None and scale1.op_type == "Mul", f"LayerScale after {dense.name}")
+        residual1 = _next(users, scale1, "Add")
+        # The attention residual feeds the MLP's normalization and its residual Add.
+        following = {node.op_type: node for node in users[residual1.output[0]] if node is not None}
+        _require(
+            len(users[residual1.output[0]]) == 2 and sorted(following) == ["Add", "LayerNormalization"],
+            f"MLP normalization and residual after {residual1.name}",
+        )
+        residual2 = following["Add"]
+        scale2 = _producer(producers, next(name for name in residual2.input if name != residual1.output[0]), "Mul")
+        blocks.append(
+            {
+                "windows": shapes[qk.input[0]][0],
+                "attention": [qk, softmax, pv],
+                "residual": [norm1, scale1, residual1, following["LayerNormalization"], scale2, residual2],
+            }
+        )
+    _require(len(blocks) == BACKBONE_BLOCKS, f"expected {BACKBONE_BLOCKS} backbone blocks, found {len(blocks)}")
+    return blocks
+
+
+def _region_operations(model):
+    """Find the operations of each BF16 region by structure."""
+    _, _, producers, users = _index(model)
+    blocks = _backbone_blocks(model)
+    residual = [node for block in blocks for node in block["residual"]]
+    norms = {node.name for node in residual if node.op_type == "LayerNormalization"}
+    # Each feature tap normalizes a block's output for the projector; the projector region starts after them.
+    taps = [
+        reader
+        for block in blocks
+        for reader in users[block["residual"][-1].output[0]]
+        if reader is not None and reader.op_type == "LayerNormalization" and reader.name not in norms
+    ]
+    _require(len(taps) == FEATURE_TAPS, f"expected {FEATURE_TAPS} feature taps, found {len(taps)}")
+    attention = [node for block in blocks if block["windows"] == 1 for node in block["attention"]]
+    _require(len(attention) == 3 * GLOBAL_ATTENTION_BLOCKS, f"expected {GLOBAL_ATTENTION_BLOCKS} global blocks")
+    return {
+        "residual": residual,
+        "attention_global": attention,
+        "projector": _upstream(producers, [FEATURES], {tap.output[0] for tap in taps}),
+        "head": _upstream(producers, [SCORES, BOXES], {FEATURES}),
+        # The operations whose results leave the backbone, and the layout operations after them.
+        "outputs": [node for node in model.graph.node if None in _readers(users, node.output[0])],
+    }
+
+
+def _promoted(found, regions):
+    """Return the names of the operations the regions run BF16.
+
+    Neat cannot run a backbone whose outputs mix BF16 and INT8, so only the outputs region promotes the
+    operations that produce them. It marks their layout operations too, because AFE runs a Concat INT8.
+    """
+    promoted = {node.name for region in regions for node in found[region] if node.op_type not in LAYOUT_OPS}
+    outputs = {node.name for node in found["outputs"]}
+    return promoted | outputs if "outputs" in regions else promoted - outputs
+
+
+def _annotate(model, promoted):
+    """Mark the promoted operations BF16 for AFE and the operations that read their results INT8.
+
+    AFE gives an AnnotatePrecision's precision to the operation producing its input, and each later
+    operation takes the precision its inputs share, so an INT8 mark on each first reader ends a region.
+    Returns how many operations each precision marks.
+    """
+    _, _, _, users = _index(model)
+    marks = dict.fromkeys(promoted, "bfloat16")
+    for node in model.graph.node:
+        if node.name in promoted:
+            for reader in _readers(users, node.output[0]):
+                if reader is not None and reader.name not in promoted:
+                    marks[reader.name] = "int8"
+    nodes = []
+    for node in model.graph.node:
+        nodes.append(node)
+        if node.name in marks:
+            _require(len(node.output) == 1, f"one output to annotate at {node.name}")
+            value = node.output[0]
+            node.output[0] = f"{value}/unannotated"
+            nodes.append(
+                helper.make_node(
+                    "AnnotatePrecision",
+                    [node.output[0]],
+                    [value],
+                    name=f"{node.name}/AnnotatePrecision",
+                    domain="ai.sima",
+                    precision=marks[node.name],
+                )
+            )
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
+    model.opset_import.append(helper.make_opsetid("ai.sima", 1))
+    return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
+
+
+def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, int]:
+    """Rewrite the backbone graph to run the regions' operations BF16; return the marks per precision."""
+    model = onnx.load(graph)
+    marks = _annotate(model, _promoted(_region_operations(model), regions))
+    onnx.checker.check_model(model)
+    onnx.save(model, graph)
+    return marks
 
 
 def graph_paths(output_dir: Path) -> tuple[Path, Path]:
