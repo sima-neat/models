@@ -23,7 +23,7 @@ import numpy as np
 import pyneat
 from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
-DATASET_ID = "yfcc100m-superpoint"
+DATASET_ID = "yfcc100m"
 SPLIT = "test"
 KEYPOINTS = 512
 DESCRIPTOR_SIZE = 256
