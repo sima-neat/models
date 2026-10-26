@@ -250,7 +250,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
@@ -368,7 +368,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert_side_by_side_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert STEREO_PAIR.format(view="left") in report["workload"]
-    elif getattr(options, "decode_type", "").startswith("YoloV26"):
+    elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         # Pose accuracy scores only images with a labelled person.
