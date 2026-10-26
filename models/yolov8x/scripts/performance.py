@@ -20,6 +20,8 @@ benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
 benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
+# YOLOv8 expects letterboxed inputs.
+benchmark_options.resize_mode = pyneat.ResizeMode.Letterbox
 postprocess = model.info().selection.selected_post_kind
 report = model_report.from_performance(
     model.benchmark(benchmark_options),
