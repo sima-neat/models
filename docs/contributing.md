@@ -158,9 +158,9 @@ from stated local evidence or the trusted staging workflow after merge.
 ## After merge: trusted staging automation
 
 Merging does not deploy the model browser frontend to production. Automatic
-browser publication still targets staging on `main`/`develop` when staging is
-selected. For an explicit frontend release, a Models owner runs **Deploy Model
-Browser & Docs** from `main` or `develop`, chooses the destination (`staging` or
+browser publication targets staging on `main`/`develop` independently of
+`VULCAN_ENV` or the orchestrator's manual environment override. For an explicit
+frontend release, a Models owner runs **Deploy Model Browser & Docs** from `main` or `develop`, chooses the destination (`staging` or
 `production`) and audience (`developer` for branch selection, `customer` for Main
 only), and approves their own run at the `model-browser-deploy` environment gate.
 Only `owners-models` can approve; administrator bypass is disabled. Dispatch a new
@@ -191,13 +191,14 @@ When the change is merged to `develop`, the push runs **Vulcan Model Orchestrato
 on the reviewed revision. Pushes use repository variable `VULCAN_ENV`, with staging
 as the fallback when unset. Manual dispatch's `environment=default` uses the same
 setting; explicitly choosing `staging` or `production` overrides it for that run.
-The variable currently remains staging, so merge does not switch builds to
-production. Changing it to production later switches default builds and publication:
+Selecting production changes model builds and registry publication; the frontend
+build and publication configuration remain staging:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
    for the revision. Every push runs this check, not only merges, and a
-   push to `main` or `develop` publishes the checked browser only when staging is selected.
+   push to `main` or `develop` publishes the checked browser to staging using
+   `resolve-staging-browser-config`, independently of model environment selection.
 2. **Resolve configuration and plan.** `plan` waits for `select`, the portal
    check and `resolve-vulcan-config`. It requests OIDC permission; only a production
    run assumes the selected GitHub environment's

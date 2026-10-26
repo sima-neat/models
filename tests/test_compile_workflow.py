@@ -138,6 +138,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "portal",
         "resolve-vulcan-config",
         "publish-model-browser",
+        "resolve-staging-browser-config",
         "plan",
         "authorize-runner-classes",
         "initialize-catalog",
@@ -148,6 +149,21 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "benchmark-without-compiles",
         "report-partial-publication",
     }
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+@pytest.mark.parametrize("branch, allowed", [("develop", True), ("main", True), ("feature/example", False)])
+def test_frontend_staging_publication_is_independent_of_model_environment(environment, event, branch, allowed):
+    jobs = load(WORKFLOW)["jobs"]
+    values = {
+        "github.ref": f"refs/heads/{branch}",
+        "github.event_name": event,
+        "vars.VULCAN_ENV": environment,
+        "needs.select.outputs.vulcan_environment": environment,
+    }
+    for name in ("resolve-staging-browser-config", "publish-model-browser"):
+        assert evaluate(jobs[name]["if"], values) is allowed
 
 
 def test_json_catalog_and_package_publication_are_retired() -> None:

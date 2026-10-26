@@ -99,9 +99,13 @@ publishes that portal to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
 
-A manual staging dispatch of the orchestrator on either branch republishes it. The job resolves the bucket, publisher
-role, KMS key, and CloudFront distribution from the shared staging Vulcan
-configuration; those deployment values are not hard-coded in this repository.
+A manual dispatch of the orchestrator on either branch also republishes it.
+The frontend build and publication always use staging, independently of
+`VULCAN_ENV` and the selected model build/registry environment. The separate
+`resolve-staging-browser-config` job resolves the bucket, publisher role, KMS key,
+and CloudFront distribution from the shared staging Vulcan configuration.
+Production frontend deployment remains a manual, owner-gated
+**Deploy Model Browser & Docs** dispatch.
 
 `website/scripts/portal-config.mjs` selects the UI at build time from `GITHUB_REF`:
 Main builds the customer view of the main catalog; Develop, feature branches and
