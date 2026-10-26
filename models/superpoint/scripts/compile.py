@@ -103,8 +103,8 @@ def _quantization(precision: str, calibration_bins: int | None) -> Any:
         )
     else:
         raise ValueError(f"unsupported precision: {precision}")
-    # with_activation_quantization turns per-token quantization on for BF16; this recipe keeps it off.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
+    # with_activation_quantization turns per-token quantization on for BF16; only W8A16 keeps it.
+    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(precision == "w8a16")
 
 
 def _channels_first(outputs: list[np.ndarray]) -> dict[str, np.ndarray]:
