@@ -144,8 +144,11 @@ an application gets from a 720p frame to decoded results, not the MPK alone:
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
    normalizes, quantizes and tessellates the frame in every timed inference.
-   YOLO26 resizes with `ResizeMode.Letterbox`; ResNet-50 and RF-DETR's
-   backbone with `ResizeMode.Stretch`.
+   YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
+   scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
+   `ResizeMode.Stretch` and set `preprocess.preset =
+   NormalizePreset.ImageNet`; without a preset, Neat applies no mean or
+   standard deviation.
 
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound

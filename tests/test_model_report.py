@@ -235,6 +235,7 @@ PYNEAT_ENUMS = {
     "InputKind": ("Image", "Tensor"),
     "AutoFlag": ("On", "Off"),
     "ResizeMode": ("Letterbox", "Stretch"),
+    "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
     "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg"),
@@ -335,7 +336,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
     else:
-        assert options.preprocess.resize.mode == "Stretch"
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert "ILSVRC2012_val_00000001.webp" in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
@@ -385,7 +386,9 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
+        "Image", "Stretch", "ImageNet"
+    )
 
 
 def test_model_code_uses_cores_mla_stats_names():

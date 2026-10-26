@@ -42,6 +42,8 @@ def image_options() -> pyneat.ModelOptions:
     options.preprocess.resize.enable = pyneat.AutoFlag.On
     options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
     options.preprocess.normalize.enable = pyneat.AutoFlag.On
+    # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
+    options.preprocess.preset = pyneat.NormalizePreset.ImageNet
     return options
 
 

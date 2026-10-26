@@ -54,6 +54,8 @@ options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
+# Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
+options.preprocess.preset = pyneat.NormalizePreset.ImageNet
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
