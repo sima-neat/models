@@ -57,7 +57,7 @@ options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.YoloV26
 # An application's decoder keeps a few confident detections, not every candidate.
 options.top_k = 10
-options.score_threshold = 0.5
+options.score_threshold = 0.25
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -73,7 +73,7 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing, "
-        f"YoloV26 box decoder, top 10 above 0.5, {postprocess} post-processing"
+        f"YoloV26 box decoder, top 10 above 0.25, {postprocess} post-processing"
     ),
 )
 report.save(args.output)

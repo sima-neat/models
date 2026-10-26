@@ -71,7 +71,7 @@ The script takes:
 
 The script contains the exact model selection and measurement settings. For
 example, YOLO26 boxes explicitly selects `BoxDecodeType.YoloV26` and keeps the
-top 10 detections that score above 0.5, as an application would; pose and
+top 10 detections that score above 0.25, as an application would; pose and
 segmentation use their corresponding decoders with the same limits. The
 current scripts of single-component models request 1000 samples, a 60000 ms
 minimum duration and MLA layer and stage stats. Customers can read or adapt

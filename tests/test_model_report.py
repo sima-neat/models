@@ -331,7 +331,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert_letterboxed_frame(frame)
     report = saved_report(output)
     if getattr(options, "decode_type", "").startswith("YoloV26"):
-        assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.5)
+        assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         # Pose accuracy scores only images with a labelled person.
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
