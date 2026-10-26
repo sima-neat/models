@@ -3,8 +3,57 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published develop report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.5316
+        coco_ap50: 0.6992
+        coco_ap75: 0.5794
+        coco_ap_small: 0.3531
+        coco_ap_medium: 0.5884
+        coco_ap_large: 0.6942
+        coco_ar1: 0.3942
+        coco_ar10: 0.6550
+        coco_ar100: 0.7042
+        coco_ar_small: 0.5334
+        coco_ar_medium: 0.7645
+        coco_ar_large: 0.8552
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.5164
+        coco_ap50: 0.6856
+        coco_ap75: 0.5633
+        coco_ap_small: 0.3312
+        coco_ap_medium: 0.5825
+        coco_ap_large: 0.6864
+        coco_ar1: 0.3872
+        coco_ar10: 0.6444
+        coco_ar100: 0.6944
+        coco_ar_small: 0.5103
+        coco_ar_medium: 0.7599
+        coco_ar_large: 0.8540
+    w8a16:
+      coco-2017-val:
+        coco_map: 0.5298
+        coco_ap50: 0.6969
+        coco_ap75: 0.5778
+        coco_ap_small: 0.3563
+        coco_ap_medium: 0.5865
+        coco_ap_large: 0.6911
+        coco_ar1: 0.3947
+        coco_ar10: 0.6532
+        coco_ar100: 0.7030
+        coco_ar_small: 0.5327
+        coco_ar_medium: 0.7633
+        coco_ar_large: 0.8559
 performance:
   run_tests: false
-  skip_reason: No build has a published develop report to expect values from yet.
+  skip_reason: Throughput is bound by the box decoder on the synthetic benchmark input and is not stable enough to gate yet.
+  expected:
+    w16a16:
+      throughput_fps: 65.8
+    w8a8:
+      throughput_fps: 291.7
+    w8a16:
+      throughput_fps: 38.1
