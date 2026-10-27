@@ -1,0 +1,53 @@
+display_name: LightStereo-S
+description: The smallest LightStereo network, estimating disparity from a rectified stereo image pair.
+model_type: vision
+tasks: [depth_estimation]
+
+modalities:
+  inputs: [image]
+  outputs: [depth_map]
+
+architecture: lightstereo
+
+license:
+  # Neither the Hugging Face repository nor OpenStereo on GitHub declares a license; the model is for
+  # internal evaluation only, so the registry must not publish its packages (sima-neat/models#364).
+  spdx: LicenseRef-OpenStereo-Undeclared
+  redistribution: prohibited
+  attribution: LightStereo is developed by Xianda Guo et al. in OpenStereo; no license is declared.
+
+upstream:
+  repository: https://huggingface.co/XiandaGuo/OpenStereo
+  revision: cac6f81baeb0099522adc72859b1bda46bfcf6e7
+  derived_from: https://github.com/XiandaGuo/OpenStereo/tree/23d71c92e33ad1f80dfc42bf29f5c6a914d38769/stereo/modeling/models/lightstereo
+
+conversion:
+  source:
+    uri: hf://models/XiandaGuo/OpenStereo@cac6f81baeb0099522adc72859b1bda46bfcf6e7/checkpoint/LightStereo/LightStereo-S-SceneFlow.ckpt
+    sha256: e34b6aaa646217d03abcaa4f438dd02404711fe2bcee10eb59a6aff71f2ca02f
+    size_bytes: 14162117
+
+compilation:
+  format: onnx
+  # TODO(convert-pin): replace with the source block Vulcan Model Convert prints for this branch.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightstereo_s/TODO/model.onnx
+    sha256: TODO
+    size_bytes: 0
+
+build_profiles:
+  # No INT8 profile yet: W8A8 measured 1.555 px Scene Flow EPE against 0.736 px for the float model, and the
+  # Model Compiler's W8A16 code fails its simulation check on this graph's large transposed convolutions.
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+numerical_fidelity:
+  # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.
+  status: diagnostic
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 10}
+  outputs: [disparity]
+
+performance: {}
