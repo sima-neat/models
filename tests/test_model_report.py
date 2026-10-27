@@ -239,7 +239,7 @@ PYNEAT_ENUMS = {
     "AutoFlag": ("On", "Off"),
     "ResizeMode": ("Letterbox", "Stretch"),
     "NormalizePreset": ("ImageNet",),
-    "PixelFormat": ("RGB", "GRAY8"),
+    "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
     "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
     "SuperPointProfile": ("MagicLeapDemoV1",),
@@ -247,6 +247,10 @@ PYNEAT_ENUMS = {
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
 }
+# Color conversion takes its own enum, not PixelFormat; distinct values catch a script passing the wrong one.
+SCRIPT_PYNEAT["PreprocessColorFormat"] = types.SimpleNamespace(
+    **{value: f"PreprocessColorFormat.{value}" for value in ("RGB", "BGR", "GRAY8")}
+)
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
 
@@ -342,7 +346,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, in grayscale, scaled to [0, 1] without a preset.
         color = options.preprocess.color_convert
-        assert (options.preprocess.resize.mode, color.enable, color.output_format) == ("Stretch", "On", "GRAY8")
+        assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
+            "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
+        )
         assert not hasattr(options.preprocess, "preset")
         assert ".jpg" in report["workload"]
     else:

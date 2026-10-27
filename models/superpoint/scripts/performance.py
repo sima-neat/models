@@ -55,8 +55,8 @@ options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.color_convert.enable = pyneat.AutoFlag.On
-options.preprocess.color_convert.input_format = pyneat.PixelFormat.RGB
-options.preprocess.color_convert.output_format = pyneat.PixelFormat.GRAY8
+options.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+options.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.GRAY8
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.SuperPoint
 # Magic Leap's demo settings: keypoint threshold 0.015, NMS radius 4, a 4-pixel border.
