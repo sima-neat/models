@@ -49,11 +49,4 @@ accuracy:
         coco_ar_large: 0.7803
 performance:
   run_tests: false
-  skip_reason: Throughput is bound by the box decoder on the synthetic benchmark input and is not stable enough to gate yet.
-  expected:
-    w16a16:
-      throughput_fps: 202.6
-    w8a8:
-      throughput_fps: 94.3
-    w8a16:
-      throughput_fps: 39.5
+  skip_reason: No report from the benchmark on a real 720p frame yet.
