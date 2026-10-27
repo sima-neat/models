@@ -1,17 +1,23 @@
-"""Benchmark one compiled SuperGlue matcher MPK with Neat Core on one keypoint pair and save its report.
+"""Benchmark SuperGlue with Neat Core on one keypoint pair, including its CPU matching, and save its report.
 
 SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
 repeats two random.Random(0) images of that dataset, the SuperPoint keypoints accuracy.py matches; without it, a
-fixed seeded pair of 512 keypoints. The Sinkhorn iterations and match extraction run in the application.
+fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then the application's CPU steps, the 20
+Sinkhorn iterations and the mutual-match extraction (matching.py), as accuracy.py does. Core's own benchmark of
+the MPK supplies only the MLA layer and stage stats.
 """
+
+from __future__ import annotations
 
 import argparse
 import random
+import time
 from pathlib import Path
 
 import model_report
 import numpy as np
 import pyneat
+from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
 KEYPOINTS_DATASET = "yfcc100m-keypoints-val"
 KEYPOINTS, DESCRIPTOR_SIZE = 512, 256
@@ -19,12 +25,12 @@ KEYPOINTS, DESCRIPTOR_SIZE = 512, 256
 INPUTS = ("keypoints0", "scores0", "descriptors0", "keypoints1", "scores1", "descriptors1")
 # The fixed pair's image size: the longer side SuperPoint resizes YFCC images to.
 FIXED_WIDTH, FIXED_HEIGHT = 1600, 1200
-
-
-def normalize_keypoints(keypoints: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Map pixel (x, y) keypoints to SuperGlue's frame: centred on the image, divided by 0.7 times its longer side."""
-    size = np.array([width, height], dtype=np.float64)
-    return ((np.asarray(keypoints, dtype=np.float64) - size / 2) / (size.max() * 0.7)).astype(np.float32)
+# As accuracy.py and SuperGlue's match_pairs.py evaluation.
+SINKHORN_ITERATIONS = 20
+WARMUP_PAIRS = 10
+MEASURED_PAIRS = 1000
+MIN_DURATION_S = 60
+TIMEOUT_MS = 10000
 
 
 def dataset_images(dataset: Path) -> tuple[str, list]:
@@ -62,36 +68,101 @@ def pair_tensors(images: list) -> list[np.ndarray]:
     return [np.ascontiguousarray(values[name]) for name in INPUTS]
 
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--dataset", help=f"{KEYPOINTS_DATASET}=<extracted directory>")
-parser.add_argument("--output", required=True, help="directory for model-report.json")
-args = parser.parse_args()
-if args.dataset:
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    if dataset_id != KEYPOINTS_DATASET:
-        raise SystemExit(f"--dataset must be {KEYPOINTS_DATASET}, got {dataset_id}")
-    workload, images = dataset_images(Path(dataset_dir))
-else:
-    workload, images = fixed_images()
+def tensor_options() -> pyneat.ModelOptions:
+    """The inputs are keypoint features, not images: Neat only quantizes and tessellates them."""
+    options = pyneat.ModelOptions()
+    options.preprocess.kind = pyneat.InputKind.Tensor
+    options.preprocess.resize.enable = pyneat.AutoFlag.Off
+    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
+    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
+    return options
 
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-# The inputs are keypoint features, not images: Neat only quantizes and tessellates them.
-options.preprocess.resize.enable = pyneat.AutoFlag.Off
-options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-model = pyneat.Model(args.mpk, options)
-# Request 1000 samples and a 60 s minimum measurement duration.
-benchmark_options = pyneat.BenchmarkOptions()
-benchmark_options.num_samples = 1000
-benchmark_options.min_duration_ms = 60000
-benchmark_options.include_mla_layer_stats = True
-benchmark_options.include_mla_stage_stats = True
-benchmark_options.inputs = [pyneat.Tensor.from_numpy(value, copy=True) for value in pair_tensors(images)]
-report = model_report.from_performance(
-    model.benchmark(benchmark_options),
-    {"model": model},
-    workload=f"{workload}, {KEYPOINTS} keypoints each, on the tensor route",
-)
-report.save(args.output)
+
+def mla_stats(mpk: str) -> tuple[dict[str, object], dict[str, object]]:
+    """Core's MLA layer and stage stats for the MPK. Their throughput is the MPK's, not the model's, so Core's
+    default run serves."""
+    options = pyneat.BenchmarkOptions()
+    options.include_mla_layer_stats = True
+    options.include_mla_stage_stats = True
+    report = pyneat.Model(mpk).benchmark(options)
+    layer_stats, stage_stats = report.mla_layer_stats, report.mla_stage_stats
+    layers = [
+        {"stage_index": layer.stage_index, "name": layer.name, "latency_us": layer.latency_us}
+        for layer in layer_stats.layers
+    ]
+    stages = [{"stage_index": stage.stage_index, "latency_us": stage.latency_us} for stage in stage_stats.stages]
+    return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
+
+
+def match_pair(runner, tensors: list) -> np.ndarray:
+    """The MPK's couplings, then the CPU's Sinkhorn iterations and mutual-match extraction: the pair's matches."""
+    (output,) = runner.run(tensors, timeout_ms=TIMEOUT_MS)
+    couplings = output.to_numpy(copy=False).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
+    matches, _ = extract_matches(log_sinkhorn(couplings, SINKHORN_ITERATIONS), MATCH_THRESHOLD)
+    return matches
+
+
+def measure(model: pyneat.Model, tensors: list) -> tuple[list[float], float, pyneat.Telemetry]:
+    """Seconds per pair after the warm-up, the measured span's length, and board telemetry over it."""
+    runner = model.build(tensors)
+    try:
+        for _ in range(WARMUP_PAIRS):
+            match_pair(runner, tensors)
+        monitor = pyneat.TelemetryMonitor()
+        monitor.start()
+        seconds: list[float] = []
+        started = time.perf_counter()
+        while len(seconds) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
+            begun = time.perf_counter()
+            match_pair(runner, tensors)
+            seconds.append(time.perf_counter() - begun)
+        span = time.perf_counter() - started
+        telemetry = monitor.stop()
+    finally:
+        runner.close()
+    return seconds, span, telemetry
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mpk", required=True, help="compiled model archive")
+    parser.add_argument("--dataset", help=f"{KEYPOINTS_DATASET}=<extracted directory>")
+    parser.add_argument("--output", required=True, help="directory for model-report.json")
+    args = parser.parse_args()
+    if args.dataset:
+        dataset_id, dataset_dir = args.dataset.split("=", 1)
+        if dataset_id != KEYPOINTS_DATASET:
+            raise SystemExit(f"--dataset must be {KEYPOINTS_DATASET}, got {dataset_id}")
+        workload, images = dataset_images(Path(dataset_dir))
+    else:
+        workload, images = fixed_images()
+
+    layer_stats, stage_stats = mla_stats(args.mpk)
+    model = pyneat.Model(args.mpk, tensor_options())
+    tensors = [pyneat.Tensor.from_numpy(value, copy=True) for value in pair_tensors(images)]
+    seconds, span, telemetry = measure(model, tensors)
+    benchmark = pyneat.BenchmarkReport()
+    benchmark.latency_ms = float(np.mean(seconds) * 1000)
+    benchmark.latency_p50_ms = float(np.percentile(seconds, 50) * 1000)
+    benchmark.latency_p95_ms = float(np.percentile(seconds, 95) * 1000)
+    benchmark.latency_p99_ms = float(np.percentile(seconds, 99) * 1000)
+    benchmark.fps = len(seconds) / span
+    benchmark.throughput_duration_ms = span * 1000
+    benchmark.throughput_samples = len(seconds)
+    report = model_report.from_performance(
+        benchmark,
+        {"model": model},
+        workload=(
+            f"{workload}, {KEYPOINTS} keypoints each, on the tensor route, then {SINKHORN_ITERATIONS} Sinkhorn "
+            "iterations and mutual-match extraction on the CPU, one pair at a time"
+        ),
+        telemetry=telemetry,
+        mla_layer_stats={"model": layer_stats},
+        mla_stage_stats={"model": stage_stats},
+    )
+    report.save(args.output)
+    print(f"{benchmark.fps:.1f} pairs/s over {len(seconds)} pairs; latency {benchmark.latency_ms:.2f} ms")
+
+
+if __name__ == "__main__":
+    main()

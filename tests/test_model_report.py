@@ -368,43 +368,62 @@ def keypoint_dataset(root):
 
 @pytest.mark.parametrize("with_dataset", [True, False], ids=["dataset", "fixed"])
 @pytest.mark.parametrize("model_name", sorted(TENSOR_INPUT_MODELS))
-def test_every_tensor_input_script_benchmarks_a_keypoint_pair(model_name, with_dataset, monkeypatch, tmp_path):
-    loaded, requests = [], []
+def test_every_tensor_input_script_times_its_cpu_matching(model_name, with_dataset, monkeypatch, tmp_path):
+    import numpy as np
 
-    class ScriptModel(Model):
-        def __init__(self, *args):
-            super().__init__("model")
-            loaded.append(args)
+    requests = []
+
+    def rows(stats, field):
+        return types.SimpleNamespace(status=stats["status"], **{field: [
+            types.SimpleNamespace(**row) for row in stats[field]
+        ]})
+
+    class ScriptModel:
+        def __init__(self, mpk, options=None):
+            self.mpk, self.options = mpk, options
 
         def benchmark(self, options):
             requests.append(options)
-            return Saved(CORE_REPORT)
+            return types.SimpleNamespace(
+                mla_layer_stats=rows(CORE_REPORT["mla_layer_stats"], "layers"),
+                mla_stage_stats=rows(CORE_REPORT["mla_stage_stats"], "stages"),
+            )
+
+    class Runner:
+        """Returns couplings in Neat's channels-last [1, 1, i, j] shape, each keypoint scoring itself highest."""
+
+        def run(self, tensors, timeout_ms):
+            couplings = np.full((513, 513), -5.0, np.float32)
+            np.fill_diagonal(couplings, 5.0)
+            return [types.SimpleNamespace(to_numpy=lambda copy: couplings.reshape(1, 1, 513, 513))]
 
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
-        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
-        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+        Model=ScriptModel, ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor,
+        **SCRIPT_PYNEAT,
     ))
     script = REPOSITORY / "models" / model_name / "scripts/performance.py"
-    output = tmp_path / "output"
-    dataset = ["--dataset", f"yfcc100m-keypoints-val={keypoint_dataset(tmp_path / 'dataset')}"] if with_dataset else []
-    monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", *dataset, "--output", str(output)])
+    monkeypatch.syspath_prepend(str(script.parent))
+    functions = runpy.run_path(str(script))
 
-    runpy.run_path(str(script), run_name="__main__")
-
-    assert [args[0] for args in loaded] == ["model.tar.gz"]
-    options = loaded[0][1]
+    options = functions["tensor_options"]()
     assert options.preprocess.kind == "Tensor"
     assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == ("Off", "Off")
-    (request,) = requests
-    assert (request.num_samples, request.min_duration_ms) == (1000, 60000)
-    shapes = [tuple(tensor.array.shape) for tensor in request.inputs]
-    assert shapes == [(1, 1, 512, 2), (1, 1, 512, 1), (1, 1, 512, 256)] * 2
+    if with_dataset:
+        workload, images = functions["dataset_images"](keypoint_dataset(tmp_path / "dataset"))
+        assert workload.startswith("yfcc100m-keypoints-val")
+    else:
+        workload, images = functions["fixed_images"]()
+    tensors = functions["pair_tensors"](images)
+    assert [tensor.shape for tensor in tensors] == [(1, 1, 512, 2), (1, 1, 512, 1), (1, 1, 512, 256)] * 2
     if with_dataset:
         # The dataset's keypoints sit at the image centre, which SuperGlue's frame maps to the origin.
-        assert all((tensor.array == 0).all() for tensor in request.inputs[0::3])
-    report = saved_report(output)
-    assert ("yfcc100m-keypoints-val" in report["workload"]) == with_dataset
-    assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
+        assert all((tensor == 0).all() for tensor in tensors[0::3])
+    # Every timed pair runs the CPU Sinkhorn iterations and mutual-match extraction after the MPK.
+    matches = functions["match_pair"](Runner(), tensors)
+    assert matches.tolist() == list(range(512))
+    layer_stats, stage_stats = functions["mla_stats"]("model.tar.gz")
+    assert [(r.include_mla_layer_stats, r.include_mla_stage_stats) for r in requests] == [(True, True)]
+    assert (layer_stats, stage_stats) == (CORE_REPORT["mla_layer_stats"], CORE_REPORT["mla_stage_stats"])
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)

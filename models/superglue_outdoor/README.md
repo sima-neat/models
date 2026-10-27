@@ -14,20 +14,22 @@ keypoints; run SuperPoint first.
 
 ## Inputs and outputs
 
-**Inputs.** Run SuperPoint with a keypoint score threshold of 0.0005, so each
-image yields at least 512 keypoints, and keep the 512 with the highest scores.
+**Inputs.** Run SuperPoint with a keypoint score threshold of 0.0005 and keep
+the 512 keypoints with the highest scores. The model takes exactly 512 per
+image: if an image yields fewer, such as a low-texture frame, skip that pair
+rather than padding it, because padded keypoints take part in the matching.
 Pass three float tensors per image (0 and 1):
 
 - `keypoints0`, `keypoints1`: 512 × 2 (x, y) pixel positions, minus half the image width and height, divided by 0.7 times the longer image side.
 - `scores0`, `scores1`: 512 × 1 keypoint scores.
 - `descriptors0`, `descriptors1`: 512 × 256 SuperPoint descriptors.
 
-**Output.** `couplings` is a 513 × 513 score matrix: entry (j, i) scores
-image-0 keypoint i against image-1 keypoint j, and index 512 is each image's
-unmatched option. Transpose it so rows are image-0 keypoints.
+**Output.** Neat returns `couplings` as 1 × 1 × 513 × 513; read it as a
+513 × 513 matrix whose entry (i, j) scores image-0 keypoint i against image-1
+keypoint j. Row and column 512 are each image's unmatched option.
 
 1. Subtract the matrix maximum and take the exponent of every entry.
-2. Run 100 Sinkhorn iterations: alternately rescale rows and columns so rows 0–511 each sum to 1/1024 and row 512 to 512/1024, and the same for columns.
+2. Run 20 Sinkhorn iterations, as SuperGlue's evaluation does: alternately rescale rows and columns so rows 0–511 each sum to 1/1024 and row 512 to 512/1024, and the same for columns.
 3. Multiply the result by 1024.
 4. For each image-0 keypoint, find its best image-1 keypoint, ignoring index 512.
 5. Keep the pair only if that image-1 keypoint's best is the same image-0 keypoint.
