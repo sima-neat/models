@@ -339,6 +339,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Pose accuracy scores only images with a labelled person.
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
+    elif getattr(options, "decode_type", "") == "SuperPoint":
+        # SuperPoint takes the frame stretched to its input, in grayscale, scaled to [0, 1] without a preset.
+        color = options.preprocess.color_convert
+        assert (options.preprocess.resize.mode, color.enable, color.output_format) == ("Stretch", "On", "GRAY8")
+        assert not hasattr(options.preprocess, "preset")
+        assert ".jpg" in report["workload"]
     else:
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert "ILSVRC2012_val_00000001.webp" in report["workload"]

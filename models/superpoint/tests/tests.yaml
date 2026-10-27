@@ -21,7 +21,8 @@ accuracy:
         matching_accuracy: 0.9434
         homography_accuracy: 0.9870
 performance:
-  run_tests: true
+  run_tests: false
+  skip_reason: The expected throughput was measured on synthetic inputs; the 720p-frame benchmark (#475) publishes new values.
   expected:
     w16a16:
       throughput_fps: 131.2
