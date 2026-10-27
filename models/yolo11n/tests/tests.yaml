@@ -48,5 +48,11 @@ accuracy:
         coco_ar_medium: 0.6599
         coco_ar_large: 0.7803
 performance:
-  run_tests: false
-  skip_reason: No report from the benchmark on a real 720p frame yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 240.9
+    w8a8:
+      throughput_fps: 991.8
+    w8a16:
+      throughput_fps: 239.3
