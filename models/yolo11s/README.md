@@ -33,8 +33,8 @@ conversion, and normalization turned off.
 6. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
 
 Class index i is the i-th COCO category ID in ascending order. Neat's `YoloV8`
-box decoder decodes these outputs; give its score threshold as a logit
-(-1.0986 for 0.25).
+box decoder decodes these outputs: it reads the `class_logit` outputs as logits
+and applies the sigmoid itself, so give its score threshold as a probability.
 
 ## Building applications
 
