@@ -1,9 +1,10 @@
 """Measure SuperGlue Outdoor's relative pose accuracy on the YFCC100M test pairs with its MPK on a Modalix board.
 
 This is the outdoor evaluation of SuperGlue's README (match_pairs.py --eval on assets/yfcc_test_pairs_with_gt.txt):
-4000 image pairs of four YFCC100M scenes with ground-truth intrinsics and relative poses. The dataset holds each
-image's SuperPoint FP32 features at the README's settings, but KEYPOINTS of them instead of up to 2048, the fixed
-input of the compiled matcher. For each pair the script runs the MPK, extracts mutual matches after the Sinkhorn
+4000 image pairs of four YFCC100M scenes. yfcc100m-keypoints val holds each image's SuperPoint FP32 keypoints at the
+README's settings, but KEYPOINTS of them instead of up to 2048, the fixed input of the compiled matcher; yfcc100m val
+holds the images and each pair's ground-truth intrinsics and relative pose, which the script maps onto the resized,
+rotated images as match_pairs.py does. For each pair the script runs the MPK, extracts mutual matches after the Sinkhorn
 iterations, estimates the relative pose from them and scores it as match_pairs.py does: the area under the
 pose-error curve at 5, 10 and 20 degrees, match precision and matching score.
 """
@@ -23,12 +24,15 @@ import numpy as np
 import pyneat
 from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
-DATASET_ID = "yfcc100m"
+# Inputs: SuperPoint FP32 keypoints of every val image. Ground truth: the val pairs file's intrinsics and poses.
+KEYPOINTS_DATASET = "yfcc100m-keypoints-val"
+PAIRS_DATASET = "yfcc100m-val"
+PAIRS_FILE = "yfcc_test_pairs_with_gt.txt"
 SPLIT = "test"
 KEYPOINTS = 512
 DESCRIPTOR_SIZE = 256
 PAIRS = 4000
-ARRAYS = ("image_sizes", "keypoints", "scores", "descriptors", "pair_images", "intrinsics", "poses")
+KEYPOINT_ARRAYS = ("original_sizes", "rotations", "image_sizes", "keypoints", "scores", "descriptors")
 # match_pairs.py's evaluation settings: 20 Sinkhorn iterations, a 1-pixel RANSAC threshold on the resized images,
 # and a match counts as correct when its epipolar error is below 5e-4.
 SINKHORN_ITERATIONS = 20
@@ -50,28 +54,95 @@ INPUTS = {
 OUTPUT_SHAPES = ((1, 1, KEYPOINTS + 1, KEYPOINTS + 1), (1, KEYPOINTS + 1, KEYPOINTS + 1))
 
 
-def load_dataset(directory: Path) -> dict[str, np.ndarray]:
-    """Load the dataset's arrays after checking them against its manifest."""
+def load_keypoints(directory: Path) -> tuple[list[str], dict[str, np.ndarray]]:
+    """The keypoint dataset's image names and arrays, checked against its manifest."""
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("id") != DATASET_ID or manifest.get("keypoints") != KEYPOINTS or manifest.get("pairs") != PAIRS:
-        raise SystemExit(f"{directory} is not a {DATASET_ID} dataset of {PAIRS} pairs with {KEYPOINTS} keypoints")
+    identity = (manifest.get("id"), manifest.get("variant"), manifest.get("keypoints"))
+    if identity != ("yfcc100m-keypoints", "val", KEYPOINTS):
+        raise SystemExit(f"{directory} is not the {KEYPOINTS_DATASET} dataset with {KEYPOINTS} keypoints per image")
+    names = (directory / "images.txt").read_text(encoding="utf-8").split()
     data = {}
-    for name in ARRAYS:
+    for name in KEYPOINT_ARRAYS:
         path = directory / f"{name}.npy"
         if hashlib.sha256(path.read_bytes()).hexdigest() != manifest["sha256"][path.name]:
             raise SystemExit(f"{path.name} does not match the manifest")
         data[name] = np.load(path, allow_pickle=False)
-    images = len(data["image_sizes"])
+    images = len(names)
     expected = {
-        "image_sizes": (images, 2), "keypoints": (images, KEYPOINTS, 2), "scores": (images, KEYPOINTS),
-        "descriptors": (images, KEYPOINTS, DESCRIPTOR_SIZE), "pair_images": (PAIRS, 2),
-        "intrinsics": (PAIRS, 2, 3, 3), "poses": (PAIRS, 4, 4),
+        "original_sizes": (images, 2), "rotations": (images,), "image_sizes": (images, 2),
+        "keypoints": (images, KEYPOINTS, 2), "scores": (images, KEYPOINTS),
+        "descriptors": (images, KEYPOINTS, DESCRIPTOR_SIZE),
     }
     for name, shape in expected.items():
         if data[name].shape != shape:
             raise SystemExit(f"{name} has shape {data[name].shape}, expected {shape}")
-    if data["pair_images"].min() < 0 or data["pair_images"].max() >= images:
-        raise SystemExit("pair_images refers to images the dataset does not hold")
+    return names, data
+
+
+def rotate_intrinsics(K: np.ndarray, width: int, height: int, rotation: int) -> np.ndarray:
+    """SuperGlue's utils.rotate_intrinsics for an image of (width, height) after the rotation."""
+    w, h = (height, width) if rotation % 2 else (width, height)
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    if rotation == 1:
+        return np.array([[fy, 0.0, cy], [0.0, fx, w - 1 - cx], [0.0, 0.0, 1.0]])
+    if rotation == 2:
+        return np.array([[fx, 0.0, w - 1 - cx], [0.0, fy, h - 1 - cy], [0.0, 0.0, 1.0]])
+    return np.array([[fy, 0.0, h - 1 - cy], [0.0, fx, cx], [0.0, 0.0, 1.0]])
+
+
+def rotate_pose_inplane(i_T_w: np.ndarray, rotation: int) -> np.ndarray:
+    """SuperGlue's utils.rotate_pose_inplane, float32 rotation matrices included."""
+    matrices = [
+        np.array([[np.cos(r), -np.sin(r), 0.0, 0.0], [np.sin(r), np.cos(r), 0.0, 0.0],
+                  [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+        for r in [np.deg2rad(d) for d in (0, 270, 180, 90)]
+    ]
+    return np.dot(matrices[rotation], i_T_w)
+
+
+def image_intrinsics(K: np.ndarray, data: dict[str, np.ndarray], image: int) -> np.ndarray:
+    """An original image's intrinsics mapped onto the resized, rotated image its keypoints refer to, as
+    match_pairs.py's scale_intrinsics and rotate_intrinsics do."""
+    width, height = data["image_sizes"][image]
+    rotation = int(data["rotations"][image])
+    resized = (height, width) if rotation % 2 else (width, height)
+    sx, sy = data["original_sizes"][image] / np.array(resized, dtype=np.float64)
+    if rotation % 2:
+        sx, sy = sy, sx
+    K = np.diag([1 / sx, 1 / sy, 1.0]) @ K
+    return rotate_intrinsics(K, width, height, rotation) if rotation else K
+
+
+def load_dataset(keypoints_dir: Path, pairs_dir: Path) -> dict[str, np.ndarray]:
+    """The keypoints of every pair's two images, and each pair's intrinsics and pose on those images."""
+    names, data = load_keypoints(keypoints_dir)
+    position = {name: index for index, name in enumerate(names)}
+    lines = [line.split() for line in (pairs_dir / PAIRS_FILE).read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len(lines) != PAIRS or any(len(line) != 38 for line in lines):
+        raise SystemExit(f"{PAIRS_FILE} must hold {PAIRS} pairs of 38 fields")
+    pair_images, intrinsics, poses = [], [], []
+    for line in lines:
+        if line[0] not in position or line[1] not in position:
+            raise SystemExit(f"the keypoint dataset has no keypoints for {line[0]} or {line[1]}")
+        images = (position[line[0]], position[line[1]])
+        for image, rotation in zip(images, (int(line[2]), int(line[3]))):
+            if data["rotations"][image] != rotation:
+                detected = data["rotations"][image]
+                raise SystemExit(f"{names[image]} was detected with rotation {detected}, not {rotation}")
+        pose = np.array(line[22:], dtype=np.float64).reshape(4, 4)
+        cameras, camera_T_world = [], []
+        for image, values, start in ((images[0], line[4:13], np.eye(4)), (images[1], line[13:22], pose)):
+            cameras.append(image_intrinsics(np.array(values, dtype=np.float64).reshape(3, 3), data, image))
+            rotation = int(data["rotations"][image])
+            camera_T_world.append(rotate_pose_inplane(start, rotation) if rotation else start)
+        if data["rotations"][images[0]] or data["rotations"][images[1]]:
+            pose = camera_T_world[1] @ np.linalg.inv(camera_T_world[0])
+        pair_images.append(images)
+        intrinsics.append(cameras)
+        poses.append(pose)
+    data["pair_images"] = np.array(pair_images, dtype=np.int32)
+    data["intrinsics"] = np.array(intrinsics, dtype=np.float64)
+    data["poses"] = np.array(poses, dtype=np.float64)
     return data
 
 
@@ -207,12 +278,17 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="yfcc100m-superpoint-test-512=<extracted directory>")
+    parser.add_argument(
+        "--dataset", action="append", required=True,
+        help=f"{KEYPOINTS_DATASET}=<extracted directory> and {PAIRS_DATASET}=<extracted directory>",
+    )
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure the first pairs only (local runs only)")
     args = parser.parse_args(argv)
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    data = load_dataset(Path(dataset_dir))
+    datasets = dict(value.split("=", 1) for value in args.dataset)
+    if set(datasets) != {KEYPOINTS_DATASET, PAIRS_DATASET}:
+        raise SystemExit(f"--dataset must name {KEYPOINTS_DATASET} and {PAIRS_DATASET}, got {sorted(datasets)}")
+    data = load_dataset(Path(datasets[KEYPOINTS_DATASET]), Path(datasets[PAIRS_DATASET]))
     pairs = range(min(args.limit, PAIRS) if args.limit else PAIRS)
 
     options = pyneat.ModelOptions()
@@ -234,15 +310,18 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.monotonic()
     metrics, totals = evaluate(data, pairs, couplings_of)
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": metrics,
-            "split": SPLIT, "evaluated_samples": len(pairs), "available_samples": PAIRS,
-            "details": {"matches_per_pair": totals["matches"], "seconds": round(time.monotonic() - started, 1)},
+    # One evaluation needs both datasets, and the registry expects a result per pinned dataset: both carry it.
+    result = {
+        "metrics": metrics,
+        "split": SPLIT, "evaluated_samples": len(pairs), "available_samples": PAIRS,
+        "details": {
+            "inputs": KEYPOINTS_DATASET, "ground_truth": PAIRS_DATASET,
+            "matches_per_pair": totals["matches"], "seconds": round(time.monotonic() - started, 1),
         },
-    })
+    }
+    report = model_report.from_accuracy({KEYPOINTS_DATASET: result, PAIRS_DATASET: result})
     report.save(args.output)
-    measured = report.document["datasets"][dataset_id]["metrics"]
+    measured = report.document["datasets"][PAIRS_DATASET]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 

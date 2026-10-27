@@ -165,34 +165,76 @@ def test_couplings_must_be_finite_and_channels_last(case: str, load_script: Call
         accuracy.couplings_matrix(output)
 
 
-def _write_dataset(accuracy: ModuleType, directory: Path, data: dict[str, np.ndarray]) -> None:
+def _write_datasets(
+    accuracy: ModuleType, root: Path, data: dict[str, np.ndarray], rotations: tuple[int, int] = (0, 0)
+) -> tuple[Path, Path]:
+    """The keypoint dataset of the scene's two images, recorded at twice their size, and a pairs file of 4000
+    copies of their pair with the scene's ground truth."""
+    keypoints_dir, pairs_dir = root / "keypoints", root / "pairs"
+    keypoints_dir.mkdir()
+    pairs_dir.mkdir()
+    arrays = {
+        "original_sizes": data["image_sizes"] * 2, "rotations": np.array(rotations, np.int32),
+        "image_sizes": data["image_sizes"], "keypoints": data["keypoints"], "scores": data["scores"],
+        "descriptors": data["descriptors"],
+    }
     digests = {}
-    for name in accuracy.ARRAYS:
-        np.save(directory / f"{name}.npy", data[name])
-        digests[f"{name}.npy"] = hashlib.sha256((directory / f"{name}.npy").read_bytes()).hexdigest()
-    manifest = {"id": accuracy.DATASET_ID, "keypoints": accuracy.KEYPOINTS, "pairs": accuracy.PAIRS,
-                "sha256": digests}
-    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for name in accuracy.KEYPOINT_ARRAYS:
+        np.save(keypoints_dir / f"{name}.npy", arrays[name])
+        digests[f"{name}.npy"] = hashlib.sha256((keypoints_dir / f"{name}.npy").read_bytes()).hexdigest()
+    (keypoints_dir / "images.txt").write_text("a/test/images/0.jpg\na/test/images/1.jpg\n", encoding="utf-8")
+    manifest = {"id": "yfcc100m-keypoints", "variant": "val", "keypoints": accuracy.KEYPOINTS, "sha256": digests}
+    (keypoints_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    # The pairs file gives intrinsics of the original images, twice the size of the detected ones.
+    original = [np.diag([2.0, 2.0, 1.0]) @ K for K in (K0, K1)]
+    values = [*map(str, rotations), *(f"{v:.6f}" for v in [*original[0].ravel(), *original[1].ravel(),
+                                                             *data["poses"][0].ravel()])]
+    line = " ".join(["a/test/images/0.jpg", "a/test/images/1.jpg", *values])
+    (pairs_dir / accuracy.PAIRS_FILE).write_text((line + "\n") * accuracy.PAIRS, encoding="utf-8")
+    return keypoints_dir, pairs_dir
 
 
-@pytest.mark.parametrize("case", ["valid", "digest", "shape", "index"])
-def test_load_dataset_checks_the_manifest(case: str, tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("case", ["valid", "digest", "shape", "missing", "rotation"])
+def test_load_dataset_joins_keypoints_and_ground_truth(
+    case: str, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
     accuracy = load_script("accuracy")
     data, _ = _scene(accuracy)
     if case == "shape":
         data["scores"] = data["scores"][:, :100]
-    elif case == "index":
-        data["pair_images"][7] = [0, 2]
-    _write_dataset(accuracy, tmp_path, data)
+    keypoints_dir, pairs_dir = _write_datasets(accuracy, tmp_path, data)
     if case == "digest":
-        np.save(tmp_path / "scores.npy", data["scores"] + 1)
+        np.save(keypoints_dir / "scores.npy", data["scores"] + 1)
+    elif case == "missing":
+        (keypoints_dir / "images.txt").write_text("a/test/images/0.jpg\nother.jpg\n", encoding="utf-8")
+    elif case == "rotation":
+        text = (pairs_dir / accuracy.PAIRS_FILE).read_text(encoding="utf-8").replace(".jpg 0 0 ", ".jpg 0 1 ")
+        (pairs_dir / accuracy.PAIRS_FILE).write_text(text, encoding="utf-8")
 
     if case == "valid":
-        loaded = accuracy.load_dataset(tmp_path)
+        loaded = accuracy.load_dataset(keypoints_dir, pairs_dir)
+        assert loaded["pair_images"].shape == (accuracy.PAIRS, 2) and (loaded["pair_images"] == [0, 1]).all()
+        # The original intrinsics, scaled by half onto the detected images, give the scene's cameras again.
+        np.testing.assert_allclose(loaded["intrinsics"][0], [K0, K1], atol=1e-5)
+        np.testing.assert_allclose(loaded["poses"][123], data["poses"][0], atol=1e-6)
         np.testing.assert_array_equal(loaded["keypoints"], data["keypoints"])
     else:
         with pytest.raises(SystemExit):
-            accuracy.load_dataset(tmp_path)
+            accuracy.load_dataset(keypoints_dir, pairs_dir)
+
+
+def test_intrinsics_follow_the_resize_and_a_quarter_turn(load_script: Callable[[str], ModuleType]) -> None:
+    accuracy = load_script("accuracy")
+    # A 2000x1000 image resized to 1600x800, then rotated a quarter turn to 800x1600, as match_pairs.py does.
+    data = {
+        "image_sizes": np.array([[800, 1600]]), "rotations": np.array([1]), "original_sizes": np.array([[2000, 1000]]),
+    }
+    K = np.array([[1000.0, 0.0, 999.5], [0.0, 1000.0, 499.5], [0.0, 0.0, 1.0]])
+
+    mapped = accuracy.image_intrinsics(K, data, 0)
+
+    # Scaled by 0.8: f = 800, cx = 799.6, cy = 399.6; the quarter turn swaps the axes and mirrors x in the width.
+    np.testing.assert_allclose(mapped, [[800.0, 0.0, 399.6], [0.0, 800.0, 1600 - 1 - 799.6], [0.0, 0.0, 1.0]])
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
