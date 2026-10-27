@@ -4,7 +4,21 @@ compile:
   run_tests: true
 accuracy:
   run_tests: false
-  skip_reason: No build has a published accuracy report to expect values from yet.
+  skip_reason: The w8a16 build fails to compile, so it has no published report to expect values from.
+  expected:
+    w16a16:
+      dota-v1-0-val:
+        dota_obb_map50: 0.7631
+        dota_obb_map: 0.5205
+    w8a8:
+      dota-v1-0-val:
+        dota_obb_map50: 0.7520
+        dota_obb_map: 0.4992
 performance:
   run_tests: false
-  skip_reason: No build has a published performance report to expect values from yet.
+  skip_reason: The w8a16 build fails to compile, so it has no published report to expect values from.
+  expected:
+    w16a16:
+      throughput_fps: 25.3
+    w8a8:
+      throughput_fps: 109.0

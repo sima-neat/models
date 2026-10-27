@@ -3,8 +3,26 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published accuracy report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      dota-v1-0-val:
+        dota_obb_map50: 0.7518
+        dota_obb_map: 0.5058
+    w8a8:
+      dota-v1-0-val:
+        dota_obb_map50: 0.7526
+        dota_obb_map: 0.4887
+    w8a16:
+      dota-v1-0-val:
+        dota_obb_map50: 0.7550
+        dota_obb_map: 0.5039
 performance:
-  run_tests: false
-  skip_reason: No build has a published performance report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 62.7
+    w8a8:
+      throughput_fps: 269.6
+    w8a16:
+      throughput_fps: 66.9
