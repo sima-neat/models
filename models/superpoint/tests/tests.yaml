@@ -21,12 +21,11 @@ accuracy:
         matching_accuracy: 0.9442
         homography_accuracy: 0.9940
 performance:
-  run_tests: false
-  skip_reason: The 720p-frame benchmark (#475) crashed on the colour-conversion enum; the fixed run publishes the values this stage expects.
+  run_tests: true
   expected:
     w16a16:
-      throughput_fps: 131.2
+      throughput_fps: 109.7
     w8a8:
-      throughput_fps: 341.3
+      throughput_fps: 232.4
     w8a16:
-      throughput_fps: 130.7
+      throughput_fps: 108.8
