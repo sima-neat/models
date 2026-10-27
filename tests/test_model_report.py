@@ -216,7 +216,9 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
-        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
+        self.preprocess = types.SimpleNamespace(
+            resize=types.SimpleNamespace(), color_convert=types.SimpleNamespace(), normalize=types.SimpleNamespace()
+        )
 
 
 class Tensor:
@@ -278,6 +280,10 @@ def assert_letterboxed_frame(tensor):
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
 
 
+# Models whose inputs are not images benchmark a fixed tensor input on the tensor route.
+TENSOR_INPUT_MODELS = {"superglue_outdoor"}
+
+
 def performance_scripts(*, components: bool) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark."""
@@ -290,7 +296,11 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if path.parents[1].name not in TENSOR_INPUT_MODELS],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
@@ -341,6 +351,60 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
+
+
+def keypoint_dataset(root):
+    """A yfcc100m-keypoints val directory of three images with 512 keypoints each."""
+    import numpy as np
+
+    root.mkdir(parents=True)
+    (root / "images.txt").write_text("a.jpg\nb.jpg\nc.jpg\n", encoding="utf-8")
+    np.save(root / "image_sizes.npy", np.array([[1600, 1200]] * 3, np.int32))
+    np.save(root / "keypoints.npy", np.tile(np.array([800, 600], np.float32), (3, 512, 1)))
+    np.save(root / "scores.npy", np.full((3, 512), 0.5, np.float32))
+    np.save(root / "descriptors.npy", np.full((3, 512, 256), 1 / 16, np.float32))
+    return root
+
+
+@pytest.mark.parametrize("with_dataset", [True, False], ids=["dataset", "fixed"])
+@pytest.mark.parametrize("model_name", sorted(TENSOR_INPUT_MODELS))
+def test_every_tensor_input_script_benchmarks_a_keypoint_pair(model_name, with_dataset, monkeypatch, tmp_path):
+    loaded, requests = [], []
+
+    class ScriptModel(Model):
+        def __init__(self, *args):
+            super().__init__("model")
+            loaded.append(args)
+
+        def benchmark(self, options):
+            requests.append(options)
+            return Saved(CORE_REPORT)
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
+        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    output = tmp_path / "output"
+    dataset = ["--dataset", f"yfcc100m-keypoints-val={keypoint_dataset(tmp_path / 'dataset')}"] if with_dataset else []
+    monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", *dataset, "--output", str(output)])
+
+    runpy.run_path(str(script), run_name="__main__")
+
+    assert [args[0] for args in loaded] == ["model.tar.gz"]
+    options = loaded[0][1]
+    assert options.preprocess.kind == "Tensor"
+    assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == ("Off", "Off")
+    (request,) = requests
+    assert (request.num_samples, request.min_duration_ms) == (1000, 60000)
+    shapes = [tuple(tensor.array.shape) for tensor in request.inputs]
+    assert shapes == [(1, 1, 512, 2), (1, 1, 512, 1), (1, 1, 512, 256)] * 2
+    if with_dataset:
+        # The dataset's keypoints sit at the image centre, which SuperGlue's frame maps to the origin.
+        assert all((tensor.array == 0).all() for tensor in request.inputs[0::3])
+    report = saved_report(output)
+    assert ("yfcc100m-keypoints-val" in report["workload"]) == with_dataset
+    assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
