@@ -353,16 +353,17 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
 
 
-def keypoint_dataset(root):
-    """A yfcc100m-keypoints val directory of three images with 512 keypoints each."""
+def yfcc_val_dataset(root):
+    """A yfcc100m val directory: two images and an annotations file holding their pair."""
+    import cv2
     import numpy as np
 
-    root.mkdir(parents=True)
-    (root / "images.txt").write_text("a.jpg\nb.jpg\nc.jpg\n", encoding="utf-8")
-    np.save(root / "image_sizes.npy", np.array([[1600, 1200]] * 3, np.int32))
-    np.save(root / "keypoints.npy", np.tile(np.array([800, 600], np.float32), (3, 512, 1)))
-    np.save(root / "scores.npy", np.full((3, 512), 0.5, np.float32))
-    np.save(root / "descriptors.npy", np.full((3, 512, 256), 1 / 16, np.float32))
+    (root / "val" / "a").mkdir(parents=True)
+    (root / "annotations").mkdir()
+    for name in ("0.jpg", "1.jpg"):
+        assert cv2.imwrite(str(root / "val" / "a" / name), np.full((480, 640, 3), 128, np.uint8))
+    values = " ".join(["0", "0", *(["1"] * 34)])
+    (root / "annotations" / "pairs_val.txt").write_text(f"a/0.jpg a/1.jpg {values}\n", encoding="utf-8")
     return root
 
 
@@ -409,8 +410,16 @@ def test_every_tensor_input_script_times_its_cpu_matching(model_name, with_datas
     assert options.preprocess.kind == "Tensor"
     assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == ("Off", "Off")
     if with_dataset:
-        workload, images = functions["dataset_images"](keypoint_dataset(tmp_path / "dataset"))
-        assert workload.startswith("yfcc100m-keypoints-val")
+        # SuperPoint FP32 is stubbed: every image yields 512 keypoints at the centre of its 640 x 480 input.
+        found = []
+        scope = functions["dataset_images"].__globals__
+        scope["superpoint_session"] = lambda cache: "session"
+        scope["superpoint_keypoints"] = lambda session, image: found.append(image.shape) or (
+            np.tile(np.array([320, 240], np.float32), (512, 1)), np.full(512, 0.5, np.float32),
+            np.full((512, 256), 1 / 16, np.float32),
+        )
+        workload, images = functions["dataset_images"](yfcc_val_dataset(tmp_path / "dataset"), tmp_path)
+        assert workload == "yfcc100m-val a/0.jpg and a/1.jpg" and found == [(480, 640)] * 2
     else:
         workload, images = functions["fixed_images"]()
     tensors = functions["pair_tensors"](images)

@@ -1,30 +1,33 @@
 """Benchmark SuperGlue with Neat Core on one keypoint pair, including its CPU matching, and save its report.
 
-SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
-repeats two random.Random(0) images of that dataset, the SuperPoint keypoints accuracy.py matches; without it, a
-fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then the application's CPU steps, the 20
-Sinkhorn iterations and the mutual-match extraction (matching.py), as accuracy.py does. Core's own benchmark of
-the MPK supplies only the MLA layer and stage stats.
+SuperGlue takes keypoints, not images. With --dataset yfcc100m-val=<extracted directory> the benchmark repeats one
+random.Random(0) pair of that dataset, its keypoints found by the SuperPoint FP32 ONNX at 640 x 480 exactly as
+accuracy.py finds them; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
+the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (matching.py), as
+accuracy.py does. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
 """
 
 from __future__ import annotations
 
 import argparse
 import random
+import tempfile
 import time
 from pathlib import Path
 
 import model_report
 import numpy as np
 import pyneat
+from accuracy import superpoint_image, superpoint_keypoints, superpoint_session
 from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
-KEYPOINTS_DATASET = "yfcc100m-keypoints-val"
+DATASET = "yfcc100m-val"
+PAIRS_FILE = "annotations/pairs_val.txt"
 KEYPOINTS, DESCRIPTOR_SIZE = 512, 256
 # The MPK's channels-last inputs, in its order.
 INPUTS = ("keypoints0", "scores0", "descriptors0", "keypoints1", "scores1", "descriptors1")
-# The fixed pair's image size: the longer side SuperPoint resizes YFCC images to.
-FIXED_WIDTH, FIXED_HEIGHT = 1600, 1200
+# The fixed pair's image size: SuperPoint's input.
+FIXED_WIDTH, FIXED_HEIGHT = 640, 480
 # As accuracy.py and SuperGlue's match_pairs.py evaluation.
 SINKHORN_ITERATIONS = 20
 WARMUP_PAIRS = 10
@@ -33,17 +36,19 @@ MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
 
 
-def dataset_images(dataset: Path) -> tuple[str, list]:
-    """Two random.Random(0) images of the keypoint dataset: their names and (keypoints, scores, descriptors, size)."""
-    names = (dataset / "images.txt").read_text(encoding="utf-8").split()
-    arrays = {name: np.load(dataset / f"{name}.npy", allow_pickle=False)
-              for name in ("image_sizes", "keypoints", "scores", "descriptors")}
-    if arrays["keypoints"].shape != (len(names), KEYPOINTS, 2):
-        raise SystemExit(f"{dataset} is not {KEYPOINTS_DATASET} with {KEYPOINTS} keypoints per image")
-    chosen = random.Random(0).sample(range(len(names)), 2)
-    images = [(arrays["keypoints"][i], arrays["scores"][i], arrays["descriptors"][i], tuple(arrays["image_sizes"][i]))
-              for i in chosen]
-    return f"{KEYPOINTS_DATASET} {names[chosen[0]]} and {names[chosen[1]]}", images
+def dataset_images(dataset: Path, cache: Path) -> tuple[str, list]:
+    """One random.Random(0) pair of yfcc100m val: its name and each image's (keypoints, scores, descriptors, size)."""
+    lines = [line.split() for line in (dataset / PAIRS_FILE).read_text(encoding="utf-8").splitlines() if line.strip()]
+    pair = random.Random(0).choice(lines)
+    session = superpoint_session(cache)
+    images = []
+    for name, rotation in ((pair[0], int(pair[2])), (pair[1], int(pair[3]))):
+        image, _ = superpoint_image(dataset / "val" / name, rotation)
+        keypoints, scores, descriptors = superpoint_keypoints(session, image)
+        if len(keypoints) < KEYPOINTS:
+            raise SystemExit(f"{name} yields only {len(keypoints)} keypoints")
+        images.append((keypoints, scores, descriptors, (image.shape[1], image.shape[0])))
+    return f"{DATASET} {pair[0]} and {pair[1]}", images
 
 
 def fixed_images() -> tuple[str, list]:
@@ -126,14 +131,15 @@ def measure(model: pyneat.Model, tensors: list) -> tuple[list[float], float, pyn
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", required=True, help="compiled model archive")
-    parser.add_argument("--dataset", help=f"{KEYPOINTS_DATASET}=<extracted directory>")
+    parser.add_argument("--dataset", help=f"{DATASET}=<extracted directory>")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
     if args.dataset:
         dataset_id, dataset_dir = args.dataset.split("=", 1)
-        if dataset_id != KEYPOINTS_DATASET:
-            raise SystemExit(f"--dataset must be {KEYPOINTS_DATASET}, got {dataset_id}")
-        workload, images = dataset_images(Path(dataset_dir))
+        if dataset_id != DATASET:
+            raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
+        with tempfile.TemporaryDirectory(prefix="superpoint-") as cache:
+            workload, images = dataset_images(Path(dataset_dir), Path(cache))
     else:
         workload, images = fixed_images()
 
