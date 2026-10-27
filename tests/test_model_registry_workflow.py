@@ -46,11 +46,11 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
     assert "vulcan-update-latest-artifacts.yml@main" in text
 
 
-def test_model_registry_pushes_default_to_staging() -> None:
+def test_model_registry_publication_uses_repository_environment() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    assert "inputs.environment || 'staging'" in text
-    assert "vars.VULCAN_ENV" not in text
+    assert "vars.VULCAN_ENV || 'staging'" in text
+    assert "inputs.environment" not in text
 
 
 def test_package_workflow_only_builds_and_checks_the_package() -> None:

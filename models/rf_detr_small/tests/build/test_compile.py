@@ -257,15 +257,28 @@ def _metadata() -> dict:
     return load_metadata(MODEL_DIR)
 
 
-def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("profile_id", ["w8a8_w16a16", "w8a16_w16a16"])
+def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    if profile_id == "w8a8_w16a16":
+        backbone = {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50}
+    else:
+        backbone = {"precision": "w8a16", "per_token": True}
+
+    assert load_script("compile")._component_parameters(_metadata(), profile_id) == {
+        "backbone": backbone,
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
+    }
+
+
+def test_compile_describes_the_pipeline_and_rejects_undeclared_settings(
+    load_script: Callable[[str], ModuleType],
+) -> None:
     compile_module = load_script("compile")
-
-    parameters = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
-
-    assert parameters == {
+    parameters = {
         "backbone": {"precision": "w8a16", "per_token": True},
         "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
     }
+
     assert compile_module._pipeline_description(parameters) == (
         "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 decoder (JAX execute)"
     )
@@ -406,15 +419,12 @@ def test_surgery_simplifies_only_the_decoder_partition() -> None:
 
 def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
     model = load_metadata(MODEL_DIR)
-    invocation = model["build_profiles"][0]["compile_invocations"][0]
 
-    assert invocation == {"id": "w8a8_w16a16", "components": ["backbone", "decoder"]}
+    for profile in model["build_profiles"]:
+        assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16"]
-    assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
-    assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 2048
     assert model["numerical_fidelity"]["outputs"] == ["dets", "labels"]
     assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]
     assert model["performance"] == {}
