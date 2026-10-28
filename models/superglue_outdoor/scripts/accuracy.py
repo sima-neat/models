@@ -1,24 +1,21 @@
 """Measure SuperGlue Outdoor's relative pose accuracy on the YFCC100M test pairs with its MPK on a Modalix board.
 
-This is the outdoor evaluation of SuperGlue's README (match_pairs.py --eval) on yfcc100m val: 4000 image pairs of
-four YFCC100M scenes with ground-truth intrinsics and relative poses. Each image's keypoints come from Magic Leap's
-SuperPoint as an FP32 ONNX (the one the superpoint model compiles), run here on the CPU so the inputs carry no
-quantization: the image, rotated by its pair's quarter turns, is stretched to SuperPoint's 640 x 480 input, and its
-best 512 keypoints, scores and descriptors feed the compiled matcher. For each pair the script runs the MPK, extracts
-mutual matches after the Sinkhorn iterations, estimates the relative pose from them and scores it as match_pairs.py
-does: the area under the pose-error curve at 5, 10 and 20 degrees, match precision and matching score. A pair whose
-image yields fewer than 512 keypoints is skipped, as the README tells applications to do.
+This is the outdoor evaluation of SuperGlue's README (match_pairs.py --eval) on 4000 image pairs of four YFCC100M
+scenes. yfcc100m-keypoints val holds, for every image of yfcc100m val, the best 512 keypoints, scores and descriptors
+of Magic Leap's SuperPoint FP32 ONNX on the image rotated by its pair's quarter turns and stretched to 640 x 480, and
+yfcc100m's ground-truth intrinsics and relative poses. So the matcher's inputs carry no quantization; only the matcher
+under test is compiled. For each pair the script runs the MPK, extracts mutual matches after the Sinkhorn iterations,
+estimates the relative pose from them and scores it as match_pairs.py does: the area under the pose-error curve at 5,
+10 and 20 degrees, match precision and matching score. A pair whose image has fewer than 512 keypoints is skipped, as
+the README tells applications to do.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
-import tempfile
 import time
-import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -27,24 +24,15 @@ import numpy as np
 import pyneat
 from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
-DATASET = "yfcc100m-val"
+DATASET = "yfcc100m-keypoints-val"
 PAIRS_FILE = "annotations/pairs_val.txt"
+IMAGES_FILE = "annotations/images.txt"
 SPLIT = "val"
 KEYPOINTS = 512
 DESCRIPTOR_SIZE = 256
 PAIRS = 4000
-# The superpoint model's FP32 ONNX, as Vulcan Model Convert published it for sima-neat/models#382.
-SUPERPOINT_ONNX = {
-    "uri": "https://artifacts.stg.neat.sima.ai/models-onnx/superpoint/"
-           "59af69dba3fe9aab0f480882a92e5ded20c23fd39c013a58fc6ee19b83b68291/39938959015-1/model.onnx",
-    "sha256": "59af69dba3fe9aab0f480882a92e5ded20c23fd39c013a58fc6ee19b83b68291",
-    "size_bytes": 5210057,
-}
-SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT, CELL = 640, 480, 8
-# The README's SuperPoint settings: a low threshold so most images yield 512 keypoints, NMS radius 4, a 4-pixel border.
-KEYPOINT_THRESHOLD = 0.0005
-NMS_RADIUS = 4
-BORDER = 4
+# SuperPoint's input, which the stored keypoints' pixel coordinates refer to.
+SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT = 640, 480
 # match_pairs.py's evaluation settings: 20 Sinkhorn iterations, a 1-pixel RANSAC threshold on the resized images,
 # and a match counts as correct when its epipolar error is below 5e-4.
 SINKHORN_ITERATIONS = 20
@@ -64,98 +52,6 @@ INPUTS = {
     "descriptors1": (1, 1, KEYPOINTS, DESCRIPTOR_SIZE),
 }
 OUTPUT_SHAPES = ((1, 1, KEYPOINTS + 1, KEYPOINTS + 1), (1, KEYPOINTS + 1, KEYPOINTS + 1))
-
-
-def superpoint_session(cache: Path):
-    """An ONNX Runtime session of the pinned SuperPoint FP32 ONNX, downloaded once and checked by its digest."""
-    import onnxruntime as ort
-
-    path = cache / "superpoint_fp32.onnx"
-    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != SUPERPOINT_ONNX["sha256"]:
-        with urllib.request.urlopen(SUPERPOINT_ONNX["uri"], timeout=300) as response:
-            content = response.read()
-        digest = hashlib.sha256(content).hexdigest()
-        if len(content) != SUPERPOINT_ONNX["size_bytes"] or digest != SUPERPOINT_ONNX["sha256"]:
-            raise SystemExit("the downloaded SuperPoint ONNX does not match its pin")
-        path.write_bytes(content)
-    return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-
-
-def superpoint_image(path: Path, rotation: int) -> tuple[np.ndarray, tuple[int, int]]:
-    """The 640 x 480 grayscale [0, 1] input of an image rotated by `rotation` quarter turns, and its original
-    (width, height). As match_pairs.py does, the image is resized first, to 480 x 640 when the turn is odd, then
-    rotated; the grayscale mix is transformers' SuperPointImageProcessor's."""
-    import cv2
-
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if image is None:
-        raise SystemExit(f"cannot read {path}")
-    original = (image.shape[1], image.shape[0])
-    size = (SUPERPOINT_HEIGHT, SUPERPOINT_WIDTH) if rotation % 2 else (SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT)
-    rgb = cv2.cvtColor(cv2.resize(image, size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
-    gray = (rgb.astype(np.float32) / np.float32(255)) @ np.array([0.2989, 0.5870, 0.1140], dtype=np.float32)
-    return np.ascontiguousarray(np.rot90(gray, k=rotation)), original
-
-
-def _max_pool(values: np.ndarray, radius: int) -> np.ndarray:
-    """max_pool2d with a (2r+1) window, stride 1 and -inf padding, separably."""
-    height, width = values.shape
-    padded = np.pad(values, radius, constant_values=-np.inf)
-    rows = padded[:height].copy()
-    for offset in range(1, 2 * radius + 1):
-        np.maximum(rows, padded[offset:offset + height], out=rows)
-    pooled = rows[:, :width].copy()
-    for offset in range(1, 2 * radius + 1):
-        np.maximum(pooled, rows[:, offset:offset + width], out=pooled)
-    return pooled
-
-
-def _simple_nms(scores: np.ndarray, radius: int = NMS_RADIUS) -> np.ndarray:
-    """transformers' simple_nms on one [H, W] score map."""
-    zeros = np.zeros_like(scores)
-    max_mask = scores == _max_pool(scores, radius)
-    for _ in range(2):
-        suppressed = _max_pool(max_mask.astype(scores.dtype), radius) > 0
-        suppressed_scores = np.where(suppressed, zeros, scores)
-        max_mask |= (suppressed_scores == _max_pool(suppressed_scores, radius)) & ~suppressed
-    return np.where(max_mask, scores, zeros)
-
-
-def _sample_descriptors(keypoints: np.ndarray, raw: np.ndarray) -> np.ndarray:
-    """L2-normalize [256, H/8, W/8] coarse descriptors, sample them bilinearly at the keypoints, normalize again."""
-    dense = raw / np.maximum(np.linalg.norm(raw, axis=0, keepdims=True), 1e-12)
-    channels, height, width = dense.shape
-    grid = (keypoints - CELL / 2 + 0.5) / np.array([width * CELL - CELL / 2 - 0.5, height * CELL - CELL / 2 - 0.5])
-    # grid_sample with align_corners=True maps 0..1 onto pixel centres 0..size-1.
-    x, y = grid[:, 0] * (width - 1), grid[:, 1] * (height - 1)
-    x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
-    sampled = np.zeros((len(keypoints), channels), np.float32)
-    for dx in (0, 1):
-        for dy in (0, 1):
-            xi, yi = x0 + dx, y0 + dy
-            weight = (1 - np.abs(x - xi)) * (1 - np.abs(y - yi))
-            valid = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
-            sampled[valid] += weight[valid, None] * dense[:, yi[valid], xi[valid]].T
-    return sampled / np.maximum(np.linalg.norm(sampled, axis=1, keepdims=True), 1e-12)
-
-
-def superpoint_keypoints(session, image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """The best KEYPOINTS (x, y) pixel keypoints of a 640 x 480 image, best first, with scores and unit descriptors,
-    decoded from SuperPoint's raw heads as transformers decodes them. Fewer when the image has fewer."""
-    logits, raw = session.run(None, {"image": image[None, None].astype(np.float32)})
-    logits = logits[0].astype(np.float32)
-    exp = np.exp(logits - logits.max(0, keepdims=True))
-    probabilities = (exp / exp.sum(0, keepdims=True))[:-1]
-    cells_y, cells_x = probabilities.shape[1:]
-    scores = probabilities.transpose(1, 2, 0).reshape(cells_y, cells_x, CELL, CELL)
-    scores = _simple_nms(scores.transpose(0, 2, 1, 3).reshape(cells_y * CELL, cells_x * CELL))
-    ys, xs = np.nonzero(scores > KEYPOINT_THRESHOLD)
-    inside = (ys >= BORDER) & (ys < scores.shape[0] - BORDER) & (xs >= BORDER) & (xs < scores.shape[1] - BORDER)
-    ys, xs = ys[inside], xs[inside]
-    values = scores[ys, xs]
-    order = np.argsort(-values, kind="stable")[:KEYPOINTS]
-    keypoints = np.stack([xs[order], ys[order]], axis=1).astype(np.float32)
-    return keypoints, values[order].astype(np.float32), _sample_descriptors(keypoints, raw[0].astype(np.float32))
 
 
 def rotate_intrinsics(K: np.ndarray, width: int, height: int, rotation: int) -> np.ndarray:
@@ -199,41 +95,46 @@ def read_pairs(directory: Path) -> list[list[str]]:
     return lines
 
 
-def load_dataset(directory: Path, session) -> dict[str, np.ndarray]:
-    """SuperPoint's keypoints of every image, and each pair's intrinsics and pose mapped onto the resized, rotated
-    images the keypoints refer to. data["usable"] marks the pairs whose images both yield KEYPOINTS keypoints."""
+def load_dataset(directory: Path) -> dict[str, np.ndarray]:
+    """Every image's stored SuperPoint keypoints, and each pair's intrinsics and pose mapped onto the resized, rotated
+    images the keypoints refer to. data["usable"] marks the pairs whose images both have KEYPOINTS keypoints."""
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if (manifest.get("id"), manifest.get("variant")) != ("yfcc100m", "val"):
-        raise SystemExit(f"{directory} is not the {DATASET} dataset")
+    if (manifest.get("id"), manifest.get("variant"), manifest.get("keypoints")) != ("yfcc100m-keypoints", "val",
+                                                                                    KEYPOINTS):
+        raise SystemExit(f"{directory} is not the {DATASET} dataset with {KEYPOINTS} keypoints per image")
     lines = read_pairs(directory)
-    rotations: dict[str, int] = {}
-    for line in lines:
-        for name, rotation in ((line[0], int(line[2])), (line[1], int(line[3]))):
-            if rotations.setdefault(name, rotation) != rotation:
-                raise SystemExit(f"{name} appears with rotations {rotations[name]} and {rotation}")
-    names = sorted(rotations)
     columns = {"original_sizes": [], "rotations": [], "image_sizes": [], "keypoints": [], "scores": [],
                "descriptors": [], "counts": []}
-    started = time.monotonic()
-    for index, name in enumerate(names, start=1):
-        image, original = superpoint_image(directory / SPLIT / name, rotations[name])
-        keypoints, scores, descriptors = superpoint_keypoints(session, image)
-        count = len(keypoints)
+    names = []
+    for row in (directory / IMAGES_FILE).read_text(encoding="utf-8").splitlines():
+        name, width, height, rotation, count = row.split()
+        stem = directory / SPLIT / str(Path(name).with_suffix(""))
+        arrays = {
+            key: np.load(stem / f"{key}.npy", allow_pickle=False) for key in ("keypoints", "scores", "descriptors")
+        }
+        count = int(count)
+        if arrays["keypoints"].shape != (count, 2) or arrays["descriptors"].shape != (count, DESCRIPTOR_SIZE):
+            raise SystemExit(f"{name}'s keypoints do not match {IMAGES_FILE}")
         pad = KEYPOINTS - count
-        columns["original_sizes"].append(original)
-        columns["rotations"].append(rotations[name])
+        names.append(name)
+        columns["original_sizes"].append((int(width), int(height)))
+        columns["rotations"].append(int(rotation))
         columns["image_sizes"].append((SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT))
-        columns["keypoints"].append(np.pad(keypoints, ((0, pad), (0, 0))))
-        columns["scores"].append(np.pad(scores, (0, pad)))
-        columns["descriptors"].append(np.pad(descriptors, ((0, pad), (0, 0))))
+        columns["keypoints"].append(np.pad(arrays["keypoints"], ((0, pad), (0, 0))))
+        columns["scores"].append(np.pad(arrays["scores"], (0, pad)))
+        columns["descriptors"].append(np.pad(arrays["descriptors"], ((0, pad), (0, 0))))
         columns["counts"].append(count)
-        if index == 1 or index % 250 == 0 or index == len(names):
-            log(f"SuperPoint: {index}/{len(names)} images, {(time.monotonic() - started) / index * 1000:.0f} ms/image")
     data = {key: np.array(value) for key, value in columns.items()}
     position = {name: index for index, name in enumerate(names)}
     pair_images, intrinsics, poses = [], [], []
     for line in lines:
+        if line[0] not in position or line[1] not in position:
+            raise SystemExit(f"{IMAGES_FILE} has no keypoints for {line[0]} or {line[1]}")
         images = (position[line[0]], position[line[1]])
+        for image, rotation in zip(images, (int(line[2]), int(line[3]))):
+            if data["rotations"][image] != rotation:
+                detected = data["rotations"][image]
+                raise SystemExit(f"{names[image]} was detected with rotation {detected}, not {rotation}")
         pose = np.array(line[22:], dtype=np.float64).reshape(4, 4)
         cameras, camera_T_world = [], []
         for image, values, start in ((images[0], line[4:13], np.eye(4)), (images[1], line[13:22], pose)):
@@ -392,8 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != DATASET:
         raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
-    with tempfile.TemporaryDirectory(prefix="superpoint-") as cache:
-        data = load_dataset(Path(directory), superpoint_session(Path(cache)))
+    data = load_dataset(Path(directory))
     pairs = [pair for pair in range(min(args.limit, PAIRS) if args.limit else PAIRS) if data["usable"][pair]]
 
     options = pyneat.ModelOptions()
@@ -419,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         "metrics": metrics,
         "split": SPLIT, "evaluated_samples": len(pairs), "available_samples": PAIRS,
         "details": {
-            "keypoints": f"SuperPoint FP32 ONNX at {SUPERPOINT_WIDTH}x{SUPERPOINT_HEIGHT}, best {KEYPOINTS}",
+            "keypoints": f"SuperPoint FP32 at {SUPERPOINT_WIDTH}x{SUPERPOINT_HEIGHT}, best {KEYPOINTS}",
             "skipped_pairs": int((~data["usable"]).sum()), "matches_per_pair": totals["matches"],
             "seconds": round(time.monotonic() - started, 1),
         },

@@ -168,53 +168,54 @@ def test_couplings_must_be_finite_and_channels_last(case: str, load_script: Call
 K_INPUT = np.array([[400.0, 0.0, 319.5], [0.0, 400.0, 239.5], [0.0, 0.0, 1.0]])
 
 
-def _write_val(accuracy: ModuleType, root: Path, pose: np.ndarray, rotations: tuple[int, int] = (0, 0)) -> Path:
-    """A yfcc100m val directory: val/a/0.jpg and val/a/1.jpg, and annotations/pairs_val.txt holding 4000 copies
-    of their pair, with intrinsics of the 1280 x 960 originals."""
-    import cv2
-
-    directory = root / "yfcc100m-val"
-    (directory / "val" / "a").mkdir(parents=True)
-    (directory / "annotations").mkdir()
-    for name in ("0.jpg", "1.jpg"):
-        assert cv2.imwrite(str(directory / "val" / "a" / name), np.full((960, 1280, 3), 128, np.uint8))
+def _write_superpoint(
+    accuracy: ModuleType, root: Path, data: dict[str, np.ndarray], pose: np.ndarray, counts=(512, 512)
+) -> Path:
+    """A yfcc100m-keypoints val directory: two images' stored keypoints, annotations/images.txt and
+    annotations/pairs_val.txt holding 4000 copies of their pair, with intrinsics of the 1280 x 960 originals."""
+    directory = root / "yfcc100m-keypoints-val"
+    (directory / "annotations").mkdir(parents=True)
+    rows = []
+    for side, count in enumerate(counts):
+        stem = directory / "val" / "a" / str(side)
+        stem.mkdir(parents=True)
+        np.save(stem / "keypoints.npy", data["keypoints"][side][:count])
+        np.save(stem / "scores.npy", data["scores"][side][:count])
+        np.save(stem / "descriptors.npy", data["descriptors"][side][:count])
+        rows.append(f"a/{side}.jpg 1280 960 0 {count}")
+    (directory / accuracy.IMAGES_FILE).write_text("\n".join(rows) + "\n", encoding="utf-8")
     original = np.diag([2.0, 2.0, 1.0]) @ K_INPUT
-    values = [*map(str, rotations), *(f"{v:.6f}" for v in [*original.ravel(), *original.ravel(), *pose.ravel()])]
+    values = ["0", "0", *(f"{v:.6f}" for v in [*original.ravel(), *original.ravel(), *pose.ravel()])]
     line = " ".join(["a/0.jpg", "a/1.jpg", *values])
     (directory / accuracy.PAIRS_FILE).write_text((line + "\n") * accuracy.PAIRS, encoding="utf-8")
-    (directory / "manifest.json").write_text(json.dumps({"id": "yfcc100m", "variant": "val"}), encoding="utf-8")
+    manifest = {"id": "yfcc100m-keypoints", "variant": "val", "keypoints": accuracy.KEYPOINTS}
+    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return directory
 
 
-@pytest.mark.parametrize("case", ["valid", "short", "rotation", "dataset"])
-def test_load_dataset_joins_superpoint_keypoints_and_ground_truth(
-    case: str, tmp_path: Path, load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("case", ["valid", "short", "rotation", "dataset", "shape"])
+def test_load_dataset_joins_stored_keypoints_and_ground_truth(
+    case: str, tmp_path: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
     accuracy = load_script("accuracy")
     data, _ = _scene(accuracy)
-    directory = _write_val(accuracy, tmp_path, data["poses"][0])
-    calls = []
-
-    def keypoints(session, image):
-        # load_dataset detects the images in name order: a/0.jpg, then a/1.jpg.
-        side = len(calls)
-        calls.append(side)
-        count = 100 if case == "short" and side == 1 else accuracy.KEYPOINTS
-        return data["keypoints"][side][:count], data["scores"][side][:count], data["descriptors"][side][:count]
-
-    monkeypatch.setattr(accuracy, "superpoint_keypoints", keypoints)
+    counts = (512, 100) if case == "short" else (512, 512)
+    directory = _write_superpoint(accuracy, tmp_path, data, data["poses"][0], counts)
     if case == "rotation":
         text = (directory / accuracy.PAIRS_FILE).read_text(encoding="utf-8").split("\n")
         text[5] = text[5].replace(".jpg 0 0 ", ".jpg 0 1 ")
         (directory / accuracy.PAIRS_FILE).write_text("\n".join(text), encoding="utf-8")
     elif case == "dataset":
-        (directory / "manifest.json").write_text(json.dumps({"id": "yfcc100m", "variant": "cal"}), encoding="utf-8")
+        manifest = {"id": "yfcc100m-keypoints", "variant": "cal", "keypoints": accuracy.KEYPOINTS}
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    elif case == "shape":
+        np.save(directory / "val" / "a" / "1" / "descriptors.npy", data["descriptors"][1][:, :128])
 
-    if case in {"rotation", "dataset"}:
+    if case in {"rotation", "dataset", "shape"}:
         with pytest.raises(SystemExit):
-            accuracy.load_dataset(directory, session=None)
+            accuracy.load_dataset(directory)
         return
-    loaded = accuracy.load_dataset(directory, session=None)
+    loaded = accuracy.load_dataset(directory)
     assert loaded["pair_images"].shape == (accuracy.PAIRS, 2) and (loaded["pair_images"] == [0, 1]).all()
     assert (loaded["image_sizes"] == [640, 480]).all() and (loaded["original_sizes"] == [1280, 960]).all()
     # The originals' intrinsics, scaled by half onto SuperPoint's input, give the input camera again.
@@ -226,49 +227,6 @@ def test_load_dataset_joins_superpoint_keypoints_and_ground_truth(
     else:
         np.testing.assert_array_equal(loaded["keypoints"], data["keypoints"])
         assert loaded["usable"].all()
-
-
-@pytest.mark.parametrize("rotation", [0, 1])
-def test_superpoint_input_is_640_by_480_grayscale_after_the_turn(
-    rotation: int, tmp_path: Path, load_script: Callable[[str], ModuleType]
-) -> None:
-    import cv2
-
-    accuracy = load_script("accuracy")
-    pixels = np.zeros((600, 800, 3), np.uint8)
-    pixels[:, :400] = 255  # white left half
-    assert cv2.imwrite(str(tmp_path / "image.png"), pixels)
-
-    image, original = accuracy.superpoint_image(tmp_path / "image.png", rotation)
-
-    assert original == (800, 600) and image.shape == (480, 640) and image.dtype == np.float32
-    assert 0.0 <= image.min() and image.max() <= 1.0
-    if rotation == 0:
-        assert image[:, :300].mean() > 0.99 and image[:, 340:].mean() < 0.01
-    else:
-        # Resized to 480 x 640 first, then turned a quarter counter-clockwise: the white half ends up at the bottom.
-        assert image[260:].mean() > 0.99 and image[:220].mean() < 0.01
-
-
-def test_superpoint_decode_keeps_the_best_keypoints_first(load_script: Callable[[str], ModuleType]) -> None:
-    accuracy = load_script("accuracy")
-    logits = np.full((1, 65, 60, 80), -10.0, np.float32)
-    logits[0, 64] = 10.0  # every cell is "no keypoint"
-    for (cy, cx, channel, strength) in ((10, 20, 9, 12.0), (30, 40, 18, 14.0)):
-        logits[0, channel, cy, cx] = strength  # one strong keypoint in each of two cells
-    descriptors = np.random.default_rng(0).normal(size=(1, 256, 60, 80)).astype(np.float32)
-
-    class Session:
-        def run(self, outputs, inputs):
-            assert inputs["image"].shape == (1, 1, 480, 640)
-            return [logits, descriptors]
-
-    keypoints, scores, sampled = accuracy.superpoint_keypoints(Session(), np.zeros((480, 640), np.float32))
-
-    # Channel c of cell (cy, cx) is pixel (cx * 8 + c % 8, cy * 8 + c // 8); the stronger one comes first.
-    assert keypoints[:2].tolist() == [[40 * 8 + 2, 30 * 8 + 2], [20 * 8 + 1, 10 * 8 + 1]]
-    assert scores[0] > scores[1] > accuracy.KEYPOINT_THRESHOLD
-    np.testing.assert_allclose(np.linalg.norm(sampled, axis=1), 1.0, rtol=1e-5)
 
 
 def test_intrinsics_follow_the_resize_and_a_quarter_turn(load_script: Callable[[str], ModuleType]) -> None:

@@ -1,8 +1,8 @@
 """Benchmark SuperGlue with Neat Core on one keypoint pair, including its CPU matching, and save its report.
 
-SuperGlue takes keypoints, not images. With --dataset yfcc100m-val=<extracted directory> the benchmark repeats one
-random.Random(0) pair of that dataset, its keypoints found by the SuperPoint FP32 ONNX at 640 x 480 exactly as
-accuracy.py finds them; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
+SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
+repeats two random.Random(0) images of that dataset with 512 keypoints each, the SuperPoint FP32 keypoints
+accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
 the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (matching.py), as
 accuracy.py does. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
 """
@@ -11,22 +11,20 @@ from __future__ import annotations
 
 import argparse
 import random
-import tempfile
 import time
 from pathlib import Path
 
 import model_report
 import numpy as np
 import pyneat
-from accuracy import superpoint_image, superpoint_keypoints, superpoint_session
 from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
-DATASET = "yfcc100m-val"
-PAIRS_FILE = "annotations/pairs_val.txt"
+DATASET = "yfcc100m-keypoints-val"
+IMAGES_FILE = "annotations/images.txt"
 KEYPOINTS, DESCRIPTOR_SIZE = 512, 256
 # The MPK's channels-last inputs, in its order.
 INPUTS = ("keypoints0", "scores0", "descriptors0", "keypoints1", "scores1", "descriptors1")
-# The fixed pair's image size: SuperPoint's input.
+# SuperPoint's input size, which the keypoints' pixel coordinates refer to.
 FIXED_WIDTH, FIXED_HEIGHT = 640, 480
 # As accuracy.py and SuperGlue's match_pairs.py evaluation.
 SINKHORN_ITERATIONS = 20
@@ -36,19 +34,18 @@ MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
 
 
-def dataset_images(dataset: Path, cache: Path) -> tuple[str, list]:
-    """One random.Random(0) pair of yfcc100m val: its name and each image's (keypoints, scores, descriptors, size)."""
-    lines = [line.split() for line in (dataset / PAIRS_FILE).read_text(encoding="utf-8").splitlines() if line.strip()]
-    pair = random.Random(0).choice(lines)
-    session = superpoint_session(cache)
+def dataset_images(dataset: Path) -> tuple[str, list]:
+    """Two random.Random(0) images with 512 stored keypoints each: their names and each one's
+    (keypoints, scores, descriptors, size)."""
+    rows = [row.split() for row in (dataset / IMAGES_FILE).read_text(encoding="utf-8").splitlines()]
+    full = [row[0] for row in rows if int(row[4]) == KEYPOINTS]
+    names = random.Random(0).sample(full, 2)
     images = []
-    for name, rotation in ((pair[0], int(pair[2])), (pair[1], int(pair[3]))):
-        image, _ = superpoint_image(dataset / "val" / name, rotation)
-        keypoints, scores, descriptors = superpoint_keypoints(session, image)
-        if len(keypoints) < KEYPOINTS:
-            raise SystemExit(f"{name} yields only {len(keypoints)} keypoints")
-        images.append((keypoints, scores, descriptors, (image.shape[1], image.shape[0])))
-    return f"{DATASET} {pair[0]} and {pair[1]}", images
+    for name in names:
+        stem = dataset / "val" / str(Path(name).with_suffix(""))
+        arrays = [np.load(stem / f"{key}.npy", allow_pickle=False) for key in ("keypoints", "scores", "descriptors")]
+        images.append((*arrays, (FIXED_WIDTH, FIXED_HEIGHT)))
+    return f"{DATASET} {names[0]} and {names[1]}", images
 
 
 def fixed_images() -> tuple[str, list]:
@@ -138,8 +135,7 @@ def main() -> None:
         dataset_id, dataset_dir = args.dataset.split("=", 1)
         if dataset_id != DATASET:
             raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
-        with tempfile.TemporaryDirectory(prefix="superpoint-") as cache:
-            workload, images = dataset_images(Path(dataset_dir), Path(cache))
+        workload, images = dataset_images(Path(dataset_dir))
     else:
         workload, images = fixed_images()
 
