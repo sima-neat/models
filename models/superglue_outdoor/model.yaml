@@ -49,6 +49,10 @@ build_profiles:
   #     model:
   #       parameters: {precision: w8a16}
 
+accuracy:
+  datasets:
+  - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}
+
 performance: {}
 
 reference_metrics:

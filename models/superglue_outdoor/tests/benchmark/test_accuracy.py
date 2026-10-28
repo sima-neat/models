@@ -255,5 +255,20 @@ def test_a_stretched_quarter_turn_scales_the_original_axes(load_script: Callable
     np.testing.assert_allclose(mapped, [[2000 / 3, 0.0, 958 / 3], [0.0, 375.0, 480 - 1 - 239.625], [0.0, 0.0, 1.0]])
 
 
+@pytest.mark.parametrize("spread", [3.0, 400.0])
+def test_sinkhorn_matches_equal_the_log_transport_extraction(spread: float,
+                                                             load_script: Callable[[str], ModuleType]) -> None:
+    pytest.importorskip("cv2")
+    accuracy = load_script("accuracy")
+    rng = np.random.RandomState(5)
+    # 64 keypoints a side, 40 true matches; a spread of 400 underflows the linear domain and takes the log path.
+    couplings = rng.normal(0, 1, (65, 65)) * spread / 10
+    couplings[np.arange(40), rng.permutation(64)[:40]] += spread
+    expected = accuracy.extract_matches(accuracy.log_sinkhorn(couplings, 20), 0.2)
+    matches, scores = accuracy.sinkhorn_matches(couplings, 20, 0.2)
+    np.testing.assert_array_equal(matches, expected[0])
+    np.testing.assert_allclose(scores, expected[1], rtol=1e-9, atol=0)
+
+
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
     assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []

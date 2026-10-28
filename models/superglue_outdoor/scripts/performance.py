@@ -3,13 +3,19 @@
 SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
 repeats two random.Random(0) images of that dataset with 512 keypoints each, the SuperPoint FP32 keypoints
 accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
-the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (from accuracy.py), as
-accuracy.py does. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
+the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (accuracy.py's
+sinkhorn_matches), as accuracy.py does. Latency runs one pair at a time. The CPU steps take longer than the MPK,
+so the throughput pass matches pairs in NEAT_WORKERS processes, each with its own runner, as an application with
+the DevKit's 16 cores would. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
+import gc
+import multiprocessing
+import os
 import random
 import time
 from pathlib import Path
@@ -17,7 +23,7 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from accuracy import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
+from accuracy import MATCH_THRESHOLD, normalize_keypoints, sinkhorn_matches
 
 DATASET = "yfcc100m-keypoints-val"
 IMAGES_FILE = "annotations/images.txt"
@@ -32,6 +38,11 @@ WARMUP_PAIRS = 10
 MEASURED_PAIRS = 1000
 MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
+# Throughput-pass processes, each running the MPK and the CPU matching. Neat Core starts at most four accelerator
+# clients at once.
+NEAT_WORKERS = 4
+# Seconds between the workers' starts: runners built at the same moment can find the accelerator busy.
+NEAT_START_STAGGER_S = 2.0
 
 
 def dataset_images(dataset: Path) -> tuple[str, list]:
@@ -100,29 +111,79 @@ def match_pair(runner, tensors: list) -> np.ndarray:
     """The MPK's couplings, then the CPU's Sinkhorn iterations and mutual-match extraction: the pair's matches."""
     (output,) = runner.run(tensors, timeout_ms=TIMEOUT_MS)
     couplings = output.to_numpy(copy=False).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
-    matches, _ = extract_matches(log_sinkhorn(couplings, SINKHORN_ITERATIONS), MATCH_THRESHOLD)
+    matches, _ = sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
     return matches
 
 
-def measure(model: pyneat.Model, tensors: list) -> tuple[list[float], float, pyneat.Telemetry]:
-    """Seconds per pair after the warm-up, the measured span's length, and board telemetry over it."""
+def measure_latency(model: pyneat.Model, tensors: list) -> list[float]:
+    """Seconds per pair, one pair at a time, after the warm-up."""
     runner = model.build(tensors)
     try:
         for _ in range(WARMUP_PAIRS):
             match_pair(runner, tensors)
-        monitor = pyneat.TelemetryMonitor()
-        monitor.start()
         seconds: list[float] = []
         started = time.perf_counter()
         while len(seconds) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
             begun = time.perf_counter()
             match_pair(runner, tensors)
             seconds.append(time.perf_counter() - begun)
-        span = time.perf_counter() - started
-        telemetry = monitor.stop()
     finally:
         runner.close()
-    return seconds, span, telemetry
+    return seconds
+
+
+def _start_worker(mpk: str, arrays: list[np.ndarray], started, ready) -> None:
+    """Pool initializer of a throughput worker: its own model and runner, built one worker at a time."""
+    global _worker_runner, _worker_tensors
+    # The parent's runner set this for Neat's GStreamer runtime; Neat refuses to start with it inherited.
+    os.environ.pop("GST_PLUGIN_SYSTEM_PATH_1_0", None)
+    with started.get_lock():
+        order = started.value
+        started.value += 1
+    time.sleep(order * NEAT_START_STAGGER_S)
+    _worker_tensors = [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays]
+    _worker_runner = pyneat.Model(mpk, tensor_options()).build(_worker_tensors)
+    match_pair(_worker_runner, _worker_tensors)
+    with ready.get_lock():
+        ready.value += 1
+
+
+def _match_once(_: int) -> int:
+    return int((match_pair(_worker_runner, _worker_tensors) >= 0).sum())
+
+
+def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> tuple[int, float, pyneat.Telemetry]:
+    """Pairs, seconds and board telemetry with pairs matched in NEAT_WORKERS processes, each keeping at most two
+    pairs queued. The measured span starts after WARMUP_PAIRS pairs and lasts at least MEASURED_PAIRS pairs and
+    MIN_DURATION_S seconds."""
+    monitor = pyneat.TelemetryMonitor()
+    context = multiprocessing.get_context("spawn")
+    ready = context.Value("i", 0)
+    pairs, started = 0, 0.0
+    with context.Pool(NEAT_WORKERS, _start_worker, (mpk, arrays, context.Value("i", 0), ready)) as pool:
+        # Stream pairs only once every worker has built its runner.
+        deadline = time.monotonic() + 120 + NEAT_WORKERS * NEAT_START_STAGGER_S
+        while ready.value < NEAT_WORKERS:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"only {ready.value} of {NEAT_WORKERS} workers started")
+            time.sleep(0.5)
+        ahead = collections.deque()
+        submitted = 0
+        while True:
+            ahead.append(pool.apply_async(_match_once, (submitted,)))
+            submitted += 1
+            if len(ahead) <= 2 * NEAT_WORKERS:
+                continue
+            ahead.popleft().get()
+            pairs += 1
+            if pairs == WARMUP_PAIRS:
+                monitor.start()
+                started = time.perf_counter()
+            elif pairs > WARMUP_PAIRS:
+                measured, seconds = pairs - WARMUP_PAIRS, time.perf_counter() - started
+                if measured >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
+                    pool.terminate()
+                    return measured, seconds, monitor.stop()
 
 
 def main() -> None:
@@ -140,30 +201,36 @@ def main() -> None:
         workload, images = fixed_images()
 
     layer_stats, stage_stats = mla_stats(args.mpk)
+    arrays = pair_tensors(images)
     model = pyneat.Model(args.mpk, tensor_options())
-    tensors = [pyneat.Tensor.from_numpy(value, copy=True) for value in pair_tensors(images)]
-    seconds, span, telemetry = measure(model, tensors)
+    seconds = measure_latency(model, [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays])
+    # The throughput workers need every accelerator client Neat allows; reload the model for the report after.
+    del model
+    gc.collect()
+    pairs, span, telemetry = measure_throughput(args.mpk, arrays)
+    model = pyneat.Model(args.mpk, tensor_options())
     benchmark = pyneat.BenchmarkReport()
     benchmark.latency_ms = float(np.mean(seconds) * 1000)
     benchmark.latency_p50_ms = float(np.percentile(seconds, 50) * 1000)
     benchmark.latency_p95_ms = float(np.percentile(seconds, 95) * 1000)
     benchmark.latency_p99_ms = float(np.percentile(seconds, 99) * 1000)
-    benchmark.fps = len(seconds) / span
+    benchmark.fps = pairs / span
     benchmark.throughput_duration_ms = span * 1000
-    benchmark.throughput_samples = len(seconds)
+    benchmark.throughput_samples = pairs
     report = model_report.from_performance(
         benchmark,
         {"model": model},
         workload=(
             f"{workload}, {KEYPOINTS} keypoints each, on the tensor route, then {SINKHORN_ITERATIONS} Sinkhorn "
-            "iterations and mutual-match extraction on the CPU, one pair at a time"
+            f"iterations and mutual-match extraction on the CPU; latency one pair at a time, throughput with "
+            f"{NEAT_WORKERS} processes each running the MPK and the CPU matching"
         ),
         telemetry=telemetry,
         mla_layer_stats={"model": layer_stats},
         mla_stage_stats={"model": stage_stats},
     )
     report.save(args.output)
-    print(f"{benchmark.fps:.1f} pairs/s over {len(seconds)} pairs; latency {benchmark.latency_ms:.2f} ms")
+    print(f"{benchmark.fps:.1f} pairs/s over {pairs} pairs; latency {benchmark.latency_ms:.2f} ms")
 
 
 if __name__ == "__main__":

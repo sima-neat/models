@@ -101,6 +101,39 @@ def extract_matches(log_transport, threshold=0.0):
     return np.where(valid, best0, -1), np.where(valid, scores, 0.0)
 
 
+def sinkhorn_matches(couplings, iterations, threshold=0.0):
+    """extract_matches(log_sinkhorn(couplings, iterations), threshold), computed without the log matrix.
+
+    Same iterations in the linear domain, with OpenCV's vectorized exponential and a row-major copy of the kernel's
+    transpose for the column update. log is increasing, so each row's best column is the argmax of kernel * v and
+    each column's best row the argmax of kernel * u; the score is exp(log transport) = kernel * u * v * (M + N).
+    """
+    import cv2
+
+    rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
+    scale = rows + columns
+    mu = np.full(rows + 1, 1.0 / scale)
+    mu[-1] = columns / scale
+    nu = np.full(columns + 1, 1.0 / scale)
+    nu[-1] = rows / scale
+    cost = np.asarray(couplings, dtype=np.float64).reshape(rows + 1, columns + 1)
+    kernel = cv2.exp(cost - cost.max())
+    kernel_t = np.ascontiguousarray(kernel.T)
+    u, v = np.ones(rows + 1), np.ones(columns + 1)
+    for _ in range(iterations):
+        u = mu / (kernel @ v)
+        v = nu / (kernel_t @ u)
+    if not (np.all(np.isfinite(u)) and np.all(np.isfinite(v)) and np.all(u > 0) and np.all(v > 0)):
+        return extract_matches(log_sinkhorn(couplings, iterations), threshold)
+    by_row = kernel[:-1, :-1] * v[None, :-1]
+    best0 = by_row.argmax(1)
+    best1 = (kernel_t[:-1, :-1] * u[None, :-1]).argmax(1)
+    mutual = best1[best0] == np.arange(rows)
+    scores = np.where(mutual, by_row[np.arange(rows), best0] * u[:-1] * scale, 0.0)
+    valid = mutual & (scores > threshold)
+    return np.where(valid, best0, -1), np.where(valid, scores, 0.0)
+
+
 def rotate_intrinsics(K: np.ndarray, width: int, height: int, rotation: int) -> np.ndarray:
     """SuperGlue's utils.rotate_intrinsics for an image of (width, height) after the rotation."""
     w, h = (height, width) if rotation % 2 else (width, height)
@@ -287,7 +320,7 @@ def pose_auc(errors: Sequence[float], thresholds: Sequence[float] = AUC_DEGREES)
 
 def score_pair(couplings: np.ndarray, data: dict[str, np.ndarray], pair: int) -> dict[str, float]:
     """Match one pair from its [N+1, N+1] couplings and score the matches and the pose as match_pairs.py does."""
-    matches, _ = extract_matches(log_sinkhorn(couplings, SINKHORN_ITERATIONS), MATCH_THRESHOLD)
+    matches, _ = sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
     image0, image1 = data["pair_images"][pair]
     K0, K1 = data["intrinsics"][pair]
     T_0to1 = data["poses"][pair]
