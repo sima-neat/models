@@ -3,10 +3,17 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The expected YFCC100M values are recorded from the first DevKit accuracy run on yfcc100m-keypoints val (#365 follow-up).
+  run_tests: true
+  expected:
+    w16a16:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2850
+        pose_auc_10: 0.4925
+        pose_auc_20: 0.6806
+        match_precision: 0.9724
+        matching_score: 0.2762
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 13.4
+      throughput_fps: 48.7
