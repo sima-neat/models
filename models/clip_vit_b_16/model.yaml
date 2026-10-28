@@ -48,27 +48,29 @@ calibrations:
 - id: imagenet-2012-cal
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
 
+# Both precisions calibrate: AFE refuses to quantize these encoders without calibrated ranges, even at BF16.
+# The text encoder calibrates on 32 of the tokenized prompts the conversion embeds, not on images.
 build_profiles:
   w16a16:
+    calibration_dataset: imagenet-2012-cal
     components:
       image_encoder:
-        parameters: {precision: w16a16}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
       text_encoder:
-        parameters: {precision: w16a16}
+        parameters: {precision: w16a16, calibration_bins: 2048}
 
   w8a8:
     calibration_dataset: imagenet-2012-cal
     components:
       image_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
-      # The text encoder calibrates on 32 of the tokenized prompts the conversion embeds, not on images.
       text_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048}
 
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-  # The 50 images after W8A8's 50 calibration images. text_embeds compares the end-of-text rows of the 32
+  # The 50 images after the 50 calibration images. text_embeds compares the end-of-text rows of the 32
   # embedded prompts the text encoder does not calibrate on.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
   outputs: [image_embeds, logits, text_embeds]

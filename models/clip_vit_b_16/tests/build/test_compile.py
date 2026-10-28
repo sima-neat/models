@@ -128,7 +128,8 @@ def test_compile_reads_both_encoders_of_each_build_profile(
     parameters = recipe._component_parameters(recipe.load_metadata(MODEL_DIR), profile_id)
     assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
     assert {item["precision"] for item in parameters.values()} == {profile_id}
-    assert all(recipe._calibrates(item) == (profile_id == "w8a8") for item in parameters.values())
+    # Both precisions calibrate both encoders: AFE needs calibrated ranges even at BF16.
+    assert all("calibration_bins" in item for item in parameters.values())
     assert recipe._precision_label(parameters) == profile_id.upper()
 
 
@@ -151,9 +152,9 @@ def test_fidelity_compares_every_output_after_the_calibration_images(load_script
         int(binding["parameters"]["calibration_samples"])
         for profile in metadata["build_profiles"]
         for binding in profile["components"]
-        if binding["id"] == "image_encoder" and "calibration_samples" in binding["parameters"]
+        if binding["id"] == "image_encoder"
     ]
-    assert counts and fidelity["selection"]["offset"] >= max(counts)
+    assert len(counts) == len(metadata["build_profiles"]) and fidelity["selection"]["offset"] >= max(counts)
     assert metadata["calibrations"][0]["dataset"] == fidelity["dataset"]
 
 

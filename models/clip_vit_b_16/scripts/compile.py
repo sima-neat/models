@@ -29,7 +29,6 @@ from afe.apis.defines import (
     HistogramMSEMethod,
     InputName,
     RequantizationMode,
-    SkipCalibration,
     bfloat16_scheme,
     default_quantization,
     gen2_target,
@@ -79,27 +78,21 @@ def _component_name(profile_id: str, component_id: str) -> str:
     return f"{MODEL_ID}_{profile_id}_{component_id}"
 
 
-def _calibrates(parameters: dict[str, Any]) -> bool:
-    return parameters["precision"] == "w8a8"
-
-
 def _quantization_config(parameters: dict[str, Any]) -> Any:
     precision = parameters["precision"]
     if precision == "w8a8":
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
         weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-        calibration = HistogramMSEMethod(int(parameters["calibration_bins"]))
     elif precision == "w16a16":
-        # BF16 activations need no calibrated ranges.
         activation = weights = bfloat16_scheme()
-        calibration = SkipCalibration()
     else:
         raise ValueError(f"unsupported precision: {precision}")
     return (
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
         .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(calibration)
+        # AFE refuses to quantize these encoders without calibrated ranges, even at BF16.
+        .with_calibration(HistogramMSEMethod(int(parameters["calibration_bins"])))
         .with_channel_equalization(False)
         .with_smooth_quant(False)
         # with_activation_quantization turns per-token quantization on for BF16; these builds do not use it.
@@ -113,14 +106,12 @@ def _afe_layout(array: np.ndarray) -> np.ndarray:
 
 
 def _quantize_component(graph: Path, name: str, component_id: str, parameters: dict[str, Any],
-                        calibration: np.ndarray | None) -> Any:
+                        calibration: np.ndarray) -> Any:
     shapes = COMPONENT_GRAPHS[component_id]["inputs"]
     importer = onnx_source(str(graph), shape_dict=shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
-    data = None
-    if calibration is not None:
-        (input_name,) = shapes
-        data = convert_data_generator_to_iterable(DataGenerator({InputName(input_name): _afe_layout(calibration)}))
+    (input_name,) = shapes
+    data = convert_data_generator_to_iterable(DataGenerator({InputName(input_name): _afe_layout(calibration)}))
     return loaded.quantize(
         calibration_data=data,
         quantization_config=_quantization_config(parameters),
@@ -313,12 +304,10 @@ def _output(outputs: dict[tuple[int, ...], np.ndarray], component_id: str, name:
 
 
 def _image_phase(graph: Path, temporary_dir: Path, profile_id: str, parameters: dict[str, Any],
-                 calibration_dataset: Path | None, calibration_names: list[str], fidelity_dataset: Path,
+                 calibration_dataset: Path, calibration_names: list[str], fidelity_dataset: Path,
                  fidelity_names: list[str]) -> None:
     """Compile the image encoder and compare its outputs on the fidelity images."""
-    calibration = None
-    if _calibrates(parameters):
-        calibration = load_images(calibration_dataset, calibration_names).transpose(0, 3, 1, 2)
+    calibration = load_images(calibration_dataset, calibration_names).transpose(0, 3, 1, 2)
     name = _component_name(profile_id, "image_encoder")
     encoder = _quantize_component(graph, name, "image_encoder", parameters, calibration)
     _compile_component(encoder, temporary_dir / name, "image_encoder", parameters["precision"])
@@ -336,9 +325,8 @@ def _text_phase(graph: Path, temporary_dir: Path, profile_id: str, parameters: d
     """Compile the text encoder and compare the held-out prompts' end-of-text rows."""
     with np.load(temporary_dir / PROMPTS_FILE) as saved:
         prompts, ends = saved["prompts"], saved["ends"]
-    calibration = prompts[:TEXT_CALIBRATION] if _calibrates(parameters) else None
     name = _component_name(profile_id, "text_encoder")
-    encoder = _quantize_component(graph, name, "text_encoder", parameters, calibration)
+    encoder = _quantize_component(graph, name, "text_encoder", parameters, prompts[:TEXT_CALIBRATION])
     _compile_component(encoder, temporary_dir / name, "text_encoder", parameters["precision"])
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = saved["text_embeds"]
@@ -432,7 +420,7 @@ def _write_compile_outputs(output_dir: Path, profile_id: str, archives: dict[str
                                                      encoding="utf-8")
 
 
-def compile_model(source: Path, profile_id: str, calibration_dataset: Path | None, fidelity_dataset: Path,
+def compile_model(source: Path, profile_id: str, calibration_dataset: Path, fidelity_dataset: Path,
                   output_dir: Path) -> dict[str, Path]:
     metadata = load_metadata(MODEL_DIR)
     component_parameters = _component_parameters(metadata, profile_id)
@@ -440,15 +428,11 @@ def compile_model(source: Path, profile_id: str, calibration_dataset: Path | Non
     fidelity_config = metadata["numerical_fidelity"]
     selection = fidelity_config["selection"]
     seed, offset, samples = (int(selection[key]) for key in ("seed", "offset", "samples"))
-    calibration_names: list[str] = []
     image_parameters = component_parameters["image_encoder"]
-    if _calibrates(image_parameters):
-        if calibration_dataset is None:
-            raise ValueError("a W8A8 build requires --dataset")
-        count = int(image_parameters["calibration_samples"])
-        if offset < count:
-            raise ValueError("the fidelity selection must begin after the calibration images")
-        calibration_names = select_names(calibration_dataset, seed, 0, count)
+    count = int(image_parameters["calibration_samples"])
+    if offset < count:
+        raise ValueError("the fidelity selection must begin after the calibration images")
+    calibration_names = select_names(calibration_dataset, seed, 0, count)
     fidelity_names = select_names(fidelity_dataset, seed, offset, samples)
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
@@ -495,7 +479,7 @@ def compile_model(source: Path, profile_id: str, calibration_dataset: Path | Non
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration images; required by the W8A8 build")
+    parser.add_argument("--dataset", type=Path, required=True, help="calibration images")
     parser.add_argument("--fidelity-dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
@@ -504,13 +488,13 @@ def main() -> int:
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
     source = args.model.expanduser().resolve()
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
+    dataset = args.dataset.expanduser().resolve()
     fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
     if source.suffix != ".onnx":
         parser.error("--model must be the verified ONNX from the manual conversion workflow")
     if not source.is_file():
         parser.error(f"source does not exist: {source}")
-    if dataset is not None and not dataset.exists():
+    if not dataset.exists():
         parser.error(f"dataset does not exist: {dataset}")
     if not fidelity_dataset.exists():
         parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
