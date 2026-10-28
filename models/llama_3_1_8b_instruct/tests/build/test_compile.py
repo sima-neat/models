@@ -9,4 +9,5 @@ def test_deployment_contains_the_language_model(compiled):
     assert any("language" in name and name.endswith(".elf") for name in names)
     assert "devkit/tokenizer.json" in names
     assert "devkit/vlm_config.json" in names
+    assert "devkit/LICENSE.txt" in names
     assert "compile.sh" in names
