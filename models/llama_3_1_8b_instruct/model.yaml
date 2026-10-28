@@ -13,7 +13,7 @@ architecture: llama
 license:
   spdx: LicenseRef-Llama-3.1-Community
   redistribution: restricted
-  attribution: Built with Llama. Derived from meta-llama/Llama-3.1-8B-Instruct under the Llama 3.1 Community License; GPTQ checkpoint provided by SiMa.ai.
+  attribution: Built with Llama. Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved. Derived from meta-llama/Llama-3.1-8B-Instruct; GPTQ checkpoint provided by SiMa.ai.
 
 upstream:
   repository: https://huggingface.co/simaai/Llama-3.1-8B-Instruct-GPTQ-Safetensors

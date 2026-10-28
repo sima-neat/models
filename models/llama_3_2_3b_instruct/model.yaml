@@ -13,7 +13,7 @@ architecture: llama
 license:
   spdx: LicenseRef-Llama-3.2-Community
   redistribution: restricted
-  attribution: Built with Llama. Derived from meta-llama/Llama-3.2-3B-Instruct under the Llama 3.2 Community License; AutoRound checkpoint provided by SiMa.ai.
+  attribution: Built with Llama. Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved. Derived from meta-llama/Llama-3.2-3B-Instruct; AutoRound checkpoint provided by SiMa.ai.
 
 upstream:
   repository: https://huggingface.co/simaai/Llama-3.2-3B-Instruct-Autoround-Safetensors
