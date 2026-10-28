@@ -29,11 +29,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(convert-pin): replace with the source block Vulcan Model Convert prints for this branch.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightstereo_s/TODO/model.onnx
-    sha256: TODO
-    size_bytes: 0
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightstereo_s/a93bbdc222130de7c833a2fcb963b51d57992e537dd0022a97f422d9f28a8cf3/40740157468-1/model.onnx
+    sha256: a93bbdc222130de7c833a2fcb963b51d57992e537dd0022a97f422d9f28a8cf3
+    size_bytes: 20039926
 
 build_profiles:
   # No INT8 profile yet: W8A8 measured 1.555 px Scene Flow EPE against 0.736 px for the float model, and the
