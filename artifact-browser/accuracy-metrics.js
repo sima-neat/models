@@ -40,6 +40,9 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_large: "Mask AR large",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
+  recall_at_1: "Recall@1",
+  recall_at_5: "Recall@5",
+  recall_at_10: "Recall@10",
 };
 
 export function accuracyMetricLabel(name) {
