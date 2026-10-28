@@ -6,7 +6,7 @@ import io
 import random
 import tarfile
 from collections.abc import Iterator, Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -15,9 +15,8 @@ from PIL import Image
 IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
-IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
-# coco-2017/cal holds coco/cal2017/<image> beside annotation PNGs, which are not inputs.
-CALIBRATION_SPLIT = "cal2017"
+# pitts30k/cal holds 1,000 Pitts30k-train database JPEGs under pitts30k/images/, beside the split and README.
+IMAGE_ROOT = "pitts30k/images/"
 
 
 def preprocess_image(content: bytes) -> np.ndarray:
@@ -36,20 +35,16 @@ def _image_names(dataset: Path) -> list[str]:
             names = [member.name for member in archive.getmembers() if member.isfile()]
     else:
         raise ValueError(f"unsupported image dataset input: {dataset}")
-    return sorted(
-        name
-        for name in names
-        if PurePosixPath(name).parent.name == CALIBRATION_SPLIT and name.lower().endswith(IMAGE_SUFFIXES)
-    )
+    return sorted(name for name in names if name.startswith(IMAGE_ROOT) and name.lower().endswith(".jpg"))
 
 
 def select_images(dataset: Path, seed: int, start: int, count: int) -> tuple[str, ...]:
-    """Return images start to start + count of a seeded shuffle of the dataset's cal2017 images."""
+    """Return images start to start + count of a seeded shuffle of the dataset's Pittsburgh images."""
     names = _image_names(dataset)
     if start < 0 or count < 1:
         raise ValueError("an image selection needs a non-negative start and a positive count")
     if len(names) < start + count:
-        raise ValueError(f"{dataset} has {len(names)} {CALIBRATION_SPLIT} images, but {start + count} are required")
+        raise ValueError(f"{dataset} has {len(names)} Pittsburgh images, but {start + count} are required")
     random.Random(seed).shuffle(names)
     return tuple(names[start : start + count])
 

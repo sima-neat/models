@@ -34,10 +34,10 @@ compilation:
     sha256: 48cc5517c6ce43d4079190960041986353710486c66dc3b16fd6bb7d945243fb
     size_bytes: 596020767
 
-# No loop closure set (Pitts30k, MSLS, Tokyo 24/7) is in Dataset Registry; COCO's outdoor and urban scenes calibrate.
+# Pitts30k-train database images, the training set of these weights; none is in Pitts30k test.
 calibrations:
-- id: coco-2017-cal
-  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+- id: pitts30k-cal
+  dataset: {id: pitts30k, variant: cal, sha256: 7df86e763de22f83c67d89bb594f80a22ba1fee4e0bded5141ba2053c3dad156, size_bytes: 38853089}
 
 build_profiles:
   w16a16:
@@ -48,7 +48,7 @@ build_profiles:
   # No W8A8: per-tensor INT8 activations erase the small residuals of weakly assigned clusters, which
   # intra-normalization then scales up to full weight; a W8A8 build kept 0.40 descriptor cosine on a DevKit.
   w8a16:
-    calibration_dataset: coco-2017-cal
+    calibration_dataset: pitts30k-cal
     components:
       model:
         parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 50}
@@ -56,8 +56,20 @@ build_profiles:
 numerical_fidelity:
   # Calibration takes the first images of this seed's shuffle, so the comparison starts after them.
   status: diagnostic
-  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+  dataset: {id: pitts30k, variant: cal, sha256: 7df86e763de22f83c67d89bb594f80a22ba1fee4e0bded5141ba2053c3dad156, size_bytes: 38853089}
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 10}
   outputs: [descriptor]
 
+accuracy:
+  # pitts30k-val holds the Pittsburgh 30k test split NetVLAD and these weights' authors evaluate: 6,816 queries.
+  datasets:
+  - {id: pitts30k, variant: val, sha256: 11099213681d0b0037b497d02c983a4a53c09c6e3eed0ac08637bf22cfeee395, size_bytes: 611858077}
+
 performance: {}
+
+reference_metrics:
+- source: https://arxiv.org/html/2103.01486v1
+  dataset: {id: pitts30k, split: test}
+  conditions: 640x480, Pittsburgh 30k-trained NetVLAD global descriptor, 25 m tolerance
+  note: Patch-NetVLAD Table 1, NetVLAD row; the paper does not state that row's PCA dimension.
+  metrics: {recall_at_1: 0.835, recall_at_5: 0.913, recall_at_10: 0.94}

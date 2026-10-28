@@ -52,15 +52,23 @@ def test_preprocessing_resizes_to_640x480_and_applies_imagenet_normalization(
     np.testing.assert_allclose(result[479, 639], blue, atol=1e-5)
 
 
-def test_selection_is_a_seeded_shuffle_of_cal2017_images_only(
+def test_selection_is_a_seeded_shuffle_of_the_pittsburgh_images_only(
     tmp_path: Path,
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
-    images = {f"coco/cal2017/{index:012d}.jpg": _png(8, 8, (index, 0, 0)) for index in range(6)}
+    # pitts30k/cal keeps its images under pitts30k/images/<tar>/, beside the split, the list and the README.
+    images = {
+        f"pitts30k/images/00{index % 2}/{index:06d}_pitch1_yaw1.jpg": _png(8, 8, (index, 0, 0)) for index in range(6)
+    }
     archive = _write_archive(
         tmp_path / "cal.tgz",
-        {**images, "coco/annotations/panoptic_cal2017/000000000001.png": b"mask", "coco/README.txt": b"readme"},
+        {
+            **images,
+            "pitts30k/pitts30k_train.mat": b"spec",
+            "pitts30k/cal.txt": b"list",
+            "pitts30k/README.txt": b"readme",
+        },
     )
 
     shuffled = calibration.select_images(archive, 42, 0, 6)
@@ -68,7 +76,7 @@ def test_selection_is_a_seeded_shuffle_of_cal2017_images_only(
     assert sorted(shuffled) == sorted(images)
     assert calibration.select_images(archive, 42, 2, 3) == shuffled[2:5]
     assert calibration.load_images(archive, shuffled[:2]).shape == (2, 480, 640, 3)
-    with pytest.raises(ValueError, match="has 6 cal2017 images, but 7 are required"):
+    with pytest.raises(ValueError, match="has 6 Pittsburgh images, but 7 are required"):
         calibration.select_images(archive, 42, 4, 3)
 
 
@@ -80,8 +88,8 @@ def test_calibration_images_precede_the_fidelity_selection(
     recipe = load_script("compile")
     root = tmp_path / "cal"
     for index in range(80):
-        (root / "coco" / "cal2017").mkdir(parents=True, exist_ok=True)
-        (root / "coco" / "cal2017" / f"{index:012d}.jpg").write_bytes(b"")
+        (root / "pitts30k" / "images" / "000").mkdir(parents=True, exist_ok=True)
+        (root / "pitts30k" / "images" / "000" / f"{index:06d}_pitch1_yaw1.jpg").write_bytes(b"")
     selection = recipe._metadata()["numerical_fidelity"]["selection"]
     fidelity = recipe.select_images(root, selection["seed"], selection["offset"], selection["samples"])
 
@@ -95,6 +103,21 @@ def test_calibration_images_precede_the_fidelity_selection(
     monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
     with pytest.raises(ValueError, match="must begin after the calibration images"):
         recipe.calibration_names(root, 50)
+
+
+@pytest.mark.parametrize(("precision", "per_token"), [("w8a16", True), ("w16a16", False)])
+def test_only_w8a16_quantizes_activations_per_token(
+    precision: str, per_token: bool, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    builder = MagicMock()
+    monkeypatch.setattr(compile_module, "default_quantization", builder)
+
+    compile_module._quantization(precision, 2048)
+
+    # The recipe ends every configuration with with_per_token_quant, which the YOLO26 W8A16 recipes also set.
+    (last,) = [item for item in builder.mock_calls if str(item).endswith(f".with_per_token_quant({per_token})")]
+    assert last.args == (per_token,)
 
 
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
