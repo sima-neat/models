@@ -1,0 +1,43 @@
+build-on-demand: true
+display_name: Gemma 4 E4B Text
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: gemma
+
+license:
+  spdx: LicenseRef-Gemma
+  redistribution: restricted
+  attribution: Derived from google/gemma-4-E4B-it under the Gemma Terms of Use; text-only GPTQ checkpoint provided by SiMa.ai.
+
+upstream:
+  repository: https://huggingface.co/simaai/Gemma-4-E4B-it-TextOnly-GPTQ-Safetensors
+  revision: 3e78d281a85a591493ea1a824a32c31b18f737fc
+  derived_from: https://huggingface.co/google/gemma-4-E4B-it
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Gemma-4-E4B-it-TextOnly-GPTQ-Safetensors
+    revision: 3e78d281a85a591493ea1a824a32c31b18f737fc
+    main_file: config.json
+    files:
+      chat_template.jinja: {sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5, size_bytes: 18569}
+      config.json: {sha256: b68fc63193bed27e1d5df5d94828df40bd3c627e51b79f7eaa991b2a29f81802, size_bytes: 3299}
+      generation_config.json: {sha256: ca3509307f9760c9ed873072bf385cc224dbb2876e3f7e985c4d09aada0e2062, size_bytes: 204}
+      model.safetensors: {sha256: 044ec2e1063613e56951db6e6125f7f3947b5939f1eb04efd39a2c6bba0d99b3, size_bytes: 9338824132}
+      tokenizer.json: {sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f, size_bytes: 32169626}
+      tokenizer_config.json: {sha256: a284d1243b62be31faa9c13e1c28cece940c4abaa7bd9ad87b94f61b40687200, size_bytes: 2741}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
