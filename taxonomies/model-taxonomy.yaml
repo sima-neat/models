@@ -85,6 +85,10 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
+  siglip:
+    display_name: SigLIP
+    paradigm: transformer
+    allowed_model_types: [vlm]
   whisper:
     display_name: Whisper
     paradigm: transformer
@@ -151,6 +155,9 @@ tasks:
     allowed_model_types: [llm, vlm]
   image_captioning:
     display_name: Image Captioning
+    allowed_model_types: [vlm]
+  image_text_embedding:
+    display_name: Image-Text Embedding
     allowed_model_types: [vlm]
   multimodal_chat:
     display_name: Multimodal Chat

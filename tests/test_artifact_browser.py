@@ -1852,8 +1852,9 @@ def test_preview_native_deployments_use_manifest_and_path_preserving_files(tmp_p
     api = "/v1/repositories/sima-neat/models"
     with _preview(tmp_path) as base:
         catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        model = next(model for model in catalog["catalog"]["document"]["models"]
-                     if model["categories"]["model_type"] in {"llm", "vlm"})
+        # A LLiMa model; a vision-language model such as CLIP can be an ONNX model with MPKs instead.
+        model = next(model for model in catalog["catalog"]["document"]["models"] if model["builds"] and _get_json(
+            f"{base}/v1/runs/{model['builds'][0]['run_id']}")["run"]["metadata"]["artifact_kind"] == "llima")
         for record in [model["builds"][0], model["packages"][0]]:
             artifacts = _get_json(f"{base}/v1/runs/{record['run_id']}")["artifacts"]
             manifest, *files = artifacts
