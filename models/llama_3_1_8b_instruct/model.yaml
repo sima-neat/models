@@ -1,0 +1,44 @@
+build-on-demand: true
+display_name: Llama 3.1 8B Instruct
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: llama
+
+license:
+  spdx: LicenseRef-Llama-3.1-Community
+  redistribution: restricted
+  attribution: Built with Llama. Derived from meta-llama/Llama-3.1-8B-Instruct under the Llama 3.1 Community License; GPTQ checkpoint provided by SiMa.ai.
+
+upstream:
+  repository: https://huggingface.co/simaai/Llama-3.1-8B-Instruct-GPTQ-Safetensors
+  revision: 1a68b8a99dcf44ea15b831bfc582f9b71004a92e
+  derived_from: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Llama-3.1-8B-Instruct-GPTQ-Safetensors
+    revision: 1a68b8a99dcf44ea15b831bfc582f9b71004a92e
+    main_file: config.json
+    files:
+      chat_template.jinja: {sha256: e10ca381b1ccc5cf9db52e371f3b6651576caee0a630b452e2816b2d404d4b65, size_bytes: 4614}
+      config.json: {sha256: df511be289b7f0653d8a2118f4e61617f58ef4a3487b6f6fdf7fe0d07839a719, size_bytes: 1821}
+      generation_config.json: {sha256: 986f6be5036784161c539c46a8788b8ed1f05a2500692850300dd6073fa205bc, size_bytes: 184}
+      model.safetensors: {sha256: 4df75ba7e34b2d467d3acdf56ac9c07db71f34fb38cf6023ddc5a40f54d01fbc, size_bytes: 4862253160}
+      special_tokens_map.json: {sha256: 6f38c73729248f6c127296386e3cdde96e254636cc58b4169d3fd32328d9a8ec, size_bytes: 296}
+      tokenizer.json: {sha256: 12487b766b0b1584dcc5311824df327d5ea154939524790c643cdf2a3f6adf9f, size_bytes: 17209921}
+      tokenizer_config.json: {sha256: 06cf8bb52c93bb82c7f8e416646cb1e01fe48e5df5ce509377637b9eca0037f5, size_bytes: 324}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
