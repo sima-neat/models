@@ -31,7 +31,7 @@ def test_sinkhorn_and_extraction_find_clear_matches(converter: ModuleType) -> No
     couplings[np.arange(size), permutation] = 8.0
     couplings[4] = -2.0  # keypoint 4 has no partner: its mass goes to the dustbin
     couplings[:, -1] = couplings[-1] = 1.0
-    log_transport = converter.log_sinkhorn(couplings[None])
+    log_transport = converter.log_sinkhorn(couplings[None], converter.SINKHORN_ITERATIONS)
 
     matches, scores = converter.extract_matches(log_transport)
     # Extraction compares keypoints only, so the two leftovers still pair up, with a near-zero score...

@@ -3,7 +3,7 @@
 SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
 repeats two random.Random(0) images of that dataset with 512 keypoints each, the SuperPoint FP32 keypoints
 accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
-the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (matching.py), as
+the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (from accuracy.py), as
 accuracy.py does. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from matching import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
+from accuracy import MATCH_THRESHOLD, extract_matches, log_sinkhorn, normalize_keypoints
 
 DATASET = "yfcc100m-keypoints-val"
 IMAGES_FILE = "annotations/images.txt"

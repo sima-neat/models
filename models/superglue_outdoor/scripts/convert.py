@@ -2,7 +2,7 @@
 
 The exported graph runs the keypoint encoder, the attentional GNN and the final projection of one image pair and
 returns the Sinkhorn couplings, the descriptor scores bordered by the learned dustbin score. The application runs the
-Sinkhorn iterations and match extraction on the CPU; matching.py is their reference.
+Sinkhorn iterations and match extraction on the CPU; accuracy.py holds their reference.
 """
 
 import argparse
@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 
 import numpy as np
 import onnx
-from matching import SINKHORN_ITERATIONS, extract_matches, log_sinkhorn, normalize_keypoints  # noqa: F401
+from accuracy import extract_matches, log_sinkhorn, normalize_keypoints  # noqa: F401
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
 
@@ -18,6 +18,8 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 
 CHECKPOINT = "model.safetensors"
 EXPORTER = "4.57.1"
+# transformers' SuperGlueConfig default, which the exported couplings are checked under.
+SINKHORN_ITERATIONS = 100
 KEYPOINTS = 512
 DESCRIPTOR_SIZE = 256
 # SuperGlueConfig of magic-leap-community/superglue_outdoor, written out so conversion needs only the weights.
@@ -223,8 +225,8 @@ def compare_matches(expected, actual):
     """Require the exported couplings to give the reference's matches after Sinkhorn and match extraction."""
     if actual.shape != expected.shape or not np.isfinite(actual).all():
         raise ValueError(f"Unexpected or non-finite couplings: {actual.shape} vs {expected.shape}")
-    expected_matches, _ = extract_matches(log_sinkhorn(expected))
-    actual_matches, _ = extract_matches(log_sinkhorn(actual))
+    expected_matches, _ = extract_matches(log_sinkhorn(expected, SINKHORN_ITERATIONS))
+    actual_matches, _ = extract_matches(log_sinkhorn(actual, SINKHORN_ITERATIONS))
     agreement = float((expected_matches == actual_matches).mean())
     if agreement < MIN_ASSIGNMENT_AGREEMENT or (expected_matches >= 0).sum() == 0:
         raise AssertionError(f"matches agree on only {agreement:.4f} of keypoints")
