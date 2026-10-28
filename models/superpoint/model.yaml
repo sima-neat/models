@@ -60,3 +60,7 @@ accuracy:
   - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
 
 performance: {}
+
+# No reference_metrics: neither the pinned Hugging Face model card nor SuperPointPretrainedNetwork's README
+# (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these weights. The paper's HPatches tables measure
+# its own training-time models.
