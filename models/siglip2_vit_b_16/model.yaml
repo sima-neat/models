@@ -1,5 +1,3 @@
-# Temporary: CI validates but does not compile until Vulcan Model Convert publishes the ONNX pinned below.
-build-on-demand: true
 display_name: SigLIP 2 ViT-B/16
 description: Embeds images and text in one space for zero-shot classification and image-text search.
 model_type: vlm
@@ -36,10 +34,9 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(convert-pin): replace with the Vulcan Model Convert output for this branch.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/siglip2_vit_b_16/51d70d172a3965e3a1c2b023d046823e55367a94be140e46e819a8a7434e57a8/0-0/model.onnx
-    sha256: 51d70d172a3965e3a1c2b023d046823e55367a94be140e46e819a8a7434e57a8
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/siglip2_vit_b_16/ee51a26d60fda5551f62f02504f378583e91fba46a30e665ac5cd250346d9c3e/40755046423-1/model.onnx
+    sha256: ee51a26d60fda5551f62f02504f378583e91fba46a30e665ac5cd250346d9c3e
     size_bytes: 727941268
   components: [image_encoder, text_encoder]
 
