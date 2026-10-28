@@ -195,7 +195,8 @@ def estimate_pose(points0: np.ndarray, points1: np.ndarray, K0: np.ndarray, K1: 
         return None
     best, pose = 0, None
     for candidate in np.split(E, len(E) / 3):
-        inliers, R, t, _ = cv2.recoverPose(candidate, points0, points1, np.eye(3), 1e9, mask=mask)
+        # OpenCV 4.11-4.14 return (inliers, R, t, mask) for this call; the first three are the same in every overload.
+        inliers, R, t = cv2.recoverPose(candidate, points0, points1, np.eye(3), 1e9, mask=mask)[:3]
         if inliers > best:
             best, pose = inliers, (R, t[:, 0])
     return pose
