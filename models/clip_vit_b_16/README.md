@@ -26,7 +26,8 @@ Neat's resize, color conversion, and normalization turned off.
 the source checkpoint), padded to 77 tokens with the end-of-text token. On the
 CPU, replace each token ID with its 512-value row of the checkpoint's token
 embedding table, `text_model.embeddings.token_embedding.weight`. This gives the
-77×512 float tensor `token_embeds`.
+77×512 float tensor `token_embeds`; pass it as a 1×77×512 tensor with height,
+width, channel (HWC) axes.
 
 **Outputs.** `image_embeds` is the image's 512-value embedding. `logits` holds
 1,000 ImageNet class scores: 100 times the cosine similarity between the image
