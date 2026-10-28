@@ -243,5 +243,17 @@ def test_intrinsics_follow_the_resize_and_a_quarter_turn(load_script: Callable[[
     np.testing.assert_allclose(mapped, [[800.0, 0.0, 399.6], [0.0, 800.0, 1600 - 1 - 799.6], [0.0, 0.0, 1.0]])
 
 
+def test_a_stretched_quarter_turn_scales_the_original_axes(load_script: Callable[[str], ModuleType]) -> None:
+    accuracy = load_script("accuracy")
+    # A 640x480 image stretched to 480x640, then rotated a quarter turn to the 640x480 input.
+    data = {"image_sizes": np.array([[640, 480]]), "rotations": np.array([1]), "original_sizes": np.array([[640, 480]])}
+    K = np.array([[500.0, 0.0, 319.5], [0.0, 500.0, 239.5], [0.0, 0.0, 1.0]])
+
+    mapped = accuracy.image_intrinsics(K, data, 0)
+
+    # x scales by 480/640 (fx = 375, cx = 239.625), y by 640/480 (fy = 666.67, cy = 319.33); then the turn.
+    np.testing.assert_allclose(mapped, [[2000 / 3, 0.0, 958 / 3], [0.0, 375.0, 480 - 1 - 239.625], [0.0, 0.0, 1.0]])
+
+
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
     assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []

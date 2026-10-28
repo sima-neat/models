@@ -124,13 +124,13 @@ def rotate_pose_inplane(i_T_w: np.ndarray, rotation: int) -> np.ndarray:
 
 def image_intrinsics(K: np.ndarray, data: dict[str, np.ndarray], image: int) -> np.ndarray:
     """An original image's intrinsics mapped onto the resized, rotated image its keypoints refer to, as
-    match_pairs.py's scale_intrinsics and rotate_intrinsics do."""
+    match_pairs.py's scale_intrinsics and rotate_intrinsics do. The image is stretched to `resized` before it is
+    rotated, so the scales stay in the original axes; match_pairs.py swaps them, which only its isotropic resize
+    tolerates."""
     width, height = data["image_sizes"][image]
     rotation = int(data["rotations"][image])
     resized = (height, width) if rotation % 2 else (width, height)
     sx, sy = data["original_sizes"][image] / np.array(resized, dtype=np.float64)
-    if rotation % 2:
-        sx, sy = sy, sx
     K = np.diag([1 / sx, 1 / sy, 1.0]) @ K
     return rotate_intrinsics(K, width, height, rotation) if rotation else K
 
