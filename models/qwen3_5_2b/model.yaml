@@ -1,0 +1,48 @@
+build-on-demand: true
+display_name: Qwen3.5-2B
+description: Generates text from instructions, conversation history, and images.
+model_type: vlm
+tasks: [text_generation, visual_question_answering]
+
+modalities:
+  inputs: [text, image]
+  outputs: [text]
+
+architecture: qwen
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from Qwen/Qwen3.5-2B; AutoRound checkpoint provided by SiMa.ai under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/simaai/Qwen3.5-2B-Autoround-Safetensors
+  revision: 185ccd6cb4e420e47cc7b6c4113618b02ec4226d
+  derived_from: https://huggingface.co/Qwen/Qwen3.5-2B
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Qwen3.5-2B-Autoround-Safetensors
+    revision: 185ccd6cb4e420e47cc7b6c4113618b02ec4226d
+    main_file: config.json
+    files:
+      chat_template.jinja: {sha256: 273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80, size_bytes: 7755}
+      config.json: {sha256: 85be96f13c5baacd310c1d91eefa9bdd8b208ef40da2fd7d6cff6d4e521fec2c, size_bytes: 11596}
+      generation_config.json: {sha256: fc730df2f1e20386761af522a6fdb5306abf12177662b24d45fd5fc31942695b, size_bytes: 116}
+      merges.txt: {sha256: a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d, size_bytes: 3353259}
+      model.safetensors: {sha256: 718bcb8f28708c3198528c7a3c746232721e33ee2129cd1a3bf5948ef1c544f7, size_bytes: 2311585008}
+      preprocessor_config.json: {sha256: 27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516, size_bytes: 390}
+      processor_config.json: {sha256: d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1, size_bytes: 1191}
+      tokenizer.json: {sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42, size_bytes: 12807982}
+      tokenizer_config.json: {sha256: 792fa3f0cb88b111e54ef3134c873531008c4df471d108da17903426e308aa7b, size_bytes: 1165}
+      video_preprocessor_config.json: {sha256: 7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13, size_bytes: 385}
+      vocab.json: {sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003, size_bytes: 6722759}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128, input_height: 448, input_width: 448}
