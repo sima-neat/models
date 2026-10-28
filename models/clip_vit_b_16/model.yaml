@@ -56,13 +56,15 @@ build_profiles:
       text_encoder:
         parameters: {precision: w16a16, calibration_bins: 2048}
 
-  w8a8:
-    calibration_dataset: imagenet-2012-cal
-    components:
-      image_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
-      text_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048}
+  # w8a8 is held back: its INT8 activations collapse zero-shot ImageNet top-1 to 0.0012 (w16a16: 0.6838), far
+  # outside the 5% the registry allows. Uncomment it once an INT8 recipe keeps CLIP's accuracy.
+  # w8a8:
+  #   calibration_dataset: imagenet-2012-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+  #     text_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048}
 
 numerical_fidelity:
   status: diagnostic

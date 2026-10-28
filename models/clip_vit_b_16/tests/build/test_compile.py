@@ -120,17 +120,27 @@ def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callab
         calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
 
 
-@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8"])
-def test_compile_reads_both_encoders_of_each_build_profile(
-    load_script: Callable[[str], ModuleType], profile_id: str
-) -> None:
+def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
-    parameters = recipe._component_parameters(recipe.load_metadata(MODEL_DIR), profile_id)
-    assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
-    assert {item["precision"] for item in parameters.values()} == {profile_id}
-    # Both precisions calibrate both encoders: AFE needs calibrated ranges even at BF16.
-    assert all("calibration_bins" in item for item in parameters.values())
-    assert recipe._precision_label(parameters) == profile_id.upper()
+    metadata = recipe.load_metadata(MODEL_DIR)
+    assert [profile["id"] for profile in metadata["build_profiles"]] == ["w16a16"]
+    for profile in metadata["build_profiles"]:
+        parameters = recipe._component_parameters(metadata, profile["id"])
+        assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
+        assert {item["precision"] for item in parameters.values()} == {profile["id"]}
+        # Both encoders calibrate: AFE needs calibrated ranges even at BF16.
+        assert all("calibration_bins" in item for item in parameters.values())
+        assert recipe._precision_label(parameters) == profile["id"].upper()
+
+
+def test_the_w8a8_recipe_quantizes_both_encoders_to_int8(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+    # The held-back w8a8 profile keeps a working recipe for when it is uncommented.
+    parameters = {"precision": "w8a8", "calibration_bins": 2048}
+    assert recipe._quantization_config(parameters) is not None
+    assert recipe._precision_label({"image_encoder": parameters, "text_encoder": parameters}) == "W8A8"
+    with pytest.raises(ValueError, match="unsupported precision"):
+        recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})
 
 
 def test_compile_rejects_an_undeclared_build_profile_or_mixed_precisions(
