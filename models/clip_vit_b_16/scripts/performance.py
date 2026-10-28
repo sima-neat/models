@@ -138,9 +138,15 @@ def frame_tensor(path: Path) -> pyneat.Tensor:
 
 
 def prompt_tensor() -> pyneat.Tensor:
-    """A fixed 77-token prompt at the scale of CLIP's token embeddings, reused for every frame."""
+    """A fixed 77-token prompt at the scale of CLIP's token embeddings, reused for every frame.
+
+    Neat sizes the text input as height 1, width 77 and depth 512, so the tensor declares HWC axes; untagged, a 3-D
+    tensor counts as CHW, and its width, 512, exceeds the input's 77.
+    """
     embeds = np.random.default_rng(0).normal(0.0, 0.02, TEXT_SHAPE).astype(np.float32)
-    return pyneat.Tensor.from_numpy(embeds, copy=True, memory=pyneat.TensorMemory.EV74)
+    return pyneat.Tensor.from_numpy(
+        embeds, copy=True, memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC
+    )
 
 
 def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor,
