@@ -17,17 +17,17 @@ encoder to compare images with prompts of your own.
 
 **Image input.** Resize the image straight to 224×224 with bilinear
 resampling, without keeping its aspect ratio or cropping. Scale the RGB values
-to 0–1, subtract 0.5, and divide by 0.5, so each value lies between −1 and 1.
-The reference scripts pass this image as a 224×224×3 (height, width, channel)
-float tensor, with Neat's resize, color conversion, and normalization turned
-off.
+to 0–1, subtract 0.5, and divide by 0.5. The reference scripts pass this image
+as a 224×224×3 (height, width, channel) float tensor, with Neat's resize, color
+conversion, and normalization turned off.
 
 **Text input.** Lowercase the prompt and tokenize it with SigLIP 2's Gemma
 tokenizer (`tokenizer.json` in the source checkpoint), which appends the
 end-of-sequence token, then pad it to 64 tokens with the padding token. On the
 CPU, replace each token ID with its 768-value row of the checkpoint's token
 embedding table, `text_model.embeddings.token_embedding.weight`. This gives the
-64×768 float tensor `token_embeds`.
+64×768 float tensor `token_embeds`; pass it as a 1×64×768 tensor with height,
+width, channel (HWC) axes.
 
 **Outputs.** `image_embeds` is the image's 768-value embedding, and
 `text_embeds` is the prompt's. `logits` holds 1,000 ImageNet class scores: the
