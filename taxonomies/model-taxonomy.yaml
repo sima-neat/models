@@ -152,6 +152,9 @@ tasks:
   image_captioning:
     display_name: Image Captioning
     allowed_model_types: [vlm]
+  image_text_embedding:
+    display_name: Image-Text Embedding
+    allowed_model_types: [vlm]
   multimodal_chat:
     display_name: Multimodal Chat
     allowed_model_types: [vlm]

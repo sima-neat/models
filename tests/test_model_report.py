@@ -271,8 +271,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split, and the Scene Flow
-    test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012, ImageNet mini's val
+    split, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -280,6 +280,7 @@ def benchmark_dataset(root):
     (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
+    write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
@@ -422,13 +423,21 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     image = functions["sample_image"](benchmark_dataset(tmp_path))
     frame = functions["frame_tensor"](image)
 
-    assert image.parent.name == "val2017"
+    metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    splits = {"coco-2017": "val2017", "imagenet-2012": "val2012"}
+    assert image.parent.name == splits[metadata["accuracy"]["datasets"][0]["id"]]
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
-        "Image", "Stretch", "ImageNet"
-    )
+    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    # The first component normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+    normalize = options.preprocess.normalize
+    if getattr(normalize, "has_explicit_stats", False):
+        calibration = runpy.run_path(str(script.parent / "calibration.py"))
+        assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+        assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+    else:
+        assert options.preprocess.preset == "ImageNet"
 
 
 def test_model_code_uses_cores_mla_stats_names():
