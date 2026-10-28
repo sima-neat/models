@@ -1,4 +1,8 @@
-"""Export LightStereo-S from its OpenStereo checkpoint with MLA-friendly operators and check ONNX against PyTorch."""
+"""Export LightStereo-S from its OpenStereo checkpoint with MLA-friendly operators and check ONNX against PyTorch.
+
+The export takes one side-by-side frame, [left | right], and splits it before the network, so an application
+passes a single image; the network itself keeps upstream's two views.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +23,9 @@ HEIGHT, WIDTH = 544, 960
 # The same config sets MAX_DISP 192, so the quarter-resolution cost volume holds 48 disparity bins.
 MAX_DISP = 192
 BINS = MAX_DISP // 4
-INTERFACE = {"left": [1, 3, HEIGHT, WIDTH], "right": [1, 3, HEIGHT, WIDTH], "disparity": [1, 1, HEIGHT, WIDTH]}
-INPUTS = ("left", "right")
+VIEW = [1, 3, HEIGHT, WIDTH]
+INTERFACE = {"stereo": [1, 3, HEIGHT, 2 * WIDTH], "disparity": [1, 1, HEIGHT, WIDTH]}
+INPUTS = ("stereo",)
 OUTPUT = "disparity"
 OPSET = 17
 # Upstream's cost volume writes slices in place and its upsampling unfolds patches, which export as ScatterND
@@ -276,6 +281,21 @@ def build_network(export: bool) -> Any:
     return LightStereo()
 
 
+def side_by_side(network: Any) -> Any:
+    """Wrap the two-view network so it takes one [left | right] frame; the split exports as two Slice nodes."""
+    import torch
+
+    class SideBySide(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.network = network
+
+        def forward(self, stereo: torch.Tensor) -> torch.Tensor:
+            return self.network(stereo[..., :WIDTH], stereo[..., WIDTH:])
+
+    return SideBySide().eval()
+
+
 def load_network(checkpoint: Path, export: bool) -> Any:
     import torch
 
@@ -302,7 +322,7 @@ def fold_constants(path: Path) -> None:
 def synthetic_pair(seed: int) -> tuple[np.ndarray, np.ndarray]:
     """A normalized noise image and the same image shifted left by a seeded disparity, as a rectified pair."""
     random = np.random.RandomState(seed)
-    left = random.normal(0, 1, INTERFACE["left"]).astype(np.float32)
+    left = random.normal(0, 1, VIEW).astype(np.float32)
     return left, np.roll(left, -random.randint(1, MAX_DISP), axis=3)
 
 
@@ -313,7 +333,7 @@ def convert(checkpoint: Path, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=False)
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
-    reference, network = load_network(checkpoint, export=False), load_network(checkpoint, export=True)
+    reference, network = load_network(checkpoint, export=False), side_by_side(load_network(checkpoint, export=True))
     example = tuple(torch.zeros(INTERFACE[name]) for name in INPUTS)
     with torch.inference_mode():
         torch.onnx.export(
@@ -330,7 +350,8 @@ def convert(checkpoint: Path, output_dir: Path) -> Path:
         left, right = synthetic_pair(seed)
         with torch.inference_mode():
             expected = reference(torch.from_numpy(left), torch.from_numpy(right)).numpy()
-        errors.append(compare_disparity(expected, session.run([OUTPUT], {"left": left, "right": right})[0]))
+        stereo = np.concatenate([left, right], axis=3)
+        errors.append(compare_disparity(expected, session.run([OUTPUT], {"stereo": stereo})[0]))
     print(
         f"Synthetic-pair PyTorch/ONNX disparity check passed with seeds {SEEDS.start}-{SEEDS.stop - 1} "
         f"(max {max(errors):.2e} px): {output}"

@@ -30,7 +30,7 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
-from scene_flow import HEIGHT, INPUTS, WIDTH, fidelity_pairs, read_pairs
+from scene_flow import HEIGHT, INPUT, WIDTH, fidelity_pairs, read_pairs
 from sima_utils.data.data_generator import DataGenerator
 
 # Importing afe leaves the root logger at WARNING, so the recipe logs through its own INFO logger.
@@ -40,11 +40,12 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "lightstereo_s"
 COMPONENT_ID = "model"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
-INPUT_SHAPE = [1, 3, HEIGHT, WIDTH]
+# One side-by-side frame, [left | right], in; the left view's disparity out.
+INPUT_SHAPE = [1, 3, HEIGHT, 2 * WIDTH]
 OUTPUT = "disparity"
 OUTPUT_SHAPE = [1, 1, HEIGHT, WIDTH]
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
-INPUT_BYTES = dict.fromkeys(INPUTS, math.prod(INPUT_SHAPE) * 4)
+INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(OUTPUT_SHAPE) * 4]
 
 
@@ -116,13 +117,13 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> tuple[Path
     precision = str(_parameters(profile_id)["precision"])
     quantization = _quantization(precision)
     # BF16 derives nothing from representative data, but quantize() still needs one sample.
-    samples = {name: np.zeros((1, HEIGHT, WIDTH, 3), dtype=np.float32) for name in INPUTS}
+    samples = {INPUT: np.zeros((1, HEIGHT, 2 * WIDTH, 3), dtype=np.float32)}
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         build_dir = Path(temporary)
-        importer = onnx_source(str(source), shape_dict={name: tuple(INPUT_SHAPE) for name in INPUTS}, layout="NCHW")
+        importer = onnx_source(str(source), shape_dict={INPUT: tuple(INPUT_SHAPE)}, layout="NCHW")
         loaded = load_model(importer, target=gen2_target)
         LOG.info("Quantizing %s", precision)
         data = DataGenerator({InputName(name): batch for name, batch in samples.items()})
@@ -164,14 +165,13 @@ def measure_fidelity(
     """Compare the quantized graph's disparity with the ONNX source on the declared Scene Flow pairs."""
     selection = config["selection"]
     selected = fidelity_pairs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
-    pairs = read_pairs(dataset, selected)
+    frames = read_pairs(dataset, selected)
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
     totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
     for index, (left, _) in enumerate(selected):
-        sample = {name: pairs[name][index : index + 1] for name in INPUTS}
-        feeds = {name: batch.transpose(0, 3, 1, 2) for name, batch in sample.items()}
-        expected = reference.run([OUTPUT], feeds)[0].astype(np.float64)
-        outputs = candidate.execute(inputs={InputName(name): batch for name, batch in sample.items()}, use_jax=True)
+        frame = frames[index : index + 1]
+        expected = reference.run([OUTPUT], {INPUT: frame.transpose(0, 3, 1, 2)})[0].astype(np.float64)
+        outputs = candidate.execute(inputs={InputName(INPUT): frame}, use_jax=True)
         actual = np.asarray(outputs[0], dtype=np.float64).reshape(expected.shape)
         if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
             raise RuntimeError(f"disparity for {left} contains non-finite values")

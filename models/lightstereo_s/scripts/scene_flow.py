@@ -1,4 +1,5 @@
-"""Pad and normalize Scene Flow pairs the way OpenStereo evaluates LightStereo, and select fidelity pairs."""
+"""Pad and normalize Scene Flow pairs the way OpenStereo evaluates LightStereo, join them side by side, and select
+fidelity pairs."""
 
 from __future__ import annotations
 
@@ -10,11 +11,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-# cfgs/lightstereo/lightstereo_s_sceneflow.yaml: RightTopPad to 544x960, then ImageNet normalization.
+# cfgs/lightstereo/lightstereo_s_sceneflow.yaml: RightTopPad each view to 544x960, then ImageNet normalization.
 HEIGHT, WIDTH = 544, 960
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
-INPUTS = ("left", "right")
+# The model takes one side-by-side frame: the left view in the first WIDTH columns, the right view after it.
+INPUT = "stereo"
 # The scene-flow cal archive holds scene_flow/cal.txt (left, right, disparity per line) and the listed files.
 ROOT = "scene_flow"
 CAL_LIST = "cal.txt"
@@ -57,8 +59,8 @@ def fidelity_pairs(dataset: Path, seed: int, offset: int, samples: int) -> list[
     return pairs[offset : offset + samples]
 
 
-def read_pairs(dataset: Path, pairs: list[tuple[str, str]]) -> dict[str, np.ndarray]:
-    """Return the preprocessed left and right views of the pairs as two NHWC batches, in the given order."""
+def read_pairs(dataset: Path, pairs: list[tuple[str, str]]) -> np.ndarray:
+    """Return the pairs as one NHWC batch of side-by-side frames, [left | right] views preprocessed, in order."""
     wanted = {path for pair in pairs for path in pair}
     found: dict[str, bytes] = {}
     with tarfile.open(dataset, "r|gz") as archive:
@@ -69,6 +71,4 @@ def read_pairs(dataset: Path, pairs: list[tuple[str, str]]) -> dict[str, np.ndar
     missing = sorted(wanted - set(found))
     if missing:
         raise ValueError(f"{dataset} lacks {len(missing)} listed images, e.g. {missing[:2]}")
-    return {
-        name: np.stack([preprocess_image(found[pair[index]]) for pair in pairs]) for index, name in enumerate(INPUTS)
-    }
+    return np.stack([np.concatenate([preprocess_image(found[view]) for view in pair], axis=1) for pair in pairs])

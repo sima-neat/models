@@ -84,34 +84,32 @@ def test_fidelity_pairs_follow_the_declared_seeded_selection(tmp_path: Path, sce
         scene_flow.fidelity_pairs(dataset, seed=42, offset=1, samples=12)
 
 
-def test_read_pairs_returns_left_and_right_batches_in_the_given_order(tmp_path: Path, scene_flow: ModuleType) -> None:
+def test_read_pairs_returns_side_by_side_frames_in_the_given_order(tmp_path: Path, scene_flow: ModuleType) -> None:
     dataset = _cal_archive(tmp_path / "cal.tgz", 4)
 
-    pairs = scene_flow.read_pairs(dataset, [_pair(3), _pair(1)])
+    frames = scene_flow.read_pairs(dataset, [_pair(3), _pair(1)])
 
-    assert list(pairs) == ["left", "right"]
-    assert pairs["left"].shape == pairs["right"].shape == (2, 544, 960, 3)
-    # The fixture's grey level is the pair index for the left view and 100 more for the right one.
+    assert frames.shape == (2, 544, 1920, 3)
+    # The fixture's grey level is the pair index for the left view and 100 more for the right one; the left
+    # view fills the first 960 columns of each frame and the right view the rest.
     grey = (np.array([3, 1, 103, 101], np.float32) / 255 - scene_flow.MEAN[0]) / scene_flow.STD[0]
-    np.testing.assert_allclose(pairs["left"][:, 20, 0, 0], grey[:2], rtol=1e-6)
-    np.testing.assert_allclose(pairs["right"][:, 20, 0, 0], grey[2:], rtol=1e-6)
+    np.testing.assert_allclose(frames[:, 20, 959, 0], grey[:2], rtol=1e-6)
+    np.testing.assert_allclose(frames[:, 20, 960, 0], grey[2:], rtol=1e-6)
     with pytest.raises(ValueError, match="lacks 2 listed images"):
         scene_flow.read_pairs(dataset, [_pair(7)])
 
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
-    """The plugin chain of the compiled w16a16 MPK: a BF16 cast per view, the MLA, then a slice and a cast back."""
-    view = 1 * 3 * 544 * 960 * 4
+    """The plugin chain of the compiled w16a16 MPK: a BF16 cast of the frame, the MLA, then a slice and a cast back."""
     return {
         "model_sdk_version": compile_module.COMPILER_VERSION,
-        "input_nodes": [{"name": "left", "size": view}, {"name": "right", "size": view}],
+        "input_nodes": [{"name": "stereo", "size": 1 * 3 * 544 * 1920 * 4}],
         "plugins": [
             {"sequence": 1, "processor": "EV74", "config_params": {"kernel": "cast_transform"}},
-            {"sequence": 2, "processor": "EV74", "config_params": {"kernel": "cast_transform"}},
-            {"sequence": 3, "processor": "MLA", "config_params": {}},
-            {"sequence": 4, "processor": "EV74", "config_params": {"kernel": "slice_transform"}},
+            {"sequence": 2, "processor": "MLA", "config_params": {}},
+            {"sequence": 3, "processor": "EV74", "config_params": {"kernel": "slice_transform"}},
             {
-                "sequence": 5,
+                "sequence": 4,
                 "processor": "EV74",
                 "config_params": {"kernel": "cast_transform"},
                 "output_nodes": [{"size": 1 * 1 * 544 * 960 * 4}],
@@ -128,21 +126,21 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "one_input", "output", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "two_inputs", "output", "two_mla", "host", "compiler"])
 def test_mpk_audit_requires_one_mla_segment_and_the_stereo_interface(
     tmp_path: Path, case: str, load_script: Callable[[str], ModuleType]
 ) -> None:
     compile_module = load_script("compile")
     manifest = _mpk_manifest(compile_module)
     plugins = manifest["plugins"]
-    if case == "one_input":
-        manifest["input_nodes"].pop()
+    if case == "two_inputs":
+        manifest["input_nodes"].append({"name": "right", "size": 1 * 3 * 544 * 960 * 4})
     elif case == "output":
         plugins[-1]["output_nodes"][0]["size"] //= 4
     elif case == "two_mla":
-        plugins.insert(3, {"sequence": 3, "processor": "MLA", "config_params": {}})
+        plugins.insert(2, {"sequence": 2, "processor": "MLA", "config_params": {}})
     elif case == "host":
-        plugins.insert(3, {"sequence": 3, "processor": "A65", "config_params": {}})
+        plugins.insert(2, {"sequence": 2, "processor": "A65", "config_params": {}})
     elif case == "compiler":
         manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
