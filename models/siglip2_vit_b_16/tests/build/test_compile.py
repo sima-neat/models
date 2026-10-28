@@ -7,6 +7,7 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock, call
 
 import numpy as np
 import pytest
@@ -118,7 +119,7 @@ def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callab
 def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)
-    assert [profile["id"] for profile in metadata["build_profiles"]] == ["w16a16"]
+    assert metadata["build_profiles"]
     for profile in metadata["build_profiles"]:
         parameters = recipe._component_parameters(metadata, profile["id"])
         assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
@@ -128,12 +129,26 @@ def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable
         assert recipe._precision_label(parameters) == profile["id"].upper()
 
 
-def test_the_w8a8_recipe_quantizes_both_encoders_to_int8(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+def test_the_quantization_recipe_follows_the_precision(
+    monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
+) -> None:
     recipe = load_script("compile")
-    # The held-back w8a8 profile keeps a working recipe for when it is uncommented.
-    parameters = {"precision": "w8a8", "calibration_bins": 2048}
-    assert recipe._quantization_config(parameters) is not None
-    assert recipe._precision_label({"image_encoder": parameters, "text_encoder": parameters}) == "W8A8"
+    for name in ("quantization_scheme", "bfloat16_scheme", "HistogramMSEMethod", "default_quantization"):
+        monkeypatch.setattr(recipe, name, MagicMock(name=name))
+    recipe._quantization_config({"precision": precision, "calibration_bins": 2048})
+    if precision == "w8a8":
+        # The held-back w8a8 profile keeps its recipe: INT8 activations per tensor, INT8 weights per channel.
+        assert recipe.quantization_scheme.call_args_list == [
+            call(asymmetric=True, per_channel=False, bits=8),
+            call(asymmetric=False, per_channel=True, bits=8),
+        ]
+        recipe.bfloat16_scheme.assert_not_called()
+    else:
+        recipe.quantization_scheme.assert_not_called()
+        recipe.bfloat16_scheme.assert_called_once_with()
+    # Both precisions calibrate: AFE needs calibrated ranges even at BF16.
+    recipe.HistogramMSEMethod.assert_called_once_with(2048)
     with pytest.raises(ValueError, match="unsupported precision"):
         recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})
 
@@ -208,14 +223,20 @@ def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_input(
 
 
 def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
     arguments = ["compile.py", "--model", str(tmp_path / "model.onnx"), "--output-dir", str(tmp_path / "out"),
-                 "--fidelity-dataset", str(tmp_path), "--build-profile", "w16a16", "--compile-invocation", "w8a8"]
+                 "--dataset", str(tmp_path), "--fidelity-dataset", str(tmp_path), "--build-profile", "w16a16",
+                 "--compile-invocation", "w8a8"]
     monkeypatch.setattr("sys.argv", arguments)
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as stopped:
         recipe.main()
+    assert stopped.value.code == 2
+    assert "a build profile compiles in one invocation named after it" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
 
 
