@@ -63,7 +63,7 @@ sima-cli models download --id resnet_50 --variant w8a8 --branch develop
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
 | `Target Branch Checks` | pull request | Runs `python -m pytest`, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
-| `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, starts `Vulcan Model Compile` for each changed build, starts the benchmarks reused builds lack, and publishes the branch catalog. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging. |
+| `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, starts `Vulcan Model Compile` for each changed build, starts the benchmarks reused builds lack, and publishes the branch catalog. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging, independently of `VULCAN_ENV`. |
 | `Vulcan Model Compile` | started by the orchestrator | Compiles one build, runs the model's compile tests on it, publishes it, and starts its benchmarks. |
 | `Vulcan Model Benchmarking` | started by `Vulcan Model Compile` or the orchestrator | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit, runs the model's benchmark tests on each result, and publishes each result with its test outcome. |
 | `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes the ONNX file, and prints its source pin. |

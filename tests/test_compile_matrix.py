@@ -106,9 +106,11 @@ def test_matrix_entries_carry_the_stages_each_profile_benchmarks() -> None:
     assert [(entry["model_id"], entry["compile_invocation_id"], entry["component_ids"], entry["stages"])
             for entry in matrix["include"]] == [
         ("qwen3_5_0_8b", "w4a16", ["model"], []),
-        ("resnet_50", "w16a16", ["model"], ["performance"]),
+        ("resnet_50", "w16a16", ["model"], ["performance", "accuracy"]),
+        ("resnet_50", "w8a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a8", ["model"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a16_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
+        ("rf_detr_small", "w8a8_mixed_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
     ]
 
@@ -546,6 +548,7 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(model
         ("tools/model_registry/artifact.py", False),
         ("tools/model_registry/cli.py", False),
         ("tools/model_registry/model.py", True),
+        ("tools/model_registry/mla_stage_simulation.py", True),
         ("tools/model_registry/compile_matrix.py", False),
         ("models/qwen3_5_0_8b/scripts/compile.sh", False),
         ("scripts/run_model_compilation.sh", True),

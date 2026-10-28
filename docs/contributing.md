@@ -157,6 +157,27 @@ from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
+Merging does not deploy the model browser frontend to production. Automatic
+browser publication targets staging on `main`/`develop` independently of
+`VULCAN_ENV` or the orchestrator's manual environment override. For an explicit
+frontend release, a Models owner runs **Deploy Model Browser & Docs** from `main` or `develop`, chooses the destination (`staging` or
+`production`) and audience (`developer` for branch selection, `customer` for Main
+only), and approves their own run at the `model-browser-deploy` environment gate.
+Only `owners-models` can approve; administrator bypass is disabled. Dispatch a new
+run to retry because previous approvals cannot authorize reruns. Configuration
+resolution, build, and publication each reject later attempts independently,
+including retries of only failed or individual jobs. The workflow must
+be present on default branch `main` for GitHub to expose its Run workflow button.
+
+This workflow builds and smoke-tests the frontend, publishes only `models/`, retains
+prior assets for rollback, and invalidates the model browser paths. Its per-environment
+publish concurrency group is shared with automatic staging publication and does not
+cancel an active publication, so the two upload paths cannot overlap. It does not
+build models, promote catalogs, or publish registry tooling. Tooling publication in
+**Vulcan Model Registry** follows repository `VULCAN_ENV` (default `staging`) on both
+pushes and manual runs. See [model browser deployment](model-browser.md) for release
+and rollback instructions.
+
 On-demand candidates require a separate manual **Promote model** dispatch to become approved
 on Develop. Enter the model folder ID and a build profile ID from its `model.yaml`;
 the workflow resolves the newest matching candidate receipt and pins it for review.
@@ -170,13 +191,14 @@ When the change is merged to `develop`, the push runs **Vulcan Model Orchestrato
 on the reviewed revision. Pushes use repository variable `VULCAN_ENV`, with staging
 as the fallback when unset. Manual dispatch's `environment=default` uses the same
 setting; explicitly choosing `staging` or `production` overrides it for that run.
-The variable currently remains staging, so merge does not switch builds to
-production. Changing it to production later switches default builds and publication:
+Selecting production changes model builds and registry publication; the frontend
+build and publication configuration remain staging:
 
 1. **Check the portal.** The model browser is built and smoke-tested in
    Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
    for the revision. Every push runs this check, not only merges, and a
-   push to `main` or `develop` publishes the checked browser only when staging is selected.
+   push to `main` or `develop` publishes the checked browser to staging using
+   `resolve-staging-browser-config`, independently of model environment selection.
 2. **Resolve configuration and plan.** `plan` waits for `select`, the portal
    check and `resolve-vulcan-config`. It requests OIDC permission; only a production
    run assumes the selected GitHub environment's
@@ -217,6 +239,15 @@ then publishes each result as its own registry run under the build profile's
 package run, with the test outcome. A failed test fails the run after
 publication.
 
+The benchmark workflow's `environment=default` resolves repository `VULCAN_ENV`
+(with staging as the fallback); explicit staging/production overrides are supported.
+Automatic dispatch pins the parent build's resolved environment so artifacts,
+datasets, credentials, and report publication stay in the same registry even if
+the repository default changes before the benchmark starts. DevKit discovery and
+scheduling independently use the checked-in `vulcan-staging` runner label.
+Production registry reads and report writes run on GitHub-hosted runners; the
+DevKit receives staged model artifacts and only dataset-reader credentials.
+
 The compile and the benchmarks are separate GitHub Actions runs. A
 successful compile does not by itself mean the dispatched benchmark succeeded;
 inspect the `Vulcan Model Benchmarking` run of each build and the model's
@@ -224,7 +255,7 @@ selected environment's registry record. If trusted compilation or measurement fa
 up with a focused manifest, recipe, or script change and reproducible evidence.
 
 Production can be selected through `VULCAN_ENV` or a manual override; its
-GitHub environment and IAM protections still apply. Benchmarks run only in staging. A manual dispatch can name models, build profiles, or
+GitHub environment and IAM protections still apply. Benchmarks use staging DevKits for either registry environment. A manual dispatch can name models, build profiles, or
 components and can force every selected build to recompile, which also
 applies a changed model test at once; otherwise a changed test applies the next
 time its stage runs. A dispatch that

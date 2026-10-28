@@ -333,7 +333,7 @@ async function checkExecutionTooltips(browser, url) {
       await stage.blur();
       await stage.focus();
       await tooltip.waitFor();
-      await page.locator('.execution-details').first().focus();
+      await page.locator('.execution-graph .execution-details').first().focus();
       if (await tooltip.isVisible()) throw new Error('stage tooltip survived focus moving away');
       console.log(`ok  Execution stage tooltip · ${width}px ${theme}`);
     } finally { await page.close(); }
@@ -414,14 +414,12 @@ async function checkTaskComparison(browser, base) {
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         const choices = await add.locator('option').allTextContents();
-        if (choices.length !== 3 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
+        if (choices.length !== 4 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
         const dataset = await page.locator('.compare-chart-dataset').innerText();
         if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
-        // The FP16 classification variant has no accuracy result; it stays available in Add model.
-        if (await page.locator('.compare-point').count() !== 1) throw new Error('chart included a variant without measured accuracy');
+        if (await page.locator('.compare-point').count() !== 3) throw new Error('chart omitted a measured classification variant');
         await add.selectOption('resnet_50.w16a16');
-        if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('variant without accuracy is no longer selectable');
-        if (await page.locator('.compare-legend button').count()) throw new Error('selection without measured accuracy appears in the legend');
+        if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('selected variant is missing from the table');
         await page.locator('.compare-table .compare-remove').click();
         if (await page.locator('.compare-table, .compare-selected').count()) throw new Error('removing the final variant left an empty table');
         if (new URL(page.url()).searchParams.getAll('build').length) throw new Error('removing the final variant left a selection in the URL');

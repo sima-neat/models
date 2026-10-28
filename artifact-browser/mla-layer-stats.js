@@ -1,4 +1,4 @@
-// Compiled MLA timings from one component's profiling pass, separate from headline latency.
+// Core's MLA layer stats: compiled MLA timings from one component's profiling pass, separate from headline latency.
 export function analyzeLayers(rows) {
   if (!Array.isArray(rows) || !rows.length) return null;
   const layers = [];
@@ -7,8 +7,8 @@ export function analyzeLayers(rows) {
   for (const [index, row] of rows.entries()) {
     if (!row || typeof row.name !== "string" || !row.name
       || !Number.isSafeInteger(row.stage_index) || row.stage_index < 0
-      || !Number.isFinite(row.total_execution_time_us) || row.total_execution_time_us < 0) return null;
-    const layer = { order: index + 1, name: row.name, stage: row.stage_index, timeUs: row.total_execution_time_us };
+      || !Number.isFinite(row.latency_us) || row.latency_us < 0) return null;
+    const layer = { order: index + 1, name: row.name, stage: row.stage_index, timeUs: row.latency_us };
     layers.push(layer);
     totalUs += layer.timeUs;
     const stage = stages.get(layer.stage) || { index: layer.stage, timeUs: 0, count: 0 };

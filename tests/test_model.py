@@ -492,8 +492,6 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("stage", "entry", "expected"),
     [
-        ("accuracy", {**EXPECTED["accuracy"], "expected": {"other": {"imagenet-2012-mini": {"top1_accuracy": 0.5}}}},
-         "accuracy.expected names build profiles that are not benchmarked: other"),
         ("accuracy", {**EXPECTED["accuracy"], "expected": {"fixture": {"imagenet-2012-mini": {"top5_accuracy": 0.5}}}},
          "accuracy.expected.fixture.imagenet-2012-mini lacks top1_accuracy"),
         ("accuracy", {**EXPECTED["accuracy"], "expected": {"fixture": {"other": {"top1_accuracy": 0.5}}}},
@@ -511,7 +509,6 @@ def test_model_tests_set_up_every_stage_the_model_has(tmp_path: Path) -> None:
         ),
     ],
     ids=[
-        "accuracy of a build profile that is not benchmarked",
         "accuracy without a required metric",
         "accuracy of an undeclared dataset",
         "accuracy without values",
@@ -551,10 +548,11 @@ def test_catalog_model_is_valid() -> None:
         "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
     )
     profiles = {profile["id"]: profile for profile in model["build_profiles"]}
-    assert set(profiles) == {"w16a16", "w8a8"}
+    assert set(profiles) == {"w16a16", "w8a8", "w8a16"}
     assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
     assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
     assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert profiles["w8a16"]["components"][0]["parameters"]["precision"] == "w8a16"
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
         "variant": "mini",

@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'model-browser', label: 'Model browser'},
         'runner-class-requests',
         'model-taxonomy',
+        'illustration-guide',
       ],
     },
   ],

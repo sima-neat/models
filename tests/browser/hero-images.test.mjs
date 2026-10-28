@@ -35,10 +35,13 @@ test('API-only mode retries and removed images do not start new requests', () =>
   const removed = fixture(); removed.image.isConnected = false; removed.fail();
   assert.equal(removed.requests.length, 0);
 });
-test('only staging developer builds opt in by default, with an explicit rollback', () => {
+test('standard staging and production developer builds opt in by default, with an explicit rollback', () => {
   assert.match(portalConfig({GITHUB_REF: 'refs/heads/develop'}).heroCdnBaseUrl, /stg.*images\/sha256$/);
   assert.equal(portalConfig({MODEL_BROWSER_UI_MODE: 'customer'}).heroCdnBaseUrl, '');
   assert.equal(portalConfig({MODEL_REGISTRY_API_URL: 'https://example.com'}).heroCdnBaseUrl, '');
   assert.equal(portalConfig({MODEL_HERO_CDN_BASE_URL: ''}).heroCdnBaseUrl, '');
+  assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'}).heroCdnBaseUrl, 'https://models-registry.neat.sima.ai/images/sha256');
+  assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_HERO_CDN_BASE_URL: ''}).heroCdnBaseUrl, '');
+  assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_REGISTRY_API_URL: 'https://example.com'}).heroCdnBaseUrl, '');
   assert.throws(() => portalConfig({MODEL_HERO_CDN_BASE_URL: 'http://example.com'}), /HTTPS/);
 });

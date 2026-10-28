@@ -4,8 +4,8 @@
 # Usage: run_model_compilation.sh <model_dir> <build_profile> <compile_invocation> <output_root>
 #
 # Run inside an activated Model Compiler environment with model-registry installed. Outputs land in
-# <output_root>/<model_id>/<build_profile>/: one directory per component, compile-outputs.json and
-# compile-timing.json.
+# <output_root>/<model_id>/<build_profile>/: one directory per component, compile-outputs.json,
+# compile-timing.json, and mla-stage-simulation.json.
 
 set -euo pipefail
 
@@ -101,3 +101,5 @@ if [[ ! -f "$PROFILE_OUTPUT_DIR/compile-outputs.json" ]]; then
 fi
 "$PYTHON" -m model_registry validate-compile-outputs "$PROFILE_OUTPUT_DIR/compile-outputs.json" \
   --output-root "$PROFILE_OUTPUT_DIR" "${identity[@]}"
+# A missing or failing mla-msim is recorded in the simulation's status rather than failing the build.
+"$PYTHON" -m model_registry simulate-mla-stages "$PROFILE_OUTPUT_DIR" >/dev/null

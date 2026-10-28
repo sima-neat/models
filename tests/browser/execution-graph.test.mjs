@@ -59,10 +59,10 @@ test('reads the plan the performance script recorded and shows nothing for anoth
 
 test('reads a multi-component report as one score with each component\'s layers and execution graph', () => {
   const saved = report();
-  const layers = [{name: 'MLA_0/conv2d_0', stage_index: 0, total_execution_time_us: 120.5}];
+  const layers = [{stage_index: 0, name: 'MLA_0/conv2d_0', latency_us: 120.5}];
   saved.components = {
-    backbone: {layer_stats: layers, execution_plan: plan},
-    decoder: {layer_stats: [], execution_plan: null},
+    backbone: {mla_layer_stats: {status: 'ok', layers}, execution_plan: plan},
+    decoder: {mla_layer_stats: {status: 'not requested', layers: []}, execution_plan: null},
   };
   const benchmark = readPerformance({report: saved}).value;
   assert.equal(benchmark.measurements.throughput_fps.value, saved.metrics.throughput_fps);

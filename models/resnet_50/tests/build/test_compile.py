@@ -134,12 +134,20 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
-def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    recipe = load_script("compile")
+    parameters = recipe._variant(recipe._metadata(), profile_id)["parameters"]
+
+    assert parameters["precision"] == profile_id
+    if profile_id == "w8a8":
+        assert parameters["calibration_samples"] == 500
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe._metadata()
 
-    assert recipe._variant(metadata, "w16a16")["parameters"]["precision"] == "w16a16"
-    assert recipe._variant(metadata, "w8a8")["parameters"]["calibration_samples"] == 500
     assert metadata["numerical_fidelity"]["outputs"] == ["logits"]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._variant(metadata, "w32a32")
@@ -152,11 +160,12 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
 ) -> None:
     recipe = load_script("compile")
     metadata = recipe._metadata()
-    metadata["build_profiles"][0]["components"][0]["parameters"]["precision"] = "fp32"
+    profile = metadata["build_profiles"][0]
+    profile["components"][0]["parameters"]["precision"] = "fp32"
     monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
 
     with pytest.raises(ValueError, match="only the declared Modalix BF16 and INT8 variants"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
     assert not (tmp_path / "model").exists()
 
 

@@ -419,12 +419,12 @@ jobs:
         if: >-
           inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
           steps.packages.outputs.count != '0' &&
-          inputs.vulcan_environment == 'staging' &&
           fromJSON(inputs.entry).target == 'modalix' &&
           join(fromJSON(inputs.entry).stages, '') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          VULCAN_ENV: ${{ inputs.vulcan_environment }}
           ENTRY: ${{ inputs.entry }}
         run: scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"
 

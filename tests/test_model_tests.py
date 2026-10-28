@@ -274,10 +274,8 @@ COCO = {"coco": {"coco_map": 0.4}}
             {"w8a8": {"imagenet": {"top1_accuracy": 0.8}, "other": {"top1_accuracy": 0.8}, **COCO}},
             "accuracy.expected.w8a8 names undeclared datasets: other",
         ),
-        (
-            {"w8a8": {"imagenet": {"top1_accuracy": 0.8}, **COCO}, "w16a16": {"imagenet": {"top1_accuracy": 0.8}}},
-            "accuracy.expected names build profiles that are not benchmarked: w16a16",
-        ),
+        # model.yaml leaves w16a16 out, as when it is commented out, so its expectations wait unchecked.
+        ({"w8a8": {"imagenet": {"top1_accuracy": 0.8}, **COCO}, "w16a16": {"imagenet": {"top1_accuracy": 0.8}}}, None),
         (
             {"w8a8": {"imagenet": {"top1_accuracy": 0.8, "unknown_metric": 0.9}, **COCO}},
             "unknown accuracy metrics: unknown_metric",
@@ -306,6 +304,23 @@ def test_accuracy_expectations_give_each_measured_build_profile_its_required_met
     else:
         with pytest.raises(ValidationError, match=error):
             validate_model_tests(model_dir, ACCURACY_MODEL, ROOT / "schemas" / "model-tests.schema.json")
+
+
+def test_accuracy_expectations_reject_a_declared_profile_that_is_not_measured(model_dir: Path) -> None:
+    model = {**ACCURACY_MODEL, "build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}],
+             "accuracy": {**ACCURACY_MODEL["accuracy"], "build_profiles": ["w8a8"]}}
+    tests = model_dir / "tests"
+    (tests / "build").mkdir()
+    (tests / "build" / "test_compile.py").write_text("", encoding="utf-8")
+    (tests / "benchmark" / "test_accuracy.py").write_text("", encoding="utf-8")
+    expected = {"w8a8": {"imagenet": {"top1_accuracy": 0.8}, **COCO}, "w16a16": {"imagenet": {"top1_accuracy": 0.8}}}
+    (tests / "tests.yaml").write_text(
+        yaml.safe_dump({"compile": {"run_tests": True}, "accuracy": {"run_tests": True, "expected": expected}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="names build profiles that are not benchmarked: w16a16"):
+        validate_model_tests(model_dir, model, ROOT / "schemas" / "model-tests.schema.json")
 
 
 def test_accuracy_expectations_may_be_skipped_explicitly(model_dir: Path) -> None:

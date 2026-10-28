@@ -10,6 +10,8 @@ import pytest
 from model_registry import cli
 from model_registry.cli import main
 
+from tests.test_stage_plan import repository_without_w16a16_accuracy
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -324,13 +326,14 @@ def test_resolve_devkit_accuracy_caches_each_accuracy_dataset_of_the_profile(
     }]
 
 
-def test_resolve_devkit_accuracy_skips_a_profile_without_accuracy(monkeypatch, capsys) -> None:
+def test_resolve_devkit_accuracy_skips_a_profile_without_accuracy(monkeypatch, capsys, tmp_path: Path) -> None:
     def unexpected_resolve(*args, **kwargs):
         raise AssertionError("a profile without accuracy must not resolve a dataset")
 
     monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
 
-    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "w16a16"]) == 0
+    model_dir = repository_without_w16a16_accuracy(tmp_path) / "models" / "resnet_50"
+    assert main(["resolve-devkit-accuracy", str(model_dir), "--build-profile", "w16a16"]) == 0
 
     assert capsys.readouterr().out == ""
 

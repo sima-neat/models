@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         if count == 1 or count % 500 == 0 or count == len(names):
             log(f"{count}/{len(names)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
 
-    report = model_report.accuracy({
+    report = model_report.from_accuracy({
         dataset_id: {
             "metrics": {
                 "top1_accuracy": top1 / len(names),

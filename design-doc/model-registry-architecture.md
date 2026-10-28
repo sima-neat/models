@@ -81,13 +81,14 @@ this table. Modules marked CI only are removed from the author package by
 | `compile_matrix.py` | the compile matrix: one entry per build profile's compile invocation, with the benchmarks that measure it (`build_matrix`) |
 | `fingerprints.py` | the fingerprints (`compile_fingerprint`, `benchmark_fingerprint`), the files each one hashes, and each benchmark's run type |
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
-| `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
+| `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
 | `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
 | `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
 | `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and deployment file indexes |
-| `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report |
+| `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
+| `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `source.py` | source identity and URL redaction |
@@ -128,6 +129,28 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
 
+Manual **Deploy Model Browser & Docs** is independent of model builds and tooling
+publication. From `main` or `develop`, select `staging` or `production` and the
+`developer` or `customer` audience. The `authorize` job waits on the
+`model-browser-deploy` environment's sole reviewer team, `owners-models`, with
+administrator bypass disabled. The dispatching owner must approve their own run;
+reruns must be replaced by a new dispatch. Every downstream job independently
+requires attempt 1 and the original triggering actor, so rerunning only failed
+jobs cannot reuse a completed authorization job. The named authorization script verifies
+the gate and approval before configuration resolution or deployment credentials.
+The reusable docs workflow builds and smoke-tests the selected frontend, then the
+shared static publisher uploads only `models/`, retains old assets, and invalidates
+`/models` and `/models/*`. Its publish concurrency group is
+`${{ github.repository }}-model-browser-${{ inputs.environment }}`, with
+`cancel-in-progress: false`; staging shares the automatic publisher's group so
+manual and automatic uploads cannot run concurrently. Automatic staging publication
+on `main`/`develop` uses a separate staging configuration regardless of `VULCAN_ENV`;
+production frontend publication requires this manual dispatch. See [browser deployment](../docs/model-browser.md).
+
+**Vulcan Model Registry** tooling publication selects repository `VULCAN_ENV`
+(default `staging`) for both pushes and manual runs. It has no separate environment
+input and publishes to the selected Vulcan backend independently of frontend deployment.
+
 Manual **Promote model** takes a model ID and build profile, resolves the newest matching
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
@@ -142,7 +165,7 @@ configuration, retries, and the staging acceptance boundary.
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
-       -> on main and develop, when staging is selected: publish that model browser to staging
+       -> on main and develop: resolve-staging-browser-config + checked portal -> publish-model-browser to staging
   -> resolve-vulcan-config: after select, resolve the selected environment configuration
   -> plan (waits for select, portal and resolve-vulcan-config): compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
@@ -163,10 +186,12 @@ Pushes, including merges to `develop`, select repository variable `VULCAN_ENV`,
 falling back to staging when it is unset. Manual dispatch defaults to `default`
 (use that same repository setting); choosing `staging` or `production` explicitly
 overrides it for that run. Concurrency and the run title use the same selection.
-The repository variable is currently staging, so merging this support preserves
-staging builds. Changing it to production switches subsequent default builds and
-publication to production. The selected configuration
-supplies the runner environment, artifact bucket and dataset bucket; compile
+Selecting production switches model builds and registry publication to production.
+Frontend builds explicitly use staging, and `resolve-staging-browser-config`
+resolves staging publication settings independently of `select` and
+`resolve-vulcan-config`. Frontend publication waits only for this staging resolver
+and the checked portal. The selected model configuration
+supplies the compiler runner environment, artifact bucket and dataset bucket; compile
 workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
 
 The `plan` job requests `id-token: write` and waits for configuration resolution
@@ -189,9 +214,20 @@ authentication. Pull-request validation does not acquire this planning identity.
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
 compile fingerprint, or when a maintainer forces a rebuild. A reused build is
 queued for the benchmarks whose fingerprints have no completed run. Benchmarks
-run only in staging, only for Modalix targets, and only after the profile's
+run on staging DevKits for either registry environment, only for Modalix targets, and only after the profile's
 package publishes. On-demand models compile only on the explicit manual
 selection described below, and their builds are not benchmarked.
+
+Benchmark dispatch passes the parent build's resolved `VULCAN_ENV` explicitly.
+Standalone benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
+staging fallback and per-run override. Registry reads, datasets, and report
+publication use that selection; DevKit discovery independently requests
+`vulcan-staging`, and execution consumes the resolver's labels. Production
+registry restoration and report publication use the production GitHub environment
+on hosted runners. The board receives staged artifacts and dataset-reader access.
+Benchmark concurrency includes the registry environment so staging and production
+runs do not share a concurrency group. This routing does not change model or
+benchmark fingerprints.
 
 ### Branches, merges, and concurrent pushes
 
