@@ -148,6 +148,8 @@ jobs:
   portal:
     name: Check the model browser portal
     uses: ./.github/workflows/developer-docs.yml
+    with:
+      environment: staging
 
   resolve-vulcan-config:
     name: Resolve Vulcan publication config
@@ -160,31 +162,41 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  # Frontend staging publication is independent of the model build/registry environment.
+  resolve-staging-browser-config:
+    name: Resolve staging model browser publication config
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: staging
+    secrets: inherit
+
   # Staging serves the model browser of main and develop: the portal this run built and checked.
   # Both branches publish to the same prefix, and a publish deletes files missing from its site, so
   # publishes queue in one group instead of overlapping.
   publish-model-browser:
     name: Publish the staging model browser
-    needs: [select, portal, resolve-vulcan-config]
+    needs: [portal, resolve-staging-browser-config]
     concurrency:
       group: ${{ github.repository }}-model-browser-staging
       cancel-in-progress: false
-    if: >-
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
-      needs.select.outputs.vulcan_environment == 'staging'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     permissions:
       contents: read
       actions: write
       id-token: write
     uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
     with:
-      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      environment_name: ${{ needs.resolve-staging-browser-config.outputs.vulcan_env }}
       site_key: DOCS
-      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-      bucket: ${{ needs.resolve-vulcan-config.outputs.docs_bucket }}
-      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.docs_kms_key_id }}
-      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}
+      aws_region: ${{ needs.resolve-staging-browser-config.outputs.aws_region }}
+      bucket: ${{ needs.resolve-staging-browser-config.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-staging-browser-config.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-staging-browser-config.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-staging-browser-config.outputs.sysdoc_cloudfront_distribution_id }}
       artifact_pattern: model-browser-site
       s3_prefix: models
       cloudfront_paths: "/models /models/*"

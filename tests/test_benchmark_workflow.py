@@ -206,7 +206,11 @@ def test_performance_runs_only_at_the_full_cpu_clock() -> None:
 def test_performance_runs_the_model_owned_script() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
     assert '"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"' in script
-    assert '"${mpks[@]}" --output "$OUTPUT_DIR"' in script
+    assert '"${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR"' in script
+    # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
+    assert "model_registry resolve-devkit-accuracy" in script
+    assert 'dataset=(--dataset "$name=$directory")' in script
+    assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
     assert "model_registry model-component-mpks" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
@@ -218,7 +222,8 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert not {"BENCHMARK_PERFORMANCE", "BENCHMARK_ACCURACY"} & set(benchmark["env"])
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && steps.stages.outputs.performance == 'true' }}"
+        "${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' "
+        "&& steps.stages.outputs.performance == 'true' }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance'
@@ -242,7 +247,9 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert accuracy_evidence["with"]["if-no-files-found"] == "error"
     for name in ("Install trusted dataset tooling", "Configure dataset reader credentials",
                  "Cache the accuracy dataset on NVMe"):
-        assert step(steps, name)["if"] == "steps.stages.outputs.accuracy == 'true'", name
+        assert step(steps, name)["if"] == (
+            "steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'"
+        ), name
 
 
 @pytest.mark.parametrize(
@@ -276,7 +283,7 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
         "performance": "${{ steps.performance-tests.outcome }}",
         "accuracy": "${{ steps.accuracy-tests.outcome }}",
     }
-    # Shared setup gates both stages; a failed accuracy dataset step does not skip performance.
+    # Shared setup gates both stages; each stage checks the dataset step itself.
     assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
         "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
     )
@@ -368,6 +375,7 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
             "Install trusted dataset tooling",
             "Configure dataset reader credentials",
             "Cache the accuracy dataset on NVMe",
+            "Measure performance on DevKit",
             "Measure accuracy on DevKit",
         )
     ]
@@ -380,16 +388,18 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
     assert "dataset/dataset-registry@main:latest" in install_script
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
     accuracy_script = (ROOT / "scripts" / "run_model_accuracy.sh").read_text(encoding="utf-8")
+    performance_script = (ROOT / "scripts" / "run_model_performance.sh").read_text(encoding="utf-8")
     assert 'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"' in cache_script
     assert 'mountpoint -q "$NVME_MOUNT"' in cache_script
     assert "coco" not in cache_script.lower()
-    # Both scripts serialize resolution through the board-wide dataset lock, under a timeout.
+    # Every script serializes resolution through the board-wide dataset lock, under a timeout.
     assert 'DATASET_LOCK="${DATASET_LOCK:-$NVME_MOUNT/datasets/locks/prepare.lock}"' in cache_script
-    assert 'DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"' in accuracy_script
-    for script in (cache_script, accuracy_script):
+    for script in (accuracy_script, performance_script):
+        assert 'DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"' in script
+        assert "/media/nvme/datasets/artifacts" in script
+    for script in (cache_script, accuracy_script, performance_script):
         assert 'flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK"' in script
         assert 'timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS"' in script
-    assert "/media/nvme/datasets/artifacts" in accuracy_script
     assert "$NVME_MOUNT/datasets/artifacts" in cache_script
 
 

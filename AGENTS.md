@@ -83,12 +83,19 @@ component's MPK and the CPU work between them. `model.yaml` declares only
 `build_profiles`. Every performance report holds the metrics
 `tools/model_report/metrics.json` marks `required`. The metrics an accuracy
 dataset requires live in `datasets/<registry id>.yaml`, per task; a model
-reports, on each dataset, the metrics listed for its `tasks`. Decoder selection, top-k,
-sample count, duration and MLA layer and stage stats belong in each model's
-`scripts/performance.py`. Every benchmarked model must include that standalone
+reports, on each dataset, the metrics listed for its `tasks`. The benchmark input, decoder
+selection, top-k, score threshold, sample count, duration and MLA layer and stage stats belong
+in each model's `scripts/performance.py`. Every benchmarked model must include that standalone
 script so customers can copy it and reproduce CI in the PyNeat environment,
 with `tools/model_report` on `PYTHONPATH` and without `model_registry` imports
-or YAML configuration. Keep its `--mpk` and `--output` CLI. `performance.py`
+or YAML configuration. Keep its `--mpk` and `--output` CLI. A model with accuracy datasets
+also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and benchmarks one
+`random.Random(0)` image from it, letterboxed into a 1280x720 RGB frame by code inside the
+script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
+timed. `run_model_performance.sh` passes only the first dataset, and only for a profile
+accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
+do not benchmark Core's synthetic inputs ([Benchmark
+input](docs/benchmarking.md#benchmark-input)). `performance.py`
 and `accuracy.py` write `model-report.json` with `model_report.from_performance()`
 or `model_report.from_accuracy()`, the latter with one result per dataset source ID;
 `schemas/model-report.schema.json` is the report
@@ -200,6 +207,7 @@ in the same commit.
 | what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
+| how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
 | a custom `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script), and for a multi-component model the [multi-component script](docs/benchmarking.md#multi-component-models): hand Core's `BenchmarkReport`, board telemetry, and each component's Model to `model_report.from_performance()` |
 | a metric: a Core benchmark reading or an accuracy score the registry should publish | a row in `tools/model_report/metrics.json` with its Vulcan measurement name (`registry_name`), and its entry in the browser's `metrics.js` or `accuracy-metrics.js`, and for a telemetry reading in `TELEMETRY_METRICS` in `model-report.js`, which tests keep in step; for a performance metric, its row in `DETAIL_CARDS` in `model-view.js` when a Performance details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |

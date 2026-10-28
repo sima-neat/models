@@ -119,8 +119,7 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
     job = workflow["jobs"]["publish-model-browser"]
 
     assert job["if"] == (
-        "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && "
-        "needs.select.outputs.vulcan_environment == 'staging'"
+        "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'"
     )
     assert job["uses"] == "sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main"
     assert job["permissions"] == {"contents": "read", "actions": "write", "id-token": "write"}
@@ -130,18 +129,35 @@ def test_staging_deployment_publishes_models_to_docs_origin() -> None:
         "cancel-in-progress": "false",
     }
 
+    resolver = workflow["jobs"]["resolve-staging-browser-config"]
+    assert resolver["if"] == job["if"]
+    assert "needs" not in resolver
+    assert resolver["uses"] == "sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main"
+    assert resolver["with"]["vulcan_env"] == "staging"
+    assert workflow["jobs"]["portal"]["with"]["environment"] == "staging"
+    # Model operations retain their independently selected environment.
+    assert workflow["jobs"]["resolve-vulcan-config"]["with"]["vulcan_env"] == (
+        "${{ needs.select.outputs.vulcan_environment }}"
+    )
+
     publish = job["with"]
-    assert publish["bucket"] == "${{ needs.resolve-vulcan-config.outputs.docs_bucket }}"
-    assert publish["role_to_assume"] == "${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}"
+    for field, output in {
+        "environment_name": "vulcan_env",
+        "aws_region": "aws_region",
+        "sse_kms_key_id": "docs_kms_key_id",
+    }.items():
+        assert publish[field] == "${{ needs.resolve-staging-browser-config.outputs." + output + " }}"
+    assert publish["bucket"] == "${{ needs.resolve-staging-browser-config.outputs.docs_bucket }}"
+    assert publish["role_to_assume"] == "${{ needs.resolve-staging-browser-config.outputs.docs_publisher_role_arn }}"
     assert publish["cloudfront_distribution_id"] == (
-        "${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}"
+        "${{ needs.resolve-staging-browser-config.outputs.sysdoc_cloudfront_distribution_id }}"
     )
     assert publish["s3_prefix"] == "models"
     assert publish["cloudfront_paths"] == "/models /models/*"
 
     # The deployment publishes the site the run's portal check built and checked.
     assert workflow["jobs"]["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
-    assert job["needs"] == ["select", "portal", "resolve-vulcan-config"]
+    assert job["needs"] == ["portal", "resolve-staging-browser-config"]
     docs = yaml.load(DOCS_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     upload = docs["jobs"]["build"]["steps"][-1]
     assert upload["with"]["path"] == "website/portal-build/"

@@ -40,6 +40,7 @@ COMPILER_AND_BOARD_MODULES = (
     "afe.apis.loaded_net",
     "afe.apis.model",
     "afe.core",
+    "afe.core.configs",
     "afe.core.utils",
     "afe.ir",
     "afe.ir.tensor_type",
