@@ -1,0 +1,63 @@
+display_name: SegFormer-B0 ADE20K
+description: Labels every pixel of a scene with one of the 150 ADE20K classes.
+model_type: vision
+tasks: [semantic_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: segformer
+
+# The NVIDIA Source Code License for SegFormer allows use only noncommercially, for research or evaluation.
+license:
+  spdx: LicenseRef-NVIDIA-Source-Code-License-SegFormer
+  redistribution: restricted
+  attribution: SegFormer by NVIDIA, under the NVIDIA Source Code License (https://github.com/NVlabs/SegFormer/blob/master/LICENSE).
+
+upstream:
+  repository: https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512
+  revision: 489d5cd81a0b59fab9b7ea758d3548ebe99677da
+  derived_from: https://github.com/NVlabs/SegFormer
+
+conversion:
+  source:
+    repository: nvidia/segformer-b0-finetuned-ade-512-512
+    revision: 489d5cd81a0b59fab9b7ea758d3548ebe99677da
+    main_file: config.json
+    files:
+      config.json: {sha256: 209caa9091e4632f7c8883c11170cd08ad29af68b23c09590aa4a5befb1a2a7f, size_bytes: 6884}
+      model.safetensors: {sha256: 6ae39addd01de6b1b8bde2cf677d43a5cd733424b8d186de3f95d1c51fee23f9, size_bytes: 15036944}
+
+compilation:
+  format: onnx
+  # TODO(#402): replace with the source block the Vulcan Model Convert workflow prints for segformer_b0_ade_512.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
+    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
+    size_bytes: 9917015
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+# Scored against the ONNX source rather than ADE20K labels, which no registry dataset holds.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 20}
+  outputs: [logits]
+
+performance: {}

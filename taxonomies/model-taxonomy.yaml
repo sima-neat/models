@@ -85,6 +85,10 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
+  segformer:
+    display_name: SegFormer
+    paradigm: transformer
+    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer
