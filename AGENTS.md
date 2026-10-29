@@ -92,7 +92,7 @@ or YAML configuration. Keep its `--mpk` and `--output` CLI. A model with accurac
 also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and benchmarks one
 `random.Random(0)` image from it, letterboxed into a 1280x720 RGB frame by code inside the
 script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
-timed. `run_model_performance.sh` passes only the first dataset, and only for a profile
+timed. A stereo model benchmarks one such pair as a side-by-side frame instead. `run_model_performance.sh` passes only the first dataset, and only for a profile
 accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`

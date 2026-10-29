@@ -40,10 +40,32 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_large: "Mask AR large",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
+  epe: "EPE",
+  d1_all: "D1-all",
+};
+
+// The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and
+// directions.
+export const ACCURACY_METRIC_SCALES = {
+  epe: { unit: "px", direction: "lower" },
+  d1_all: { unit: "%", direction: "lower" },
 };
 
 export function accuracyMetricLabel(name) {
   return ACCURACY_METRIC_LABELS[name] || name;
+}
+
+// A score as a number in its display unit: a ratio as a percentage, any other unit as reported.
+export function accuracyDisplay(name, value) {
+  const { unit, direction } = ACCURACY_METRIC_SCALES[name] || { unit: "ratio", direction: "higher" };
+  return unit === "ratio" ? { number: value * 100, unit: "%", direction } : { number: value, unit, direction };
+}
+
+// A score as text: "40.10%" for a ratio or a percentage, "0.776 px" for pixels, and "—" (or blank) when missing.
+export function formatAccuracy(name, value, { blank = false } = {}) {
+  if (!Number.isFinite(value)) return blank ? "" : "—";
+  const { number, unit } = accuracyDisplay(name, value);
+  return unit === "%" ? `${number.toFixed(2)}%` : `${number.toFixed(3)} ${unit}`;
 }
 
 // Known metrics follow the label order and any others follow them in the order given.

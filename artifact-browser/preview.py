@@ -35,6 +35,7 @@ from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
 from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
 from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
+from model_report import METRICS  # noqa: E402
 
 UI_MODE = os.environ.get("MODEL_BROWSER_UI_MODE", "developer")
 BRANCH = "main" if UI_MODE == "customer" else "develop"
@@ -415,8 +416,9 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
     """A whole-model accuracy report on each dataset the model declares, for the metrics its tests expect there,
     else the ones the dataset requires.
 
-    Each metric lands a little below the source model's reference score on that dataset, when there is one.
-    One profile in two evaluates a sampled subset of each split, so both coverages appear.
+    Each metric lands a little worse than the source model's reference score on that dataset, when there is one:
+    below it, or above it for an error metric such as EPE. One profile in two evaluates a sampled subset of each
+    split, so both coverages appear.
     """
     template = _report_template("accuracy")
     sample = next(iter(template["datasets"].values()))
@@ -438,11 +440,17 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
             "available_samples": available,
             "metrics": {
                 metric: round(reference.get(metric, 0.3 + _fraction("reference", *key, metric) * 0.6)
-                              * (0.9 + _fraction("accuracy", *key, name, metric) * 0.08), 4)
+                              * _worse(metric, _fraction("accuracy", *key, name, metric)), 4)
                 for metric in expected.get(name) or dataset["required_metrics"]
             },
         }
     return {**copy.deepcopy(template), "datasets": datasets}
+
+
+def _worse(metric: str, fraction: float) -> float:
+    """The factor that makes a measured score 2-10% worse than its reference, in the metric's direction."""
+    shortfall = 0.02 + (1 - fraction) * 0.08
+    return 1 + shortfall if METRICS[metric]["direction"] == "lower" else 1 - shortfall
 
 
 def _benchmark_parameters(model: dict, benchmark: dict) -> dict[str, Any]:

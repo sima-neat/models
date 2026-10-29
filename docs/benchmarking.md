@@ -155,6 +155,14 @@ decoder settings. Preprocessing is part of the measurement and can bound
 throughput. Give a Model one frame size only: Core builds the benchmark runner
 for the frame it receives.
 
+A stereo model takes its pair as one side-by-side frame, so it skips the
+letterbox: it picks one pair from the dataset's test list with
+`random.Random(0)` (for Scene Flow, `scene_flow/sceneflow_finalpass_test.txt`),
+reads both views as RGB, and passes them as one frame, the left view beside
+the right one (1920x540 for Scene Flow). Its Model resizes with
+`ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
+pair's left image.
+
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
 
