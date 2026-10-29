@@ -278,6 +278,10 @@ def assert_letterboxed_frame(tensor):
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
 
 
+# Models with no accuracy dataset get no --dataset and benchmark a fixed frame their script builds.
+FIXED_FRAME_MODELS = {"segformer_b0_ade_512"}
+
+
 def performance_scripts(*, components: bool) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark."""
@@ -290,7 +294,11 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if path.parents[1].name not in FIXED_FRAME_MODELS],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
@@ -341,6 +349,50 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
+
+
+@pytest.mark.parametrize("model_name", sorted(FIXED_FRAME_MODELS))
+def test_every_fixed_frame_script_benchmarks_one_720p_frame_without_a_dataset(model_name, monkeypatch, tmp_path):
+    loaded, requests = [], []
+
+    class ScriptModel(Model):
+        def __init__(self, *args):
+            super().__init__("model")
+            loaded.append(args)
+
+        def benchmark(self, options):
+            requests.append(options)
+            return Saved(CORE_REPORT)
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
+        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(output)])
+
+    for _ in range(2):
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert [args[0] for args in loaded] == ["model.tar.gz"] * 2
+    assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
+            for r in requests] == [(1000, 60000, True, True)] * 2
+    options = loaded[0][1]
+    assert options.preprocess.kind == "Image"
+    assert (options.preprocess.enable, options.preprocess.resize.enable, options.preprocess.normalize.enable) == (
+        "On", "On", "On"
+    )
+    assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+    (first,), (second,) = (request.inputs for request in requests)
+    assert (first.array.shape, str(first.array.dtype)) == ((720, 1280, 3), "uint8")
+    assert first.options["image_format"] == "RGB"
+    # Every run measures the same frame.
+    assert (first.array == second.array).all()
+    report = saved_report(output)
+    assert "1280x720" in report["workload"]
+    assert list(report["components"]) == ["model"]
+    assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)

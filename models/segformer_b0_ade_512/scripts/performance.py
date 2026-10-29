@@ -14,7 +14,8 @@ FRAME_WIDTH, FRAME_HEIGHT, SEED = 1280, 720, 0
 def synthetic_frame() -> np.ndarray:
     rows = np.linspace(0, 1, FRAME_HEIGHT, dtype=np.float32)[:, None]
     columns = np.linspace(0, 1, FRAME_WIDTH, dtype=np.float32)[None, :]
-    base = np.stack([rows * 200 + 30, columns * 180 + 40, (1 - rows) * columns * 220 + 20], axis=-1)
+    channels = [rows * 200 + 30, columns * 180 + 40, (1 - rows) * columns * 220 + 20]
+    base = np.stack([np.broadcast_to(channel, (FRAME_HEIGHT, FRAME_WIDTH)) for channel in channels], axis=-1)
     noise = np.random.default_rng(SEED).normal(0, 8, base.shape)
     return np.clip(base + noise, 0, 255).astype(np.uint8)
 
