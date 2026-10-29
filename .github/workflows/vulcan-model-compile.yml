@@ -383,6 +383,7 @@ jobs:
             --repository . \
             --compiled-dir _compiled \
             --output-dir _packages \
+            --resource-cache-dir "$RUNNER_TEMP/model-registry-resources" \
             --all \
             --json > "$RUNNER_TEMP/packages.json"
           count="$(jq -er '.count' "$RUNNER_TEMP/packages.json")"

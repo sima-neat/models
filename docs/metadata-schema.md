@@ -216,6 +216,31 @@ manifest in `package-result.json`, validated against
 [`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
 the manifest is not shipped inside the package.
 
+An ONNX model whose application also runs files on the CPU, such as CPU-side
+ONNX graphs, tokenizer tables or voice data, lists them in `resources`, pinned
+like a source. Every package of the model installs each resource's files
+under its `install_path`, and the package is then a ZIP even with one
+component:
+
+```yaml
+resources:
+  supertone_runtime:
+    source:
+      repository: Supertone/supertonic-3
+      revision: 724fb5abbf5502583fb520898d45929e62f02c0b
+      main_file: onnx/tts.json
+      files:
+        onnx/text_encoder.onnx: {sha256: c7befd5e..., size_bytes: 36416150}
+    install_path: supertonic-3
+```
+
+A file the compile recipe derives for the CPU, such as tables from graph
+surgery, goes in `compile-outputs.json` as `runtime_files`: a list of `path`,
+relative to the profile's output directory, and `sha256`. The package carries
+it at that path, beside the MPKs it was derived with. A resource is a compile
+input, so changing one recompiles the model; LLiMa packages ship their
+deployment folder and take neither.
+
 A multi-component model can add `pipeline` so the model browser shows the
 order its components run in. List each component once, in run order, and
 name any CPU step between them:

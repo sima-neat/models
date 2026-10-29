@@ -6,16 +6,16 @@ import os
 import shutil
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from .artifact import deployment_files, verify_artifact
 from .errors import ValidationError
-from .fetch import sha256_file
+from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import load_and_validate_model
+from .model import _expand_source, load_and_validate_model
 from .runner_approval import runner_provenance
 from .source import source_identity
 
@@ -57,6 +57,44 @@ def _link_or_copy(source: str, destination: str) -> str:
         return shutil.copyfile(source, destination)
 
 
+def package_resources(model: dict[str, Any]) -> list[dict[str, Any]]:
+    """model.yaml's resources, each with its expanded source; every package of the model installs all of them."""
+    return [
+        {"id": resource_id, "source": _expand_source(resource["source"]), "install_path": resource["install_path"]}
+        for resource_id, resource in sorted(model.get("resources", {}).items())
+    ]
+
+
+def _runtime_files(profile_dir: Path) -> list[tuple[str, Path]]:
+    """Files the compile recipe declared beside its MPKs in compile-outputs.json, such as runtime tables."""
+    manifest_file = profile_dir / "compile-outputs.json"
+    if not manifest_file.is_file():
+        return []
+    files = []
+    for item in _load_json(manifest_file, "compile outputs").get("runtime_files", []):
+        path = profile_dir / item["path"]
+        if not path.is_file() or sha256_file(path)[0] != item["sha256"]:
+            raise ValidationError(f"{manifest_file}: runtime file {item['path']} is missing or changed")
+        files.append((item["path"], path))
+    return files
+
+
+def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, Path]]]:
+    """Fetch one pinned resource and place its files under install_path."""
+    source = resource["source"]
+    path, _, digest, size = fetcher.fetch_source(source)
+    install_path = PurePosixPath(resource["install_path"])
+    if source["type"] == "file":
+        files = [(install_path.as_posix(), path)]
+    else:
+        source_root = path
+        for _ in PurePosixPath(source["entrypoint"]).parts:
+            source_root = source_root.parent
+        files = [((install_path / member["path"]).as_posix(), source_root / member["path"]) for member in source["files"]]
+    entry = {"id": resource["id"], "paths": [name for name, _ in files], "source_sha256": digest, "size_bytes": size}
+    return entry, files
+
+
 def assemble_package(
     *,
     repository: str | Path,
@@ -65,6 +103,7 @@ def assemble_package(
     model_id: str,
     build_profile_id: str,
     package_id: str,
+    resource_cache_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
@@ -133,8 +172,8 @@ def assemble_package(
         if native:
             if package["composition"] not in compositions or compositions[package["composition"]]["type"] != "single":
                 raise ValidationError("A LLiMa package uses a single deployment composition")
-            if len(package["components"]) != 1:
-                raise ValidationError("A LLiMa package contains one complete deployment")
+            if len(package["components"]) != 1 or model.get("resources"):
+                raise ValidationError("A LLiMa package contains one complete deployment and no extra resources")
             if result.get("format") != "llima":
                 raise ValidationError("Hugging Face compile result must declare format llima")
             native_deployment = result_dir / "deployment"
@@ -171,12 +210,27 @@ def assemble_package(
         if package_path in occupied_paths:
             raise ValidationError(f"package path is declared more than once: {package_path}")
         occupied_paths.add(package_path)
-    packaged_files = sorted(component_files)
+    extra_files = _runtime_files(compiled / model_id / build_profile_id)
+    resource_entries: list[dict[str, Any]] = []
+    resources = package_resources(model)
+    if resources:
+        fetcher = Fetcher(resource_cache_dir)
+        for resource in resources:
+            entry, files = _resource_files(fetcher, resource)
+            resource_entries.append(entry)
+            extra_files.extend(files)
+    for package_path, _ in extra_files:
+        if package_path in occupied_paths:
+            raise ValidationError(f"package path is declared more than once: {package_path}")
+        occupied_paths.add(package_path)
+    packaged_files = sorted((*component_files, *extra_files))
     installed_files = [
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
     ]
     if native_deployment is not None:
+        if extra_files:
+            raise ValidationError("A LLiMa package ships its deployment folder and no runtime files")
         installed_files = native_files
     manifest = {
         "model_id": model_id,
@@ -187,7 +241,7 @@ def assemble_package(
         "target": profiles[build_profile_id]["target"],
         "provenance": provenance_identity or {},
         "components": component_entries,
-        "resources": [],  # sima-cli reads the field; no package carries extra resources.
+        "resources": resource_entries,
         "files": installed_files,
         "license": model["license"],
     }
@@ -267,6 +321,7 @@ def assemble_available_packages(
     repository: str | Path,
     compiled_dir: str | Path,
     output_dir: str | Path,
+    resource_cache_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     root = Path(repository).expanduser().resolve()
     results: list[dict[str, Any]] = []
@@ -291,6 +346,7 @@ def assemble_available_packages(
                             model_id=model["id"],
                             build_profile_id=profile_id,
                             package_id=package["id"],
+                            resource_cache_dir=resource_cache_dir,
                         )
                     )
     return results

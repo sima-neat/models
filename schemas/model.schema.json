@@ -52,6 +52,14 @@
         "entrypoint": {"description": "The package's public entrypoint when it is not default, such as generate.", "$ref": "#/$defs/id"}
       }
     },
+    "resources": {
+      "description": "Pinned files an ONNX model's CPU code needs at run time, such as CPU-side ONNX graphs or voice data. Every package installs each resource's files under its install_path.",
+      "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["source", "install_path"],
+        "properties": {"source": {"$ref": "#/$defs/source"}, "install_path": {"$ref": "#/$defs/relativePath"}}
+      }
+    },
     "calibrations": {
       "description": "What build profiles calibrate on: a Dataset Registry dataset, named by its source ID such as coco-2017-cal.",
       "type": "array",

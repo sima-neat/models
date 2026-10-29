@@ -234,6 +234,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     package.add_argument("--build-profile")
     package.add_argument("--package")
     package.add_argument("--all", action="store_true", dest="all_packages")
+    package.add_argument("--resource-cache-dir", type=Path, help="where pinned package resources are cached")
     package.add_argument("--json", action="store_true", dest="json_output")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
@@ -662,6 +663,7 @@ def _assemble_package(args: argparse.Namespace) -> int:
             repository=args.repository,
             compiled_dir=args.compiled_dir,
             output_dir=args.output_dir,
+            resource_cache_dir=args.resource_cache_dir,
         )
     else:
         if any(value is None for value in explicit):
@@ -674,6 +676,7 @@ def _assemble_package(args: argparse.Namespace) -> int:
                 model_id=args.model,
                 build_profile_id=args.build_profile,
                 package_id=args.package,
+                resource_cache_dir=args.resource_cache_dir,
             )
         ]
     payload = {"count": len(results), "packages": results}

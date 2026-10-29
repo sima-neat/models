@@ -33,7 +33,8 @@ def validate_compile_outputs(
     fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
     if grouped:
         fields.add("derived_graphs")
-    if not isinstance(manifest, dict) or set(manifest) != fields:
+    # runtime_files lists what the model's CPU code reads beside its MPKs, such as tables from graph surgery.
+    if not isinstance(manifest, dict) or set(manifest) - {"runtime_files"} != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {
         "model_id": model_id,
@@ -101,6 +102,8 @@ def validate_compile_outputs(
         raise ValidationError(f"{manifest_file}: output tree contains undeclared MPK archives")
 
     result = {**identity, "outputs": resolved}
+    if "runtime_files" in manifest:
+        result["runtime_files"] = _validate_runtime_files(manifest["runtime_files"], root, manifest_file)
     if grouped:
         graphs = manifest["derived_graphs"]
         if not isinstance(graphs, list) or len(graphs) != len(component_ids):
@@ -123,6 +126,24 @@ def validate_compile_outputs(
 
         result["derived_graphs"] = graphs
     return result
+
+
+def _validate_runtime_files(files: Any, root: Path, manifest_file: Path) -> list[dict[str, str]]:
+    if not isinstance(files, list) or not files:
+        raise ValidationError(f"{manifest_file}: runtime_files must be a non-empty list")
+    names: set[str] = set()
+    for index, item in enumerate(files):
+        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+            raise ValidationError(f"{manifest_file}: runtime_files[{index}] must contain path and sha256")
+        relative = PurePosixPath(str(item["path"]))
+        if (relative.is_absolute() or ".." in relative.parts or relative.as_posix() != item["path"]
+                or relative.name.endswith("_mpk.tar.gz") or item["path"] in names):
+            raise ValidationError(f"{manifest_file}: unsafe or duplicate runtime file path {item['path']!r}")
+        names.add(item["path"])
+        path = root.joinpath(*relative.parts)
+        if not path.is_file() or sha256_file(path)[0] != item["sha256"]:
+            raise ValidationError(f"{manifest_file}: runtime file {item['path']} is missing or its SHA-256 does not match")
+    return files
 
 
 def record_compile_outputs(
