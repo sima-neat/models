@@ -86,9 +86,9 @@ this table. Modules marked CI only are removed from the author package by
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
 | `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
-| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and deployment file indexes |
+| `artifact.py` | compile outputs, MPK, deployment folder and deployed LLiMa verification, and deployment file indexes |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
-| `package.py` | assembling a profile's `default` package from component MPKs, the model's pinned `resources` and the compile's `runtime_files`, or from a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
+| `package.py` | assembling a profile's `default` package from component MPKs (a folder of files when it also carries the model's pinned `resources` or the compile's `runtime_files`), or from a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `source.py` | source identity and URL redaction |
@@ -391,7 +391,9 @@ package run. Content-addressed S3 objects are reused between compile and
 package publication. Retrieval preserves the folder and verifies every file
 through public resolved URLs. See the [metadata contract](../docs/metadata-schema.md#llima-checkpoint-and-deployment-formats)
 for manifest fields, publication metadata, and the temporary 5 GiB per-file
-upload limit. Aggregate deployment size has no limit.
+upload limit. Aggregate deployment size has no limit. An ONNX package that
+carries `resources` or `runtime_files` beside its MPKs is published the same
+way, as a folder of files; see [Packages and pipeline](../docs/metadata-schema.md#packages-and-pipeline).
 
 Empty benchmark declarations schedule no benchmarks. Qwen's defaults
 and the separate performance and accuracy follow-ups are in the
