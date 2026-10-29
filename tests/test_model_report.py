@@ -278,12 +278,15 @@ def assert_letterboxed_frame(tensor):
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
 
 
-def performance_scripts(*, components: bool) -> list[Path]:
+def performance_scripts(*, components: bool, accuracy: bool | None = None) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
-    pipeline and take each component's MLA stats from its own Model.benchmark."""
+    pipeline and take each component's MLA stats from its own Model.benchmark. accuracy selects the models that
+    do or do not declare accuracy datasets; only those benchmark a dataset image."""
     scripts = []
     for path in sorted(REPOSITORY.glob("models/*/model.yaml")):
         model = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if accuracy is not None and ("accuracy" in model) != accuracy:
+            continue
         if "performance" in model and ("components" in model["compilation"]) == components:
             scripts.append(path.parent / "scripts/performance.py")
     assert scripts
@@ -372,7 +375,9 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
     assert (layer_stats, stage_stats) == (CORE_REPORT["mla_layer_stats"], CORE_REPORT["mla_stage_stats"])
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script", performance_scripts(components=True, accuracy=True), ids=lambda path: path.parents[1].name
+)
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
         ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
