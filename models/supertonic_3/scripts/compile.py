@@ -374,6 +374,8 @@ def _write_outputs(
             {"component_id": component_id, "sha256": reports[component_id]["derived_graph_sha256"]}
             for component_id in COMPONENT_IDS
         ],
+        # The package carries the runtime tables beside the MPKs they were derived with.
+        "runtime_files": [{"path": RUNTIME_DATA, "sha256": sha256(output_dir / RUNTIME_DATA)}],
     }
     (output_dir / "compile-outputs.json").write_text(json.dumps(outputs, indent=2, sort_keys=True) + "\n", "utf-8")
     report = {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import hashlib
 import json
 import sys
 import tarfile
@@ -189,6 +190,8 @@ def test_one_invocation_writes_both_mpks_and_compile_outputs(
         {"component_id": component_id, "sha256": component_id * 2} for component_id in COMPONENT_IDS
     ]
     assert (output / RUNTIME_DATA).read_bytes() == b"tables"
+    # The package carries the runtime tables, so the compile declares them with their checksum.
+    assert outputs["runtime_files"] == [{"path": RUNTIME_DATA, "sha256": hashlib.sha256(b"tables").hexdigest()}]
     report = json.loads((output / "compile-report.json").read_text(encoding="utf-8"))
     assert report["components"]["vector_estimator"]["batch_size"] == 2
     assert set(report["source_sha256"]) == {"vector_estimator.onnx", "vocoder.onnx"}
@@ -244,6 +247,9 @@ def test_build_holds_both_mpks_at_their_batch_sizes_and_the_runtime_data(
         for name in ("conditional_style_key", "unconditional_text", "unconditional_style_key",
                      "unconditional_style_value"):
             assert np.isfinite(archive[name]).all(), name
+    outputs = json.loads((compiled / "compile-outputs.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256((compiled / RUNTIME_DATA).read_bytes()).hexdigest()
+    assert outputs["runtime_files"] == [{"path": RUNTIME_DATA, "sha256": digest}]
 
 
 def test_quantized_components_agree_with_the_float_graphs(compiled: Path) -> None:
