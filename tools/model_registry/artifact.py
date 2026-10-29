@@ -142,7 +142,9 @@ def _validate_runtime_files(files: Any, root: Path, manifest_file: Path) -> list
         names.add(item["path"])
         path = root.joinpath(*relative.parts)
         if not path.is_file() or sha256_file(path)[0] != item["sha256"]:
-            raise ValidationError(f"{manifest_file}: runtime file {item['path']} is missing or its SHA-256 does not match")
+            raise ValidationError(
+                f"{manifest_file}: runtime file {item['path']} is missing or its SHA-256 does not match"
+            )
     return files
 
 

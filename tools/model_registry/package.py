@@ -90,7 +90,9 @@ def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[st
         source_root = path
         for _ in PurePosixPath(source["entrypoint"]).parts:
             source_root = source_root.parent
-        files = [((install_path / member["path"]).as_posix(), source_root / member["path"]) for member in source["files"]]
+        files = [
+            ((install_path / member["path"]).as_posix(), source_root / member["path"]) for member in source["files"]
+        ]
     entry = {"id": resource["id"], "paths": [name for name, _ in files], "source_sha256": digest, "size_bytes": size}
     return entry, files
 
