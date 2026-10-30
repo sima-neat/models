@@ -171,10 +171,11 @@ def calibration_inputs(dataset: Path, samples: int, seed: int = 42) -> dict[str,
     return {name: np.concatenate([inputs[name] for inputs in stacked]) for name in INPUT_SHAPES}
 
 
-def fidelity_inputs(dataset: Path, seed: int, offset: int, samples: int) -> list[dict[str, np.ndarray]]:
-    """The declared span of the seeded order, one pair's inputs at a time."""
+def fidelity_inputs(dataset: Path, seed: int, offset: int,
+                    samples: int) -> list[tuple[dict[str, np.ndarray], tuple[int, int]]]:
+    """The declared span of the seeded order: each pair's inputs and its images' numbers of real keypoints."""
     with opened(dataset) as root:
         pairs = seeded_pairs(root, seed)
         if len(pairs) < offset + samples:
             raise ValueError(f"numerical fidelity needs {offset + samples} pairs, the dataset has {len(pairs)}")
-        return [pair_inputs(root, pair)[0] for pair in pairs[offset : offset + samples]]
+        return [pair_inputs(root, pair) for pair in pairs[offset : offset + samples]]

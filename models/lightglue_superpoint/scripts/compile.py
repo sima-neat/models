@@ -32,7 +32,7 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from calibration import INPUT_SHAPES, OUTPUT_SHAPE, calibration_inputs, fidelity_inputs
+from calibration import INPUT_SHAPES, OUTPUT_SHAPE, calibration_inputs, fidelity_inputs, matches
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
@@ -42,6 +42,8 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "lightglue_superpoint"
 COMPONENT_ID = "model"
 OUTPUT_NAME = "assignment"
+# The fidelity report's second entry: the matches extracted from the assignment, as a 0/1 matrix.
+MATCHES_NAME = "matches"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 
@@ -205,19 +207,31 @@ class _OutputError:
         }
 
 
+def match_matrix(assignment: np.ndarray, counts: tuple[int, int]) -> np.ndarray:
+    """LightGlue's matches among the real keypoints as a 0/1 matrix, so that its cosine against another such matrix
+    is the overlap of the two match sets, |A & B| / sqrt(|A| |B|)."""
+    matrix = np.zeros(OUTPUT_SHAPE[1:], np.float64)
+    pairs = matches(assignment, counts)
+    matrix[pairs[:, 0], pairs[:, 1]] = 1.0
+    return matrix
+
+
 def measure_fidelity(source: Path, quantized: Any, dataset: Path, config: dict[str, Any], profile_id: str) -> dict:
-    """Compare the quantized graph's assignment with the ONNX source's on the declared cal pairs."""
+    """Compare the quantized graph with the ONNX source on the declared cal pairs: the assignment itself, and the
+    matches LightGlue extracts from it. The assignment holds probabilities near 0 or 1, so a keypoint whose two best
+    partners are close can swap them under BF16 rounding, which moves its cosine far more than the matches move."""
     selection = config["selection"]
     samples = fidelity_inputs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    error = _OutputError(OUTPUT_NAME)
-    for inputs in samples:
+    errors = {OUTPUT_NAME: _OutputError(OUTPUT_NAME), MATCHES_NAME: _OutputError(MATCHES_NAME)}
+    for inputs, counts in samples:
         (expected,) = reference.run([OUTPUT_NAME], inputs)
         outputs = quantized.execute(inputs={InputName(name): value for name, value in inputs.items()}, use_jax=True)
         (actual,) = [np.asarray(output) for output in outputs]
         if actual.shape != OUTPUT_SHAPE:
             raise RuntimeError(f"the quantized graph returns its assignment as {actual.shape}, expected {OUTPUT_SHAPE}")
-        error.add(expected, actual)
+        errors[OUTPUT_NAME].add(expected, actual)
+        errors[MATCHES_NAME].add(match_matrix(expected, counts), match_matrix(actual, counts))
     return {
         "schema_version": 1,
         "model_id": MODEL_ID,
@@ -228,7 +242,7 @@ def measure_fidelity(source: Path, quantized: Any, dataset: Path, config: dict[s
         "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
         "selection": selection,
         "samples": len(samples),
-        "metrics": [error.summary()],
+        "metrics": [error.summary() for error in errors.values()],
     }
 
 
@@ -262,7 +276,10 @@ def main() -> int:
         LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
         report = measure_fidelity(source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity,
                                   args.build_profile)
-        LOG.info("Fidelity: %s", report["metrics"][0])
+        # Printed, not logged: the Model Compiler's logging setup drops this module's INFO records.
+        for metric in report["metrics"]:
+            print(f"Fidelity {metric['name']}: cosine {metric['cosine_similarity']:.4f}, "
+                  f"max |error| {metric['max_absolute_error']:.4f}", flush=True)
     compile_model(quantized, output_dir / COMPONENT_ID, precision)
     if report is not None:
         (output_dir / "fidelity.json").write_text(

@@ -94,7 +94,8 @@ def test_calibration_reads_the_archive_and_fidelity_follows_it_in_one_seeded_ord
     assert {name: value.shape[0] for name, value in samples.items()} == dict.fromkeys(calibration.INPUT_SHAPES, 4)
     order = calibration.seeded_pairs(root, 42)
     expected = [calibration.pair_inputs(root, pair)[0]["keypoints0"] for pair in order[4:7]]
-    np.testing.assert_array_equal([inputs["keypoints0"] for inputs in later], expected)
+    np.testing.assert_array_equal([inputs["keypoints0"] for inputs, _ in later], expected)
+    assert [counts for _, counts in later] == [(512, 512)] * 3
     with pytest.raises(ValueError, match="needs 12 pairs"):
         calibration.fidelity_inputs(archive, 42, 4, 8)
 
@@ -110,9 +111,26 @@ def test_every_build_profile_calibrates_before_the_fidelity_pairs(load_script: C
         assert parameters["precision"] == profile["id"]
         assert binding["calibration"] == "yfcc100m-keypoints-cal"
         assert parameters["calibration_samples"] <= selection["offset"]
-    assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
+    assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME, recipe.MATCHES_NAME]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters(metadata, "w32a32")
+
+
+def test_the_matches_fidelity_is_the_overlap_of_the_two_match_sets(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+    expected = np.full((512, 512), 1e-4, np.float32)
+    actual = expected.copy()
+    for row in range(4):  # FP32 matches keypoints 0-3; the quantized graph keeps 0-2 and finds 5
+        expected[row, row + 10] = 0.9
+    for row in (0, 1, 2, 5):
+        actual[row, row + 10] = 0.8
+    actual[400, 300] = 0.95  # past image 0's 300 real keypoints: padding, never a match
+
+    error = recipe._OutputError(recipe.MATCHES_NAME)
+    error.add(recipe.match_matrix(expected, (300, 512)), recipe.match_matrix(actual, (300, 512)))
+
+    # 3 shared matches of 4 and 4: 3 / sqrt(4 * 4).
+    assert error.summary()["cosine_similarity"] == pytest.approx(0.75)
 
 
 def test_every_input_fills_whole_mla_words(load_script: Callable[[str], ModuleType]) -> None:
@@ -193,9 +211,12 @@ def test_build_holds_the_matcher_and_follows_the_onnx(
     (item,) = outputs["outputs"]
     recipe.audit_mpk(compiled / item["mpk_path"])
     fidelity = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
-    (metric,) = fidelity["metrics"]
-    assert metric["name"] == "assignment"
-    # BF16 keeps the assignment close to the ONNX's, and INT8 may drift but not collapse. A broken operator or a
-    # collapsed INT8 build shows up as a low cosine, and a failed test leaves the build unpublished.
-    floor = 0.99 if build_profile == "w16a16" else 0.95
-    assert metric["cosine_similarity"] > floor, metric
+    metrics = {metric["name"]: metric for metric in fidelity["metrics"]}
+    assert list(metrics) == ["assignment", "matches"]
+    # The gate is the overlap of the quantized graph's matches with the ONNX's. The assignment's own cosine overstates
+    # the change: its entries sit near 0 or 1, and a keypoint whose two best partners are close can swap them under
+    # BF16 rounding. BF16 keeps most matches and INT8 may lose more but must not collapse; a broken operator or a
+    # collapsed build shows up as a low overlap, and a failed test leaves the build unpublished. Pose AUC on the
+    # DevKit decides whether a build stays within 5% of the reference.
+    floor = 0.9 if build_profile == "w16a16" else 0.6
+    assert metrics["matches"]["cosine_similarity"] > floor, metrics

@@ -59,7 +59,7 @@ numerical_fidelity:
   dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 8}
-  outputs: [assignment]
+  outputs: [assignment, matches]
 
 accuracy:
   datasets:
