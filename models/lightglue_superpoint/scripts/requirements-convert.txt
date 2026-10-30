@@ -4,4 +4,6 @@ numpy==1.26.4
 onnx==1.17.0
 onnxruntime==1.21.1
 onnxscript==0.3.2
+# onnxscript 0.3.2's opset conversion fails on the exported functions with onnx-ir 1.x.
+onnx-ir==0.1.4
 onnxsim==0.7.3
