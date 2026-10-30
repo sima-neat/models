@@ -157,6 +157,12 @@ from stated local evidence or the trusted staging workflow after merge.
 
 ## After merge: trusted staging automation
 
+Registry release state is a separate production workflow: changes to `state.json`,
+`scripts/publish_registry_state.sh`, or `vulcan-model-state.yml` on `main` publish
+`models/state.json`. Manual runs also require `main`; both jobs and the upload
+script enforce this restriction. Runs share one production concurrency group
+and verify the uploaded file. Merging to `develop` does not deploy this state.
+
 Merging does not deploy the model browser frontend to production. Automatic
 browser publication targets staging on `main`/`develop` independently of
 `VULCAN_ENV` or the orchestrator's manual environment override. For an explicit

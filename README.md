@@ -9,6 +9,22 @@ Git holds no model binaries, datasets, compiled model packs (MPKs), logs, or
 results. A model declaration pins every input it downloads by URI, byte size,
 and SHA-256.
 
+## Registry release state
+
+[`state.json`](state.json) defines the release experience consumed by the SDK's
+Palette SDK component: `current_state` accepts `GA`, `Beta`, or `Alpha`, and
+`default_branch` accepts `develop` or `main`. Initial values are `Alpha` and
+`develop`, allowing the consumer to display `Current Release: Alpha`.
+
+The [state workflow](.github/workflows/vulcan-model-state.yml) publishes
+`models/state.json` in the production artifact bucket only from `main`. Changes
+to the file, workflow, or publishing script on `main` deploy automatically;
+manual runs must also select `main`. Other branches cannot publish this state.
+Publication validates both fields, sets JSON content type and `Cache-Control:
+no-store`, and verifies the uploaded bytes. CDN configuration must honor that
+cache policy. Palette SDK integration must fetch this file; it is not implemented
+here. This file does not participate in model compilation or fingerprints.
+
 ## How a model is built
 
 A **build** is one compile invocation of one build profile of one model. Each
