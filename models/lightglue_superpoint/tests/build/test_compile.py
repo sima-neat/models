@@ -42,12 +42,30 @@ def test_inputs_are_normalized_and_padded_to_512_keypoints(tmp_path: Path, load_
 
     assert counts == (512, 100)
     assert {name: value.shape for name, value in inputs.items()} == calibration.INPUT_SHAPES
-    # The first image's keypoints sit at the 640x480 input's centre, which LightGlue normalizes to the origin.
-    np.testing.assert_allclose(inputs["keypoints0"], 0)
-    np.testing.assert_allclose(inputs["keypoints1"][0, :100], [[1 / 320, 0]] * 100)
-    # Padding: centred keypoints and zero descriptors.
-    assert not inputs["keypoints1"][0, 100:].any() and not inputs["descriptors1"][0, 100:].any()
+    # The first image's keypoints sit at the 640x480 input's centre, which LightGlue normalizes to the origin, where
+    # every phase is 0: cosines 1 and sines 0. So does every padding keypoint.
+    centre = np.concatenate([np.ones(64), np.zeros(64)])
+    np.testing.assert_allclose(inputs["encoding0"][0], [centre] * 512, atol=1e-7)
+    np.testing.assert_allclose(inputs["encoding1"][0, 100:], [centre] * 412, atol=1e-7)
+    np.testing.assert_allclose(inputs["encoding1"][0, :100], [calibration.encoding(np.asarray([1 / 320, 0]))] * 100)
+    # Padding descriptors are zero.
+    assert not inputs["descriptors1"][0, 100:].any()
     np.testing.assert_allclose(inputs["descriptors1"][0, :100], 1 / 16)
+
+
+def test_the_encoding_is_lightglues_rotary_encoding_of_the_keypoint(load_script: Callable[[str], ModuleType]) -> None:
+    calibration = load_script("calibration")
+    keypoint = np.asarray([0.25, -0.5])
+
+    encoded = calibration.encoding(keypoint)
+
+    phases = calibration.KEYPOINT_PROJECTION.astype(np.float64) @ keypoint
+    assert encoded.shape == (calibration.ENCODING_DIM,) == (128,)
+    # Each of the 32 phases appears twice in a row, as repeat_interleave(2) gives the 64-wide attention heads.
+    np.testing.assert_allclose(encoded[:64:2], np.cos(phases), atol=1e-6)
+    np.testing.assert_allclose(encoded[1:64:2], np.cos(phases), atol=1e-6)
+    np.testing.assert_allclose(encoded[64::2], np.sin(phases), atol=1e-6)
+    np.testing.assert_allclose(encoded[65::2], np.sin(phases), atol=1e-6)
 
 
 def test_matches_ignore_padding_and_need_a_mutual_best_pair_above_the_threshold(
@@ -93,8 +111,8 @@ def test_calibration_reads_the_archive_and_fidelity_follows_it_in_one_seeded_ord
 
     assert {name: value.shape[0] for name, value in samples.items()} == dict.fromkeys(calibration.INPUT_SHAPES, 4)
     order = calibration.seeded_pairs(root, 42)
-    expected = [calibration.pair_inputs(root, pair)[0]["keypoints0"] for pair in order[4:7]]
-    np.testing.assert_array_equal([inputs["keypoints0"] for inputs, _ in later], expected)
+    expected = [calibration.pair_inputs(root, pair)[0]["encoding0"] for pair in order[4:7]]
+    np.testing.assert_array_equal([inputs["encoding0"] for inputs, _ in later], expected)
     assert [counts for _, counts in later] == [(512, 512)] * 3
     with pytest.raises(ValueError, match="needs 12 pairs"):
         calibration.fidelity_inputs(archive, 42, 4, 8)

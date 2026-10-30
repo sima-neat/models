@@ -1,3 +1,5 @@
+build-on-demand: true
+
 display_name: LightGlue (SuperPoint)
 description: Matches SuperPoint keypoints between two images.
 model_type: vision

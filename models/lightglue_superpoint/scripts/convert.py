@@ -1,10 +1,11 @@
 """Export LightGlue's matcher for SuperPoint keypoints from its Hugging Face checkpoint and check ONNX against PyTorch.
 
-The ONNX matches two images' 512 keypoints. Inputs: keypoints0 and keypoints1 [1, 512, 2], normalized as LightGlue
-normalizes them, and descriptors0 and descriptors1 [1, 512, 256], SuperPoint's descriptors. Output: assignment
-[1, 512, 512], LightGlue's soft assignment: the probability that keypoint i of image 0 matches keypoint j of image 1,
-the exponential of the log assignment LightGlue extracts its matches from. Every layer runs, since early stopping and
-keypoint pruning are off, so the graph is static. The checkpoint also holds SuperPoint, which the export leaves out.
+The ONNX matches two images' 512 keypoints. Inputs: encoding0 and encoding1 [1, 512, 128], each keypoint's rotary
+position encoding, which the CPU computes in float64 (calibration.encoding), and descriptors0 and descriptors1
+[1, 512, 256], SuperPoint's descriptors. Output: assignment [1, 512, 512], LightGlue's soft assignment: the probability
+that keypoint i of image 0 matches keypoint j of image 1, the exponential of the log assignment LightGlue extracts its
+matches from. Every layer runs, since early stopping and keypoint pruning are off, so the graph is static. The
+checkpoint also holds SuperPoint, which the export leaves out.
 """
 
 import argparse
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from calibration import ENCODING_DIM, KEYPOINT_PROJECTION, encoding
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
@@ -23,9 +25,9 @@ KEYPOINTS = 512
 DESCRIPTOR_DIM = 256
 OPSET = 18
 INTERFACE = {
-    "keypoints0": [1, KEYPOINTS, 2],
+    "encoding0": [1, KEYPOINTS, ENCODING_DIM],
     "descriptors0": [1, KEYPOINTS, DESCRIPTOR_DIM],
-    "keypoints1": [1, KEYPOINTS, 2],
+    "encoding1": [1, KEYPOINTS, ENCODING_DIM],
     "descriptors1": [1, KEYPOINTS, DESCRIPTOR_DIM],
     "assignment": [1, KEYPOINTS, KEYPOINTS],
 }
@@ -104,7 +106,8 @@ def fold_constants(path):
 
 
 def matcher(lightglue):
-    """LightGlue's matcher on two images' fixed keypoints, returning the soft assignment without the dustbins."""
+    """LightGlue's matcher on two images' fixed keypoints, from their rotary encodings and descriptors, returning the
+    soft assignment without the dustbins."""
     import torch
     from torch import nn
 
@@ -124,14 +127,16 @@ def matcher(lightglue):
                                                 encoder_attention_mask=torch.cat([mask[1:2], mask[0:1]], 0))
             return descriptors + layer.cross_mlp(torch.cat([descriptors, attended], -1))
 
-        def forward(self, keypoints0, descriptors0, keypoints1, descriptors1):
-            keypoints = torch.cat([keypoints0, keypoints1], 0)
-            descriptors, encoding = self.lightglue._keypoint_processing(torch.cat([descriptors0, descriptors1], 0),
-                                                                        keypoints)
+        def forward(self, encoding0, descriptors0, encoding1, descriptors1):
+            # The positional encoder's (cosines, sines), computed on the CPU from the keypoints.
+            encodings = torch.cat([encoding0, encoding1], 0)
+            half = encodings.shape[-1] // 2
+            rotary = (encodings[..., :half], encodings[..., half:])
+            descriptors = self.lightglue.input_projection(torch.cat([descriptors0, descriptors1], 0))
             # Every keypoint is real: an all-zero additive mask lets each attend to all.
-            mask = torch.zeros((2, 1, 1, keypoints.shape[1]))
+            mask = torch.zeros((2, 1, 1, encodings.shape[1]))
             for layer in self.lightglue.transformer_layers:
-                descriptors = self.layer(layer, descriptors, encoding[0], mask)
+                descriptors = self.layer(layer, descriptors, rotary, mask)
             assignment = self.lightglue.match_assignment_layers[-1]
             projected = assignment.final_projection(descriptors) / assignment.descriptor_dim**0.25
             similarity = projected[0:1] @ projected[1:2].transpose(-1, -2)
@@ -176,6 +181,13 @@ def normalized(pixels):
     return ((pixels - [IMAGE_WIDTH / 2, IMAGE_HEIGHT / 2]) / (max(IMAGE_WIDTH, IMAGE_HEIGHT) / 2)).astype(np.float32)
 
 
+def check_projection(lightglue):
+    """The CPU encoding uses calibration's copy of the positional encoder's projection; it must be the checkpoint's."""
+    weight = lightglue.positional_encoder.projector.weight.detach().numpy()
+    if weight.shape != KEYPOINT_PROJECTION.shape or not np.array_equal(weight, KEYPOINT_PROJECTION):
+        raise ValueError("calibration.KEYPOINT_PROJECTION differs from the checkpoint's positional encoder projection")
+
+
 def compare_assignment(expected, actual):
     """The exported assignment must equal transformers' to float32 rounding and give the same matches; a pair whose
     assignment sits at the threshold may fall either side, so 1% of the matches may differ."""
@@ -204,10 +216,11 @@ def convert(source, output_dir):
     lightglue = LightGlueForKeypointMatching.from_pretrained(source.parent, local_files_only=True,
                                                             depth_confidence=-1.0, width_confidence=-1.0,
                                                             attn_implementation="eager").eval()
+    check_projection(lightglue)
     model = matcher(lightglue)
     (pixels0, descriptors0), (pixels1, descriptors1) = sample_pair(SEEDS.start)
     example = tuple(torch.from_numpy(value)[None] for value in
-                    (normalized(pixels0), descriptors0, normalized(pixels1), descriptors1))
+                    (encoding(normalized(pixels0)), descriptors0, encoding(normalized(pixels1)), descriptors1))
     # The TorchScript exporter records the attention heads' reshape with a fixed, wrong shape; torch.export traces it.
     program = torch.onnx.export(model, example, dynamo=True, opset_version=OPSET, input_names=list(INTERFACE)[:4],
                                 output_names=["assignment"])
@@ -226,8 +239,8 @@ def convert(source, output_dir):
                                         torch.from_numpy(np.stack([descriptors0, descriptors1]))[None],
                                         IMAGE_HEIGHT, IMAGE_WIDTH, mask=torch.ones((1, 2, KEYPOINTS)))
         expected = captured["scores"][0, :-1, :-1].exp().numpy()
-        feeds = dict(zip(list(INTERFACE)[:4], (normalized(pixels0)[None], descriptors0[None],
-                                               normalized(pixels1)[None], descriptors1[None])))
+        feeds = dict(zip(list(INTERFACE)[:4], (encoding(normalized(pixels0))[None], descriptors0[None],
+                                               encoding(normalized(pixels1))[None], descriptors1[None])))
         compare_assignment(expected, session.run(None, feeds)[0][0])
     print(f"Seeded-pair transformers/ONNX assignment and match check passed with seeds {SEEDS.start}-{SEEDS.stop - 1}: "
           f"{output}")

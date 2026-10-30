@@ -20,7 +20,7 @@ def test_inputs_go_to_neat_as_one_row_of_512_keypoints_in_ev74_memory(
 
     tensors = script.input_tensors(inputs)
 
-    assert [array.shape for array, _ in tensors] == [(1, 1, 512, 2), (1, 1, 512, 256)] * 2
+    assert [array.shape for array, _ in tensors] == [(1, 1, 512, 128), (1, 1, 512, 256)] * 2
     assert all(options == {"copy": True, "memory": script.pyneat.TensorMemory.EV74} for _, options in tensors)
 
 

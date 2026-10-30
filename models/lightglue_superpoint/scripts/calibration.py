@@ -2,9 +2,11 @@
 
 The dataset holds each image's SuperPoint keypoints, best first, in pixels of SuperPoint's 640x480 input, which is the
 image stretched to that size, and their unit-length 256-d descriptors. An image has 512 keypoints unless it yields
-fewer. The matcher takes keypoints normalized as LightGlue normalizes them, ((x, y) - (320, 240)) / 320. A pair's
-inputs are padded to 512 keypoints per image with keypoints at the image centre and zero descriptors, and match
-extraction ignores them.
+fewer. The matcher takes each keypoint's rotary position encoding, which the CPU computes in float64: the keypoint
+normalized as LightGlue normalizes it, ((x, y) - (320, 240)) / 320, times LightGlue's learned 2-to-32 projection, each
+phase repeated twice, then the cosines and the sines. Computed in the graph at BF16, the phases lose enough precision
+to move about 7% of the matches. A pair's inputs are padded to 512 keypoints per image with keypoints at the image
+centre and zero descriptors, and match extraction ignores them.
 """
 
 from __future__ import annotations
@@ -22,10 +24,48 @@ import numpy as np
 KEYPOINTS = 512
 DESCRIPTOR_DIM = 256
 IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
+# LightGlue's learned keypoint projection (positional_encoder.projector.weight, [32, 2]) in the pinned checkpoint;
+# convert.py checks it against the checkpoint. Each row turns a normalized (x, y) into one phase.
+KEYPOINT_PROJECTION = np.asarray([
+    (0.07869736105203629, 0.6576962471008301),
+    (0.30121079087257385, -1.3067657947540283),
+    (-0.17319072782993317, 0.3640412390232086),
+    (-1.8221570253372192, 0.07125379890203476),
+    (4.831599235534668, 0.024766402319073677),
+    (-0.6115880608558655, -0.5418711304664612),
+    (0.5497006177902222, -0.7080969214439392),
+    (0.9728097915649414, 0.8288111686706543),
+    (-0.18647703528404236, 0.2699703872203827),
+    (1.3076542615890503, -1.4809051752090454),
+    (-0.19871585071086884, 2.5542619228363037),
+    (-1.342088222503662, -1.5769871473312378),
+    (-0.023420853540301323, -0.2613159120082855),
+    (-0.5988006591796875, -4.0408616065979),
+    (0.4600417912006378, -0.07377243041992188),
+    (-2.12711763381958, -1.0835118293762207),
+    (-0.6925885677337646, 1.3105987310409546),
+    (0.25808796286582947, -0.06581223011016846),
+    (0.09479046612977982, -0.44248539209365845),
+    (-1.2112597227096558, -1.857155680656433),
+    (-0.24696263670921326, -0.0016804899787530303),
+    (-2.5080809593200684, 3.7625091075897217),
+    (-1.390500783920288, 0.7762705087661743),
+    (0.3077039122581482, -1.0518392324447632),
+    (-1.6019573211669922, -0.010330487042665482),
+    (0.5500544309616089, 2.5014572143554688),
+    (-1.0771361589431763, 0.19658993184566498),
+    (0.25206997990608215, -0.5227173566818237),
+    (-0.5797532200813293, 0.07100092619657516),
+    (-0.36304882168769836, 1.7311886548995972),
+    (0.554409921169281, 1.0818008184432983),
+    (0.4458959400653839, 0.6291354298591614),
+], np.float32)
+# Cosines then sines of the 32 phases, each repeated twice: the rotary encoding of 64-wide attention heads.
+ENCODING_DIM = 4 * len(KEYPOINT_PROJECTION)
 INPUT_SHAPES = {
-    "keypoints0": (1, KEYPOINTS, 2),
+    "encoding0": (1, KEYPOINTS, ENCODING_DIM),
     "descriptors0": (1, KEYPOINTS, DESCRIPTOR_DIM),
-    "keypoints1": (1, KEYPOINTS, 2),
+    "encoding1": (1, KEYPOINTS, ENCODING_DIM),
     "descriptors1": (1, KEYPOINTS, DESCRIPTOR_DIM),
 }
 OUTPUT_SHAPE = (1, KEYPOINTS, KEYPOINTS)
@@ -128,16 +168,24 @@ def features(root: Path, name: str) -> tuple[np.ndarray, np.ndarray]:
 
 def normalized(keypoints: np.ndarray) -> np.ndarray:
     scale = max(IMAGE_WIDTH, IMAGE_HEIGHT) / 2
-    return ((keypoints - [IMAGE_WIDTH / 2, IMAGE_HEIGHT / 2]) / scale).astype(np.float32)
+    return (keypoints - [IMAGE_WIDTH / 2, IMAGE_HEIGHT / 2]) / scale
+
+
+def encoding(normalized_keypoints: np.ndarray) -> np.ndarray:
+    """Normalized keypoints [..., 2] to their rotary encoding [..., 128]: the cosines, then the sines, of the projected
+    phases, each phase repeated twice, as LightGlue's positional encoder computes them."""
+    phases = np.repeat(np.asarray(normalized_keypoints, np.float64) @ KEYPOINT_PROJECTION.astype(np.float64).T, 2, -1)
+    return np.concatenate([np.cos(phases), np.sin(phases)], -1).astype(np.float32)
 
 
 def image_inputs(keypoints: np.ndarray, descriptors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """One image's matcher inputs [1, 512, 2] and [1, 512, 256], padded with centred keypoints and zero descriptors."""
-    padded_keypoints = np.zeros((1, KEYPOINTS, 2), np.float32)
+    """One image's matcher inputs [1, 512, 128] and [1, 512, 256], padded with centred keypoints and zero
+    descriptors."""
+    padded_keypoints = np.zeros((1, KEYPOINTS, 2), np.float64)
     padded_descriptors = np.zeros((1, KEYPOINTS, DESCRIPTOR_DIM), np.float32)
     padded_keypoints[0, : len(keypoints)] = normalized(keypoints)
     padded_descriptors[0, : len(descriptors)] = descriptors
-    return padded_keypoints, padded_descriptors
+    return encoding(padded_keypoints), padded_descriptors
 
 
 def matcher_inputs(image0: tuple[np.ndarray, np.ndarray], image1: tuple[np.ndarray, np.ndarray]) -> dict[str, np.ndarray]:
