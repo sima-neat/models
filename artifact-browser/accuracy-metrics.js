@@ -45,6 +45,9 @@ export const ACCURACY_METRIC_LABELS = {
   recall_at_10: "Recall@10",
   epe: "EPE",
   d1_all: "D1-all",
+  pose_auc_5: "Pose AUC@5°",
+  pose_auc_10: "Pose AUC@10°",
+  pose_auc_20: "Pose AUC@20°",
 };
 
 // The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and

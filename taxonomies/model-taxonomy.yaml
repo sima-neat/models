@@ -30,6 +30,10 @@ modalities:
     display_name: Embeddings
   landmarks:
     display_name: Landmarks
+  keypoints:
+    display_name: Keypoints
+  keypoint_matches:
+    display_name: Keypoint Matches
 
 # An architecture is the network design a family is built on. Keep it coarse.
 architecture_paradigms:
@@ -57,6 +61,10 @@ architectures:
     display_name: LFM
     paradigm: transformer
     allowed_model_types: [llm]
+  lightglue:
+    display_name: LightGlue
+    paradigm: transformer
+    allowed_model_types: [vision]
   llama:
     display_name: Llama
     paradigm: transformer
@@ -112,6 +120,9 @@ tasks:
     allowed_model_types: [vision]
   face_landmark_detection:
     display_name: Face Landmark Detection
+    allowed_model_types: [vision]
+  feature_matching:
+    display_name: Feature Matching
     allowed_model_types: [vision]
   grasping:
     display_name: Grasping

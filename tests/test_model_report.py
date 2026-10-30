@@ -324,7 +324,18 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
+def takes_images(script: Path) -> bool:
+    """Whether the model a performance script measures declares an image input."""
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    return "image" in model["modalities"]["inputs"]
+
+
+# A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if takes_images(path)],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 

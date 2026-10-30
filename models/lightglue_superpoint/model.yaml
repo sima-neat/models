@@ -1,0 +1,71 @@
+build-on-demand: true
+
+display_name: LightGlue (SuperPoint)
+description: Matches SuperPoint keypoints between two images.
+model_type: vision
+tasks: [feature_matching]
+
+modalities:
+  inputs: [keypoints, embeddings]
+  outputs: [keypoint_matches]
+
+architecture: lightglue
+
+# cvg/LightGlue releases LightGlue's code and weights under Apache-2.0. The Hugging Face card's noncommercial terms come
+# from SuperPoint, which the checkpoint bundles as its keypoint detector; the conversion exports the matcher only.
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: LightGlue is developed by ETH Zurich's Computer Vision and Geometry Lab and distributed under Apache-2.0. The package holds the matcher only, not SuperPoint.
+
+upstream:
+  repository: https://huggingface.co/ETH-CVG/lightglue_superpoint
+  revision: 5f5f626efee99f37dbc9eafea879d24d297aeab8
+  derived_from: https://github.com/cvg/LightGlue/tree/5a650c444718caffc2669dc0094cde908f42dd73
+
+conversion:
+  source:
+    repository: ETH-CVG/lightglue_superpoint
+    revision: 5f5f626efee99f37dbc9eafea879d24d297aeab8
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 320864fabf972cd00ce314e889cf89039e44c238e08d74d2b42d9cf2e80fc867, size_bytes: 55016112}
+      config.json: {sha256: adea6db482a567b4f01c342b5771f18a0cdcdef047a44974f22e3bf490714471, size_bytes: 898}
+
+compilation:
+  format: onnx
+  # TODO(#394): replace with the source block the Vulcan Model Convert workflow prints for lightglue_superpoint.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
+    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
+    size_bytes: 9917015
+
+calibrations:
+- id: yfcc100m-keypoints-cal
+  dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
+
+build_profiles:
+  w16a16:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 8}
+
+  w8a8:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
+  # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 8}
+  outputs: [assignment]
+
+accuracy:
+  datasets:
+  - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}
+
+performance: {}
