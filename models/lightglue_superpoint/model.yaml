@@ -1,5 +1,3 @@
-build-on-demand: true
-
 display_name: LightGlue (SuperPoint)
 description: Matches SuperPoint keypoints between two images.
 model_type: vision
@@ -34,11 +32,10 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(#394): replace with the source block the Vulcan Model Convert workflow prints for lightglue_superpoint.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
-    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
-    size_bytes: 9917015
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightglue_superpoint/b96c9924cc610cdafd0f8117c1ce3b45194a67f846245bb7209a9151279cfcb5/41022358383-1/model.onnx
+    sha256: b96c9924cc610cdafd0f8117c1ce3b45194a67f846245bb7209a9151279cfcb5
+    size_bytes: 47752713
 
 calibrations:
 - id: yfcc100m-keypoints-cal
