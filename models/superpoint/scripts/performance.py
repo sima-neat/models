@@ -80,3 +80,11 @@ report = model_report.from_performance(
     ),
 )
 report.save(args.output)
+# The MLA's own time per frame against the whole pipeline's, so the log shows which one limits the throughput.
+stats = report.document["components"]["model"]
+mla_ms = sum(stage["latency_us"] for stage in stats["mla_stage_stats"]["stages"]) / 1000
+fps = report.document["metrics"]["throughput_fps"]
+print(f"MLA {mla_ms:.2f} ms per frame over {len(stats['mla_stage_stats']['stages'])} stages; "
+      f"pipeline {1000 / fps:.2f} ms per frame ({fps:.1f} FPS)")
+for layer in sorted(stats["mla_layer_stats"]["layers"], key=lambda layer: -layer["latency_us"])[:8]:
+    print(f"MLA layer {layer['name']}: {layer['latency_us'] / 1000:.3f} ms")
