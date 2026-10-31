@@ -1,0 +1,64 @@
+build-on-demand: true
+
+display_name: RAFT-Stereo (realtime)
+description: RAFT-Stereo's realtime model, estimating disparity from a rectified stereo image pair.
+model_type: vision
+tasks: [depth_estimation]
+
+modalities:
+  inputs: [image]
+  outputs: [depth_map]
+
+architecture: raft_stereo
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: RAFT-Stereo is developed by Lahav Lipson, Zachary Teed and Jia Deng at Princeton University's Vision & Learning Lab and distributed under the MIT license.
+
+upstream:
+  repository: https://github.com/princeton-vl/RAFT-Stereo
+  revision: 6e93ed2169bd858dbb43033988563f3b0bb49506
+
+conversion:
+  # princeton-vl releases its checkpoints in one archive; this Hugging Face mirror holds raftstereo-realtime.pth with
+  # the same bytes.
+  source:
+    uri: hf://models/shriarul5273/RAFT-Stereo@97526bde05a11452d25cce032ccb1ad030bb775e/raftstereo-realtime.pth
+    sha256: bf296740354438cdb318e3873117d2c742de1f95881e42047c7d608368930489
+    size_bytes: 39603288
+
+compilation:
+  format: onnx
+  # TODO(#393): replace with the source block the Vulcan Model Convert workflow prints for raft_stereo_realtime.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n/1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a/38121683651-1/model.onnx
+    sha256: 1746e6f7199c3590ffb7b9f789aafda69bcae194a6f8458dbfa9ea6a7f6caf5a
+    size_bytes: 9917015
+
+calibrations:
+- id: scene-flow-cal
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+
+build_profiles:
+  w16a16:
+    calibration_dataset: scene-flow-cal
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 4}
+
+  w8a8:
+    calibration_dataset: scene-flow-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
+
+numerical_fidelity:
+  # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.
+  status: diagnostic
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+  # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
+  outputs: [disparity]
+
+performance: {}

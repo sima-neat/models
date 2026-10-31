@@ -77,6 +77,10 @@ architectures:
     display_name: Qwen
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  raft_stereo:
+    display_name: RAFT-Stereo
+    paradigm: cnn
+    allowed_model_types: [vision]
   resnet:
     display_name: ResNet
     paradigm: cnn

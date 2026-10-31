@@ -1,0 +1,10 @@
+torch==2.8.0
+numpy==1.26.4
+onnx==1.17.0
+onnxruntime==1.21.1
+onnxscript==0.3.2
+# The dynamo exporter's onnxscript 0.3.2 fails with the latest onnx-ir and protobuf: onnx-ir 1.x stops its opset
+# conversion on the exported functions, and protobuf 7 refuses the boolean Reshape allowzero it writes.
+onnx-ir==0.1.4
+protobuf==4.25.7
+onnxsim==0.7.3
