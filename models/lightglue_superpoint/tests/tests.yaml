@@ -3,8 +3,22 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published develop report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2669
+        pose_auc_10: 0.4694
+        pose_auc_20: 0.6602
+    w8a8:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2498
+        pose_auc_10: 0.4442
+        pose_auc_20: 0.6351
 performance:
-  run_tests: false
-  skip_reason: No build has a published develop report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 58.9
+    w8a8:
+      throughput_fps: 98.4
