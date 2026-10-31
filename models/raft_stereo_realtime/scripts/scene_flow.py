@@ -91,6 +91,9 @@ def read_pairs(dataset: Path, pairs: list[Pair]) -> tuple[np.ndarray, np.ndarray
 
 
 def end_point_error(disparity: np.ndarray, truth: np.ndarray) -> float:
-    """Upstream's Scene Flow end-point error: the mean absolute error over pixels whose true disparity is under 192."""
-    valid = np.abs(truth) < MAX_DISPARITY
+    """The Scene Flow end-point error: the mean absolute error over pixels whose true disparity is above 0 and under
+    192, and 0 for an image with no such pixel."""
+    valid = (truth > 0) & (truth < MAX_DISPARITY)
+    if not valid.any():
+        return 0.0
     return float(np.mean(np.abs(disparity.reshape(truth.shape) - truth)[valid]))

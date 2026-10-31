@@ -290,18 +290,7 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-def gets_a_dataset(script: Path) -> bool:
-    """Whether run_model_performance.sh passes the script a dataset, which only a model with accuracy datasets gets."""
-    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
-    return "accuracy" in model
-
-
-# A model without an accuracy dataset builds a fixed input in its script, such as a stereo model's side-by-side frame.
-@pytest.mark.parametrize(
-    "script",
-    [path for path in performance_scripts(components=False) if gets_a_dataset(path)],
-    ids=lambda path: path.parents[1].name,
-)
+@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
