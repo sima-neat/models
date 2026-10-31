@@ -46,11 +46,13 @@ build_profiles:
       model:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 4}
 
-  w8a8:
-    calibration_dataset: scene-flow-cal
-    components:
-      model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
+  # w8a8 is held back: on the 8 Scene Flow fidelity pairs its disparity's end-point error is 6.449 px, against
+  # 1.111 px for the ONNX and 1.174 px for w16a16. Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy.
+  # w8a8:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
 
 numerical_fidelity:
   # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.
