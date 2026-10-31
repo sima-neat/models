@@ -186,7 +186,8 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
 def test_model_calibrates_and_compares_disparity_on_scene_flow_cal() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8"]
+    # model.yaml holds w8a8 back until an INT8 recipe keeps the accuracy.
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
     largest = max(profile["components"][0]["parameters"]["calibration_samples"] for profile in model["build_profiles"])
     fidelity = model["numerical_fidelity"]
     # Calibration takes the first pairs of the seeded order, so the fidelity pairs must start after them.
