@@ -94,6 +94,8 @@ also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and bench
 `random.Random(0)` image from it, letterboxed into a 1280x720 RGB frame by code inside the
 script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
 timed. A stereo model benchmarks one dataset pair as a side-by-side frame instead.
+A model whose inputs are not images benchmarks one `random.Random(0)` validation sample
+instead, as tensors on the tensor route.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
 accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark

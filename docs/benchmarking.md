@@ -4,8 +4,9 @@ The performance stage measures each build profile's whole model on a Modalix
 DevKit: every compiled MPK and the CPU work between them. Each model's
 standalone `scripts/performance.py` contains its benchmark setup, including
 its input: one image from the model's accuracy dataset in a 1280x720 frame,
-which Neat preprocesses inside the measurement (see [Benchmark
-input](#benchmark-input)). Scripts of single-component models load the MPK
+which Neat preprocesses inside the measurement, or one sample as tensors for a
+model whose inputs are not images (see [Benchmark input](#benchmark-input)).
+Scripts of single-component models load the MPK
 with `pyneat.Model` and call Neat Core's benchmark API; RF-DETR, a
 multi-component model, times its pipeline itself in its script. Core owns
 warmup, latency and throughput measurement, board telemetry, and runner
@@ -271,7 +272,8 @@ threshold includes zero-time layers. Stage indices remain visible per layer.
 ## Workload and measurements
 
 The workload is the script's [benchmark input](#benchmark-input) on the image
-route, with the script's model and benchmark options; the report's `workload`
+route, or on the tensor route for a model whose inputs are not images, with the
+script's model and benchmark options; the report's `workload`
 states both. Results measured before scripts took a dataset image used Core's
 synthetic inputs without image preprocessing, and YOLO26 decoded up to 100
 detections at any score. Do not compare those results with current ones.
