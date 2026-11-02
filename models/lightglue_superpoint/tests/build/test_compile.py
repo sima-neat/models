@@ -33,24 +33,25 @@ def _write_dataset(root: Path, split: str, counts: dict[str, int]) -> Path:
     return root
 
 
-def test_inputs_are_normalized_and_padded_to_512_keypoints(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_inputs_hold_each_images_512_real_keypoints(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    root = _write_dataset(tmp_path / "yfcc100m-keypoints-cal", "cal", {"a/0.jpg": 512, "a/1.jpg": 100})
+    counts = {"a/0.jpg": 512, "a/1.jpg": 512, "a/2.jpg": 511}
+    root = _write_dataset(tmp_path / "yfcc100m-keypoints-cal", "cal", counts)
 
-    (pair,) = calibration.read_pairs(root)
-    inputs, counts = calibration.pair_inputs(root, pair)
+    pair, short_pair = calibration.read_pairs(root)
+    inputs = calibration.pair_inputs(root, pair)
 
-    assert counts == (512, 100)
     assert {name: value.shape for name, value in inputs.items()} == calibration.INPUT_SHAPES
     # The first image's keypoints sit at the 640x480 input's centre, which LightGlue normalizes to the origin, where
-    # every phase is 0: cosines 1 and sines 0. So does every padding keypoint.
+    # every phase is 0: cosines 1 and sines 0. The second image's sit one pixel to the right.
     centre = np.concatenate([np.ones(64), np.zeros(64)])
     np.testing.assert_allclose(inputs["encoding0"][0], [centre] * 512, atol=1e-7)
-    np.testing.assert_allclose(inputs["encoding1"][0, 100:], [centre] * 412, atol=1e-7)
-    np.testing.assert_allclose(inputs["encoding1"][0, :100], [calibration.encoding(np.asarray([1 / 320, 0]))] * 100)
-    # Padding descriptors are zero.
-    assert not inputs["descriptors1"][0, 100:].any()
-    np.testing.assert_allclose(inputs["descriptors1"][0, :100], 1 / 16)
+    np.testing.assert_allclose(inputs["encoding1"][0], [calibration.encoding(np.asarray([1 / 320, 0]))] * 512)
+    np.testing.assert_allclose(inputs["descriptors1"][0], 1 / 16)
+    # The matcher has no padding mask: an image with fewer keypoints is refused, and its pairs are left out.
+    with pytest.raises(ValueError, match="511 keypoints"):
+        calibration.pair_inputs(root, short_pair)
+    assert [(item.name0, item.name1) for item in calibration.usable_pairs(root)] == [("a/0.jpg", "a/1.jpg")]
 
 
 def test_the_encoding_is_lightglues_rotary_encoding_of_the_keypoint(load_script: Callable[[str], ModuleType]) -> None:
@@ -68,20 +69,20 @@ def test_the_encoding_is_lightglues_rotary_encoding_of_the_keypoint(load_script:
     np.testing.assert_allclose(encoded[65::2], np.sin(phases), atol=1e-6)
 
 
-def test_matches_ignore_padding_and_need_a_mutual_best_pair_above_the_threshold(
-    load_script: Callable[[str], ModuleType],
-) -> None:
+def test_matches_need_a_mutual_best_pair_above_the_threshold(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     assignment = np.full((512, 512), 1e-4, np.float32)
     assignment[0, 3], assignment[1, 2] = 0.8, 0.09  # a match, and a mutual best pair below the threshold
-    assignment[2, 400] = 0.95  # image 1 has 300 real keypoints, so keypoint 400 is padding
+    assignment[2, 400], assignment[5, 400] = 0.95, 0.5  # keypoint 400's best partner is 2, not 5
 
-    matched = calibration.matches(assignment.reshape(1, 1, 512, 512), (512, 300))
+    matched = calibration.matches(assignment.reshape(1, 1, 512, 512))
 
-    assert matched.tolist() == [[0, 3]]
+    assert matched.tolist() == [[0, 3], [2, 400]]
 
 
-def test_pairs_and_images_read_every_ground_truth_value(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_pairs_and_images_read_every_ground_truth_value(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
     calibration = load_script("calibration")
     root = _write_dataset(tmp_path / "set", "val", {"a/0.jpg": 512, "a/1.jpg": 512})
     pairs_file = root / "annotations" / "pairs_val.txt"
@@ -111,9 +112,8 @@ def test_calibration_reads_the_archive_and_fidelity_follows_it_in_one_seeded_ord
 
     assert {name: value.shape[0] for name, value in samples.items()} == dict.fromkeys(calibration.INPUT_SHAPES, 4)
     order = calibration.seeded_pairs(root, 42)
-    expected = [calibration.pair_inputs(root, pair)[0]["encoding0"] for pair in order[4:7]]
-    np.testing.assert_array_equal([inputs["encoding0"] for inputs, _ in later], expected)
-    assert [counts for _, counts in later] == [(512, 512)] * 3
+    expected = [calibration.pair_inputs(root, pair)["encoding0"] for pair in order[4:7]]
+    np.testing.assert_array_equal([inputs["encoding0"] for inputs in later], expected)
     with pytest.raises(ValueError, match="needs 12 pairs"):
         calibration.fidelity_inputs(archive, 42, 4, 8)
 
@@ -129,12 +129,13 @@ def test_every_build_profile_calibrates_before_the_fidelity_pairs(load_script: C
         assert parameters["precision"] == profile["id"]
         assert binding["calibration"] == "yfcc100m-keypoints-cal"
         assert parameters["calibration_samples"] <= selection["offset"]
-    assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME, recipe.MATCHES_NAME]
+    assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
+    assert set(recipe.MATCH_OVERLAP_FLOORS) == {profile["id"] for profile in metadata["build_profiles"]}
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters(metadata, "w32a32")
 
 
-def test_the_matches_fidelity_is_the_overlap_of_the_two_match_sets(load_script: Callable[[str], ModuleType]) -> None:
+def test_a_build_needs_its_matches_to_overlap_the_onnxs(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     expected = np.full((512, 512), 1e-4, np.float32)
     actual = expected.copy()
@@ -142,13 +143,15 @@ def test_the_matches_fidelity_is_the_overlap_of_the_two_match_sets(load_script: 
         expected[row, row + 10] = 0.9
     for row in (0, 1, 2, 5):
         actual[row, row + 10] = 0.8
-    actual[400, 300] = 0.95  # past image 0's 300 real keypoints: padding, never a match
 
-    error = recipe._OutputError(recipe.MATCHES_NAME)
-    error.add(recipe.match_matrix(expected, (300, 512)), recipe.match_matrix(actual, (300, 512)))
+    overlap = recipe._OutputError("matches")
+    overlap.add(recipe.match_matrix(expected), recipe.match_matrix(actual))
 
     # 3 shared matches of 4 and 4: 3 / sqrt(4 * 4).
-    assert error.summary()["cosine_similarity"] == pytest.approx(0.75)
+    assert overlap.summary()["cosine_similarity"] == pytest.approx(0.75)
+    recipe.require_match_overlap("w8a8", 0.75)
+    with pytest.raises(RuntimeError, match="not above the 0.9 floor"):
+        recipe.require_match_overlap("w16a16", 0.75)
 
 
 def test_every_input_fills_whole_mla_words(load_script: Callable[[str], ModuleType]) -> None:
@@ -230,11 +233,8 @@ def test_build_holds_the_matcher_and_follows_the_onnx(
     recipe.audit_mpk(compiled / item["mpk_path"])
     fidelity = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
     metrics = {metric["name"]: metric for metric in fidelity["metrics"]}
-    assert list(metrics) == ["assignment", "matches"]
-    # The gate is the overlap of the quantized graph's matches with the ONNX's. The assignment's own cosine overstates
-    # the change: its entries sit near 0 or 1, and a keypoint whose two best partners are close can swap them under
-    # BF16 rounding. BF16 keeps most matches and INT8 may lose more but must not collapse; a broken operator or a
-    # collapsed build shows up as a low overlap, and a failed test leaves the build unpublished. Pose AUC on the
-    # DevKit decides whether a build stays within 5% of the reference.
-    floor = 0.9 if build_profile == "w16a16" else 0.6
-    assert metrics["matches"]["cosine_similarity"] > floor, metrics
+    assert list(metrics) == ["assignment"]
+    # compile.py stops a build whose matches overlap the ONNX's no more than MATCH_OVERLAP_FLOORS before the MLA
+    # compile, so a build here kept enough of them; the accuracy stage checks its pose AUC against tests.yaml.
+    assert all(np.isfinite(value) for name, value in metrics["assignment"].items() if name != "name"), metrics
+    assert build_profile in recipe.MATCH_OVERLAP_FLOORS

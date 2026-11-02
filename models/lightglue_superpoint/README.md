@@ -22,11 +22,11 @@ keypoints. The model has no padding mask, so never fill rows with placeholders:
 they would change the real keypoints' matches. Pass `encoding0` and `encoding1`,
 each 1×512×128: each keypoint's position encoding, computed on the CPU in double
 precision. Normalize the keypoint's pixel coordinates as (x − 320) / 320 and
-(y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection (listed in the
-package's `scripts/calibration.py`) to get 32 phases, repeat each phase twice, and
-pass the 64 cosines followed by the 64 sines. Pass `descriptors0` and
-`descriptors1`, each 1×512×256: SuperPoint's unit-length descriptors, in the same
-order.
+(y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection (the
+`positional_encoder.projector.weight` tensor of the ETH-CVG/lightglue_superpoint
+checkpoint) to get 32 phases, repeat each phase twice, and pass the 64 cosines
+followed by the 64 sines. Pass `descriptors0` and `descriptors1`, each
+1×512×256: SuperPoint's unit-length descriptors, in the same order.
 
 **Outputs.** `assignment` is 1×512×512: the probability that keypoint i of the
 first image and keypoint j of the second show the same point.

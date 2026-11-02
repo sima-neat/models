@@ -1,12 +1,13 @@
 """LightGlue's inputs from the yfcc100m-keypoints dataset, for compile.py, performance.py and accuracy.py.
 
 The dataset holds each image's SuperPoint keypoints, best first, in pixels of SuperPoint's 640x480 input, which is the
-image stretched to that size, and their unit-length 256-d descriptors. An image has 512 keypoints unless it yields
-fewer. The matcher takes each keypoint's rotary position encoding, which the CPU computes in float64: the keypoint
-normalized as LightGlue normalizes it, ((x, y) - (320, 240)) / 320, times LightGlue's learned 2-to-32 projection, each
-phase repeated twice, then the cosines and the sines. Computed in the graph at BF16, the phases lose enough precision
-to move about 7% of the matches. A pair's inputs are padded to 512 keypoints per image with keypoints at the image
-centre and zero descriptors, and match extraction ignores them.
+image stretched to that size, and their unit-length 256-d descriptors. The matcher takes exactly 512 real keypoints per
+image and has no padding mask, so the scripts use only the pairs whose images both have 512: each archive holds one
+image with fewer, which leaves out 22 of the 4,000 val pairs. The matcher takes each keypoint's rotary position
+encoding, which the CPU computes in float64: the keypoint normalized as LightGlue normalizes it,
+((x, y) - (320, 240)) / 320, times LightGlue's learned 2-to-32 projection, each phase repeated twice, then the cosines
+and the sines. Computed in the graph at BF16 instead, the encoding kept 91% of the ONNX's matches at w16a16, against
+97% from the CPU.
 """
 
 from __future__ import annotations
@@ -147,22 +148,28 @@ def read_pairs(root: Path) -> list[Pair]:
     return pairs
 
 
+def usable_pairs(root: Path) -> list[Pair]:
+    """The pairs whose images both have the 512 keypoints the matcher takes."""
+    counts = {name: image.keypoints for name, image in read_images(root).items()}
+    return [pair for pair in read_pairs(root) if counts[pair.name0] == counts[pair.name1] == KEYPOINTS]
+
+
 def seeded_pairs(root: Path, seed: int) -> list[Pair]:
-    """Every pair in one seeded order: calibration takes the first ones, numerical fidelity a later span."""
-    pairs = sorted(read_pairs(root), key=lambda pair: (pair.name0, pair.name1))
+    """Every usable pair in one seeded order: calibration takes the first ones, numerical fidelity a later span."""
+    pairs = sorted(usable_pairs(root), key=lambda pair: (pair.name0, pair.name1))
     random.Random(seed).shuffle(pairs)
     return pairs
 
 
 def features(root: Path, name: str) -> tuple[np.ndarray, np.ndarray]:
-    """An image's keypoints [K, 2] in pixels of the 640x480 input and its descriptors [K, 256]."""
+    """An image's 512 keypoints [512, 2] in pixels of the 640x480 input and its descriptors [512, 256]."""
     directory = root / split_of(root) / PurePosixPath(name).with_suffix("")
     keypoints = np.load(directory / "keypoints.npy").astype(np.float32)
     descriptors = np.load(directory / "descriptors.npy").astype(np.float32)
     if keypoints.ndim != 2 or keypoints.shape[1] != 2 or descriptors.shape != (len(keypoints), DESCRIPTOR_DIM):
         raise ValueError(f"{name}: unexpected keypoints {keypoints.shape} or descriptors {descriptors.shape}")
-    if not 0 < len(keypoints) <= KEYPOINTS:
-        raise ValueError(f"{name} has {len(keypoints)} keypoints; the matcher takes 1 to {KEYPOINTS}")
+    if len(keypoints) != KEYPOINTS:
+        raise ValueError(f"{name} has {len(keypoints)} keypoints; the matcher takes {KEYPOINTS} real keypoints")
     return keypoints, descriptors
 
 
@@ -179,30 +186,31 @@ def encoding(normalized_keypoints: np.ndarray) -> np.ndarray:
 
 
 def image_inputs(keypoints: np.ndarray, descriptors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """One image's matcher inputs [1, 512, 128] and [1, 512, 256], padded with centred keypoints and zero
-    descriptors."""
-    padded_keypoints = np.zeros((1, KEYPOINTS, 2), np.float64)
-    padded_descriptors = np.zeros((1, KEYPOINTS, DESCRIPTOR_DIM), np.float32)
-    padded_keypoints[0, : len(keypoints)] = normalized(keypoints)
-    padded_descriptors[0, : len(descriptors)] = descriptors
-    return encoding(padded_keypoints), padded_descriptors
+    """One image's matcher inputs [1, 512, 128] and [1, 512, 256] from its 512 keypoints and descriptors."""
+    if keypoints.shape != (KEYPOINTS, 2) or descriptors.shape != (KEYPOINTS, DESCRIPTOR_DIM):
+        raise ValueError(
+            f"the matcher takes {KEYPOINTS} keypoints and descriptors per image, not {keypoints.shape} and "
+            f"{descriptors.shape}"
+        )
+    return encoding(normalized(keypoints))[None], np.asarray(descriptors, np.float32)[None]
 
 
-def matcher_inputs(image0: tuple[np.ndarray, np.ndarray], image1: tuple[np.ndarray, np.ndarray]) -> dict[str, np.ndarray]:
+def matcher_inputs(
+    image0: tuple[np.ndarray, np.ndarray], image1: tuple[np.ndarray, np.ndarray]
+) -> dict[str, np.ndarray]:
     """A pair's matcher inputs from each image's keypoints and descriptors."""
     return dict(zip(INPUT_SHAPES, (*image_inputs(*image0), *image_inputs(*image1))))
 
 
-def pair_inputs(root: Path, pair: Pair) -> tuple[dict[str, np.ndarray], tuple[int, int]]:
-    """A pair's matcher inputs and each image's number of real keypoints."""
-    image0, image1 = features(root, pair.name0), features(root, pair.name1)
-    return matcher_inputs(image0, image1), (len(image0[0]), len(image1[0]))
+def pair_inputs(root: Path, pair: Pair) -> dict[str, np.ndarray]:
+    """A pair's matcher inputs."""
+    return matcher_inputs(features(root, pair.name0), features(root, pair.name1))
 
 
-def matches(assignment: np.ndarray, counts: tuple[int, int], threshold: float = MATCH_THRESHOLD) -> np.ndarray:
-    """LightGlue's match extraction on the real keypoints: mutual best pairs whose assignment exceeds the threshold,
-    as rows (i, j) of keypoint indices in image 0 and image 1."""
-    assignment = np.asarray(assignment, np.float32).reshape(KEYPOINTS, KEYPOINTS)[: counts[0], : counts[1]]
+def matches(assignment: np.ndarray, threshold: float = MATCH_THRESHOLD) -> np.ndarray:
+    """LightGlue's match extraction: mutual best pairs whose assignment exceeds the threshold, as rows (i, j) of
+    keypoint indices in image 0 and image 1."""
+    assignment = np.asarray(assignment, np.float32).reshape(KEYPOINTS, KEYPOINTS)
     best0, best1 = assignment.argmax(1), assignment.argmax(0)
     rows = np.arange(len(best0))
     keep = (best1[best0] == rows) & (assignment[rows, best0] > threshold)
@@ -215,13 +223,12 @@ def calibration_inputs(dataset: Path, samples: int, seed: int = 42) -> dict[str,
         pairs = seeded_pairs(root, seed)
         if len(pairs) < samples:
             raise ValueError(f"calibration requires {samples} pairs, the dataset has {len(pairs)}")
-        stacked = [pair_inputs(root, pair)[0] for pair in pairs[:samples]]
+        stacked = [pair_inputs(root, pair) for pair in pairs[:samples]]
     return {name: np.concatenate([inputs[name] for inputs in stacked]) for name in INPUT_SHAPES}
 
 
-def fidelity_inputs(dataset: Path, seed: int, offset: int,
-                    samples: int) -> list[tuple[dict[str, np.ndarray], tuple[int, int]]]:
-    """The declared span of the seeded order: each pair's inputs and its images' numbers of real keypoints."""
+def fidelity_inputs(dataset: Path, seed: int, offset: int, samples: int) -> list[dict[str, np.ndarray]]:
+    """The declared span of the seeded order: each pair's matcher inputs."""
     with opened(dataset) as root:
         pairs = seeded_pairs(root, seed)
         if len(pairs) < offset + samples:

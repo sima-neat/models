@@ -4,7 +4,8 @@ Each val pair's SuperPoint keypoints run through the matcher, and the CPU extrac
 pose comes from the matched keypoints, in each image's original pixels: RANSAC on the essential matrix with a 1-pixel
 threshold, then the decomposition that keeps the most matches in front of both cameras. A pair's pose error is the
 larger of the rotation and translation angle errors, infinite without a pose, and pose_auc_N is the area under the
-recall of the pose error up to N degrees, as SuperGlue's paper evaluates YFCC100M.
+recall of the pose error up to N degrees, as SuperGlue's paper evaluates YFCC100M. The matcher takes 512 real keypoints
+per image, so pairs with an image of fewer are left out: one val image has 511, in 22 of the 4,000 pairs.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from calibration import (
     read_images,
     read_pairs,
     split_of,
+    usable_pairs,
 )
 
 THRESHOLDS = (5, 10, 20)
@@ -143,9 +145,10 @@ def pair_error(root: Path, images: dict[str, Image], pair: Pair, runner: pyneat.
     if runner is None:
         runner = model.build(tensors)
     (assignment,) = runner.run(tensors, timeout_ms=120000)
-    matched = matches(assignment.to_numpy(copy=False), (len(image0[0]), len(image1[0])))
+    matched = matches(assignment.to_numpy(copy=False))
     first, second = images[pair.name0], images[pair.name1]
-    points0, points1 = original_pixels(image0[0][matched[:, 0]], first), original_pixels(image1[0][matched[:, 1]], second)
+    points0 = original_pixels(image0[0][matched[:, 0]], first)
+    points1 = original_pixels(image1[0][matched[:, 1]], second)
     pose = estimate_pose(points0, points1, pair.intrinsics0, pair.intrinsics1, ransac_threshold(pair, first, second))
     return (np.inf if pose is None else pose_error(pair.pose, *pose)), len(matched), runner
 
@@ -170,8 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     root = dataset_root(Path(dataset_dir))
-    images, available = read_images(root), read_pairs(root)
-    pairs = available[: args.limit] if args.limit else available
+    images, available, usable = read_images(root), read_pairs(root), usable_pairs(root)
+    pairs = usable[: args.limit] if args.limit else usable
 
     model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
     runner = None

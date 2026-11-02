@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Compile LightGlue's matcher from the converted ONNX into a Modalix MPK and measure its numerical fidelity.
 
-The converted ONNX is static: two images' 512 keypoints and descriptors in, their soft assignment out. Calibration and
-numerical fidelity use one seeded order of the yfcc100m-keypoints cal pairs: calibration takes the first pairs, and
-fidelity compares the quantized graph's assignment with the ONNX's on a later span.
+The converted ONNX is static: two images' 512 keypoint encodings and descriptors in, their soft assignment out.
+Calibration and numerical fidelity use one seeded order of the yfcc100m-keypoints cal pairs: calibration takes the
+first pairs, and fidelity compares the quantized graph's assignment with the ONNX's on a later span. A build whose
+matches overlap the ONNX's too little stops there, before the MLA compile.
 """
 
 from __future__ import annotations
@@ -42,8 +43,11 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "lightglue_superpoint"
 COMPONENT_ID = "model"
 OUTPUT_NAME = "assignment"
-# The fidelity report's second entry: the matches extracted from the assignment, as a 0/1 matrix.
-MATCHES_NAME = "matches"
+# The least overlap of a build's matches with the ONNX's. The assignment's own cosine overstates the change: its entries
+# sit near 0 or 1, and a keypoint whose two best partners are close can swap them under BF16 rounding. BF16 keeps most
+# matches and INT8 may lose more but must not collapse; a broken operator or a collapsed build shows up as a low
+# overlap.
+MATCH_OVERLAP_FLOORS = {"w16a16": 0.9, "w8a8": 0.6}
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 
@@ -128,7 +132,9 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
             f"shared_objects={shared_objects}"
         )
     if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}")
+        raise RuntimeError(
+            f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
+        )
     public_inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     expected = {name: math.prod(shape) * 4 for name, shape in INPUT_SHAPES.items()}
     if public_inputs != expected:
@@ -207,32 +213,40 @@ class _OutputError:
         }
 
 
-def match_matrix(assignment: np.ndarray, counts: tuple[int, int]) -> np.ndarray:
-    """LightGlue's matches among the real keypoints as a 0/1 matrix, so that its cosine against another such matrix
-    is the overlap of the two match sets, |A & B| / sqrt(|A| |B|)."""
+def match_matrix(assignment: np.ndarray) -> np.ndarray:
+    """LightGlue's matches as a 0/1 matrix, so that its cosine against another such matrix is the overlap of the two
+    match sets, |A & B| / sqrt(|A| |B|)."""
     matrix = np.zeros(OUTPUT_SHAPE[1:], np.float64)
-    pairs = matches(assignment, counts)
+    pairs = matches(assignment)
     matrix[pairs[:, 0], pairs[:, 1]] = 1.0
     return matrix
 
 
-def measure_fidelity(source: Path, quantized: Any, dataset: Path, config: dict[str, Any], profile_id: str) -> dict:
-    """Compare the quantized graph with the ONNX source on the declared cal pairs: the assignment itself, and the
-    matches LightGlue extracts from it. The assignment holds probabilities near 0 or 1, so a keypoint whose two best
-    partners are close can swap them under BF16 rounding, which moves its cosine far more than the matches move."""
+def require_match_overlap(profile_id: str, overlap: float) -> None:
+    """Stop a build whose matches overlap the ONNX's no more than its profile's floor."""
+    floor = MATCH_OVERLAP_FLOORS[profile_id]
+    if not overlap > floor:
+        raise RuntimeError(f"{profile_id}'s matches overlap the ONNX's by {overlap:.4f}, not above the {floor} floor")
+
+
+def measure_fidelity(
+    source: Path, quantized: Any, dataset: Path, config: dict[str, Any], profile_id: str
+) -> tuple[dict[str, Any], float]:
+    """Compare the quantized graph with the ONNX source on the declared cal pairs: the fidelity report of the
+    assignment, and the overlap of the matches LightGlue extracts from the two assignments."""
     selection = config["selection"]
     samples = fidelity_inputs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    errors = {OUTPUT_NAME: _OutputError(OUTPUT_NAME), MATCHES_NAME: _OutputError(MATCHES_NAME)}
-    for inputs, counts in samples:
+    error, overlap = _OutputError(OUTPUT_NAME), _OutputError("matches")
+    for inputs in samples:
         (expected,) = reference.run([OUTPUT_NAME], inputs)
         outputs = quantized.execute(inputs={InputName(name): value for name, value in inputs.items()}, use_jax=True)
         (actual,) = [np.asarray(output) for output in outputs]
         if actual.shape != OUTPUT_SHAPE:
             raise RuntimeError(f"the quantized graph returns its assignment as {actual.shape}, expected {OUTPUT_SHAPE}")
-        errors[OUTPUT_NAME].add(expected, actual)
-        errors[MATCHES_NAME].add(match_matrix(expected, counts), match_matrix(actual, counts))
-    return {
+        error.add(expected, actual)
+        overlap.add(match_matrix(expected), match_matrix(actual))
+    report = {
         "schema_version": 1,
         "model_id": MODEL_ID,
         "build_profile_id": profile_id,
@@ -242,8 +256,9 @@ def measure_fidelity(source: Path, quantized: Any, dataset: Path, config: dict[s
         "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
         "selection": selection,
         "samples": len(samples),
-        "metrics": [error.summary() for error in errors.values()],
+        "metrics": [error.summary()],
     }
+    return report, overlap.summary()["cosine_similarity"]
 
 
 def main() -> int:
@@ -274,12 +289,14 @@ def main() -> int:
     if fidelity is not None:
         # Before the MLA compile, so a broken quantization stops the build early.
         LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
-        report = measure_fidelity(source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity,
-                                  args.build_profile)
+        report, overlap = measure_fidelity(source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity,
+                                           args.build_profile)
         # Printed, not logged: the Model Compiler's logging setup drops this module's INFO records.
         for metric in report["metrics"]:
             print(f"Fidelity {metric['name']}: cosine {metric['cosine_similarity']:.4f}, "
                   f"max |error| {metric['max_absolute_error']:.4f}", flush=True)
+        print(f"Fidelity matches: overlap {overlap:.4f} with the ONNX's", flush=True)
+        require_match_overlap(args.build_profile, overlap)
     compile_model(quantized, output_dir / COMPONENT_ID, precision)
     if report is not None:
         (output_dir / "fidelity.json").write_text(

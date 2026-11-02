@@ -59,8 +59,10 @@ numerical_fidelity:
   dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 8}
-  outputs: [assignment, matches]
+  outputs: [assignment]
 
+# The archives were extracted at SuperPoint's threshold 0.0005, and each holds one image with fewer than 512 keypoints.
+# The matcher takes 512 real keypoints per image, so the scripts leave out that image's pairs: 22 of the 4,000 val pairs.
 accuracy:
   datasets:
   - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}

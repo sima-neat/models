@@ -1,7 +1,8 @@
 """Benchmark LightGlue's matcher MPK with Neat Core on one yfcc100m-keypoints pair and save its report.
 
-The inputs are a fixed val pair's 512 normalized keypoints and descriptors per image, on Neat's tensor route; Core
-times the MPK on them. Match extraction on the CPU is not part of the measurement.
+The inputs are a fixed val pair's 512 keypoint encodings, computed on the CPU, and descriptors per image, on Neat's
+tensor route; Core times the MPK on them. The encoding and match extraction on the CPU are not part of the
+measurement.
 """
 
 import argparse
@@ -11,7 +12,7 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from calibration import INPUT_SHAPES, Pair, dataset_root, pair_inputs, read_pairs
+from calibration import INPUT_SHAPES, Pair, dataset_root, pair_inputs, usable_pairs
 
 
 def tensor_options() -> pyneat.ModelOptions:
@@ -34,10 +35,11 @@ def input_tensors(inputs: dict[str, np.ndarray]) -> list[pyneat.Tensor]:
 
 
 def benchmark_pair(dataset: Path) -> tuple[Pair, dict[str, np.ndarray]]:
-    """One val pair, chosen with a fixed seed so every run measures the same input."""
+    """One val pair whose images both have 512 keypoints, chosen with a fixed seed so every run measures the same
+    input."""
     root = dataset_root(dataset)
-    pair = random.Random(0).choice(sorted(read_pairs(root), key=lambda item: (item.name0, item.name1)))
-    return pair, pair_inputs(root, pair)[0]
+    pair = random.Random(0).choice(sorted(usable_pairs(root), key=lambda item: (item.name0, item.name1)))
+    return pair, pair_inputs(root, pair)
 
 
 def main() -> None:
