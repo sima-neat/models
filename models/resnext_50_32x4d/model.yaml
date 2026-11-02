@@ -1,0 +1,81 @@
+# Temporary: CI validates but does not compile until Vulcan Model Convert publishes the ONNX pinned below.
+build-on-demand: true
+display_name: ResNeXt-50 32x4d
+description: Classifies an image into one of the 1,000 ImageNet classes.
+model_type: vision
+tasks: [image_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: resnet
+
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: Derived from torchvision's ResNeXt-50 32x4d ImageNet weights (IMAGENET1K_V1) as published in timm/resnext50_32x4d.tv_in1k, and distributed under BSD-3-Clause.
+
+upstream:
+  repository: https://huggingface.co/timm/resnext50_32x4d.tv_in1k
+  revision: 6af7026b6fb49698c349bc0ab0a66e31c6f942b3
+  derived_from: https://github.com/pytorch/vision/blob/134f6382956071833f05f072763c03f9858453f2/torchvision/models/resnet.py
+
+conversion:
+  source:
+    repository: timm/resnext50_32x4d.tv_in1k
+    revision: 6af7026b6fb49698c349bc0ab0a66e31c6f942b3
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: c0d85cba49c0e9dedbcf6d4e572e2c5ea5eb68e9d64d0564811fd54d4f72939a, size_bytes: 100417784}
+      config.json: {sha256: f81a7420ec2e00a345c9470146db4cf3e160da99cc516611764e82929646be43, size_bytes: 653}
+
+compilation:
+  format: onnx
+  # TODO(convert-pin): replace with the Vulcan Model Convert output for this branch.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/resnext_50_32x4d/0f35f6a02a6451e95e557bcb53d87ef01bdb7b4117e56ebd718ab6426d5bff37/0-0/model.onnx
+    sha256: 0f35f6a02a6451e95e557bcb53d87ef01bdb7b4117e56ebd718ab6426d5bff37
+    size_bytes: 100011273
+
+calibrations:
+- id: imagenet-2012-cal
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 1000
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, center crop 0.875, bilinear, FP32
+  note: timm's resnext50_32x4d.tv_in1k row, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.77632, top5_accuracy: 0.93674}
