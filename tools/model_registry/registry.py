@@ -1999,9 +1999,11 @@ def publish_packages(
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/{SIMULATION_FILE}"),
             )
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
+        # The catalog's size is the stored package artifact's, as the registry checks; a folder's total is
+        # deployment_size_bytes.
         published.append({
             "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id, "run_id": run_id,
-            "artifact_sha256": artifact_sha, "size_bytes": package_size, "manifest_sha256": manifest_sha,
+            "artifact_sha256": artifact_sha, "size_bytes": stored.size_bytes, "manifest_sha256": manifest_sha,
             "package_fingerprint": manifest_sha, "component_run_ids": component_runs, "s3_key": stored.key,
             **({key: artifact_metadata[key] for key in
                 ("layout", "storage_backend", "file_count", "deployment_size_bytes")} if native else {}),

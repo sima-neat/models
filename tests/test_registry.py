@@ -305,7 +305,9 @@ def test_publish_package_with_a_runtime_file_publishes_each_file_by_checksum(tmp
     assert assembled["layout"] == "directory"
     assert result["packages"][0]["layout"] == "directory"
     assert result["packages"][0]["file_count"] == 2
-    assert result["packages"][0]["size_bytes"] == sum(item["size_bytes"] for item in files)
+    # The registry compares the catalog size with the stored artifact, which for a folder is its manifest.
+    assert result["packages"][0]["size_bytes"] == bodies["/v1/runs/package-run/artifacts/package"]["size_bytes"]
+    assert result["packages"][0]["deployment_size_bytes"] == sum(item["size_bytes"] for item in files)
     # The component input is still the compiled MPK; only the package is a folder.
     assert bodies["/v1/runs/package-run/inputs/component-model"]["media_type"] == "application/gzip"
     for item in files:
