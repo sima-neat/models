@@ -66,3 +66,13 @@ accuracy:
   - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}
 
 performance: {}
+
+reference_metrics:
+- source: https://github.com/cvg/glue-factory/blob/2d17e3b3bd7d30f0c828d4c4d3eac4ecefbf283d/README.md
+  dataset: {id: megadepth-1500, split: test}
+  conditions: 1600 px long side, 2048 SuperPoint keypoints, match threshold 0.1, OpenCV RANSAC at 0.5 px
+  note: >-
+    The authors' evaluation of SuperPoint + LightGlue: glue-factory's superpoint+lightglue-official configuration, which
+    loads the cvg/LightGlue weights. It measures another dataset and keypoint budget than the registry's 512 keypoints
+    at 640x480 on yfcc100m-keypoints.
+  metrics: {pose_auc_5: 0.5102, pose_auc_10: 0.681, pose_auc_20: 0.8065}
