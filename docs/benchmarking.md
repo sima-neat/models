@@ -131,8 +131,9 @@ The script runs once per benchmarked build profile, with every component's MPK.
 
 ### Benchmark input
 
-The benchmark repeats one real camera-sized frame, so its throughput is what
-an application gets from a 720p frame to decoded results, not the MPK alone:
+For an image model, the benchmark repeats one real camera-sized frame, so its
+throughput is what an application gets from a 720p frame to decoded results,
+not the MPK alone:
 
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
@@ -169,8 +170,10 @@ sample of its accuracy dataset instead of a frame. The script picks the sample
 from the validation split with `random.Random(0)`, passes its arrays to Core
 as `pyneat.Tensor` inputs on the tensor route (`preprocess.kind =
 InputKind.Tensor`, with resizing, color conversion and normalization off), and
-names the dataset and the sample in `workload`. The shared dataset-image test
-in `tests/test_model_report.py` skips such a model, so its own
+names the dataset and the sample in `workload`. Core then times the MPK alone:
+CPU steps outside the package, such as a matcher's input encoding and match
+extraction, are not part of the measurement. The shared dataset-image test in
+`tests/test_model_report.py` skips such a model, so its own
 `tests/benchmark/test_performance.py` checks the sample and the tensors.
 
 A model without an accuracy dataset builds a fixed, realistic input in its
