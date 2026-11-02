@@ -84,7 +84,7 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
-@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8"])
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
     parameters = recipe._variant(recipe._metadata(), profile_id)["parameters"]
@@ -148,3 +148,4 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
 
     assert stopped.value.code == 2
     assert message in capsys.readouterr().err
+
