@@ -57,12 +57,10 @@ catalog snapshot.
 
 ## Renames and removals
 
-Canonical IDs are stable. To rename a concept, first add the replacement ID and
-retain the old entry as the compatibility alias while model declarations are
-migrated. Its display name may mark it deprecated; there is no separate alias
-registry or taxonomy release number. Remove the old entry only after no model
-in the complete catalog references it. Full-catalog validation makes an early
-removal fail before publication.
+Canonical IDs are stable. To rename or remove a concept, change its taxonomy
+entry and every model that references it in one pull request; there is no
+alias, deprecated entry, or taxonomy release number. Full-catalog validation
+rejects a model that still references a removed ID before publication.
 
 To remove a model or compile invocation, omit it from the next complete catalog
 snapshot. It disappears from current search and browser views, while historical

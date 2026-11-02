@@ -1,6 +1,6 @@
 name: Build and Publish Model Registry
 
-run-name: Build and Publish Model Registry (${{ inputs.environment || 'staging' }}) - ${{ github.ref_name }}
+run-name: Build and Publish Model Registry (${{ vars.VULCAN_ENV || 'staging' }}) - ${{ github.ref_name }}
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
       - "models/**"
       - "schemas/**"
       - "taxonomies/**"
+      - "datasets/**"
       - "artifact-browser/**"
       - ".github/workflows/**"
       - "scripts/**"
@@ -18,15 +19,9 @@ on:
       - "conftest.py"
       - "packaging/model-registry/**"
       - "tools/model_registry/**"
+      - "tools/model_report/**"
       - "pyproject.toml"
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: Vulcan environment used for package publication
-        required: true
-        default: staging
-        type: choice
-        options: [staging, production]
+  workflow_dispatch: {}
 
 permissions:
   actions: write
@@ -42,7 +37,7 @@ jobs:
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
-      vulcan_env: ${{ inputs.environment || 'staging' }}
+      vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
 
   build:
     name: Model Registry Package

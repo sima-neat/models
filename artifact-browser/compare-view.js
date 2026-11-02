@@ -1,5 +1,5 @@
 // Explore all variants of one task; inspect up to three measured builds side by side.
-import { adaptBenchmarkResult } from "./benchmark-adapters.js";
+import { readPerformance } from "./model-report.js";
 import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
 import { escapeHtml, variantLabel } from "./ui.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
@@ -35,64 +35,41 @@ const PERFORMANCE_ROWS = [
   ["avg_power_watts", "SoM power"],
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
+  ["ev74_memory_peak_mib", "Peak EV74 memory"],
 ];
 
 function catalogVariants() {
   return [...state.models].sort(compareModels).flatMap((model) => (
-    profileGroups({ ...model, builds: compilerFilteredBuilds(model) }).filter(([, builds]) => builds.length === 1).map(([profile, builds]) => ({
+    profileGroups({ ...model, builds: compilerFilteredBuilds(model) }).map(([profile, builds]) => ({
       key: pickKey(model.model_id, profile), model, profile, build: anchorBuild(builds),
     }))
   ));
 }
 
 function measuredText(metric, key) {
-  const definition = metricDefinition(key, metric);
+  const definition = metricDefinition(key);
   const display = metricDisplay(metric, definition);
   if (!display) return null;
   return { number: Number(display.value.toFixed(display.digits)), text: `${display.value.toFixed(display.digits)} ${display.unit.replace("/inference", "")}`, direction: definition.direction };
 }
 
-// Each component is measured on its own and the CPU stage between components is not, so a build lists
-// one value per component and never adds them up.
-function componentMeasurements(variant) {
-  return variant.details.map((detail) => {
-    const adapted = detail.benchmark ? adaptBenchmarkResult(detail.benchmark.result) : null;
-    return {
-      component: variant.details.length > 1 ? detail.summary.run.metadata?.component_id || "model" : "model",
-      measurements: adapted?.kind === "supported" ? adapted.value.measurements : {},
-    };
-  });
+// Each build's performance measures the whole model, however many components it runs.
+function variantMeasurements(variant) {
+  const result = readPerformance(variant.performance);
+  return result.kind === "supported" ? result.value.measurements : {};
 }
 
-// A single-component build competes with other single-component builds; a component of a larger model
-// competes only with the same component of another build.
-function bestValues(columns, key) {
-  const byComponent = new Map();
-  let direction = "neutral";
-  for (const column of columns) {
-    for (const { component, measurements } of column.components) {
-      const value = measuredText(measurements[key], key);
-      if (!value) continue;
-      direction = value.direction;
-      byComponent.set(component, [...(byComponent.get(component) || []), value.number]);
-    }
-  }
-  if (direction === "neutral") return new Map();
-  const better = direction === "lower" ? Math.min : Math.max;
-  return new Map([...byComponent].filter(([, values]) => values.length > 1).map(([component, values]) => [component, better(...values)]));
+function bestValue(columns, key) {
+  const values = columns.map((column) => measuredText(column.measurements[key], key)).filter(Boolean);
+  if (values.length < 2 || values[0].direction === "neutral") return null;
+  return (values[0].direction === "lower" ? Math.min : Math.max)(...values.map((value) => value.number));
 }
 
 function performanceCell(column, key, best) {
-  if (!column.components.length) return "<td>—</td>";
-  const lines = column.components.map(({ component, measurements }) => {
-    const value = measuredText(measurements[key], key);
-    const isBest = value && best.get(component) === value.number;
-    const text = value ? `<span class="${isBest ? "best" : ""}">${escapeHtml(value.text)}${isBest ? '<span class="sr-only"> (best)</span>' : ""}</span>` : "<span>—</span>";
-    return column.components.length > 1
-      ? `<span class="compare-line"><span class="compare-component">${escapeHtml(component)}</span>${text}</span>`
-      : text;
-  });
-  return `<td>${lines.join("")}</td>`;
+  const value = measuredText(column.measurements[key], key);
+  if (!value) return "<td>—</td>";
+  const isBest = best === value.number;
+  return `<td><span class="${isBest ? "best" : ""}">${escapeHtml(value.text)}${isBest ? '<span class="sr-only"> (best)</span>' : ""}</span></td>`;
 }
 
 function comparisonTable(columns) {
@@ -100,7 +77,7 @@ function comparisonTable(columns) {
   const row = (label, cells) => `<tr><th scope="row">${escapeHtml(label)}</th>${cells.join("")}</tr>`;
   const text = (value) => `<td>${escapeHtml(value || "—")}</td>`;
   const performance = PERFORMANCE_ROWS.map(([key, label]) => {
-    const best = bestValues(columns, key);
+    const best = bestValue(columns, key);
     return row(label, columns.map((column) => performanceCell(column, key, best)));
   }).join("");
   return `<div class="compare-table-wrap" role="region" aria-label="Selected model measurements" tabindex="0"><table class="compare-table">
@@ -113,7 +90,7 @@ function comparisonTable(columns) {
       ${performance}
       ${group("Accuracy")}
       ${row("Headline metric", columns.map(({ accuracy }) => text(accuracy && `${accuracy.label} ${accuracy.value}`)))}
-      ${row("Published", columns.map(({ accuracy }) => text(accuracy?.published)))}
+      ${row("Published", columns.map(({ accuracy }) => text(accuracy?.reference)))}
     </tbody>
   </table></div>`;
 }
@@ -141,8 +118,7 @@ function datasetLabel(dataset) {
 
 function comparisonPlot(columns) {
   const points = columns.flatMap(column => {
-    const readings = column.components[0]?.measurements;
-    const throughput = measuredText(readings?.throughput_fps, "throughput_fps");
+    const throughput = measuredText(column.measurements.throughput_fps, "throughput_fps");
     return throughput ? [{column, x: throughput.number}] : [];
   });
   const groups = new Map();
@@ -207,7 +183,7 @@ function renderMeasurements() {
   hideComparisonTooltip();
   const results = elements["compare-pane"].querySelector(".compare-results");
   const selected = state.comparePicks.filter(Boolean).map(key => loadedColumns.find(column => column.option.key === key)).filter(Boolean);
-  results.innerHTML = `${comparisonPlot(loadedColumns)}${modelPicker(loadedColumns)}${selected.length ? `<section class="compare-selected" aria-labelledby="compare-selected-title"><div class="compare-section-heading"><h3 id="compare-selected-title">Selected models</h3><span>${selected.length} / ${MAX_COMPARED_BUILDS}</span></div>${comparisonTable(selected)}<p class="compare-chart-note">Bold marks the best value among matching components. Each component is measured separately.</p></section>` : ""}`;
+  results.innerHTML = `${comparisonPlot(loadedColumns)}${modelPicker(loadedColumns)}${selected.length ? `<section class="compare-selected" aria-labelledby="compare-selected-title"><div class="compare-section-heading"><h3 id="compare-selected-title">Selected models</h3><span>${selected.length} / ${MAX_COMPARED_BUILDS}</span></div>${comparisonTable(selected)}<p class="compare-chart-note">Bold marks the best value.</p></section>` : ""}`;
 }
 
 export function toggleComparison(key) {
@@ -237,8 +213,7 @@ export function showComparisonTooltip(point) {
   const column = loadedColumns.find(column => column.option.key === point.dataset.compareToggle);
   if (!tooltip || !column) return;
   hideComparisonTooltip();
-  const readings = column.components[0]?.measurements;
-  const throughput = measuredText(readings?.throughput_fps, "throughput_fps");
+  const throughput = measuredText(column.measurements.throughput_fps, "throughput_fps");
   const field = (label, value) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`;
   tooltip.innerHTML = `<strong>${escapeHtml(column.option.model.display_name || column.option.model.model_id)}</strong><dl>
     ${field("Variant", variantLabel(column.option.profile))}
@@ -279,7 +254,7 @@ export async function renderComparison() {
   const columns = await mapWithConcurrency(options, 3, async option => {
     if (requestId !== compareRequestId) return null;
     const variant = await loadPickedVariant(option).catch(() => null);
-    return {option, variant, failed: !variant, components: variant ? componentMeasurements(variant) : [], accuracy: variant ? accuracyHeadline(variant) : null};
+    return {option, variant, failed: !variant, measurements: variant ? variantMeasurements(variant) : {}, accuracy: variant ? accuracyHeadline(variant) : null};
   });
   if (requestId !== compareRequestId) return;
   loadedColumns = columns.filter(Boolean);

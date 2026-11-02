@@ -19,12 +19,11 @@ export async function allPages(fetchPage, basePath, query, collection) {
 
 // One workflow compiles every component of a build; a run without CI provenance stands alone.
 export function workflowIdentity(run) {
-  const meta = run.metadata || {};
-  return meta.github_run_id || run.ci_run_url || meta.compile_invocation_id || run.id;
+  return run.metadata.github_run_id || run.id;
 }
 
 export function runProfile(run) {
-  return run.metadata?.build_profile_id || run.metadata?.variant_id || "default";
+  return run.metadata.build_profile_id;
 }
 
 function runTime(run) {
@@ -49,7 +48,7 @@ export function variantBuilds(runs) {
       groups.set(key, { key, modelId: run.metadata?.model_id, profile: runProfile(run), components: new Map(), time: 0 });
     }
     const group = groups.get(key);
-    const component = run.metadata?.component_id || "model";
+    const component = run.metadata.component_id;
     const previous = group.components.get(component);
     if (!previous || runTime(run) > runTime(previous)) group.components.set(component, run);
     group.time = Math.max(group.time, runTime(run));
@@ -72,13 +71,13 @@ export async function variantBuildRuns(run, fetchPage) {
   const key = variantBuildKey(run);
   const siblings = (await allPages(fetchPage, basePath, query, "runs"))
     .filter((item) => item.id !== run.id && variantBuildKey(item) === key);
-  const component = run.metadata?.component_id || "model";
+  const component = run.metadata.component_id;
   // The requested run always stands for its own component.
-  const others = siblings.filter((item) => (item.metadata?.component_id || "model") !== component);
+  const others = siblings.filter((item) => item.metadata.component_id !== component);
   return variantBuilds([run, ...others])[0].runs;
 }
 
-// Deployment selections supersede legacy build lists for their profiles.
+// A profile's deployment selection replaces its catalog builds and packages.
 export function deploymentCatalog(model) {
   const selections = { ...model.approved_deployments, ...model.branch_deployments };
   const profiles = new Set(Object.keys(selections));
@@ -88,7 +87,7 @@ export function deploymentCatalog(model) {
     const roots = selection.artifacts || [];
     const components = roots.filter(root => root.component_id && root.run_id);
     for (const root of components) {
-      // Accuracy belongs to this exact component build, not merely its profile.
+      // The catalog build of this exact component run, not merely of its profile.
       const original = (model.builds || []).find(build => build.run_id === root.run_id
         && build.build_profile_id === profile && build.component_id === root.component_id);
       builds.push({ ...original, ...root, build_profile_id: profile });
@@ -141,7 +140,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     for (const build of model.builds || []) {
       const run = runsById.get(build.run_id);
       if (!run || build.build_profile_id !== runProfile(run)
-        || build.component_id !== (run.metadata?.component_id || "model")) continue;
+        || build.component_id !== run.metadata.component_id) continue;
       const key = variantKey(model.model_id, runProfile(run));
       if (!latest.has(key)) latest.set(key, { modelId: model.model_id, profile: runProfile(run), runs: [], time: 0, catalog: true });
       const group = latest.get(key);
@@ -153,6 +152,8 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   const declaredProfiles = new Map([...definitions].map(([modelId, model]) => [modelId,
     new Set([...(model.builds || []), ...(model.pending_builds || [])].map((build) => build.build_profile_id))]));
   for (const group of variantBuilds(runs)) {
+    // A model removed from the catalog keeps its completed runs too; a branch without a catalog shows every run.
+    if (definitions.size && !definitions.has(group.modelId)) continue;
     if (declaredProfiles.get(group.modelId)?.has(group.profile) === false) continue;
     const definition = definitions.get(group.modelId);
     if (definition?.build_on_demand || definition?.branch_deployments?.[group.profile]
@@ -169,27 +170,28 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   const models = new Map();
   for (const group of latest.values()) {
     const definition = definitions.get(group.modelId) || { model_id: group.modelId, display_name: group.modelId };
-    if (!models.has(group.modelId)) models.set(group.modelId, { ...definition, builds: [], packages: [] });
+    if (!models.has(group.modelId)) models.set(group.modelId, { ...definition, benchmark_fingerprints: {}, builds: [], packages: [] });
     const model = models.get(group.modelId);
-    for (const run of group.runs) {
-      const component = run.metadata?.component_id || "model";
-      const exactBuild = definition.builds?.find((build) => build.run_id === run.id
-        && build.build_profile_id === group.profile && build.component_id === component);
+    const exactBuilds = group.runs.map((run) => definition.builds?.find((build) => build.run_id === run.id
+      && build.build_profile_id === group.profile && build.component_id === run.metadata.component_id));
+    // A benchmark fingerprint names the MPKs it measured, so only a profile showing the catalog's own build keeps it.
+    if (exactBuilds.every(Boolean) && definition.benchmark_fingerprints?.[group.profile]) {
+      model.benchmark_fingerprints[group.profile] = definition.benchmark_fingerprints[group.profile];
+    }
+    group.runs.forEach((run, index) => {
       model.builds.push({
-        ...exactBuild,
+        ...exactBuilds[index],
         run_id: run.id,
         run,
         build_profile_id: group.profile,
-        component_id: component,
-        // The accuracy key names the MPKs it measured, so only the catalog build of this run carries it.
-        validation_fingerprint: exactBuild?.validation_fingerprint,
+        component_id: run.metadata.component_id,
         toolchain_name: run.toolchain_name,
         toolchain_version: run.toolchain_version,
         target_platform: run.target_platform,
         created_at: run.created_at,
         finished_at: run.finished_at,
       });
-    }
+    });
   }
 
   for (const model of models.values()) {
@@ -200,7 +202,7 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
         && run.metadata?.model_id === model.model_id
         && !model.branch_deployments?.[run.metadata.build_profile_id]
         && !model.approved_deployments?.[run.metadata.build_profile_id])
-        .map((run) => ({ run_id: run.id, build_profile_id: run.metadata.build_profile_id, component_run_ids: run.metadata.component_run_ids || {} })),
+        .map((run) => ({ run_id: run.id, build_profile_id: run.metadata.build_profile_id, component_run_ids: run.metadata.component_run_ids })),
       ...(definitions.get(model.model_id)?.packages || []),
     ];
     for (const item of candidates) {

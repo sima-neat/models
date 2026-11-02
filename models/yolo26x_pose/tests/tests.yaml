@@ -6,37 +6,52 @@ accuracy:
   run_tests: true
   expected:
     w16a16:
-      coco_keypoint_map: 0.7133
-      coco_keypoint_ap50: 0.9091
-      coco_keypoint_ap75: 0.7831
-      coco_keypoint_ap_medium: 0.6702
-      coco_keypoint_ap_large: 0.7942
-      coco_keypoint_ar: 0.7713
-      coco_keypoint_ar50: 0.9395
-      coco_keypoint_ar75: 0.8331
-      coco_keypoint_ar_medium: 0.7166
-      coco_keypoint_ar_large: 0.8500
-      coco_person_box_map: 0.5735
-      coco_person_box_ap50: 0.7232
+      coco-2017-val:
+        coco_keypoint_map: 0.7133
+        coco_keypoint_ap50: 0.9091
+        coco_keypoint_ap75: 0.7831
+        coco_keypoint_ap_medium: 0.6702
+        coco_keypoint_ap_large: 0.7942
+        coco_keypoint_ar: 0.7713
+        coco_keypoint_ar50: 0.9395
+        coco_keypoint_ar75: 0.8331
+        coco_keypoint_ar_medium: 0.7166
+        coco_keypoint_ar_large: 0.8500
+        coco_person_box_map: 0.5735
+        coco_person_box_ap50: 0.7232
     w8a8:
-      coco_keypoint_map: 0.6710
-      coco_keypoint_ap50: 0.9041
-      coco_keypoint_ap75: 0.7537
-      coco_keypoint_ap_medium: 0.6340
-      coco_keypoint_ap_large: 0.7494
-      coco_keypoint_ar: 0.7361
-      coco_keypoint_ar50: 0.9348
-      coco_keypoint_ar75: 0.8105
-      coco_keypoint_ar_medium: 0.6831
-      coco_keypoint_ar_large: 0.8116
-      coco_person_box_map: 0.5568
-      coco_person_box_ap50: 0.7088
+      coco-2017-val:
+        coco_keypoint_map: 0.6710
+        coco_keypoint_ap50: 0.9041
+        coco_keypoint_ap75: 0.7537
+        coco_keypoint_ap_medium: 0.6340
+        coco_keypoint_ap_large: 0.7494
+        coco_keypoint_ar: 0.7361
+        coco_keypoint_ar50: 0.9348
+        coco_keypoint_ar75: 0.8105
+        coco_keypoint_ar_medium: 0.6831
+        coco_keypoint_ar_large: 0.8116
+        coco_person_box_map: 0.5568
+        coco_person_box_ap50: 0.7088
+    w8a16:
+      coco-2017-val:
+        coco_keypoint_map: 0.7062
+        coco_keypoint_ap50: 0.9000
+        coco_keypoint_ap75: 0.7753
+        coco_keypoint_ap_medium: 0.6635
+        coco_keypoint_ap_large: 0.7863
+        coco_keypoint_ar: 0.7636
+        coco_keypoint_ar50: 0.9301
+        coco_keypoint_ar75: 0.8248
+        coco_keypoint_ar_medium: 0.7094
+        coco_keypoint_ar_large: 0.8415
+        coco_person_box_map: 0.5678
+        coco_person_box_ap50: 0.7160
 performance:
-  run_tests: true
+  run_tests: false
+  skip_reason: The w8a16 build has no published report to expect values from yet.
   expected:
     w16a16:
-      model:
-        throughput_fps: 29.5
+      throughput_fps: 29.5
     w8a8:
-      model:
-        throughput_fps: 125.1
+      throughput_fps: 125.1

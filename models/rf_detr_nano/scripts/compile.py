@@ -12,6 +12,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,7 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images, select_top_proposals, to_afe_layout
@@ -40,15 +42,18 @@ from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
+    BF16_REGIONS,
     BOUNDARY_SHAPES,
     BOXES,
     FEATURES,
+    GLOBAL_ATTENTION_BLOCKS,
     INPUT,
     INPUT_SHAPE,
     OUTPUT_SHAPES,
     OUTPUTS,
     PROPOSALS,
     SCORES,
+    annotate_bf16_regions,
     graph_paths,
     prepare_model,
     validate_float_split,
@@ -56,7 +61,6 @@ from surgery import (
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_nano"
-INVOCATION_ID = "rf_detr"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 # Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
 A16_PRECISIONS = ("w8a16", "w16a16")
@@ -84,23 +88,6 @@ COMPONENT_INTERFACES = {
 }
 
 
-def _validate_boundary_contract(metadata: dict[str, Any]) -> None:
-    """Match authored connections to the graph boundaries surgery and MPK audits enforce."""
-    expected = {
-        "backbone": ({INPUT: INPUT_SHAPE}, {name: BOUNDARY_SHAPES[name] for name in (FEATURES, SCORES, BOXES)}),
-        "decoder": ({name: BOUNDARY_SHAPES[name] for name in (FEATURES, PROPOSALS)},
-                    {name: OUTPUT_SHAPES[name] for name in OUTPUTS}),
-    }
-    for component in metadata["components"]:
-        entry = next(item for item in component["interface"]["entrypoints"] if item["id"] == "default")
-        for direction, shapes in zip(("inputs", "outputs"), expected[component["id"]]):
-            actual = [(tensor["name"], tensor["dtype"], tensor["shape"]) for tensor in entry[direction]]
-            if actual != [(name, "float32", shape) for name, shape in shapes.items()]:
-                raise ValueError(
-                    f"model.yaml {component['id']} {direction} do not match the RF-DETR graph boundary: {actual}"
-                )
-
-
 def _component_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, dict[str, Any]]:
     """Return each component's build parameters in the build profile."""
     profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
@@ -112,6 +99,22 @@ def _component_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str
 def _component_name(profile_id: str, component_id: str) -> str:
     """Name a component's quantized model and its build directory."""
     return f"{MODEL_ID}_{profile_id}_{component_id}"
+
+
+def _bf16_regions(profile_id: str, component_parameters: dict[str, dict[str, Any]]) -> list[str]:
+    """Return the backbone regions the build profile runs BF16, checking that its ID marks it mixed."""
+    if "bf16_regions" in component_parameters["decoder"]:
+        raise ValueError("only the backbone declares bf16_regions")
+    parameters = component_parameters["backbone"]
+    regions = parameters.get("bf16_regions", [])
+    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 backbone: {regions}")
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    if unknown:
+        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return regions
 
 
 def _calibrates(parameters: dict[str, Any]) -> bool:
@@ -173,6 +176,22 @@ def _quantize_component(
         model_name=name,
         log_level=logging.INFO,
     )
+
+
+def _require_bf16_regions(quantized: Any, regions: list[str]) -> None:
+    """Fail when AFE ignored the BF16 annotations, which would silently build a W8A8 backbone."""
+    # The quantized model keeps its network private, and AFE renames every node, so count by operation.
+    counts = Counter(
+        type(node.ir.operation).__name__
+        for node in quantized._net.iter_nodes_recursive()
+        if getattr(node.ir, "quant_config", None) is not None
+        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
+    )
+    logging.info("BF16 backbone operations: %s", dict(sorted(counts.items())))
+    # Softmax stays one AFE node, unlike LayerNorm, whose scale and bias AFE splits off.
+    softmaxes = GLOBAL_ATTENTION_BLOCKS if "attention_global" in regions else 0
+    if not counts or counts["SoftmaxOp"] != softmaxes:
+        raise RuntimeError(f"expected BF16 operations including {softmaxes} softmaxes, found {dict(counts)}")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -247,6 +266,7 @@ def _compile_component(
         retained_temporary_directory_name=None,
         use_power_limits=False,
         max_mla_power=None,
+        # The option applies to every layer norm and INT8 ones reject it, so BF16 regions keep BF16 intermediates.
         layer_norm_use_fp32_intermediates=precision in A16_PRECISIONS,
         rms_norm_use_fp32_intermediates=False,
         enable_filter_sharing=False,
@@ -329,8 +349,10 @@ class _OutputError:
 
 
 def _precision_label(parameters: dict[str, Any]) -> str:
-    """Name a component's precision, such as W8A16 per-token."""
-    return parameters["precision"].upper() + (" per-token" if parameters.get("per_token") else "")
+    """Name a component's precision, such as W8A16 per-token or W8A8 mixed (BF16 residual)."""
+    label = parameters["precision"].upper() + (" per-token" if parameters.get("per_token") else "")
+    regions = parameters.get("bf16_regions")
+    return label + (f" mixed (BF16 {', '.join(regions)})" if regions else "")
 
 
 def _pipeline_description(component_parameters: dict[str, dict[str, Any]]) -> str:
@@ -378,8 +400,6 @@ def _write_fidelity(
         "schema_version": 1,
         "model_id": MODEL_ID,
         "build_profile_id": profile_id,
-        "component_id": config["result_component"],
-        "scope": "full_pipeline",
         "status": config["status"],
         "reference": "Original full ONNX (ONNX Runtime)",
         "candidate": candidate,
@@ -433,13 +453,22 @@ def _prepare_phase(
     source: Path,
     fidelity_dataset: Path,
     evaluation_names: tuple[str, ...],
+    bf16_regions: list[str],
     temporary_dir: Path,
 ) -> None:
-    """Split the ONNX into the two component graphs, check the split, and save the reference outputs."""
+    """Split the ONNX into the two component graphs, check the split, and save the reference outputs.
+
+    Then mark the backbone's BF16 regions, which ONNX Runtime cannot run.
+    """
     backbone_graph, decoder_graph = prepare_model(source, temporary_dir / "graphs")
     images = load_images(fidelity_dataset, evaluation_names)
     validate_float_split(source, backbone_graph, decoder_graph, images[0])
     np.savez(temporary_dir / REFERENCE_OUTPUTS, **_reference_outputs(source, images))
+    if bf16_regions:
+        marks = annotate_bf16_regions(backbone_graph, bf16_regions)
+        logging.info(
+            "Marked %d backbone operations BF16 and %d INT8 for %s", marks["bfloat16"], marks["int8"], bf16_regions
+        )
 
 
 def _backbone_phase(
@@ -463,6 +492,8 @@ def _backbone_phase(
         {INPUT: calibration_images} if _calibrates(parameters) else None,
         {INPUT: tuple(INPUT_SHAPE)},
     )
+    if parameters.get("bf16_regions"):
+        _require_bf16_regions(backbone, parameters["bf16_regions"])
     _compile_component(backbone, temporary_dir / name, "backbone", parameters["precision"])
 
     features, scores, boxes = zip(
@@ -546,18 +577,13 @@ def _copy_component_archives(temporary_dir: Path, profile_id: str, output_dir: P
 
 
 def _write_compile_outputs(
-    output_dir: Path,
-    profile_id: str,
-    archives: dict[str, Path],
-    graph_hashes: dict[str, str],
-    fidelity_component: str,
+    output_dir: Path, profile_id: str, archives: dict[str, Path], graph_hashes: dict[str, str]
 ) -> None:
-    """Write compile-outputs.json, which records each MPK, derived graph, and the fidelity report."""
-    fidelity_path = output_dir / fidelity_component / FIDELITY_REPORT
+    """Write compile-outputs.json, which records each MPK and derived graph."""
     manifest = {
         "model_id": MODEL_ID,
         "build_profile_id": profile_id,
-        "compile_invocation_id": INVOCATION_ID,
+        "compile_invocation_id": profile_id,
         "outputs": [
             {
                 "component_id": component_id,
@@ -569,11 +595,6 @@ def _write_compile_outputs(
         "derived_graphs": [
             {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
         ],
-        "correctness": {
-            "component_id": fidelity_component,
-            "path": f"{fidelity_component}/{FIDELITY_REPORT}",
-            "sha256": sha256_file(fidelity_path)[0],
-        },
     }
     (output_dir / "compile-outputs.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -589,9 +610,9 @@ def compile_model(
     output_dir: Path,
 ) -> dict[str, Path]:
     metadata = load_metadata(MODEL_DIR)
-    _validate_boundary_contract(metadata)
     component_parameters = _component_parameters(metadata, profile_id)
-    fidelity_config = next(entry for entry in metadata["fidelity"] if profile_id in entry["build_profiles"])
+    bf16_regions = _bf16_regions(profile_id, component_parameters)
+    fidelity_config = metadata["numerical_fidelity"]
     selection = fidelity_config["selection"]
     calibration_names = _calibration_names(component_parameters, calibration_dataset, fidelity_dataset, selection)
     evaluation_names = select_images(
@@ -612,6 +633,7 @@ def compile_model(
             source=source,
             fidelity_dataset=fidelity_dataset,
             evaluation_names=evaluation_names,
+            bf16_regions=bf16_regions,
             temporary_dir=temporary_dir,
         )
         graph_hashes = {
@@ -642,9 +664,8 @@ def compile_model(
         )
         output_dir.mkdir(parents=True)
         archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
-        fidelity_component = fidelity_config["result_component"]
-        shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / fidelity_component / FIDELITY_REPORT)
-        _write_compile_outputs(output_dir, profile_id, archives, graph_hashes, fidelity_component)
+        shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / FIDELITY_REPORT)
+        _write_compile_outputs(output_dir, profile_id, archives, graph_hashes)
         return archives
 
 
@@ -657,8 +678,8 @@ def main() -> int:
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
     args = parser.parse_args()
-    if args.compile_invocation != INVOCATION_ID:
-        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
+    if args.compile_invocation != args.build_profile:
+        parser.error("a build profile compiles in one invocation named after it")
     source = args.model.expanduser().resolve()
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
     fidelity_dataset = args.fidelity_dataset.expanduser().resolve()

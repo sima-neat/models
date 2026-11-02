@@ -206,17 +206,18 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
             compile_module.audit_mpk(archive)
 
 
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    expected = {"precision": profile_id}
+    if profile_id == "w8a8":
+        expected |= {"calibration_bins": 1024, "calibration_samples": 50}
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
-    assert compile_module._parameters("w8a8") == {
-        "precision": "w8a8",
-        "calibration_bins": 1024,
-        "calibration_samples": 50,
-    }
+    assert load_script("compile")._parameters(profile_id) == expected
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+        load_script("compile")._parameters("w32a32")
 
 
 @pytest.fixture
@@ -230,15 +231,14 @@ def accuracy_script(monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str]
 def test_model_preserves_compilation_and_quality_settings(accuracy_script: ModuleType) -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
         "attribution": "YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.",
     }
-    declared = model["accuracy"][0]
+    declared = model["accuracy"]
     metric_names = {name for metrics in accuracy_script.METRICS.values() for name in metrics}
     for expected in load_model_tests(MODEL_DIR)["accuracy"]["expected"].values():
-        assert set(expected) == metric_names
-    assert declared["required_metrics"] == ["coco_mask_map"]
-    assert model["published_metrics"][0]["metrics"] == {"coco_mask_map": 0.400, "coco_box_map": 0.473}
+        assert set(expected["coco-2017-val"]) == metric_names
+    assert list(declared["datasets"]) == ["coco-2017-val"]
+    assert model["reference_metrics"][0]["metrics"] == {"coco_mask_map": 0.400, "coco_box_map": 0.473}

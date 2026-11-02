@@ -7,12 +7,14 @@ variant:
   rules:
     - A variant ID is the precision token of each component, in component order. Write a repeated token once.
     - Exclude the target and every other recipe option from the variant ID.
+    - When a component runs some of its operations above its precision, write mixed after its precision token. Its model.yaml parameters list those operations.
     - When two variants of one model would share an ID, append the first tokens, in the order below, that distinguish them.
     - Variant IDs are lowercase. The Model Browser displays them in uppercase.
   examples:
     w8a8: One component with INT8 weights and activations
     w16a16: One component with BF16 weights and activations
     w8a8_w16a16: A W8A8 backbone followed by a W16A16 decoder
+    w8a8_mixed_w16a16: A W8A8 backbone that runs some operations in BF16, followed by a W16A16 decoder
 
 mpk:
   rules:
@@ -25,11 +27,9 @@ mpk:
 
 order:
   - precision
-  - quantization
   - calibration
   - histogram_bins
   - weight_scaling
-  - requantization
   - bias_correction
   - equalization
   - smooth_quant
@@ -49,8 +49,8 @@ tokens:
     w16a16: BF16 weights and activations
     w8a16: INT8 weights and BF16 activations
     w4a16: INT4 weights and BF16 activations
-  quantization:
-    qat: Quantization-aware-trained source
+  mixed:
+    mixed: Some of the component's operations run above its precision, such as BF16 operations in a W8A8 component
   calibration:
     mse: Histogram mean squared error
     mm: MinMax
@@ -58,8 +58,6 @@ tokens:
     ent: Histogram entropy
   weight_scaling:
     wpt: Per-tensor integer weight scales instead of per-channel scales
-  requantization:
-    rqtf: TFLite requantization instead of SiMa requantization
   bias_correction:
     bcr: Regular bias correction
     bci: Iterative bias correction

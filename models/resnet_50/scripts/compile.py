@@ -47,15 +47,11 @@ def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:
     return {**profile, "parameters": binding["parameters"]}
 
 
-def _fidelity_config(metadata: dict[str, Any], variant_id: str) -> dict[str, Any] | None:
-    return next((item for item in metadata["fidelity"] if variant_id in item["build_profiles"]), None)
-
-
 def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
     variant = _variant(_metadata(), variant_id)
     parameters = variant["parameters"]
     precision = str(parameters.get("precision"))
-    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8"}:
+    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8", "w8a16"}:
         raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
 
     input_name = str(parameters["input_name"])
@@ -79,7 +75,12 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
         # BF16 does not derive quantization ranges from representative data.
         # The API still requires an iterable, so provide one deterministic sample.
         samples = np.zeros((1, 224, 224, 3), dtype=np.float32)
-        activation_scheme = weight_scheme = bfloat16_scheme()
+        activation_scheme = bfloat16_scheme()
+        weight_scheme = (
+            quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+            if precision == "w8a16"
+            else bfloat16_scheme()
+        )
 
     data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
     model_name = f"{MODEL_ID}_{variant_id}"
@@ -89,6 +90,8 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
             calibration_method=CalibrationMethod.from_str("mse"),
             activation_quantization_scheme=activation_scheme,
             weight_quantization_scheme=weight_scheme,
+            # W8A16 scales each token's activations on its own before an INT8-weight operation.
+            per_token_quant=precision == "w8a16",
         ),
         model_name=model_name,
     )
@@ -135,8 +138,6 @@ def measure_fidelity(
         "schema_version": 1,
         "model_id": MODEL_ID,
         "build_profile_id": variant_id,
-        "component_id": config["result_component"],
-        "scope": "component",
         "status": config["status"],
         "reference": "ONNX source (ONNX Runtime)",
         "candidate": "Quantized AFE graph (JAX execute)",
@@ -164,24 +165,25 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
     parser.add_argument("--fidelity-dataset", type=Path, help="dataset-registry fidelity archive")
     args = parser.parse_args()
-    if args.compile_invocation != COMPONENT_ID:
-        parser.error(f"unsupported compile invocation: {args.compile_invocation}")
+    if args.compile_invocation != args.build_profile:
+        parser.error("a build profile compiles in one invocation named after it")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    fidelity = _fidelity_config(_metadata(), args.build_profile)
+    fidelity = _metadata().get("numerical_fidelity")
     if fidelity is not None and args.fidelity_dataset is None:
-        parser.error(f"{args.build_profile} declares fidelity {fidelity['id']!r}; pass --fidelity-dataset")
-    component_dir = args.output_dir.expanduser().resolve() / COMPONENT_ID
+        parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
+    output_dir = args.output_dir.expanduser().resolve()
+    component_dir = output_dir / COMPONENT_ID
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
     candidate = compile_model(source, component_dir, args.build_profile, dataset)
     if fidelity is not None:
-        LOG.info("Measuring %s on %d images", fidelity["id"], fidelity["selection"]["samples"])
+        LOG.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
         fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
         report = measure_fidelity(source, candidate, fidelity_dataset, fidelity, args.build_profile)
-        (component_dir / "fidelity.json").write_text(
+        (output_dir / "fidelity.json").write_text(
             json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         LOG.info("Fidelity: %s", report["metrics"][0])

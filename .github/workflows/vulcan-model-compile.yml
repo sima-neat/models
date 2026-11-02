@@ -1,6 +1,6 @@
 name: Vulcan Model Compile
 
-# Compile and publish one authorized invocation, update approved builds, and start its DevKit stages.
+# Compile and publish one authorized invocation, update approved builds, and start its benchmarks.
 # vulcan-model-orchestrator.yml calls this once per selected invocation, so one build never waits on another.
 
 on:
@@ -34,6 +34,9 @@ on:
       aws_region:
         required: true
         type: string
+      dataset_bucket:
+        required: true
+        type: string
       artifact_bucket:
         required: true
         type: string
@@ -58,16 +61,15 @@ jobs:
       - model-compiler
       - ${{ inputs.model_compiler_label }}
       - ${{ fromJSON(inputs.entry).runner_class }}
+      - runner-market-${{ fromJSON(inputs.entry).runner_market }}
       - model-id-${{ fromJSON(inputs.entry).model_id }}
-      # The scaler authorizes elevated model runners by the contract-v2
-      # build-profile and primary-component identity. Grouped invocations use
-      # their first declared component here; matrix authorization verifies the
-      # complete component group before this job is queued.
+      # Approval is scoped to the model folder; profile/component labels identify the job.
       - build-profile-id-${{ fromJSON(inputs.entry).build_profile_id }}
       - component-id-${{ fromJSON(inputs.entry).component_id }}
     # Large models compile for hours; the limit only stops a stalled compile.
     timeout-minutes: 360
     env:
+      SIMA_DATASET_S3_URI: s3://${{ inputs.dataset_bucket }}
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
       MODEL_DIR: ${{ fromJSON(inputs.entry).model_dir }}
@@ -79,11 +81,12 @@ jobs:
       EXPECTED_COMPILER_VERSION: ${{ inputs.model_compiler_version }}
       MODEL_COMPILER_LABEL: ${{ inputs.model_compiler_label }}
       VULCAN_ENVIRONMENT: ${{ inputs.vulcan_environment }}
-      BUILD_FINGERPRINT: ${{ fromJSON(inputs.entry).build_fingerprint }}
+      COMPILE_FINGERPRINT: ${{ fromJSON(inputs.entry).compile_fingerprint }}
       REQUESTED_RUNNER_CLASS: ${{ fromJSON(inputs.entry).requested_runner_class }}
+      REQUESTED_RUNNER_MARKET: ${{ fromJSON(inputs.entry).requested_runner_market }}
+      RUNNER_MARKET: ${{ fromJSON(inputs.entry).runner_market }}
       RUNNER_CLASS: ${{ fromJSON(inputs.entry).runner_class }}
       RUNNER_APPROVAL_ID: ${{ fromJSON(inputs.entry).runner_approval_id }}
-      RUNNER_APPROVAL_IDS: ${{ toJSON(fromJSON(inputs.entry).runner_approval_ids) }}
       RUNNER_APPROVAL_SPEC_REVISION: ${{ fromJSON(inputs.entry).runner_approval_spec_revision }}
     steps:
       - name: Check out the trusted revision
@@ -96,6 +99,9 @@ jobs:
             echo "PROFILE_OUTPUT_DIR=$RUNNER_TEMP/model-registry-output/$MODEL_ID/$BUILD_PROFILE_ID"
             echo "MODEL_REGISTRY_CACHE_DIR=$RUNNER_TEMP/datasets"
           } >> "$GITHUB_ENV"
+
+      - name: Verify and record EC2 runner identity
+        run: scripts/record_compile_runner_identity.sh
 
       - name: Verify the pinned Model Compiler environment
         run: |
@@ -178,8 +184,6 @@ jobs:
             --target "$RUNNER_TEMP/model-test-tools" 'pytest>=8,<9'
 
       - name: Compile the invocation with its model's compile script
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc <<'BASH'
@@ -192,13 +196,10 @@ jobs:
           BASH
 
       - name: Verify every MPK and record its provenance
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           IFS=',' read -ra components <<< "$COMPONENT_IDS"
-          for index in "${!components[@]}"; do
-            component="${components[$index]}"
+          for component in "${components[@]}"; do
             # Cache hits from the compilation; each digest is verified again on read.
             source_sha256="$("$MODEL_COMPILER_PYTHON" -m model_registry fetch "$MODEL_DIR" \
               --component "$component" --cache-dir "$MODEL_REGISTRY_CACHE_DIR" --json | jq -er '.sha256')"
@@ -208,10 +209,6 @@ jobs:
             calibration_args=()
             if [[ -n "$calibration_sha256" ]]; then
               calibration_args=(--calibration-sha256 "$calibration_sha256")
-            fi
-            approval_id="$RUNNER_APPROVAL_ID"
-            if [[ "$RUNNER_APPROVAL_IDS" != "null" ]]; then
-              approval_id="$(jq -r ".[${index}] // \"\"" <<< "$RUNNER_APPROVAL_IDS")"
             fi
             "$MODEL_COMPILER_PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component" \
               --write-manifest \
@@ -225,10 +222,16 @@ jobs:
               "${calibration_args[@]}" \
               --git-sha "$GITHUB_SHA" \
               --environment "$VULCAN_ENVIRONMENT" \
-              --build-fingerprint "$BUILD_FINGERPRINT" \
+              --compile-fingerprint "$COMPILE_FINGERPRINT" \
               --requested-runner-class "$REQUESTED_RUNNER_CLASS" \
               --runner-class "$RUNNER_CLASS" \
-              --runner-approval-id "$approval_id" \
+              --requested-runner-market "$REQUESTED_RUNNER_MARKET" \
+              --runner-market "$RUNNER_MARKET" \
+              --runner-name "$RUNNER_NAME" \
+              --runner-instance-id "$RUNNER_INSTANCE_ID" \
+              --runner-instance-type "$RUNNER_INSTANCE_TYPE" \
+              --runner-actual-market "$RUNNER_ACTUAL_MARKET" \
+              --runner-approval-id "$RUNNER_APPROVAL_ID" \
               --runner-approval-spec-revision "$RUNNER_APPROVAL_SPEC_REVISION"
           done
 
@@ -262,7 +265,8 @@ jobs:
       COMPILE_INVOCATION_ID: ${{ fromJSON(inputs.entry).compile_invocation_id }}
       COMPONENT_IDS: ${{ join(fromJSON(inputs.entry).component_ids, ',') }}
       REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+      MODEL_REGISTRY_IAM_READ_API_URL: ${{ inputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
       AWS_REGION: ${{ inputs.aws_region }}
       ARTIFACT_BUCKET: ${{ inputs.artifact_bucket }}
       KMS_KEY_ID: ${{ inputs.artifact_kms_key_id }}
@@ -370,37 +374,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Retain the published model output for the DevKit stages
-        uses: actions/upload-artifact@v7
-        with:
-          name: compiled-model-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}-${{ fromJSON(inputs.entry).compile_invocation_id }}
-          path: _compiled
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Start the DevKit stages
-        if: >-
-          inputs.vulcan_environment == 'staging' &&
-          fromJSON(inputs.entry).target == 'modalix' &&
-          join(fromJSON(inputs.entry).stages, '') != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ENTRY: ${{ inputs.entry }}
-        run: scripts/start_devkit_stages.sh "$ENTRY" "$GITHUB_RUN_ID"
-
       - name: Assemble the packages this build completes
         id: packages
         if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           model-registry assemble-package \
             --repository . \
             --compiled-dir _compiled \
             --output-dir _packages \
-            --resource-cache-dir "$RUNNER_TEMP/model-registry-resources" \
             --all \
             --json > "$RUNNER_TEMP/packages.json"
           count="$(jq -er '.count' "$RUNNER_TEMP/packages.json")"
@@ -419,6 +401,32 @@ jobs:
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --json > "$RUNNER_TEMP/package-publication.json"
+          # The benchmarks measure the profile's package, so its receipt travels with the build.
+          receipt="$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"
+          mkdir -p "$(dirname "_compiled/$receipt")"
+          cp "_packages/$receipt" "_compiled/$receipt"
+
+      - name: Retain the published model output for the benchmarks
+        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
+        uses: actions/upload-artifact@v7
+        with:
+          name: compiled-model-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}-${{ fromJSON(inputs.entry).compile_invocation_id }}
+          path: _compiled
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Start the benchmarks
+        if: >-
+          inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
+          steps.packages.outputs.count != '0' &&
+          fromJSON(inputs.entry).target == 'modalix' &&
+          join(fromJSON(inputs.entry).stages, '') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VULCAN_ENV: ${{ inputs.vulcan_environment }}
+          ENTRY: ${{ inputs.entry }}
+        run: scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"
 
       - name: Publish this build in the catalog
         if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand

@@ -2,74 +2,66 @@ display_name: YOLO26s-det
 description: A compact YOLO26 detector for COCO objects.
 model_type: vision
 tasks: [object_detection]
+
 modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
+
 architecture: yolo
+
 license:
   spdx: AGPL-3.0-only
   redistribution: restricted
   attribution: YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.
+
 upstream:
   repository: https://huggingface.co/Ultralytics/YOLO26
   revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
 conversion:
-  default:
-    source:
-      type: file
-      uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26s.pt
-      sha256: 646f8bc3fe0a656803d95c294f7852321748cb29d13466a1af8862e2db384a1b
-      size_bytes: 20422725
-components:
-- id: model
   source:
-    type: file
+    uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26s.pt
+    sha256: 646f8bc3fe0a656803d95c294f7852321748cb29d13466a1af8862e2db384a1b
+    size_bytes: 20422725
+
+compilation:
+  format: onnx
+  source:
     uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26s/bfd336e39c165a5cfccb0dcf26003ef24a8a0bc216bf5065ce19d5eb48016f22/38124022538-1/model.onnx
     sha256: bfd336e39c165a5cfccb0dcf26003ef24a8a0bc216bf5065ce19d5eb48016f22
     size_bytes: 38266103
-    media_type: application/onnx
-  format: onnx
-datasets:
-  coco_images:
-    id: coco-2017
-    variant: cal
-    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
-    size_bytes: 187510866
-  accuracy:
-    id: coco-2017
-    variant: val
-    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
-    size_bytes: 898368520
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
 build_profiles:
-- id: w16a16
-  components:
-  - id: model
-    parameters:
-      precision: w16a16
-- id: w8a8
-  components:
-  - id: model
-    calibration: coco_images
-    parameters:
-      precision: w8a8
-      calibration_bins: 2048
-      calibration_samples: 50
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
 accuracy:
-- id: coco_accuracy
-  engine: devkit_script
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
-  status: ready
-  dataset: accuracy
-  required_metrics: [coco_map]
-published_metrics:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
 - source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
-  dataset:
-    id: coco-2017
-    split: val
+  dataset: {id: coco-2017, split: val}
   conditions: 640x640, NMS-free one-to-one head
-  metrics:
-    coco_map: 0.478
-benchmark:
-- id: modalix_latency
-  required_metrics: [avg_power_watts, energy_per_inference_joules]
+  metrics: {coco_map: 0.478}

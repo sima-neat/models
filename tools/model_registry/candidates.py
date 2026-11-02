@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .errors import ValidationError
 from .model import load_models
-from .package import _link_or_copy, assemble_package
+from .package import PROFILE_RESULT_FILES, _link_or_copy, assemble_package
 from .registry import (
     JsonObject,
     ReadRequest,
@@ -133,8 +133,6 @@ def publish_candidate(
     roles = {}
     for item in prepared:
         artifacts = ["llima" if item["files"] else "mpk", *(file["artifact"] for file in item["files"])]
-        if item["fidelity"] is not None:
-            artifacts.append("numerical-fidelity")
         roles[f"compile-{item['component_id']}"] = {
             "run_type": "model_compile", "artifacts": sorted(artifacts), "inputs": ["source-component"],
         }
@@ -144,7 +142,10 @@ def publish_candidate(
         files = by_component[package["components"][0]]["files"]
         roles[f"package-{package['id']}"] = {
             "run_type": "model_package",
-            "artifacts": sorted(["package", *(file["artifact"] for file in files)]),
+            "artifacts": sorted([
+                "package", *(file["artifact"] for file in files),
+                *(["numerical-fidelity"] if "numerical_fidelity" in model else []),
+            ]),
             "inputs": sorted(f"component-{component}" for component in package["components"]),
         }
     if len(roles) > 32 or sum(len(role["artifacts"]) + len(role["inputs"]) for role in roles.values()) > 512:
@@ -186,14 +187,18 @@ def publish_candidate(
         for run in publication["runs"]:
             path = source / model_id / build_profile_id / run["component_id"] / "registry-publication.json"
             _save(path, {"count": 1, "runs": [run]})
-    # Each invocation has its own compile-outputs.json. Join only component
-    # directories, preserving those separately validated invocation manifests.
+    # Join the component directories, and the profile results the package run publishes.
     compiled = output / "compiled"
     for item in prepared:
         destination = compiled / model_id / build_profile_id / item["component_id"]
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(item["result_path"].parent, destination, copy_function=_link_or_copy)
+    for source in sources:
+        for name in PROFILE_RESULT_FILES:
+            result_file = source / model_id / build_profile_id / name
+            if result_file.is_file():
+                shutil.copyfile(result_file, compiled / model_id / build_profile_id / name)
     package_root = output / "packages"
     for package in packages:
         assemble_package(

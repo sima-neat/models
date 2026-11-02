@@ -2,76 +2,76 @@ display_name: ResNet-50
 description: Classifies an image into one of the 1,000 ImageNet classes.
 model_type: vision
 tasks: [image_classification]
+
 modalities:
   inputs: [image]
   outputs: [class_scores]
+
 architecture: resnet
+
 license:
   spdx: Apache-2.0
   redistribution: allowed
   attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
+
 upstream:
   repository: https://huggingface.co/onnx-community/resnet-50-ONNX
   revision: b6ef686fe842388c9449c7acb7269d02c69bacfb
   derived_from: https://huggingface.co/microsoft/resnet-50/tree/34c2154c194f829b11125337b98c8f5f9965ff19
-components:
-- id: model
+
+compilation:
+  format: onnx
   source:
-    type: file
     uri: hf://models/onnx-community/resnet-50-ONNX@b6ef686fe842388c9449c7acb7269d02c69bacfb/onnx/model.onnx
     sha256: de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50
     size_bytes: 102182062
-    media_type: application/onnx
-  format: onnx
-datasets:
-  default:
-    id: imagenet-2012
-    variant: mini
-    sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239
-    size_bytes: 356052889
+
+calibrations:
+- id: imagenet-2012-mini
+  dataset: {id: imagenet-2012, variant: mini, sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239, size_bytes: 356052889}
+
 build_profiles:
-# The BF16 build checks compilation; only INT8 has an accuracy qualification.
-- id: w16a16
-  components:
-  - id: model
-    parameters:
-      precision: w16a16
-      input_name: pixel_values
-      input_shape: [1, 3, 224, 224]
-- id: w8a8
-  components:
-  - id: model
-    parameters:
-      precision: w8a8
-      input_name: pixel_values
-      input_shape: [1, 3, 224, 224]
-      calibration_samples: 500
-    calibration: default
-fidelity:
-- id: logits_fidelity
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-mini
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 500
+
+  w8a16:
+    components:
+      model:
+        parameters:
+          precision: w8a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+numerical_fidelity:
   status: diagnostic
-  dataset: default
-  selection:
-    method: seeded_random_without_replacement
-    seed: 42
-    offset: 0
-    samples: 50
+  dataset: {id: imagenet-2012, variant: mini, sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239, size_bytes: 356052889}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
   outputs: [logits]
+
 accuracy:
-- id: imagenet_accuracy
-  build_profiles: [w8a8]
-  engine: devkit_script
-  status: provisional
-  dataset: default
-  required_metrics: [top1_accuracy]
-published_metrics:
+  datasets:
+  - {id: imagenet-2012, variant: mini, sha256: d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239, size_bytes: 356052889}
+
+performance: {}
+
+reference_metrics:
 - source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
-  dataset:
-    id: imagenet-2012
-    split: val
+  dataset: {id: imagenet-2012, split: val}
   conditions: 224x224, center crop 0.95, bicubic, FP32
   note: timm's resnet50.a1_in1k row, scored on all 50,000 validation images.
-  metrics:
-    top1_accuracy: 0.80382
-    top5_accuracy: 0.94598
-benchmark: true
+  metrics: {top1_accuracy: 0.80382, top5_accuracy: 0.94598}

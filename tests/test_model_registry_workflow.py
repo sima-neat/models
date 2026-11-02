@@ -22,6 +22,7 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
     assert set(workflow["on"]) == {"push", "workflow_dispatch"}
     for path in (
         "tools/model_registry/**",
+        "tools/model_report/**",
         "packaging/model-registry/**",
         "tests/**",
         "conftest.py",
@@ -45,11 +46,11 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
     assert "vulcan-update-latest-artifacts.yml@main" in text
 
 
-def test_model_registry_pushes_default_to_staging() -> None:
+def test_model_registry_publication_uses_repository_environment() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    assert "inputs.environment || 'staging'" in text
-    assert "vars.VULCAN_ENV" not in text
+    assert "vars.VULCAN_ENV || 'staging'" in text
+    assert "inputs.environment" not in text
 
 
 def test_package_workflow_only_builds_and_checks_the_package() -> None:
@@ -71,7 +72,7 @@ def test_ci_runs_every_test_and_collects_every_stage_output_test() -> None:
 
     assert steps["Test model-registry contracts and each model's scripts"]["run"] == "python -m pytest"
     assert "--collect-only" in collect
-    assert "models/*/tests/build models/*/tests/measure" in collect
+    assert "models/*/tests/build models/*/tests/benchmark" in collect
     for option in ("converted", "compiled", "accuracy", "performance"):
         assert f"--{option}=" in collect
 

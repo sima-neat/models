@@ -8,20 +8,22 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
+import yaml
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.model import load_models
-from model_registry.registry import RegistryPublicationError, build_catalog_snapshot
-from model_registry.stage_keys import (
+from model_registry.fingerprints import (
     ACCURACY_TOOLING,
+    BENCHMARK_RUN_TYPES,
     BOARD_STAGE_TOOLING,
     COMPILE_TOOLING,
     PERFORMANCE_TOOLING,
-    compile_key,
+    benchmark_fingerprint,
+    compile_fingerprint,
 )
+from model_registry.model import load_models
+from model_registry.registry import RegistryPublicationError, build_catalog_snapshot
 from model_registry.stage_plan import (
-    applicable_stages,
     is_long_lived,
     merge_catalog_sources,
     plan_stages,
@@ -123,7 +125,7 @@ def test_long_lived_branches(branch: str, long_lived: bool) -> None:
 
 
 def _source(*profiles: tuple[str, str, str], model_id: str = "x") -> dict:
-    """A catalog document with one build and one package per (profile, compile key, origin)."""
+    """A catalog document with one build and one package per (profile, compile fingerprint, origin)."""
     return {"models": [{
         "id": model_id,
         "builds": [
@@ -138,7 +140,7 @@ def _source(*profiles: tuple[str, str, str], model_id: str = "x") -> dict:
 
 
 MERGE_MATRIX = [
-    {"model_id": "x", "build_profile_id": profile, "component_ids": ["model"], "build_fingerprint": key}
+    {"model_id": "x", "build_profile_id": profile, "component_ids": ["model"], "compile_fingerprint": key}
     for profile, key in (("p1", "k1"), ("p2", "k2"))
 ]
 
@@ -152,7 +154,7 @@ def _origins(document: dict) -> dict[tuple[str, str], str]:
     }
 
 
-def test_merge_takes_each_profile_from_the_first_source_carrying_its_keys() -> None:
+def test_merge_takes_each_profile_from_the_first_source_carrying_its_fingerprints() -> None:
     # The branch compiled p1, then merged a develop that recompiled p2.
     own = _source(("p1", "k1", "own"), ("p2", "old", "own"))
     develop = _source(("p1", "old", "develop"), ("p2", "k2", "develop"))
@@ -164,6 +166,20 @@ def test_merge_takes_each_profile_from_the_first_source_carrying_its_keys() -> N
         ("packages", "p1"): "own",
         ("builds", "p2"): "develop",
         ("packages", "p2"): "develop",
+    }
+
+
+def test_merge_takes_benchmark_fingerprints_with_their_profile_builds() -> None:
+    own = _source(("p1", "k1", "own"), ("p2", "old", "own"))
+    own["models"][0]["benchmark_fingerprints"] = {"p1": {"performance": "a" * 64}, "p2": {"performance": "b" * 64}}
+    develop = _source(("p2", "k2", "develop"))
+    develop["models"][0]["benchmark_fingerprints"] = {"p2": {"accuracy": "c" * 64}}
+
+    merged = merge_catalog_sources([own, develop], MERGE_MATRIX)
+
+    # A carried profile keeps its benchmark fingerprints, so build_catalog_snapshot can keep its results visible.
+    assert merged["models"][0]["benchmark_fingerprints"] == {
+        "p1": {"performance": "a" * 64}, "p2": {"accuracy": "c" * 64},
     }
 
 
@@ -183,14 +199,14 @@ def test_merge_keeps_the_first_unmatched_profile_and_drops_models_outside_head()
 
     merged = merge_catalog_sources([own, develop, removed], MERGE_MATRIX)
 
-    # The planner still sees p1's prior build, at a key that no longer matches, and compiles it.
+    # The planner still sees p1's prior build, at a compile fingerprint that no longer matches, and compiles it.
     assert [model["id"] for model in merged["models"]] == ["x"]
     assert _origins(merged) == {("builds", "p1"): "own", ("packages", "p1"): "own"}
     assert merge_catalog_sources([], MERGE_MATRIX) is None
 
 
-def test_merge_requires_every_component_key_of_a_profile() -> None:
-    matrix = [{"model_id": "x", "build_profile_id": "p1", "component_ids": ["a", "b"], "build_fingerprint": "k1"}]
+def test_merge_requires_every_component_fingerprint_of_a_profile() -> None:
+    matrix = [{"model_id": "x", "build_profile_id": "p1", "component_ids": ["a", "b"], "compile_fingerprint": "k1"}]
     partial = {"models": [{"id": "x", "builds": [
         {"build_profile_id": "p1", "component_id": "a", "compile_fingerprint": "k1", "run_id": "own"},
     ]}]}
@@ -204,8 +220,24 @@ def test_merge_requires_every_component_key_of_a_profile() -> None:
     assert [build["run_id"] for build in merged["models"][0]["builds"]] == ["develop", "develop"]
 
 
-# Stage planning runs against a copy of resnet_50: w16a16 declares only performance,
-# w8a8 declares performance and DevKit accuracy over the default package.
+def repository_without_w16a16_accuracy(tmp_path: Path) -> Path:
+    """A repository holding resnet_50 with accuracy measured on w8a8 and w8a16 only, so w16a16 measures performance."""
+    repository = tmp_path / "repository"
+    for relative in ("schemas", "taxonomies", "datasets", "models/resnet_50"):
+        shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
+    model_yaml = repository / "models" / "resnet_50" / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    tests_yaml = repository / "models" / "resnet_50" / "tests" / "tests.yaml"
+    tests = yaml.safe_load(tests_yaml.read_text(encoding="utf-8"))
+    del tests["accuracy"]["expected"]["w16a16"]
+    tests_yaml.write_text(yaml.safe_dump(tests, sort_keys=False), encoding="utf-8")
+    return repository
+
+
+# Stage planning runs against that copy: w16a16 measures only performance,
+# w8a16 and w8a8 measure performance and accuracy of the whole model.
 PLAN_MODEL = "resnet_50"
 BRANCH = "feat/stages"
 READ_API = "https://reader.example.invalid"
@@ -213,9 +245,7 @@ READ_API = "https://reader.example.invalid"
 
 @pytest.fixture
 def stage_repository(tmp_path: Path) -> Path:
-    repository = tmp_path / "repository"
-    for relative in ("schemas", "taxonomies", f"models/{PLAN_MODEL}"):
-        shutil.copytree(ROOT / relative, repository / relative)
+    repository = repository_without_w16a16_accuracy(tmp_path)
     for relative in ("deps/manifest.json",
                      *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
@@ -232,7 +262,7 @@ def _published_catalog(repository: Path) -> dict:
         {
             "build_profile_id": entry["build_profile_id"],
             "component_id": component_id,
-            "compile_fingerprint": entry["build_fingerprint"],
+            "compile_fingerprint": entry["compile_fingerprint"],
             "artifact_sha256": f"{index:x}" * 64,
             "run_id": f"00000000-0000-4000-8000-{index:012d}",
         }
@@ -243,20 +273,18 @@ def _published_catalog(repository: Path) -> dict:
     return build_catalog_snapshot(repository=repository, branch="develop", git_sha="a" * 40, previous=prior)
 
 
-def _published_runs(document: dict) -> set[tuple[str, str, int]]:
-    """Registry runs that carry the stage keys the catalog records."""
-    runs: set[tuple[str, str, int]] = set()
-    for model in document["models"]:
-        for build in model["builds"]:
-            if build["benchmark_fingerprint"]:
-                runs.add(("model_benchmark", build["benchmark_fingerprint"], 2))
-            if build["validation_fingerprint"]:
-                runs.add(("model_accuracy", build["validation_fingerprint"], 1))
-    return runs
+def _published_runs(document: dict) -> set[tuple[str, str]]:
+    """Registry runs that carry the benchmark fingerprints the catalog records."""
+    return {
+        (BENCHMARK_RUN_TYPES[stage], fingerprint)
+        for model in document["models"]
+        for fingerprints in model.get("benchmark_fingerprints", {}).values()
+        for stage, fingerprint in fingerprints.items()
+    }
 
 
 class FakeRegistry:
-    def __init__(self, catalogs: dict[str, dict], runs: set[tuple[str, str, int]]) -> None:
+    def __init__(self, catalogs: dict[str, dict], runs: set[tuple[str, str]]) -> None:
         self.catalogs = catalogs
         self.runs = runs
         self.urls: list[str] = []
@@ -271,15 +299,15 @@ class FakeRegistry:
                 raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
             return {"catalog": {"canonical_sha256": "c" * 64, "document": self.catalogs[branch]}}
         if parsed.path.endswith("/resolve"):
-            run = (query["run_type"][0], query["fingerprint"][0], int(query["fingerprint_version"][0]))
+            run = (query["run_type"][0], query["fingerprint"][0])
             if run not in self.runs:
                 raise RegistryPublicationError("public artifact registry HTTP 404 fingerprint_not_found")
             return {"run": {"run_id": "00000000-0000-4000-8000-000000000099"}}
         raise AssertionError(url)
 
-    def resolved(self) -> list[tuple[str, str]]:
+    def resolved(self) -> list[str]:
         return [
-            (query["run_type"][0], query["fingerprint_version"][0])
+            query["run_type"][0]
             for query in (parse_qs(urlsplit(url).query) for url in self.urls if "/resolve?" in url)
         ]
 
@@ -304,7 +332,7 @@ def _catalog_reads(registry: FakeRegistry) -> list[str]:
 
 
 def _stale(document: dict, profile_id: str) -> dict:
-    """The catalog as published before the profile's compile key changed."""
+    """The catalog as published before the profile's compile fingerprint changed."""
     stale = copy.deepcopy(document)
     for build in stale["models"][0]["builds"]:
         if build["build_profile_id"] == profile_id:
@@ -312,11 +340,8 @@ def _stale(document: dict, profile_id: str) -> dict:
     return stale
 
 
-def _selected(plan: dict, stage: str) -> list[tuple[str, list[str], list[str]]]:
-    return [
-        (entry["build_profile_id"], entry["stages"], entry["benchmark_component_ids"])
-        for entry in plan[stage]["include"]
-    ]
+def _selected(plan: dict, stage: str) -> list[tuple[str, list[str]]]:
+    return [(entry["build_profile_id"], entry["stages"]) for entry in plan[stage]["include"]]
 
 
 def _edit(repository: Path, relative: str) -> None:
@@ -326,30 +351,31 @@ def _edit(repository: Path, relative: str) -> None:
 
 def test_stage_repository_declares_both_stage_shapes(stage_repository: Path) -> None:
     entries = build_matrix(load_models(stage_repository), [PLAN_MODEL])["include"]
-    assert [(entry["build_profile_id"], applicable_stages(entry)) for entry in entries] == [
+    assert [(entry["build_profile_id"], entry["stages"]) for entry in entries] == [
         ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
         ("w8a8", ["performance", "accuracy"]),
     ]
 
 
 @pytest.mark.parametrize(
-    ("relative", "changes_compile_key"),
+    ("relative", "changes_compile_fingerprint"),
     [("scripts/performance.py", False), ("scripts/accuracy.py", False), ("scripts/compile.py", True)],
 )
-def test_only_compile_inputs_change_the_compile_key(
-    stage_repository: Path, relative: str, changes_compile_key: bool
+def test_only_compile_inputs_change_the_compile_fingerprint(
+    stage_repository: Path, relative: str, changes_compile_fingerprint: bool
 ) -> None:
-    def keys() -> list[str]:
+    def fingerprints() -> list[str]:
         return [
-            compile_key(stage_repository, PLAN_MODEL, profile, "model", COMPILER_VERSION)
+            compile_fingerprint(stage_repository, PLAN_MODEL, profile, profile, COMPILER_VERSION)
             for profile in ("w16a16", "w8a8")
         ]
 
-    before = keys()
+    before = fingerprints()
     _edit(stage_repository, relative)
-    after = keys()
+    after = fingerprints()
 
-    assert all((first != second) is changes_compile_key for first, second in zip(before, after, strict=True))
+    assert all((first != second) is changes_compile_fingerprint for first, second in zip(before, after, strict=True))
 
 
 def test_everything_published_plans_nothing(stage_repository: Path) -> None:
@@ -358,31 +384,42 @@ def test_everything_published_plans_nothing(stage_repository: Path) -> None:
 
     plan = _plan(stage_repository, registry)
 
-    assert plan == {"compile": {"include": []}, "measure": {"include": []}, "catalog_found": True}
+    assert plan == {"compile": {"include": []}, "benchmark": {"include": []}, "catalog_found": True}
 
 
-def test_resolve_requests_carry_each_stage_fingerprint_version(stage_repository: Path) -> None:
+def test_resolve_requests_carry_each_stage_run_type(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
 
     _plan(stage_repository, registry)
 
-    # One performance lookup per profile, one accuracy lookup for the profile that declares it.
+    # One performance lookup per profile, one accuracy lookup per profile that declares it.
     assert sorted(registry.resolved()) == [
-        ("model_accuracy", "1"),
-        ("model_benchmark", "2"),
-        ("model_benchmark", "2"),
+        "model_accuracy", "model_accuracy", "model_performance", "model_performance", "model_performance"
     ]
-    builds = {build["build_profile_id"]: build for build in document["models"][0]["builds"]}
-    assert builds["w16a16"]["validation_fingerprint"] is None
-    assert all(
-        any(f"fingerprint={build['benchmark_fingerprint']}&" in url for url in registry.urls)
-        for build in builds.values()
-    )
-    assert any(f"fingerprint={builds['w8a8']['validation_fingerprint']}&" in url for url in registry.urls)
+    # Each lookup carries the benchmark fingerprint of the profile's whole-model run over its catalog builds.
+    model = load_models(stage_repository)[PLAN_MODEL]
+    builds = {build["build_profile_id"]: {"model": build} for build in document["models"][0]["builds"]}
+    expected = {
+        (profile_id, stage): benchmark_fingerprint(stage_repository, model, profile_id, builds[profile_id], stage)
+        for profile_id, stage in (
+            ("w16a16", "performance"),
+            ("w8a16", "performance"),
+            ("w8a16", "accuracy"),
+            ("w8a8", "performance"),
+            ("w8a8", "accuracy"),
+        )
+    }
+    assert {
+        (profile_id, stage): fingerprint
+        for profile_id, fingerprints in document["models"][0]["benchmark_fingerprints"].items()
+        for stage, fingerprint in fingerprints.items()
+    } == expected
+    for fingerprint in expected.values():
+        assert any(url.endswith(f"fingerprint={fingerprint}") for url in registry.urls)
 
 
-def test_compile_key_change_compiles_with_every_applicable_stage(stage_repository: Path) -> None:
+def test_compile_fingerprint_change_compiles_with_every_applicable_stage(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
     _edit(stage_repository, "scripts/compile.py")
@@ -390,11 +427,12 @@ def test_compile_key_change_compiles_with_every_applicable_stage(stage_repositor
     plan = _plan(stage_repository, registry)
 
     assert _selected(plan, "compile") == [
-        ("w16a16", ["performance"], ["model"]),
-        ("w8a8", ["performance", "accuracy"], ["model"]),
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
     ]
-    assert plan["measure"]["include"] == []
-    assert all(len(entry["build_fingerprint"]) == 64 for entry in plan["compile"]["include"])
+    assert plan["benchmark"]["include"] == []
+    assert all(len(entry["compile_fingerprint"]) == 64 for entry in plan["compile"]["include"])
     # A compiled build is measured by its own workflow; no published stage run is consulted.
     assert registry.resolved() == []
 
@@ -407,10 +445,24 @@ def test_performance_script_change_measures_performance_only(stage_repository: P
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [
-        ("w16a16", ["performance"], ["model"]),
-        ("w8a8", ["performance"], ["model"]),
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance"]),
+        ("w8a8", ["performance"]),
     ]
+
+
+def test_benchmark_fingerprint_follows_the_stage_declaration_but_not_its_profile_list() -> None:
+    model = load_models(ROOT)["resnet_50"]
+    builds = {"model": {"run_id": "00000000-0000-4000-8000-000000000001", "artifact_sha256": "e" * 64}}
+
+    def fingerprint(**accuracy: object) -> str:
+        declared = {**model, "accuracy": {**model["accuracy"], **accuracy}}
+        return benchmark_fingerprint(ROOT, declared, "w8a8", builds, "accuracy")
+
+    # Benchmarking another profile leaves this profile's benchmark in place; a stricter declaration reruns it.
+    assert fingerprint(build_profiles=["w8a8", "w16a16"]) == fingerprint()
+    assert fingerprint(required_metrics=["top1_accuracy", "top5_accuracy"]) != fingerprint()
 
 
 def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -> None:
@@ -421,7 +473,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
 
 
 @pytest.mark.parametrize(
@@ -435,7 +487,7 @@ def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository:
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
 
 
 def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:
@@ -445,7 +497,7 @@ def test_shared_compile_runner_change_compiles_every_build(stage_repository: Pat
 
     plan = _plan(stage_repository, registry)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a16", "w8a8"]
 
 
 @pytest.mark.parametrize("relative", BOARD_STAGE_TOOLING)
@@ -457,9 +509,43 @@ def test_board_stage_tooling_change_measures_both_stages(stage_repository: Path,
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [
-        ("w16a16", ["performance"], ["model"]),
-        ("w8a8", ["performance", "accuracy"], ["model"]),
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
+    ]
+
+
+def test_performance_runner_change_measures_performance_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../scripts/run_model_performance.sh")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance"]),
+        ("w8a8", ["performance"]),
+    ]
+
+
+def test_board_runtime_change_measures_both_stages(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    manifest_path = stage_repository / "deps" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["neat-core"]["install_target"] = "core@release/9.9"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
     ]
 
 
@@ -473,7 +559,7 @@ def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path
     document["pending_builds"] = [{
         "model_id": PLAN_MODEL,
         "build_profile_id": "w8a8",
-        "compile_invocation_id": "model",
+        "compile_invocation_id": "w8a8",
         "component_ids": ["model"],
         "compile_fingerprint": int8["compile_fingerprint"],
     }]
@@ -481,8 +567,8 @@ def test_pending_or_missing_build_compiles_its_invocation(stage_repository: Path
 
     plan = _plan(stage_repository, registry)
 
-    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
-    assert plan["measure"]["include"] == []
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
+    assert plan["benchmark"]["include"] == []
 
 
 def test_force_rebuild_compiles_published_invocations(stage_repository: Path) -> None:
@@ -491,8 +577,8 @@ def test_force_rebuild_compiles_published_invocations(stage_repository: Path) ->
 
     plan = _plan(stage_repository, registry, force_rebuild_all=True)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
-    assert plan["measure"]["include"] == []
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a16", "w8a8"]
+    assert plan["benchmark"]["include"] == []
 
 
 def test_branch_without_catalog_plans_against_base_branch_catalog(stage_repository: Path) -> None:
@@ -504,7 +590,7 @@ def test_branch_without_catalog_plans_against_base_branch_catalog(stage_reposito
 
     assert plan["catalog_found"] is True
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "measure") == [("w8a8", ["accuracy"], [])]
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
     assert _catalog_reads(registry) == [BRANCH, "develop"]
     assert all(url.startswith(f"{READ_API}/v1/repositories/sima-neat/models/") for url in registry.urls)
 
@@ -520,7 +606,7 @@ def test_feature_branch_reuses_its_own_and_base_builds(stage_repository: Path) -
     plan = _plan(stage_repository, registry, base_branches=["develop", "release-1.0"])
 
     assert plan["compile"]["include"] == []
-    assert plan["measure"]["include"] == []
+    assert plan["benchmark"]["include"] == []
     assert _catalog_reads(registry) == [BRANCH, "develop", "release-1.0"]
 
 
@@ -532,7 +618,7 @@ def test_long_lived_branch_reuses_only_its_own_catalog(stage_repository: Path) -
 
     plan = _plan(stage_repository, registry, branch="develop", base_branches=["release-1.0"])
 
-    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
     assert _catalog_reads(registry) == ["develop"]
 
 
@@ -544,7 +630,7 @@ def test_long_lived_branch_first_push_inherits_from_the_closest_base(stage_repos
 
     plan = _plan(stage_repository, registry, branch="release-1.0", base_branches=["develop", "integration/vision"])
 
-    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"], ["model"])]
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
     assert _catalog_reads(registry) == ["release-1.0", "develop"]
 
 
@@ -555,8 +641,8 @@ def test_no_catalog_compiles_everything(stage_repository: Path, base_branches: l
     plan = _plan(stage_repository, registry, base_branches=base_branches)
 
     assert plan["catalog_found"] is False
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
-    assert plan["measure"]["include"] == []
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a16", "w8a8"]
+    assert plan["benchmark"]["include"] == []
 
 
 def test_offline_plan_compiles_everything(stage_repository: Path) -> None:
@@ -564,8 +650,9 @@ def test_offline_plan_compiles_everything(stage_repository: Path) -> None:
 
     assert plan["catalog_found"] is False
     assert _selected(plan, "compile") == [
-        ("w16a16", ["performance"], ["model"]),
-        ("w8a8", ["performance", "accuracy"], ["model"]),
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
     ]
 
 
@@ -587,14 +674,14 @@ def test_on_demand_models_never_compile_or_measure_automatically(
     plan = _plan(stage_repository, registry, force_rebuild_all=force_rebuild_all)
 
     assert plan["compile"] == {"include": []}
-    assert plan["measure"] == {"include": []}
+    assert plan["benchmark"] == {"include": []}
     assert registry.resolved() == []
 
 
 def test_manual_model_only_selection_keeps_ordinary_builds(stage_repository: Path) -> None:
     plan = _plan(stage_repository, None, model_ids=[PLAN_MODEL], include_on_demand=True)
 
-    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a8"]
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a16", "w8a8"]
     assert all("build_on_demand" not in entry for entry in plan["compile"]["include"])
 
 
@@ -641,7 +728,7 @@ def test_catalog_lists_unbuilt_on_demand_models_without_pending_builds(
     for entry in matrix:
         profile = requirements[entry["build_profile_id"]]
         invocation = next(item for item in profile["invocations"] if item["id"] == entry["compile_invocation_id"])
-        assert invocation["compile_fingerprint"] == entry["build_fingerprint"]
+        assert invocation["compile_fingerprint"] == entry["compile_fingerprint"]
         assert invocation["component_ids"] == sorted(entry["component_ids"])
         assert profile["compiler_version"] == resolve_model_compiler(stage_repository)["version"]
 
@@ -666,7 +753,7 @@ def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_change
         load_models(stage_repository), [PLAN_MODEL], ["w16a16"],
         repository=stage_repository, compiler_version=COMPILER_VERSION,
     )["include"][0]
-    assert approved["builds"][0]["compile_fingerprint"] != invocation["build_fingerprint"]
+    assert approved["builds"][0]["compile_fingerprint"] != invocation["compile_fingerprint"]
     selected_matrix = tmp_path / "selected.json"
     selected_matrix.write_text(json.dumps({"include": [invocation]}), encoding="utf-8")
     compiled_dir, package_dir = tmp_path / "compiled", tmp_path / "packages"
@@ -676,7 +763,7 @@ def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_change
         (component / "registry-publication.json").write_text(json.dumps({"runs": [{
             "model_id": PLAN_MODEL, "build_profile_id": "w16a16", "component_id": "model",
             "run_id": "candidate-compile", "artifact_sha256": "e" * 64,
-            "compile_fingerprint": invocation["build_fingerprint"],
+            "compile_fingerprint": invocation["compile_fingerprint"],
         }]}), encoding="utf-8")
         package = package_dir / PLAN_MODEL / "w16a16" / "packages" / "default"
         package.mkdir(parents=True)

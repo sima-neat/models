@@ -1,15 +1,15 @@
 // Model catalog and build history: filters, search, and the result list.
-import { deploymentCatalog, branchModels, variantBuilds } from "./branch-builds.js";
+import { branchModels, variantBuilds } from "./branch-builds.js";
 import {
-  DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
+  DEFAULT_BRANCH, branchSelectionEnabled, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
 import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
-import { adaptBenchmarkResult, packageBenchmark } from "./benchmark-adapters.js";
+import { readPerformance } from "./model-report.js";
 import { accuracyHeadline } from "./model-view.js";
 import {
-  api, writeBranchPreference, writeCachedBranches, writeCachedCatalog, buildProfileId, componentId,
-  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, loadVariant, mapWithConcurrency,
+  api, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
+  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadVariant, mapWithConcurrency,
 } from "./api.js";
 
 // A filter lists only the values the loaded builds use, labeled from the taxonomy.
@@ -85,27 +85,22 @@ export function updateFilterIndicators() {
 }
 
 export function applyCatalog(payload, { append = false, cache = true } = {}) {
-  const models = Array.isArray(payload.models) ? payload.models.map(deploymentCatalog) : [];
-  const runs = Array.isArray(payload.runs) ? payload.runs : [];
-  const modelsMode = payload.mode === "models"
-    || (payload.mode !== "runs" && Object.hasOwn(payload, "models"));
+  const modelsMode = payload.mode === "models";
   state.catalogMode = modelsMode ? "models" : "runs";
   if (modelsMode) {
-    if (Array.isArray(payload.compileRuns)) {
-      state.compileRuns = payload.compileRuns;
-      state.packageRuns = payload.packageRuns || [];
-      state.catalogDefinitions = payload.catalogDefinitions || [];
-      state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
-        elements["compiler-filter"].value);
-    } else {
-      state.models = append ? [...state.models, ...models] : models;
-    }
+    state.compileRuns = payload.compileRuns;
+    state.packageRuns = payload.packageRuns;
+    state.catalogDefinitions = payload.catalogDefinitions;
+    state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
+      elements["compiler-filter"].value);
     state.runs = state.models.flatMap((model) => (model.builds || []).map((build) => runFromCatalogBuild(model, build)));
   } else {
     state.models = [];
     state.compileRuns = [];
     state.packageRuns = [];
     state.catalogDefinitions = [];
+    // History shows compile runs that record their build profile and recipe timing.
+    const runs = payload.runs.filter((run) => run.metadata?.build_profile_id && run.metadata?.compile_timing);
     state.runs = append ? [...state.runs, ...runs] : runs;
   }
   state.availableBranches = [...new Set([
@@ -148,9 +143,7 @@ function normalizedSearchTerms(value) {
 
 function runSearchDocument(run) {
   return [
-    run.metadata?.model_id, run.metadata?.model_name, run.metadata?.display_name,
-    run.metadata?.build_profile_id, run.metadata?.component_id,
-    run.metadata?.variant_id, run.metadata?.package_id,
+    run.metadata?.model_id, run.metadata?.build_profile_id, run.metadata?.component_id,
     run.git_ref, run.commit_sha, run.run_type,
     run.toolchain_version, run.target_platform,
     taxonomyLabel("model_types", run.model_type),
@@ -190,7 +183,7 @@ function modelSearchDocument(model) {
     ...(model.output_modalities || []).flatMap((id) => [id, taxonomyLabel("modalities", id)]),
     ...(model.model_tags || []),
     ...(model.builds || []).flatMap((build) => [
-      buildProfileId(build), componentId(build), build.toolchain_name,
+      build.build_profile_id, build.component_id, build.toolchain_name,
       build.toolchain_version, build.target_platform,
     ]),
   ].filter(Boolean).join(" ");
@@ -213,8 +206,8 @@ function filteredModels() {
 
 function populateFilters({ persistBranchFallback = false } = {}) {
   const selectedCompiler = elements["compiler-filter"].value;
-  const preferredBranch = state.preferredBranch ?? DEFAULT_BRANCH;
-  const branches = state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
+  const preferredBranch = branchSelectionEnabled ? state.preferredBranch ?? DEFAULT_BRANCH : DEFAULT_BRANCH;
+  const branches = !branchSelectionEnabled ? [DEFAULT_BRANCH] : state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
     ? [...state.availableBranches, preferredBranch].sort() : state.availableBranches;
   const compilers = [...new Set([
     selectedCompiler,
@@ -237,7 +230,7 @@ function populateFilters({ persistBranchFallback = false } = {}) {
 }
 
 function componentList(runs) {
-  const components = runs.map((run) => run.metadata?.component_id || "model");
+  const components = runs.map((run) => run.metadata.component_id);
   return components.length > 1 || components[0] !== "model" ? components.join(" · ") : "";
 }
 
@@ -292,36 +285,24 @@ export function compareModels(left, right) {
 function modelCardImage(model) {
   const heroUrl = documentationHeroUrl(model.documentation);
   return heroUrl
-    ? `<span class="model-card-image"><img src="${escapeHtml(heroUrl)}" alt="" loading="lazy" decoding="async" /></span>`
+    ? `<span class="model-card-image"><img src="${escapeHtml(heroUrl)}" data-hero-fallback="${escapeHtml(documentationHeroFallbackUrl(model.documentation))}" alt="" loading="lazy" decoding="async" /></span>`
     : `<span class="model-card-image model-card-image-empty" aria-hidden="true"><img src="favicon.svg" alt="" /></span>`;
 }
 
 let tableRequestId = 0;
 
 function catalogMetric(measurements, key) {
-  const reading = metricDisplay(measurements[key], metricDefinition(key, measurements[key]));
+  const reading = metricDisplay(measurements[key], metricDefinition(key));
   return reading ? `${reading.value.toFixed(1)} ${reading.unit}` : null;
 }
 
-function catalogReading(measurements, component) {
+// The whole model's throughput and latency for the build profile.
+function tablePerformance(variant) {
+  const result = readPerformance(variant.performance);
+  const measurements = result.kind === "supported" ? result.value.measurements : {};
   const rate = catalogMetric(measurements, "throughput_fps");
   const latency = catalogMetric(measurements, "latency_avg_ms");
-  return `<span class="catalog-reading">${component ? `<small>${escapeHtml(component)}</small>` : ""}
-    <span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
-}
-
-// A package result scores the whole model; otherwise each component shows its own reading.
-function tablePerformance(variant) {
-  const measuredPackage = packageBenchmark(variant.details);
-  if (measuredPackage) return catalogReading(measuredPackage.result.measurements, "");
-  return variant.details.map((detail) => {
-    const component = variant.details.length > 1 ? detail.summary.run.metadata?.component_id : "";
-    if (detail.benchmark?.result?.benchmark_report?.workloads) {
-      return `<span class="catalog-reading">See model page for workload results</span>`;
-    }
-    const adapted = detail.benchmark && adaptBenchmarkResult(detail.benchmark.result);
-    return catalogReading(adapted?.kind === "supported" ? adapted.value.measurements : {}, component);
-  }).join("");
+  return `<span class="catalog-reading"><span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
 }
 
 function renderCatalogTable(models) {
@@ -360,6 +341,8 @@ function renderCatalogTable(models) {
             <thead><tr><th scope="col">Model</th><th scope="col">Precision</th><th scope="col">Accuracy</th><th scope="col">Performance</th></tr></thead>
             <tbody>${entries.map(renderRow).join("")}</tbody></table></div></section>`;
     }).join("");
+  // A model page hides the list; returning to the list renders the table again and loads its details then.
+  if (state.selectedId) return;
   const requestId = tableRequestId;
   // Load details only in table view, with bounded concurrency and the model page's existing cache.
   mapWithConcurrency(models, 3, async (model) => {
@@ -411,7 +394,7 @@ function renderModels() {
   if (!models.length) {
     const noBuilds = !state.compileRuns.length && elements["branch-filter"].value;
     elements["result-list"].innerHTML = noBuilds
-      ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>Its catalog appears after its first push completes. Select another branch to browse its models.</p></div>`
+      ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>${branchSelectionEnabled ? "Its catalog appears after its first push completes. Select another branch to browse its models." : "No models have been published to Main yet."}</p></div>`
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;
     return;
   }

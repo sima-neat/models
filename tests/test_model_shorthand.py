@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 from jsonschema import Draft202012Validator
-from model_registry.accuracy_config import find_devkit_accuracy_config
+from model_registry.benchmark_declarations import benchmarked_profiles
 from model_registry.errors import ValidationError
 from model_registry.model import normalize_model, validate_model
 from model_registry.source import source_identity
@@ -37,27 +36,47 @@ def test_authored_short_form_keeps_the_public_package_entrypoint(name: str, entr
     assert model["packages"][0]["build_profiles"] == [profile["id"] for profile in model["build_profiles"]]
 
 
-def test_normalization_is_idempotent_and_does_not_modify_authored_settings() -> None:
+def test_normalization_does_not_modify_authored_settings() -> None:
     authored = _authored("resnet_50")
     original = copy.deepcopy(authored)
 
     model = normalize_model(authored, MODELS / "resnet_50")
 
     assert authored == original
-    assert normalize_model(model, MODELS / "resnet_50") == model
     assert model["architecture"] == {"id": "resnet"}
     assert all(profile["target"] == "modalix" for profile in model["build_profiles"])
-    assert model["benchmark"][0]["id"] == "modalix_latency"
-    assert model["benchmark"][0]["scope"] == {"type": "component", "component": "model"}
+    assert [profile["compile_invocations"] for profile in model["build_profiles"]] == [
+        [{"id": "w16a16", "components": ["model"]}],
+        [{"id": "w8a8", "components": ["model"]}],
+        [{"id": "w8a16", "components": ["model"]}],
+    ]
+    assert model["performance"] == authored["performance"]
     assert model["compositions"][0]["entrypoint"] == "default"
-    assert "entrypoints" not in model["components"][0]["interface"]
+    assert model["components"][0]["interface"] == {"format": "onnx"}
+
+
+def test_multi_component_model_compiles_and_packages_its_components_together() -> None:
+    authored = _authored("rf_detr_nano")
+
+    model = normalize_model(authored, MODELS / "rf_detr_nano")
+
+    assert [component["id"] for component in model["components"]] == ["backbone", "decoder"]
+    assert {component["source"]["sha256"] for component in model["components"]} == {
+        authored["compilation"]["source"]["sha256"]
+    }
+    for profile in model["build_profiles"]:
+        assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
+        # The recipe calibrates the backbone; the decoder calibrates on the backbone's outputs.
+        assert [binding.get("calibration") for binding in profile["components"]] == ["coco-2017-cal", None]
+    assert model["compositions"] == [{"id": "default", "type": "declarative"}]
+    assert model["packages"][0]["components"] == ["backbone", "decoder"]
 
 
 def test_hugging_face_mapping_preserves_layout_media_and_content_identity() -> None:
     authored = _authored("qwen3_5_0_8b")
     revision = "a" * 40
-    authored["components"][0]["source"] = {
-        "repository": "example/model", "revision": revision, "entrypoint": "target/config.json",
+    authored["compilation"]["source"] = {
+        "repository": "example/model", "revision": revision, "main_file": "target/config.json",
         "files": {
             "target/config.json": {"sha256": "b" * 64, "size_bytes": 10, "media_type": "application/json"},
             "draft/weights.safetensors": {"sha256": "c" * 64, "size_bytes": 20,
@@ -80,12 +99,12 @@ def test_hugging_face_mapping_preserves_layout_media_and_content_identity() -> N
 @pytest.mark.parametrize("exception_first", [True, False])
 @pytest.mark.parametrize("uri", [
     f"hf://models/example/tokenizer@{'a' * 40}/chat_template.jinja",
-    "https://github.com/example/tokenizer/releases/download/v1/chat_template.jinja",
+    f"https://huggingface.co/example/tokenizer/resolve/{'b' * 40}/chat_template.jinja",
 ])
 def test_upstream_defaults_to_the_declared_checkpoint_with_exceptional_members(uri: str, exception_first: bool) -> None:
     authored = _authored("qwen3_5_0_8b")
     del authored["upstream"]
-    source = authored["components"][0]["source"]
+    source = authored["compilation"]["source"]
     exception = {"chat_template.jinja": {"uri": uri, "sha256": "b" * 64, "size_bytes": 1}}
     ordinary = {key: value for key, value in source["files"].items() if key != "chat_template.jinja"}
     source["files"] = {**exception, **ordinary} if exception_first else {**ordinary, **exception}
@@ -97,22 +116,13 @@ def test_upstream_defaults_to_the_declared_checkpoint_with_exceptional_members(u
     validate_model(MODELS / "qwen3_5_0_8b", authored, SCHEMA)
 
 
-@pytest.mark.parametrize("file_set", [False, True])
-def test_upstream_retains_the_uri_fallback_for_explicit_sources(file_set: bool) -> None:
+def test_upstream_is_required_when_the_source_names_no_hugging_face_repository() -> None:
     authored = _authored("resnet_50")
     del authored["upstream"]
-    source = authored["components"][0]["source"]
-    if file_set:
-        member = {key: value for key, value in source.items() if key != "type"}
-        authored["components"][0]["source"] = {
-            "type": "file_set", "entrypoint": "model.onnx", "files": [{"path": "model.onnx", **member}],
-        }
 
-    model = normalize_model(authored, MODELS / "resnet_50")
-
-    checkpoint, revision = source["uri"].removeprefix("hf://models/").split("@", 1)
-    assert model["upstream"]["repository"] == f"https://huggingface.co/{checkpoint}"
-    assert model["upstream"]["revision"] == revision.split("/", 1)[0]
+    assert "upstream" not in normalize_model(authored, MODELS / "resnet_50")
+    with pytest.raises(ValidationError, match="upstream is required"):
+        validate_model(MODELS / "resnet_50", authored, SCHEMA)
 
 
 def test_normalization_preserves_existing_explicit_upstream_overrides() -> None:
@@ -125,54 +135,25 @@ def test_normalization_preserves_existing_explicit_upstream_overrides() -> None:
         assert model["upstream"] == {"model_card": upstream["repository"], **upstream}, path.parent.name
 
 
-def test_dataset_aliases_keep_pins_scopes_and_recorded_accuracy_behavior() -> None:
+def test_accuracy_names_each_dataset_by_its_registry_source_and_keeps_measured_build_profiles() -> None:
     authored = _authored("resnet_50")
     model = normalize_model(authored, MODELS / "resnet_50")
-    pin = authored["datasets"]["default"]
+    [pin] = authored["accuracy"]["datasets"]
 
-    assert model["calibrations"][0] == {"id": "default", "status": "ready", "dataset": pin}
-    for stage in ("fidelity", "accuracy"):
-        assert model[stage][0]["dataset"] == pin
-        assert model[stage][0]["scope"] == {"type": "package", "package": "default"}
-        assert model[stage][0]["result_component"] == "model"
-    assert find_devkit_accuracy_config(model, "w16a16") is None
-    assert find_devkit_accuracy_config(model, "w8a8")["id"] == "imagenet_accuracy"
-    recorded = _authored("ssd_mobilenet_v1")
-    normalized = normalize_model(recorded, MODELS / "ssd_mobilenet_v1")
-    assert normalized["accuracy"] == recorded["accuracy"]
-    assert find_devkit_accuracy_config(normalized, "w8a8") is None
+    assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-mini": pin}}
+    assert benchmarked_profiles(model, "accuracy") == ["w16a16", "w8a8", "w8a16"]
+    assert benchmarked_profiles(model, "performance") == ["w16a16", "w8a8", "w8a16"]
+    authored["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
+    assert benchmarked_profiles(normalize_model(authored, MODELS / "resnet_50"), "accuracy") == ["w8a8", "w8a16"]
+    authored = _authored("yolo26n")
+    del authored["accuracy"]
+    without_accuracy = normalize_model(authored, MODELS / "yolo26n")
+    assert "accuracy" not in without_accuracy
+    assert benchmarked_profiles(without_accuracy, "accuracy") == []
 
 
 def test_hugging_face_shorthand_rejects_a_mutable_revision() -> None:
     authored = _authored("qwen3_5_0_8b")
-    authored["components"][0]["source"]["revision"] = "main"
-    with pytest.raises(ValidationError, match="immutable 40-character commit"):
-        normalize_model(authored, MODELS / "qwen3_5_0_8b")
-
-
-def test_unknown_dataset_alias_has_an_actionable_error() -> None:
-    authored = _authored("resnet_50")
-    authored["accuracy"][0]["dataset"] = "missing"
-    with pytest.raises(ValidationError, match="accuracy 'imagenet_accuracy': unknown dataset 'missing'"):
-        normalize_model(authored, MODELS / "resnet_50")
-
-
-def test_multi_component_benchmark_does_not_guess_its_scope() -> None:
-    authored = _authored("rf_detr_nano")
-    authored["benchmark"][0].pop("scope")
-    with pytest.raises(ValidationError, match="multi-component scope must be explicit"):
-        normalize_model(authored, MODELS / "rf_detr_nano")
-
-
-def test_unregistered_required_accuracy_metric_fails_even_when_tests_are_skipped(tmp_path: Path) -> None:
-    directory = tmp_path / "resnet_50"
-    shutil.copytree(MODELS / "resnet_50", directory)
-    tests_file = directory / "tests/tests.yaml"
-    tests = yaml.safe_load(tests_file.read_text())
-    tests["accuracy"] = {"run_tests": False, "skip_reason": "No DevKit available for this fixture."}
-    tests_file.write_text(yaml.safe_dump(tests))
-    authored = _authored("resnet_50")
-    authored["accuracy"][0]["required_metrics"] = ["top1_acuracy"]
-
-    with pytest.raises(ValidationError, match="unregistered metrics: top1_acuracy"):
-        validate_model(directory, authored, SCHEMA, ROOT / "taxonomies/model-taxonomy.yaml")
+    authored["compilation"]["source"]["revision"] = "main"
+    with pytest.raises(ValidationError, match="compilation.source"):
+        validate_model(MODELS / "qwen3_5_0_8b", authored, SCHEMA)

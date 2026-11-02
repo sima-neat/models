@@ -28,11 +28,11 @@ def validate_compile_outputs(
         raise ValidationError(f"{manifest_file}: could not load compile outputs: {exc}") from exc
 
     # A grouped invocation compiles several components from one derived graph set, so it must also
-    # record each component's derived graph and the invocation's correctness result.
+    # record each component's derived graph.
     grouped = len(component_ids) > 1
     fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
     if grouped:
-        fields.update({"derived_graphs", "correctness"})
+        fields.add("derived_graphs")
     if not isinstance(manifest, dict) or set(manifest) != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {
@@ -121,33 +121,7 @@ def validate_compile_outputs(
         if graph_ids != expected_components:
             raise ValidationError(f"{manifest_file}: derived_graphs must cover every component")
 
-        correctness = manifest["correctness"]
-        if not isinstance(correctness, dict) or set(correctness) != {"component_id", "path", "sha256"}:
-            raise ValidationError(f"{manifest_file}: correctness must contain component_id, path, and sha256")
-        component_id = correctness["component_id"]
-        if component_id not in expected_components:
-            raise ValidationError(f"{manifest_file}: correctness references unknown component {component_id!r}")
-        relative = PurePosixPath(str(correctness["path"]))
-        if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
-            raise ValidationError(f"{manifest_file}: unsafe correctness path {relative}")
-        if relative.parts[0] != component_id or relative.name != "fidelity.json":
-            raise ValidationError(f"{manifest_file}: correctness must be the owning component's fidelity.json")
-        correctness_path = root.joinpath(*relative.parts)
-        if not correctness_path.is_file():
-            raise ValidationError(f"{manifest_file}: correctness result does not exist: {relative}")
-        digest, _ = sha256_file(correctness_path)
-        if correctness["sha256"] != digest:
-            raise ValidationError(f"{manifest_file}: correctness SHA-256 does not match")
-        result.update(
-            {
-                "derived_graphs": graphs,
-                "correctness": {
-                    "component_id": component_id,
-                    "path": str(correctness_path),
-                    "sha256": digest,
-                },
-            }
-        )
+        result["derived_graphs"] = graphs
     return result
 
 

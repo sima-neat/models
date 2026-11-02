@@ -1,0 +1,23 @@
+{
+  "schema": "sima.model-report",
+  "schema_version": 1,
+  "stage": "accuracy",
+  "runtime": {
+    "pyneat": "0.6.0+feat-benchmark-sentinel-telemetry.82d758ef18ee",
+    "build": {}
+  },
+  "datasets": {
+    "imagenet-2012-mini": {
+      "split": "val",
+      "evaluated_samples": 1000,
+      "available_samples": 1000,
+      "metrics": {
+        "top1_accuracy": 0.7652,
+        "top5_accuracy": 0.9318
+      },
+      "details": {
+        "inference_seconds": 41.3
+      }
+    }
+  }
+}

@@ -2,82 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.neat.sima.ai/model-registry/model.schema.json",
   "title": "SiMa Neat Model Registry model.yaml",
+  "description": "What a model is and what its compile stage and benchmarks must produce. Each build profile compiles every component in one compile.py call; scripts/performance.py and scripts/accuracy.py measure the whole model.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "display_name", "description", "model_type", "tasks",
-    "modalities", "architecture", "license", "components", "build_profiles"
+    "modalities", "architecture", "license", "compilation", "build_profiles"
   ],
   "properties": {
-    "id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1},
     "description": {"type": "string", "minLength": 1},
     "build-on-demand": {"type": "boolean", "default": false},
-    "model_type": {"$ref": "#/$defs/taxonomyId"},
-    "tasks": {"$ref": "#/$defs/taxonomyIdSet"},
-    "modalities": {"$ref": "#/$defs/modalities"},
-    "architecture": {"oneOf": [{"$ref": "#/$defs/architecture"}, {"$ref": "#/$defs/id"}]},
-    "tags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/taxonomyId"}},
-    "owners": {
-      "type": "array", "minItems": 1, "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^@[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$"}
-    },
-    "license": {"$ref": "#/$defs/license"},
-    "upstream": {"$ref": "#/$defs/upstream"},
-    "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/component"}},
-    "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
-    "calibrations": {"type": "array", "items": {"$ref": "#/$defs/calibration"}},
-    "datasets": {"type": "object", "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/datasetRef"}},
-    "build_profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildProfile"}},
-    "compositions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/composition"}},
-    "pipeline": {
-      "type": "array", "minItems": 2,
-      "items": {"oneOf": [
-        {"type": "object", "additionalProperties": false, "required": ["component"], "properties": {"component": {"$ref": "#/$defs/id"}}},
-        {"type": "object", "additionalProperties": false, "required": ["cpu"], "properties": {"cpu": {"type": "string", "minLength": 1}}}
-      ]}
-    },
-    "packages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/package"}},
-    "conversion": {
-      "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
-      "additionalProperties": {
-        "type": "object", "additionalProperties": false, "required": ["source"],
-        "properties": {"source": {"$ref": "#/$defs/source"}}
-      }
-    },
-    "fidelity": {"type": "array", "items": {"$ref": "#/$defs/fidelityEntry"}},
-    "accuracy": {"type": "array", "items": {"$ref": "#/$defs/accuracyEntry"}},
-    "published_metrics": {"type": "array", "items": {"$ref": "#/$defs/publishedMetrics"}},
-    "benchmark": {"if": {"type": "boolean"}, "then": {"const": true}, "else": {"type": "array", "items": {"$ref": "#/$defs/benchmarkEntry"}}},
-    "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
-  },
-  "$defs": {
-    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
-    "taxonomyId": {"$ref": "#/$defs/id"},
-    "taxonomyIdSet": {
-      "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/taxonomyId"}
-    },
-    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "relativePath": {
-      "type": "string", "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$"
-    },
+    "model_type": {"$ref": "#/$defs/id"},
+    "tasks": {"$ref": "#/$defs/idSet"},
     "modalities": {
       "type": "object", "additionalProperties": false, "required": ["inputs", "outputs"],
-      "properties": {
-        "inputs": {"$ref": "#/$defs/taxonomyIdSet"}, "outputs": {"$ref": "#/$defs/taxonomyIdSet"}
-      }
+      "properties": {"inputs": {"$ref": "#/$defs/idSet"}, "outputs": {"$ref": "#/$defs/idSet"}}
     },
-    "architectureComponent": {
-      "type": "object", "additionalProperties": false, "required": ["role", "architecture_id"],
-      "properties": {
-        "role": {"$ref": "#/$defs/taxonomyId"}, "architecture_id": {"$ref": "#/$defs/taxonomyId"}
-      }
-    },
-    "architecture": {
-      "type": "object", "additionalProperties": false, "required": ["id"],
-      "properties": {"id": {"$ref": "#/$defs/taxonomyId"}}
-    },
+    "architecture": {"$ref": "#/$defs/id"},
     "license": {
       "type": "object", "additionalProperties": false, "required": ["spdx", "redistribution", "attribution"],
       "properties": {
@@ -95,291 +37,67 @@
         "derived_from": {"type": "string", "format": "uri"}
       }
     },
-    "sourceUri": {
-      "type": "string", "minLength": 1,
-      "pattern": "^(?:hf://(?:models|datasets|spaces)/[^@/]+/[^@/]+@[a-f0-9]{40}/.+|https://.+)$"
+    "conversion": {
+      "description": "The source scripts/convert.py turns into compilation.source.",
+      "type": "object", "additionalProperties": false, "required": ["source"],
+      "properties": {"source": {"$ref": "#/$defs/source"}}
     },
-    "sourceFile": {
-      "type": "object", "additionalProperties": false, "required": ["path", "uri", "sha256", "size_bytes"],
+    "compilation": {
+      "description": "The source scripts/compile.py (ONNX) or scripts/compile.sh (Hugging Face) compiles, and the components it must produce. One component is named model.",
+      "type": "object", "additionalProperties": false, "required": ["format", "source"],
       "properties": {
-        "path": {"$ref": "#/$defs/relativePath"}, "uri": {"$ref": "#/$defs/sourceUri"},
-        "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1},
-        "media_type": {"type": "string", "minLength": 1}
+        "format": {"enum": ["onnx", "huggingface"]},
+        "source": {"$ref": "#/$defs/source"},
+        "components": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "entrypoint": {"description": "The package's public entrypoint when it is not default, such as generate.", "$ref": "#/$defs/id"}
       }
     },
-    "source": {
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false, "required": ["entrypoint", "files"],
-          "properties": {
-            "repository": {"type": "string", "pattern": "^[^/@]+/[^/@]+$"},
-            "revision": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
-            "entrypoint": {"$ref": "#/$defs/relativePath"},
-            "files": {
-              "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/relativePath"},
-              "additionalProperties": {
-                "type": "object", "additionalProperties": false, "required": ["sha256", "size_bytes"],
-                "properties": {
-                  "uri": {"$ref": "#/$defs/sourceUri"}, "sha256": {"$ref": "#/$defs/sha256"},
-                  "size_bytes": {"type": "integer", "minimum": 1}, "media_type": {"type": "string", "minLength": 1}
-                }
-              }
+    "calibrations": {
+      "description": "What build profiles calibrate on: a Dataset Registry dataset, named by its source ID such as coco-2017-cal.",
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "dataset"],
+        "properties": {"id": {"$ref": "#/$defs/datasetId"}, "dataset": {"$ref": "#/$defs/dataset"}}
+      }
+    },
+    "build_profiles": {
+      "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["components"],
+        "properties": {
+          "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]},
+          "benchmark_baseline": {
+            "type": "object", "additionalProperties": false, "required": ["model_id", "build_profile"],
+            "properties": {
+              "model_id": {"$ref": "#/$defs/id"}, "build_profile": {"$ref": "#/$defs/id"}
+            }
+          },
+          "calibration_dataset": {"description": "A calibrations entry.", "$ref": "#/$defs/datasetId"},
+          "components": {
+            "description": "Each component's build parameters, keyed like compilation.components.",
+            "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
+            "additionalProperties": {
+              "type": "object", "additionalProperties": false, "required": ["parameters"],
+              "properties": {"parameters": {"type": "object"}, "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]}}
             }
           }
-        },
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "uri", "sha256", "size_bytes"],
-          "properties": {
-            "type": {"const": "file"}, "uri": {"$ref": "#/$defs/sourceUri"},
-            "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1},
-            "media_type": {"type": "string", "minLength": 1}
-          }
-        },
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "entrypoint", "files"],
-          "properties": {
-            "type": {"const": "file_set"}, "entrypoint": {"$ref": "#/$defs/relativePath"},
-            "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourceFile"}}
-          }
-        }
-      ]
-    },
-    "dimension": {
-      "oneOf": [{"type": "integer", "minimum": 1}, {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}]
-    },
-    "tensor": {
-      "type": "object", "additionalProperties": false, "required": ["name", "dtype", "shape"],
-      "properties": {
-        "name": {"type": "string", "minLength": 1},
-        "dtype": {"enum": ["float16", "bfloat16", "float32", "float64", "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64", "bool", "string"]},
-        "shape": {"type": "array", "items": {"$ref": "#/$defs/dimension"}},
-        "layout": {"type": "string", "minLength": 1}, "description": {"type": "string"}
-      }
-    },
-    "state": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "input", "output", "initialization", "lifetime"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "input": {"type": "string", "minLength": 1},
-        "output": {"type": "string", "minLength": 1},
-        "initialization": {"enum": ["zero", "provided", "component"]},
-        "lifetime": {"enum": ["invocation", "session", "stream"]}
-      }
-    },
-    "entrypoint": {
-      "type": "object", "additionalProperties": false, "required": ["id", "inputs", "outputs"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"},
-        "inputs": {"type": "array", "items": {"$ref": "#/$defs/tensor"}},
-        "outputs": {"type": "array", "items": {"$ref": "#/$defs/tensor"}},
-        "state": {"type": "array", "items": {"$ref": "#/$defs/state"}},
-        "streaming": {
-          "type": "object", "additionalProperties": false, "required": ["mode"],
-          "properties": {
-            "mode": {"enum": ["chunked", "autoregressive"]}, "reset": {"type": "boolean"},
-            "flush": {"type": "boolean"}, "parameters": {"type": "object"}
-          }
         }
       }
-    },
-    "shapeProfile": {
-      "type": "object", "additionalProperties": false, "required": ["id", "entrypoint", "bindings"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "entrypoint": {"$ref": "#/$defs/id"},
-        "bindings": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 1}}
-      }
-    },
-    "interface": {
-      "type": "object", "additionalProperties": false, "required": ["format"],
-      "properties": {
-        "format": {"enum": ["onnx", "huggingface"]}, "opset": {"type": "integer", "minimum": 1},
-        "entrypoints": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/entrypoint"}},
-        "shape_profiles": {"type": "array", "items": {"$ref": "#/$defs/shapeProfile"}}
-      }
-    },
-    "pipelineStage": {
-      "type": "object", "additionalProperties": false, "required": ["op", "parameters"],
-      "properties": {"op": {"$ref": "#/$defs/id"}, "parameters": {"type": "object"}}
     },
     "pipeline": {
-      "type": "object", "additionalProperties": false, "required": ["pipeline"],
-      "properties": {"pipeline": {"type": "array", "items": {"$ref": "#/$defs/pipelineStage"}}}
+      "description": "How the model runs, for the browser; orchestration stays in the scripts.",
+      "type": "array", "minItems": 2,
+      "items": {"oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["component"], "properties": {"component": {"$ref": "#/$defs/id"}}},
+        {"type": "object", "additionalProperties": false, "required": ["cpu"], "properties": {"cpu": {"type": "string", "minLength": 1}}}
+      ]}
     },
-    "surgery": {
-      "oneOf": [
-        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "none"}}},
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "entrypoint", "parameters"],
-          "properties": {
-            "type": {"const": "python"},
-            "entrypoint": {"type": "string", "pattern": "^scripts/[A-Za-z0-9_./-]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"},
-            "parameters": {"type": "object"}
-          }
-        }
-      ]
-    },
-    "component": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "source"],
-      "anyOf": [{"required": ["format"]}, {"required": ["interface"]}],
+    "numerical_fidelity": {
+      "description": "Compiled outputs compared against the source model by scripts/compile.py.",
+      "type": "object", "additionalProperties": false, "required": ["status", "dataset", "selection", "outputs"],
       "properties": {
-        "id": {"$ref": "#/$defs/id"}, "role": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/source"},
-        "format": {"enum": ["onnx", "huggingface"]}, "entrypoint": {"$ref": "#/$defs/id"},
-        "interface": {"$ref": "#/$defs/interface"}, "preprocessing": {"$ref": "#/$defs/pipeline"},
-        "postprocessing": {"$ref": "#/$defs/pipeline"}, "surgery": {"$ref": "#/$defs/surgery"},
-        "recipe": {"enum": ["scripts/compile.py", "scripts/compile.sh"]},
-        "depends_on": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
-      }
-    },
-    "resource": {
-      "type": "object", "additionalProperties": false, "required": ["id", "source", "install_path"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/source"},
-        "install_path": {"$ref": "#/$defs/relativePath"}, "optional": {"type": "boolean"},
-        "license": {"$ref": "#/$defs/license"}
-      }
-    },
-    "datasetRef": {
-      "type": "object", "additionalProperties": false, "required": ["id", "variant", "sha256", "size_bytes"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
-        "variant": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
-        "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1}
-      }
-    },
-    "calibration": {
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false, "required": ["id", "status", "reason"],
-          "properties": {"id": {"$ref": "#/$defs/id"}, "status": {"const": "pending"}, "reason": {"type": "string", "minLength": 1}}
-        },
-        {
-          "type": "object", "additionalProperties": false, "required": ["id", "status", "source"],
-          "properties": {"id": {"$ref": "#/$defs/id"}, "status": {"const": "ready"}, "source": {"$ref": "#/$defs/source"}}
-        },
-        {
-          "type": "object", "additionalProperties": false, "required": ["id", "status", "dataset"],
-          "properties": {"id": {"$ref": "#/$defs/id"}, "status": {"const": "ready"}, "dataset": {"$ref": "#/$defs/datasetRef"}}
-        }
-      ]
-    },
-    "compatibility": {
-      "type": "object", "additionalProperties": false,
-      "properties": {
-        "device_family": {"type": "string", "minLength": 1},
-        "platform_version": {"type": "string", "minLength": 1},
-        "runtime_version": {"type": "string", "minLength": 1}
-      }
-    },
-    "buildComponent": {
-      "type": "object", "additionalProperties": false, "required": ["id", "parameters"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "runner_class": {"enum": ["default", "expensive", "most-expensive"]},
-        "shape_profile": {"$ref": "#/$defs/id"}, "calibration": {"$ref": "#/$defs/id"},
-        "parameters": {"type": "object"}, "status": {"enum": ["supported", "unsupported"]},
-        "reason": {"type": "string", "minLength": 1}
-      },
-      "allOf": [{"if": {"properties": {"status": {"const": "unsupported"}}, "required": ["status"]}, "then": {"required": ["reason"]}}]
-    },
-    "compileInvocation": {
-      "type": "object", "additionalProperties": false, "required": ["id", "components"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"},
-        "components": {
-          "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}
-        }
-      }
-    },
-    "buildProfile": {
-      "type": "object", "additionalProperties": false, "required": ["id", "components"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "target": {"type": "string", "minLength": 1},
-        "runner_class": {"enum": ["default", "expensive", "most-expensive"]},
-        "compatibility": {"$ref": "#/$defs/compatibility"},
-        "benchmark_baseline": {
-          "type": "object", "additionalProperties": false, "required": ["model_id", "build_profile"],
-          "properties": {
-            "model_id": {"$ref": "#/$defs/id"},
-            "build_profile": {"$ref": "#/$defs/id"}
-          }
-        },
-        "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/buildComponent"}},
-        "compile_invocations": {
-          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/compileInvocation"}
-        }
-      }
-    },
-    "composition": {
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false, "required": ["id", "type", "component", "entrypoint"],
-          "properties": {
-            "id": {"$ref": "#/$defs/id"}, "type": {"const": "single"},
-            "component": {"$ref": "#/$defs/id"}, "entrypoint": {"$ref": "#/$defs/id"}
-          }
-        },
-        {
-          "type": "object", "additionalProperties": false,
-          "required": ["id", "type", "components", "connections", "inputs", "outputs"],
-          "properties": {
-            "id": {"$ref": "#/$defs/id"}, "type": {"const": "declarative"},
-            "components": {"type": "array"}, "connections": {"type": "array"},
-            "inputs": {"type": "array"}, "outputs": {"type": "array"}
-          }
-        }
-      ]
-    },
-    "package": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "default", "components", "build_profiles", "composition"],
-      "properties": {
-        "id": {"$ref": "#/$defs/id"}, "default": {"type": "boolean"},
-        "components": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-        "resources": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-        "build_profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-        "composition": {"$ref": "#/$defs/id"},
-        "maturity": {"enum": ["experimental", "staging", "approved", "deprecated"]}
-      }
-    },
-    "testScope": {
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "component"],
-          "properties": {"type": {"const": "component"}, "component": {"$ref": "#/$defs/id"}}
-        },
-        {
-          "type": "object", "additionalProperties": false, "required": ["type", "package"],
-          "properties": {"type": {"const": "package"}, "package": {"$ref": "#/$defs/id"}}
-        }
-      ]
-    },
-    "stageEntryId": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
-    "stageBuildProfiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-    "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
-    "accuracyEntry": {
-      "oneOf": [
-        {"$ref": "#/$defs/devkitAccuracy"},
-        {"$ref": "#/$defs/recordedAccuracy"}
-      ]
-    },
-    "recordedAccuracy": {
-      "description": "Accuracy evidence recorded in model.yaml; no stage runs it.",
-      "type": "object", "required": ["id", "scope", "build_profiles"], "not": {"required": ["engine"]},
-      "properties": {
-        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"}
-      }
-    },
-    "fidelityEntry": {
-      "description": "Numerical comparison of compiled outputs against the source model, computed by scripts/compile.py.",
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "status", "dataset", "selection", "outputs"],
-      "properties": {
-        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
         "status": {"enum": ["diagnostic", "provisional", "ready"]},
-        "result_component": {"$ref": "#/$defs/id"},
-        "dataset": {"oneOf": [{"$ref": "#/$defs/datasetRef"}, {"$ref": "#/$defs/id"}]},
+        "dataset": {"$ref": "#/$defs/dataset"},
         "selection": {
           "type": "object", "additionalProperties": false, "required": ["method", "seed", "offset", "samples"],
           "properties": {
@@ -391,72 +109,91 @@
         "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       }
     },
-    "devkitAccuracy": {
-      "description": "Task accuracy measured by the model's scripts/accuracy.py with its compiled MPKs on a DevKit.",
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "engine", "status", "dataset"],
-      "anyOf": [{"required": ["metrics"]}, {"required": ["required_metrics"]}],
+    "accuracy": {
+      "description": "The datasets scripts/accuracy.py evaluates the whole model on, on a DevKit. datasets/<id>.yaml says which metrics each dataset requires for the model's tasks.",
+      "type": "object", "additionalProperties": false, "required": ["datasets"],
       "properties": {
-        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
-        "engine": {"const": "devkit_script"},
-        "status": {"enum": ["ready", "provisional"]},
-        "result_component": {"$ref": "#/$defs/id"},
-        "dataset": {"oneOf": [{"$ref": "#/$defs/datasetRef"}, {"$ref": "#/$defs/id"}]},
-        "metrics": {"$ref": "#/$defs/accuracyMetricNames"},
-        "required_metrics": {"$ref": "#/$defs/accuracyMetricNames"}
+        "datasets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/dataset"}},
+        "build_profiles": {"$ref": "#/$defs/profileIds"}
       }
     },
-    "publishedMetrics": {
-      "description": "Scores the source model's authors published for these weights, copied from a pinned page.",
-      "type": "object", "additionalProperties": false, "required": ["source", "dataset", "conditions", "metrics"],
+    "performance": {
+      "description": "Measures the whole model with scripts/performance.py on a DevKit. Every report must hold the metrics tools/model_report/metrics.json marks required.",
+      "type": "object", "additionalProperties": false,
       "properties": {
-        "source": {"type": "string", "format": "uri", "pattern": "^https://"},
-        "dataset": {
-          "type": "object", "additionalProperties": false, "required": ["id", "split"],
-          "properties": {"id": {"$ref": "#/$defs/datasetId"}, "split": {"$ref": "#/$defs/datasetId"}}
-        },
-        "conditions": {"type": "string", "minLength": 1},
-        "note": {"type": "string", "minLength": 1},
-        "metrics": {
-          "type": "object", "minProperties": 1,
-          "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
-          "additionalProperties": {"type": "number"}
+        "build_profiles": {"$ref": "#/$defs/profileIds"}
+      }
+    },
+    "reference_metrics": {
+      "description": "Scores the source model's authors published for these weights, copied from a pinned page.",
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["source", "dataset", "conditions", "metrics"],
+        "properties": {
+          "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "dataset": {
+            "type": "object", "additionalProperties": false, "required": ["id", "split"],
+            "properties": {"id": {"$ref": "#/$defs/datasetId"}, "split": {"$ref": "#/$defs/datasetId"}}
+          },
+          "conditions": {"type": "string", "minLength": 1},
+          "note": {"type": "string", "minLength": 1},
+          "metrics": {"type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"type": "number"}}
         }
       }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "idSet": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "profileIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "runnerClass": {"enum": ["default", "expensive", "most-expensive"]},
+    "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "relativePath": {
+      "type": "string", "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$"
     },
-    "accuracyMetricNames": {
-      "type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+    "sourceUri": {
+      "type": "string", "minLength": 1,
+      "pattern": "^(?:hf://(?:models|datasets|spaces)/[^@/]+/[^@/]+@[a-f0-9]{40}/.+|https://.+)$"
     },
-    "benchmarkEntry": {
-      "type": "object", "additionalProperties": false, "required": ["id"],
-      "properties": {
-        "id": {"$ref": "#/$defs/stageEntryId"}, "scope": {"$ref": "#/$defs/testScope"},
-        "build_profiles": {"$ref": "#/$defs/stageBuildProfiles"},
-        "status": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "reason": {"type": "string", "minLength": 1},
-        "target": {"type": "string", "minLength": 1},
-        "metrics": {
-          "type": "array", "minItems": 1,
-          "items": {
-            "oneOf": [
-              {"type": "string", "minLength": 1},
-              {
-                "type": "object", "additionalProperties": false, "required": ["name"],
-                "properties": {"name": {"type": "string", "minLength": 1}}
-              }
-            ]
+    "source": {
+      "oneOf": [
+        {
+          "description": "One file.",
+          "type": "object", "additionalProperties": false, "required": ["uri", "sha256", "size_bytes"],
+          "properties": {
+            "uri": {"$ref": "#/$defs/sourceUri"}, "sha256": {"$ref": "#/$defs/sha256"},
+            "size_bytes": {"type": "integer", "minimum": 1}, "media_type": {"type": "string", "minLength": 1}
           }
         },
-        "required_metrics": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-        "note": {"type": "string", "minLength": 1}
-      },
-      "allOf": [
         {
-          "if": {"properties": {"status": {"pattern": "^pending"}}, "required": ["status"]},
-          "then": {"anyOf": [{"required": ["reason"]}, {"required": ["note"]}]}
+          "description": "A set of files, such as a Hugging Face checkpoint; main_file is the one the recipe opens.",
+          "type": "object", "additionalProperties": false, "required": ["main_file", "files"],
+          "properties": {
+            "repository": {"type": "string", "pattern": "^[^/@]+/[^/@]+$"},
+            "revision": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+            "main_file": {"$ref": "#/$defs/relativePath"},
+            "files": {
+              "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/relativePath"},
+              "additionalProperties": {
+                "type": "object", "additionalProperties": false, "required": ["sha256", "size_bytes"],
+                "properties": {
+                  "uri": {"$ref": "#/$defs/sourceUri"}, "sha256": {"$ref": "#/$defs/sha256"},
+                  "size_bytes": {"type": "integer", "minimum": 1}, "media_type": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
         }
       ]
+    },
+    "dataset": {
+      "type": "object", "additionalProperties": false, "required": ["id", "variant", "sha256", "size_bytes"],
+      "properties": {
+        "id": {"$ref": "#/$defs/datasetId"}, "variant": {"$ref": "#/$defs/datasetId"},
+        "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1}
+      }
     }
   }
 }

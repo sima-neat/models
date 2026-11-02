@@ -1,34 +1,24 @@
-// Metric definitions and value formatting.
+// Metric definitions and value formatting. Each performance metric matches tools/model_report/metrics.json,
+// whose `display` unit and scale it shows.
 export const METRIC_DEFINITIONS = {
   latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p99_ms: { label: "Latency p99", unit: "ms", digits: 2, scale: 1, direction: "lower" },
-  throughput_fps: { label: "Throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
-  sync_throughput_fps: { label: "Synchronous throughput", unit: "fps", digits: 1, scale: 1, direction: "higher" },
+  throughput_fps: { label: "Throughput", unit: "inferences/s", digits: 1, scale: 1, direction: "higher" },
   avg_power_watts: { label: "SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   peak_power_watts: { label: "Peak SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   avg_mla_power_watts: { label: "MLA power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   peak_mla_power_watts: { label: "Peak MLA power", unit: "W", digits: 2, scale: 1, direction: "lower" },
-  energy_joules: { label: "Benchmark energy", unit: "J", digits: 2, scale: 1, direction: "lower" },
   energy_per_inference_joules: {
     label: "Energy / inference", unit: "mJ/inference", digits: 2, scale: 1000, direction: "lower",
   },
-  model_load_ms: { label: "Model load", unit: "ms", digits: 1, scale: 1, direction: "lower" },
-  time_to_first_inference_ms: {
-    label: "Time to first inference", unit: "ms", digits: 1, scale: 1, direction: "lower",
-  },
-  mla_memory_baseline_mib: { label: "MLA memory baseline", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
   mla_memory_peak_mib: { label: "Peak MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
-  mla_memory_peak_delta_mib: {
-    label: "Peak MLA memory increase", unit: "MiB", digits: 1, scale: 1, direction: "lower",
-  },
-  mla_memory_final_mib: { label: "MLA memory final", unit: "MiB", digits: 1, scale: 1, direction: "neutral" },
   mla_memory_avg_mib: { label: "MLA memory", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
-  avg_cma_memory_mib: { label: "CMA pool in use", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
-  peak_cma_memory_mib: { label: "Peak CMA pool in use", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
-  avg_linux_memory_mib: { label: "Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
-  peak_linux_memory_mib: { label: "Peak Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
+  ev74_memory_peak_mib: { label: "Peak EV74 memory", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
+  ev74_memory_avg_mib: { label: "EV74 memory", unit: "MiB", digits: 1, scale: 1, direction: "lower" },
+  avg_linux_memory_mib: { label: "Board Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
+  peak_linux_memory_mib: { label: "Peak board Linux memory used", unit: "MiB", digits: 0, scale: 1, direction: "neutral" },
   avg_die_temperature_c: { label: "SoC temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
   peak_die_temperature_c: { label: "Peak SoC temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
   avg_board_temperature_c: { label: "SoM temperature", unit: "°C", digits: 1, scale: 1, direction: "lower" },
@@ -44,24 +34,21 @@ function fallbackMetricLabel(key) {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Measurement";
 }
 
-export function metricDefinition(key, metric = null) {
-  if (key === "throughput_fps" && metric?.unit) {
-    return { ...METRIC_DEFINITIONS[key], unit: metric.unit };
-  }
+export function metricDefinition(key) {
   return METRIC_DEFINITIONS[key] || {
     label: fallbackMetricLabel(key),
-    unit: metric?.unit || "",
+    unit: "",
     digits: 2,
     scale: 1,
     direction: "neutral",
   };
 }
 
-export function metricDisplay(metric, definition = metricDefinition(metric?.key || "", metric)) {
+export function metricDisplay(metric, definition = metricDefinition(metric?.key || "")) {
   if (!metric || metric.status !== "measured" || !Number.isFinite(metric.value)) return null;
   return {
     value: metric.value * definition.scale,
-    unit: definition.scale === 1 ? (metric.unit || definition.unit) : definition.unit,
+    unit: definition.unit,
     digits: definition.digits,
   };
 }

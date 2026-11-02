@@ -7,17 +7,16 @@ from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from .accuracy_config import accuracy_components, find_devkit_accuracy_config
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
+from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, reference_metrics_by_model
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
-from .fidelity_config import find_fidelity_config
+from .mla_stage_simulation import write_mla_stage_simulation
 from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
 from .model_tests import TEST_OUTCOMES
-from .published_metrics import published_metrics_by_model
 from .runner_approval import authorize_runner_matrix
 from .stage_plan import plan_stages, resolve_base_branches
 
@@ -31,6 +30,7 @@ AUTHOR_COMMANDS = frozenset(
         "authorize-runner-matrix",
         "assemble-package",
         "resolve-compiler",
+        "simulate-mla-stages",
         "validate",
         "validate-models",
         "validate-compile-outputs",
@@ -81,7 +81,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     calibration.add_argument("--json", action="store_true", dest="json_output")
 
     fidelity_dataset = subcommands.add_parser(
-        "fetch-fidelity-dataset", help="download and verify the dataset a build's fidelity entry compares on"
+        "fetch-fidelity-dataset", help="download and verify the dataset numerical fidelity compares on"
     )
     fidelity_dataset.add_argument("model_dir", type=Path)
     fidelity_dataset.add_argument("--schema", type=Path)
@@ -95,7 +95,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     matrix.add_argument("--models", help="comma-separated model IDs; every model when omitted")
     matrix.add_argument("--profiles", help="comma-separated build profile IDs within the selected models")
     matrix.add_argument("--components", help="comma-separated component IDs within the selected models")
-    matrix.add_argument("--compiler-version", help="also emit each invocation's compile key")
+    matrix.add_argument("--compiler-version", help="also emit each invocation's compile fingerprint")
 
     pipelines = subcommands.add_parser(
         "component-pipelines", help="write the order each multi-component model runs in, for the model browser"
@@ -103,14 +103,14 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     pipelines.add_argument("--repository", type=Path, default=Path.cwd())
     pipelines.add_argument("--output", type=Path, required=True)
 
-    published = subcommands.add_parser(
-        "published-metrics", help="write the scores each source model's authors published, for the model browser"
+    reference = subcommands.add_parser(
+        "reference-metrics", help="write the scores each source model's authors published, for the model browser"
     )
-    published.add_argument("--repository", type=Path, default=Path.cwd())
-    published.add_argument("--output", type=Path, required=True)
+    reference.add_argument("--repository", type=Path, default=Path.cwd())
+    reference.add_argument("--output", type=Path, required=True)
 
     stages = subcommands.add_parser(
-        "plan-stages", help="select changed compile invocations and the board stages reused builds still need"
+        "plan-stages", help="select changed compile invocations and the benchmarks reused builds still need"
     )
     stages.add_argument("--repository", type=Path, default=Path.cwd())
     stages.add_argument("--compiler-version", required=True)
@@ -131,7 +131,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     authorize.add_argument("--matrix", type=Path, required=True)
     authorize.add_argument("--vulcan-spec", type=Path, required=True)
     authorize.add_argument("--repository-name", required=True)
-    authorize.add_argument("--environment", required=True)
 
     base = subcommands.add_parser("resolve-base", help="list the base branches whose catalogs builds may come from")
     base.add_argument("--repository", type=Path, default=Path.cwd())
@@ -147,48 +146,30 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
-    core_report = subcommands.add_parser(
-        "import-core-benchmark", help="attach registry provenance to a saved Core benchmark report"
-    )
-    core_report.add_argument("--manifest", type=Path, required=True)
-    core_report.add_argument("--report", type=Path, required=True, help="BenchmarkReport.save() JSON")
-    core_report.add_argument("--context", type=Path, required=True, help="the performance script's context")
-    core_report.add_argument("--output", type=Path, required=True)
-    core_report.add_argument("--schema", type=Path, required=True)
-
     devkit_accuracy = subcommands.add_parser(
-        "resolve-devkit-accuracy", help="resolve a build profile's DevKit accuracy entry and its cached dataset"
+        "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
     )
     devkit_accuracy.add_argument("model_dir", type=Path)
     devkit_accuracy.add_argument("--schema", type=Path)
     devkit_accuracy.add_argument("--cache-dir", type=Path)
     devkit_accuracy.add_argument("--build-profile", required=True)
 
-    accuracy_import = subcommands.add_parser(
-        "import-accuracy", help="attach model, dataset and MPK identity to scripts/accuracy.py output"
+    inputs = subcommands.add_parser(
+        "model-component-mpks", help="print component=path for each component MPK a build profile's benchmarks run"
     )
-    accuracy_import.add_argument("--repository", type=Path, default=Path.cwd())
-    accuracy_import.add_argument("--model-id", required=True)
-    accuracy_import.add_argument("--build-profile-id", required=True)
-    accuracy_import.add_argument("--script-output", type=Path, required=True)
-    accuracy_import.add_argument(
-        "--compiled-dir", type=Path, required=True, help="root holding <model>/<profile>/compile-outputs.json"
-    )
-    accuracy_import.add_argument("--git-sha", required=True, help="models revision the accuracy script came from")
-    accuracy_import.add_argument("--output", type=Path, required=True)
+    inputs.add_argument("compiled_dir", type=Path, help="root holding <model>/<profile>/compile-outputs.json")
+    inputs.add_argument("--repository", type=Path, default=Path.cwd())
+    inputs.add_argument("--model", required=True)
+    inputs.add_argument("--build-profile", required=True)
 
-    benchmark_manifest = subcommands.add_parser(
-        "make-benchmark-manifest", help="generate a direct-DevKit benchmark manifest for one compiled model"
+    check = subcommands.add_parser(
+        "check-report", help="check a model report against model.yaml and record the DevKit it ran on"
     )
-    benchmark_manifest.add_argument("--repository", type=Path, default=Path.cwd())
-    benchmark_manifest.add_argument("--compiled-dir", type=Path, required=True)
-    benchmark_manifest.add_argument("--output", type=Path, required=True)
-    benchmark_manifest.add_argument("--branch", required=True)
-    benchmark_manifest.add_argument("--git-sha", required=True)
-    benchmark_manifest.add_argument("--model", required=True)
-    benchmark_manifest.add_argument("--build-profile", required=True)
-    benchmark_manifest.add_argument("--component", required=True)
-    benchmark_manifest.add_argument("--json", action="store_true", dest="json_output")
+    check.add_argument("output_dir", type=Path, help="the stage output holding model-report.json")
+    check.add_argument("--repository", type=Path, default=Path.cwd())
+    check.add_argument("--stage", choices=BENCHMARK_STAGES, required=True)
+    check.add_argument("--model", required=True)
+    check.add_argument("--build-profile", required=True)
 
     mpk = subcommands.add_parser(
         "verify-mpk", aliases=["verify-artifact"], help="validate and checksum a compiled artifact"
@@ -206,8 +187,14 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     mpk.add_argument("--calibration-sha256")
     mpk.add_argument("--git-sha")
     mpk.add_argument("--environment")
-    mpk.add_argument("--build-fingerprint")
+    mpk.add_argument("--compile-fingerprint")
     mpk.add_argument("--requested-runner-class")
+    mpk.add_argument("--requested-runner-market")
+    mpk.add_argument("--runner-market")
+    mpk.add_argument("--runner-name")
+    mpk.add_argument("--runner-instance-id")
+    mpk.add_argument("--runner-instance-type")
+    mpk.add_argument("--runner-actual-market")
     mpk.add_argument("--runner-class")
     mpk.add_argument("--runner-approval-id")
     mpk.add_argument("--runner-approval-spec-revision")
@@ -232,6 +219,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     record_outputs.add_argument("--compile-invocation-id", required=True)
     record_outputs.add_argument("--components", required=True, help="comma-separated component IDs")
 
+    simulate = subcommands.add_parser(
+        "simulate-mla-stages", help="write mla-stage-simulation.json: mla-msim's estimate of each compiled MLA stage"
+    )
+    simulate.add_argument("output_dir", type=Path, help="the build profile's compile output, with compile-outputs.json")
+
     package = subcommands.add_parser(
         "assemble-package", help="assemble deterministic package bundles from verified component MPKs"
     )
@@ -242,7 +234,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     package.add_argument("--build-profile")
     package.add_argument("--package")
     package.add_argument("--all", action="store_true", dest="all_packages")
-    package.add_argument("--resource-cache-dir", type=Path)
     package.add_argument("--json", action="store_true", dest="json_output")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
@@ -306,63 +297,31 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_package.add_argument("--github-run-url", required=True)
     publish_package.add_argument("--json", action="store_true", dest="json_output")
 
-    publish_benchmark = subcommands.add_parser(
-        "publish-benchmark", help="publish a benchmark run linked to its Vulcan model compilation run"
+    publish_report = subcommands.add_parser(
+        "publish-report", help="publish a checked model report as a whole-model benchmark run"
     )
-    publish_benchmark.add_argument("--result", type=Path, required=True)
-    publish_benchmark.add_argument("--log", type=Path)
-    publish_benchmark.add_argument("--schema", type=Path)
-    publish_benchmark.add_argument("--api-url", required=True)
-    publish_benchmark.add_argument("--aws-region", default="us-west-2")
-    publish_benchmark.add_argument("--bucket", required=True)
-    publish_benchmark.add_argument("--kms-key-id")
-    publish_benchmark.add_argument("--environment", choices=("staging", "production"), required=True)
-    publish_benchmark.add_argument("--branch", required=True)
-    publish_benchmark.add_argument("--git-sha", required=True)
-    publish_benchmark.add_argument("--github-run-url")
-    publish_benchmark.add_argument("--compile-run-id")
-    publish_benchmark.add_argument(
+    publish_report.add_argument("output_dir", type=Path, help="the stage output check-report accepted")
+    publish_report.add_argument("--stage", choices=BENCHMARK_STAGES, required=True)
+    publish_report.add_argument(
         "--repository", type=Path, required=True, help="models checkout at the measured revision"
     )
-    publish_benchmark.add_argument(
-        "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's performance tests"
+    publish_report.add_argument(
+        "--compiled-dir", type=Path, required=True, help="the registered build and package the report measured"
     )
-    publish_benchmark.add_argument("--json", action="store_true", dest="json_output")
-
-    publish_accuracy = subcommands.add_parser(
-        "publish-accuracy", help="publish a DevKit accuracy run linked to its Vulcan model compilation run"
+    publish_report.add_argument("--model", required=True)
+    publish_report.add_argument("--build-profile", required=True)
+    publish_report.add_argument("--api-url", required=True)
+    publish_report.add_argument("--aws-region", default="us-west-2")
+    publish_report.add_argument("--bucket", required=True)
+    publish_report.add_argument("--kms-key-id")
+    publish_report.add_argument("--environment", choices=("staging", "production"), required=True)
+    publish_report.add_argument("--branch", required=True)
+    publish_report.add_argument("--git-sha", required=True)
+    publish_report.add_argument("--github-run-url")
+    publish_report.add_argument(
+        "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's tests on the report"
     )
-    publish_accuracy.add_argument(
-        "--repository", type=Path, required=True, help="models checkout at the measured revision"
-    )
-    publish_accuracy.add_argument(
-        "--compiled-dir", type=Path, required=True, help="registered compilation the accuracy script measured"
-    )
-    publish_accuracy.add_argument("--result", type=Path, required=True)
-    publish_accuracy.add_argument("--log", type=Path)
-    publish_accuracy.add_argument("--api-url", required=True)
-    publish_accuracy.add_argument("--aws-region", default="us-west-2")
-    publish_accuracy.add_argument("--bucket", required=True)
-    publish_accuracy.add_argument("--kms-key-id")
-    publish_accuracy.add_argument("--environment", choices=("staging", "production"), required=True)
-    publish_accuracy.add_argument("--branch", required=True)
-    publish_accuracy.add_argument("--git-sha", required=True)
-    publish_accuracy.add_argument("--github-run-url")
-    publish_accuracy.add_argument(
-        "--test-status", choices=TEST_OUTCOMES, required=True, help="outcome of the model's accuracy tests"
-    )
-    publish_accuracy.add_argument("--json", action="store_true", dest="json_output")
-
-    benchmark_set = subcommands.add_parser(
-        "validate-benchmark-set", help="validate a complete benchmark result set before publication"
-    )
-    benchmark_set.add_argument("--repository", type=Path, default=Path.cwd())
-    benchmark_set.add_argument("--result-root", type=Path, required=True)
-    benchmark_set.add_argument("--model-id", required=True)
-    benchmark_set.add_argument("--build-profile-id", required=True)
-    benchmark_set.add_argument("--components", required=True)
-    benchmark_set.add_argument("--git-sha", required=True)
-    benchmark_set.add_argument("--json", action="store_true", dest="json_output")
+    publish_report.add_argument("--json", action="store_true", dest="json_output")
 
     publish_catalog_parser = subcommands.add_parser(
         "publish-catalog", help="publish and atomically promote a complete model catalog snapshot"
@@ -497,7 +456,7 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
     _, binding = profile_component_for(model, args.build_profile, args.component)
     calibration_id = binding.get("calibration")
     calibration = next((item for item in model["calibrations"] if item["id"] == calibration_id), None)
-    if calibration is None or calibration["status"] != "ready":
+    if calibration is None:
         result = {
             "kind": "none",
             "model_id": model["id"],
@@ -507,7 +466,7 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
             "sha256": "",
             "size_bytes": 0,
         }
-    elif "dataset" in calibration:
+    else:
         dataset = calibration["dataset"]
         path = resolve_dataset(dataset, args.cache_dir)
         result = {
@@ -518,18 +477,6 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
             "path": str(path),
             "sha256": dataset["sha256"],
             "size_bytes": dataset["size_bytes"],
-        }
-    else:
-        path, cache_hit, source_sha256, size_bytes = Fetcher(args.cache_dir).fetch_source(calibration["source"])
-        result = {
-            "kind": "source",
-            "cache_hit": cache_hit,
-            "model_id": model["id"],
-            "component_id": args.component,
-            "build_profile_id": args.build_profile,
-            "path": str(path),
-            "sha256": source_sha256,
-            "size_bytes": size_bytes,
         }
     if args.json_output:
         print(json.dumps(result, sort_keys=True))
@@ -543,12 +490,7 @@ def _fetch_calibration(args: argparse.Namespace) -> int:
 def _fetch_fidelity_dataset(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     profile_component_for(model, args.build_profile, args.component)
-    selected = find_fidelity_config(
-        args.model_dir,
-        model,
-        build_profile_id=args.build_profile,
-        component_id=args.component,
-    )
+    selected = model.get("numerical_fidelity")
     result = {
         "kind": "none",
         "model_id": model["id"],
@@ -571,7 +513,7 @@ def _fetch_fidelity_dataset(args: argparse.Namespace) -> int:
     elif result["path"]:
         print(f"Verified fidelity dataset: {result['path']}")
     else:
-        print(f"No fidelity entry applies: {result['model_id']}")
+        print(f"No numerical fidelity declared: {result['model_id']}")
     return 0
 
 
@@ -608,9 +550,9 @@ def _component_pipelines(args: argparse.Namespace) -> int:
     return 0
 
 
-def _published_metrics(args: argparse.Namespace) -> int:
-    published = published_metrics_by_model(load_models(args.repository))
-    args.output.write_text(json.dumps(published, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+def _reference_metrics(args: argparse.Namespace) -> int:
+    reference = reference_metrics_by_model(load_models(args.repository))
+    args.output.write_text(json.dumps(reference, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
     return 0
 
 
@@ -644,12 +586,7 @@ def _authorize_runner_matrix(args: argparse.Namespace) -> int:
         raise ModelRegistryError(f"could not load runner authorization input: {exc}") from exc
     if not isinstance(matrix, dict) or not isinstance(vulcan_spec, dict):
         raise ModelRegistryError("runner authorization inputs must be JSON objects")
-    result = authorize_runner_matrix(
-        matrix,
-        vulcan_spec,
-        repository=args.repository_name,
-        environment=args.environment,
-    )
+    result = authorize_runner_matrix(matrix, vulcan_spec, repository=args.repository_name)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
@@ -675,23 +612,6 @@ def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
     return 0
 
 
-def _make_benchmark_manifest(args: argparse.Namespace) -> int:
-    from .benchmark_manifest import make_benchmark_manifest
-
-    result = make_benchmark_manifest(
-        repository=args.repository,
-        compiled_dir=args.compiled_dir,
-        output_path=args.output,
-        branch=args.branch,
-        git_sha=args.git_sha,
-        model_id=args.model,
-        build_profile_id=args.build_profile,
-        component_id=args.component,
-    )
-    print(json.dumps(result, sort_keys=True) if args.json_output else result["manifest"])
-    return 0
-
-
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
@@ -704,8 +624,14 @@ def _verify_mpk(args: argparse.Namespace) -> int:
         "calibration_sha256",
         "git_sha",
         "environment",
-        "build_fingerprint",
+        "compile_fingerprint",
         "requested_runner_class",
+        "requested_runner_market",
+        "runner_market",
+        "runner_name",
+        "runner_instance_id",
+        "runner_instance_type",
+        "runner_actual_market",
         "runner_class",
         "runner_approval_id",
         "runner_approval_spec_revision",
@@ -736,7 +662,6 @@ def _assemble_package(args: argparse.Namespace) -> int:
             repository=args.repository,
             compiled_dir=args.compiled_dir,
             output_dir=args.output_dir,
-            resource_cache_dir=args.resource_cache_dir,
         )
     else:
         if any(value is None for value in explicit):
@@ -749,7 +674,6 @@ def _assemble_package(args: argparse.Namespace) -> int:
                 model_id=args.model,
                 build_profile_id=args.build_profile,
                 package_id=args.package,
-                resource_cache_dir=args.resource_cache_dir,
             )
         ]
     payload = {"count": len(results), "packages": results}
@@ -840,116 +764,65 @@ def _publish_candidate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _publish_benchmark(args: argparse.Namespace) -> int:
-    from .benchmark_publication import publish_benchmark_result
-
-    result = publish_benchmark_result(
-        result_path=args.result,
-        log_path=args.log,
-        schema_path=args.schema,
-        api_url=args.api_url,
-        aws_region=args.aws_region,
-        bucket=args.bucket,
-        kms_key_id=args.kms_key_id,
-        environment=args.environment,
-        branch=args.branch,
-        git_sha=args.git_sha,
-        github_run_url=args.github_run_url,
-        compile_run_id=args.compile_run_id,
-        repository=args.repository,
-        test_status=args.test_status,
-    )
-    message = (
-        json.dumps(result, sort_keys=True)
-        if args.json_output
-        else f"Published benchmark {result['result_fingerprint']} for "
-        # A package result names its package, a component result its component.
-        f"{result['model_id']}/{result['build_profile_id']}/{result.get('package_id') or result['component_id']}"
-    )
-    print(message)
-    return 0
-
-
-def _publish_accuracy(args: argparse.Namespace) -> int:
-    from .benchmark_publication import publish_accuracy_run
-
-    result = publish_accuracy_run(
-        repository=args.repository,
-        compiled_dir=args.compiled_dir,
-        result_path=args.result,
-        log_path=args.log,
-        api_url=args.api_url,
-        aws_region=args.aws_region,
-        bucket=args.bucket,
-        kms_key_id=args.kms_key_id,
-        environment=args.environment,
-        branch=args.branch,
-        git_sha=args.git_sha,
-        github_run_url=args.github_run_url,
-        test_status=args.test_status,
-    )
-    message = (
-        json.dumps(result, sort_keys=True)
-        if args.json_output
-        else f"Published accuracy {result['accuracy_key']} for "
-        f"{result['model_id']}/{result['build_profile_id']}/{result['component_id']}"
-    )
-    print(message)
-    return 0
-
-
-def _validate_benchmark_set(args: argparse.Namespace) -> int:
-    from .benchmark_publication import validate_benchmark_set
-
-    component_ids = [item.strip() for item in args.components.split(",") if item.strip()]
-    result = validate_benchmark_set(
-        repository=args.repository,
-        result_root=args.result_root,
-        model_id=args.model_id,
-        build_profile_id=args.build_profile_id,
-        component_ids=component_ids,
-        git_sha=args.git_sha,
-    )
-    print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid benchmark set: {result['count']}")
-    return 0
-
-
 def _resolve_devkit_accuracy(args: argparse.Namespace) -> int:
+    """Print one JSON line per dataset the profile's accuracy evaluates, in model.yaml order; none without one."""
     model = load_and_validate_model(args.model_dir, args.schema)
-    entry = find_devkit_accuracy_config(model, args.build_profile)
-    if entry is None:
-        result = {"kind": "none", "model_id": model["id"], "build_profile_id": args.build_profile}
-    else:
-        result = {
-            "kind": "dataset",
-            "model_id": model["id"],
-            "build_profile_id": args.build_profile,
-            "accuracy_id": entry["id"],
-            "result_component": entry["result_component"],
-            "components": accuracy_components(model, entry),
-            "path": str(resolve_dataset(entry["dataset"], args.cache_dir)),
-            "sha256": entry["dataset"]["sha256"],
-            "size_bytes": entry["dataset"]["size_bytes"],
-        }
-    print(json.dumps(result, sort_keys=True))
+    if args.build_profile not in benchmarked_profiles(model, "accuracy"):
+        return 0
+    for name, dataset in model["accuracy"]["datasets"].items():
+        print(json.dumps({
+            "name": name,
+            "path": str(resolve_dataset(dataset, args.cache_dir)),
+            "sha256": dataset["sha256"],
+            "size_bytes": dataset["size_bytes"],
+        }, sort_keys=True))
     return 0
 
 
-def _import_accuracy(args: argparse.Namespace) -> int:
-    from .accuracy_result import ACCURACY_RESULT_SCHEMA, build_accuracy_result, load_accuracy_result
+def _check_report(args: argparse.Namespace) -> int:
+    from model_report import REPORT_FILE
 
-    result = build_accuracy_result(
-        repository=args.repository,
-        model_id=args.model_id,
-        build_profile_id=args.build_profile_id,
-        script_output=args.script_output,
-        compiled_dir=args.compiled_dir,
-        git_sha=args.git_sha,
+    from .report_publication import ENVIRONMENT_FILE, check_report, runner_environment
+
+    report = check_report(args.output_dir / REPORT_FILE, args.repository, args.model, args.build_profile, args.stage)
+    (args.output_dir / ENVIRONMENT_FILE).write_text(
+        json.dumps(runner_environment(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    load_accuracy_result(args.output, Path(args.repository).expanduser().resolve() / ACCURACY_RESULT_SCHEMA)
-    print(json.dumps({"output": str(args.output), "metrics": sorted(result["metrics"])}, sort_keys=True))
+    if args.stage == "accuracy":
+        for name, result in report["datasets"].items():
+            print(f"Checked the accuracy report on {name}: {', '.join(sorted(result['metrics']))}")
+    else:
+        print(f"Checked the {args.stage} report: {', '.join(sorted(report['metrics']))}")
+    return 0
+
+
+def _publish_report(args: argparse.Namespace) -> int:
+    from .report_publication import publish_report
+
+    result = publish_report(
+        output_dir=args.output_dir,
+        stage=args.stage,
+        repository=args.repository,
+        compiled_dir=args.compiled_dir,
+        model_id=args.model,
+        build_profile_id=args.build_profile,
+        api_url=args.api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_url=args.github_run_url,
+        test_status=args.test_status,
+    )
+    message = (
+        json.dumps(result, sort_keys=True)
+        if args.json_output
+        else f"Published {args.stage} {result['benchmark_fingerprint']} "
+        f"for {result['model_id']}/{result['build_profile_id']}"
+    )
+    print(message)
     return 0
 
 
@@ -1021,6 +894,9 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 component_ids=_id_list(args.components, "--components"),
             ))
             return 0
+        if args.command == "simulate-mla-stages":
+            print(write_mla_stage_simulation(args.output_dir))
+            return 0
         if args.command == "fetch":
             return _fetch(args)
         if args.command == "fetch-calibration":
@@ -1031,8 +907,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _matrix(args)
         if args.command == "component-pipelines":
             return _component_pipelines(args)
-        if args.command == "published-metrics":
-            return _published_metrics(args)
+        if args.command == "reference-metrics":
+            return _reference_metrics(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "authorize-runner-matrix":
@@ -1043,20 +919,15 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
-        if args.command == "import-core-benchmark":
-            from .core_benchmark import import_core_benchmark
-
-            result = import_core_benchmark(
-                args.manifest, args.report, args.context, args.output, schema_path=args.schema
-            )
-            print(json.dumps(result, sort_keys=True))
-            return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)
-        if args.command == "import-accuracy":
-            return _import_accuracy(args)
-        if args.command == "make-benchmark-manifest":
-            return _make_benchmark_manifest(args)
+        if args.command == "model-component-mpks":
+            from .report_publication import model_component_mpks
+
+            print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
+            return 0
+        if args.command == "check-report":
+            return _check_report(args)
         if args.command in {"verify-mpk", "verify-artifact"}:
             return _verify_mpk(args)
         if args.command == "assemble-package":
@@ -1075,12 +946,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "publish-package":
             return _publish_package(args)
-        if args.command == "publish-accuracy":
-            return _publish_accuracy(args)
-        if args.command == "publish-benchmark":
-            return _publish_benchmark(args)
-        if args.command == "validate-benchmark-set":
-            return _validate_benchmark_set(args)
+        if args.command == "publish-report":
+            return _publish_report(args)
         if args.command == "publish-catalog":
             return _publish_catalog(args)
         if args.command == "stage-registry-build":

@@ -25,6 +25,7 @@ from model_registry.artifact import (
 from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
+from model_registry.fingerprints import COMPILE_TOOLING, compile_fingerprint
 from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import (
     RegistryPublicationError,
@@ -37,7 +38,6 @@ from model_registry.registry import (
     stage_catalog_build,
 )
 from model_registry.source import source_identity
-from model_registry.stage_keys import COMPILE_TOOLING, compile_key
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_0_8b"
@@ -151,6 +151,10 @@ class Registry:
             request=self.request, artifact_store=self,
         )
 
+COMPILE_TIMING = json.dumps({
+    "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00Z", "finished_at": "2026-08-13T01:00:00Z",
+})
+
 
 @pytest.fixture
 def compiled(tmp_path):
@@ -165,12 +169,13 @@ def compiled(tmp_path):
         "source_sha256": source_identity(model["components"][0]["source"]),
         "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
-        "build_fingerprint": compile_key(ROOT, MODEL, PROFILE, "model", compiler["identity"]),
+        "compile_fingerprint": compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, compiler["identity"]),
     }
     verify_artifact(component, write_manifest=True, provenance=provenance)
     record_compile_outputs(
-        profile, model_id=MODEL, build_profile_id=PROFILE, compile_invocation_id="model", component_ids=["model"]
+        profile, model_id=MODEL, build_profile_id=PROFILE, compile_invocation_id=PROFILE, component_ids=["model"]
     )
+    (profile / "compile-timing.json").write_text(COMPILE_TIMING)
     return dist
 
 
@@ -185,7 +190,7 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     source = component / "deployment"
     manifest = validate_compile_outputs(
         component.parent / "compile-outputs.json", component.parent,
-        model_id=MODEL, build_profile_id=PROFILE, compile_invocation_id="model", component_ids=["model"],
+        model_id=MODEL, build_profile_id=PROFILE, compile_invocation_id=PROFILE, component_ids=["model"],
     )
     assert manifest["outputs"][0]["artifact_path"] == str(component / "deployment-manifest.json")
     registry = Registry()
@@ -224,7 +229,7 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     assert all(run["metadata"]["build_on_demand"] for run in registry.runs.values())
 
     catalog = {"catalog_revision": "b" * 40, "models": [{"id": MODEL, "builds": [{
-        "build_profile_id": PROFILE, "compile_invocation_id": "model", "component_id": "model",
+        "build_profile_id": PROFILE, "compile_invocation_id": PROFILE, "component_id": "model",
         "run_id": compile_run, "artifact_sha256": published["runs"][0]["artifact_sha256"],
     }]}]}
 
@@ -240,7 +245,7 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     restore_args = dict(
         repository=ROOT, output_dir=tmp_path / "restored", api_url="https://registry.example.invalid",
         branch="develop", catalog_revision="b" * 40, model_id=MODEL, build_profile_id=PROFILE,
-        compile_invocation_id="model", read_request=read, download_request=registry.objects.__getitem__,
+        compile_invocation_id=PROFILE, read_request=read, download_request=registry.objects.__getitem__,
     )
     stage_catalog_build(**restore_args)
     restored = tmp_path / "restored" / MODEL / PROFILE / "model/deployment"
@@ -277,7 +282,7 @@ def test_native_publication_rejects_wrong_compiled_settings_before_creating_runs
     provenance = json.loads((component / "compile-result.json").read_text())["provenance"]
     verify_artifact(component, write_manifest=True, provenance=provenance)
     record_compile_outputs(component.parent, model_id=MODEL, build_profile_id=PROFILE,
-                           compile_invocation_id="model", component_ids=["model"])
+                           compile_invocation_id=PROFILE, component_ids=["model"])
     registry = Registry()
     with pytest.raises(ValidationError, match="compiled max_num_tokens does not match model.yaml"):
         publish_compilations(repository=ROOT, dist_dir=compiled, **registry.args())
@@ -357,7 +362,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
     model_dir = root / "models" / model_id
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
-    parameters = model["build_profiles"][0]["components"][0]["parameters"]
+    parameters = model["build_profiles"][PROFILE]["components"]["model"]["parameters"]
     parameters.update(max_num_tokens=8192, language_group_size=group_size)
     if image_input:
         parameters.update(input_height=512, input_width=640)
@@ -366,9 +371,9 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
         parameters.pop("input_width", None)
     if model_id == MTP_MODEL:
         model["upstream"]["revision"] = "a" * 40
-        for member in model["components"][0]["source"]["files"]:
+        for path_name, member in model["compilation"]["source"]["files"].items():
             repository, revision_path = member["uri"].split("@", 1)
-            revision = "b" * 40 if member["path"].startswith(parameters["draft_model_path"] + "/") else "a" * 40
+            revision = "b" * 40 if path_name.startswith(parameters["draft_model_path"] + "/") else "a" * 40
             member["uri"] = f"{repository}@{revision}/{revision_path.split('/', 1)[1]}"
     path.write_text(yaml.safe_dump(model, sort_keys=False))
     model = load_and_validate_model(model_dir)
@@ -434,7 +439,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         executable.chmod(0o755)
     captured = tmp_path / "arguments.json"
     subprocess.run([
-        "bash", str(root / "scripts/run_llima_compilation.sh"), str(model_dir), PROFILE, "model",
+        "bash", str(root / "scripts/run_llima_compilation.sh"), str(model_dir), PROFILE, PROFILE,
         str(tmp_path / "output"),
     ], check=True, capture_output=True, text=True, env={
         **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "PYTHONPATH": str(root / "tools"),
@@ -495,7 +500,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         "source_sha256": source_identity(model["components"][0]["source"]),
         "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
-        "build_fingerprint": compile_key(root, model_id, PROFILE, "model", compiler["identity"]),
+        "compile_fingerprint": compile_fingerprint(root, model_id, PROFILE, PROFILE, compiler["identity"]),
     })
     prepared = _preflight_compilations(root, output, load_models(root), environment="staging", git_sha="a" * 40)
     assert prepared[0]["compiled_parameters"] == {
@@ -521,7 +526,7 @@ def test_mtp_recipe_rejects_unsupported_draft_precision(tmp_path, precision):
     shutil.copytree(ROOT / "models" / MTP_MODEL, model_dir)
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
-    model["build_profiles"][0]["components"][0]["parameters"]["draft_precision"] = precision
+    model["build_profiles"][PROFILE]["components"]["model"]["parameters"]["draft_precision"] = precision
     path.write_text(yaml.safe_dump(model, sort_keys=False))
     tools = tmp_path / "bin"
     tools.mkdir()
@@ -613,7 +618,7 @@ class WhisperModel:
     assert os.access(output / "compile.sh", os.X_OK)
 
 
-def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, monkeypatch):
+def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch):
     root = tmp_path / "repository"
     model_dir = root / "models/fixture_model"
     shutil.copytree(ROOT / "tests/fixtures/fixture_model", model_dir)
@@ -626,14 +631,19 @@ def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, mo
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
     model["build-on-demand"] = True
-    model["components"].append({**model["components"][0], "id": "aux"})
-    model["build_profiles"][0]["components"].append({"id": "aux", "parameters": {}})
+    model["compilation"]["components"] = ["backbone", "decoder"]
+    model["build_profiles"]["fixture"]["components"] = {
+        "backbone": {"parameters": {}}, "decoder": {"parameters": {}},
+    }
     path.write_text(yaml.safe_dump(model, sort_keys=False))
     compiler = resolve_model_compiler(root)
+    key = compile_fingerprint(root, "fixture_model", "fixture", "fixture", compiler["identity"])
     registry = Registry()
-    invocations = tmp_path / "invocations"
-    for component in ("model", "aux"):
-        output = invocations / component / "fixture_model/fixture" / component
+    # The profile's one compile invocation compiles both components.
+    invocation = tmp_path / "invocations" / "fixture" / "fixture_model/fixture"
+    outputs = []
+    for component in ("backbone", "decoder"):
+        output = invocation / component
         output.mkdir(parents=True)
         archive = output / f"fixture_model_fixture_{component}_mpk.tar.gz"
         with tarfile.open(archive, "w:gz") as stream:
@@ -645,32 +655,60 @@ def test_mpk_candidate_joins_multiple_invocations_before_finalizing(tmp_path, mo
             "model_id": "fixture_model", "build_profile_id": "fixture", "component_id": component,
             "target": "modalix", "source_sha256": "a" * 64, "git_sha": "a" * 40,
             "environment": "staging", "compiler_version": compiler["version"], "compiler_label": compiler["label"],
-            "build_fingerprint": compile_key(root, "fixture_model", "fixture", component, compiler["identity"]),
+            "compile_fingerprint": key,
         })
-        record_compile_outputs(output.parent, model_id="fixture_model", build_profile_id="fixture",
-                               compile_invocation_id=component, component_ids=[component])
+        outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
+                        "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()})
+    (invocation / "compile-timing.json").write_text(COMPILE_TIMING)
+    (invocation / "compile-outputs.json").write_text(json.dumps({
+        "model_id": "fixture_model", "build_profile_id": "fixture", "compile_invocation_id": "fixture",
+        "outputs": outputs,
+        "derived_graphs": [{"component_id": component, "sha256": "a" * 64} for component in ("backbone", "decoder")],
+    }))
     from model_registry import stage_plan
 
+    # A catalog build of one component at the head key cannot join a candidate built from another source.
     previous = {"models": [{"id": "fixture_model", "builds": [
-        {"build_profile_id": "fixture", "component_id": "model", "run_id": "older-source",
-         "compile_fingerprint": compile_key(root, "fixture_model", "fixture", "model", compiler["identity"])},
+        {"build_profile_id": "fixture", "component_id": "backbone", "run_id": "older-source",
+         "compile_fingerprint": key},
     ]}]}
     monkeypatch.setattr(stage_plan, "read_catalog_sources", lambda *args: (None, [previous]))
     plan_args = dict(repository=root, compiler_version=compiler["identity"], branch="feature/candidate",
                      model_ids=["fixture_model"], profile_ids=["fixture"], include_on_demand=True,
                      read=lambda url: {}, read_api_url="https://registry.example.invalid")
-    plan = stage_plan.plan_stages(**plan_args)
-    assert {item["compile_invocation_id"] for item in plan["compile"]["include"]} == {"model", "aux"}
-    with pytest.raises(ValidationError, match="complete profile"):
-        stage_plan.plan_stages(**plan_args, component_ids=["aux"])
-    result = publish_candidate(repository=root, dist_dir=invocations, output_dir=tmp_path / "candidate",
+    for component_ids in (None, ["decoder"]):
+        plan = stage_plan.plan_stages(**plan_args, component_ids=component_ids)
+        assert [(item["compile_invocation_id"], item["component_ids"]) for item in plan["compile"]["include"]] == [
+            ("fixture", ["backbone", "decoder"]),
+        ]
+    result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
                                model_id="fixture_model", build_profile_id="fixture", **registry.args())
     assert result["state"] == "finalized"
-    assert set(registry.bindings) == {"compile-model", "compile-aux", "package-default"}
+    assert set(registry.bindings) == {"compile-backbone", "compile-decoder", "package-default"}
     finalization = next(index for index, (method, path, _) in enumerate(registry.calls)
                         if path.startswith(DEPLOYMENTS) and path.endswith("/finalize"))
     assert all(index < finalization for index, (_, path, _) in enumerate(registry.calls)
                if path.startswith("/v1/runs/") and path.endswith("/finalize"))
+
+
+def test_llima_compile_fingerprint_names_no_compile_invocation():
+    """A LLiMa key covers the compiler, target, and each component's source and parameters, as it always has."""
+    model = load_and_validate_model(ROOT / "models" / MODEL)
+    profile = model["build_profiles"][0]
+    compiler = resolve_model_compiler(ROOT)["identity"]
+    identity = {
+        "compiler_version": compiler,
+        "target": profile["target"],
+        "components": [{
+            "source_sha256": source_identity(model["components"][0]["source"]),
+            "parameters": profile["components"][0]["parameters"],
+        }],
+    }
+
+    assert profile["compile_invocations"] == [{"id": PROFILE, "components": ["model"]}]
+    assert compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, compiler) == hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
 
 
 @pytest.mark.parametrize("unsafe", ["../escape", "/absolute", "./alias", "elf_files//alias", "bad\\path",

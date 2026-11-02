@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import builtins
 import io
+import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -244,7 +245,7 @@ def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None
     assert "quantized.compile(" in source
     assert "compile-outputs.json" in source
     assert '"derived_graphs"' in source
-    assert '"correctness"' in source
+    assert '"compile_invocation_id": profile_id' in source
     assert "shutil.copyfile" in source
     assert "requests" not in source
     assert "urllib" not in source
@@ -256,18 +257,46 @@ def _metadata() -> dict:
     return load_metadata(MODEL_DIR)
 
 
-def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize(
+    ("profile_id", "backbone"),
+    [
+        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}),
+        ("w8a16_w16a16", {"precision": "w8a16", "per_token": True}),
+        (
+            "w8a8_mixed_w16a16",
+            {
+                "precision": "w8a8",
+                "calibration_bins": 1024,
+                "calibration_samples": 50,
+                "bf16_regions": ["residual", "attention_global", "projector", "head", "outputs"],
+            },
+        ),
+    ],
+)
+def test_compile_reads_each_declared_build_profile(
+    load_script: Callable[[str], ModuleType], profile_id: str, backbone: dict
+) -> None:
+    assert load_script("compile")._component_parameters(_metadata(), profile_id) == {
+        "backbone": backbone,
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
+    }
+
+
+def test_compile_describes_the_pipeline_and_rejects_undeclared_settings(
+    load_script: Callable[[str], ModuleType],
+) -> None:
     compile_module = load_script("compile")
-
-    compile_module._validate_boundary_contract(_metadata())
-    parameters = compile_module._component_parameters(_metadata(), "w8a16_w16a16")
-
-    assert parameters == {
+    parameters = {
         "backbone": {"precision": "w8a16", "per_token": True},
         "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
     }
+
     assert compile_module._pipeline_description(parameters) == (
         "AFE W8A16 per-token backbone → CPU TopK/Gather → AFE W16A16 decoder (JAX execute)"
+    )
+    mixed = {**parameters, "backbone": {"precision": "w8a8", "bf16_regions": ["residual", "head"]}}
+    assert compile_module._pipeline_description(mixed) == (
+        "AFE W8A8 mixed (BF16 residual, head) backbone → CPU TopK/Gather → AFE W16A16 decoder (JAX execute)"
     )
     with pytest.raises(ValueError, match="no build profile 'w32a32'"):
         compile_module._component_parameters(_metadata(), "w32a32")
@@ -277,22 +306,25 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
         compile_module._quantization_config({"precision": "w8a8"})
 
 
-@pytest.mark.parametrize("field", ["shape", "dtype", "name"])
-def test_compile_rejects_mismatched_boundary_contract(
-    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    load_script: Callable[[str], ModuleType],
 ) -> None:
     compile_module = load_script("compile")
-    metadata = _metadata()
-    tensor = metadata["components"][1]["interface"]["entrypoints"][0]["inputs"][0]
-    shape = tensor["shape"]
-    # Shape and dtype changes preserve the byte count, which alone cannot validate a connection.
-    tensor[field] = {"shape": [shape[0], shape[1], shape[2] * shape[3], 1],
-                     "dtype": "int32", "name": "wrong_features"}[field]
-    monkeypatch.setattr(compile_module, "load_metadata", lambda _: metadata)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["compile.py", "--model", str(tmp_path / "model.onnx"), "--fidelity-dataset", str(tmp_path / "images"),
+         "--output-dir", str(tmp_path / "out"), "--build-profile", "w8a16_w16a16", "--compile-invocation", "rf_detr"],
+    )
 
-    with pytest.raises(ValueError, match="decoder inputs do not match the RF-DETR graph boundary"):
-        compile_module.compile_model(tmp_path / "source.onnx", "w8a16_w16a16", None,
-                                     tmp_path / "images", tmp_path / "output")
+    with pytest.raises(SystemExit) as stopped:
+        compile_module.main()
+
+    assert stopped.value.code == 2
+    assert "a build profile compiles in one invocation named after it" in capsys.readouterr().err
 
 
 def test_the_decoder_calibrates_in_every_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -401,25 +433,17 @@ def test_surgery_simplifies_only_the_decoder_partition() -> None:
     assert "full, valid = simplify(" not in source
 
 
-def test_model_declares_onnx_and_full_pipeline_correctness() -> None:
+def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
     model = load_metadata(MODEL_DIR)
-    invocation = model["build_profiles"][0]["compile_invocations"][0]
-    correctness = model["fidelity"][0]
-    benchmarks = model["benchmark"]
 
-    assert invocation["components"] == ["backbone", "decoder"]
-    assert "python_packages" not in invocation
+    for profile in model["build_profiles"]:
+        assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
     assert model["components"][0]["source"]["type"] == "file"
     assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_w16a16", "w8a16_w16a16"]
-    assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_samples"] == 50
-    assert model["build_profiles"][0]["components"][0]["parameters"]["calibration_bins"] == 1024
-    assert correctness["scope"] == {"type": "package", "package": "default"}
-    assert [(entry["id"], entry["scope"]) for entry in benchmarks] == [
-        ("orchestration", {"type": "package", "package": "default"})
-    ]
-    assert benchmarks[0]["required_metrics"] == ["avg_power_watts", "energy_per_inference_joules"]
+    assert model["numerical_fidelity"]["outputs"] == ["dets", "labels"]
+    assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]
+    assert model["performance"] == {}
 
 
 def _gelu_mlp() -> onnx.ModelProto:
@@ -542,6 +566,117 @@ def test_surgery_merges_the_query_sine_embedding_into_one_sin(load_script: Calla
 
     assert [node.op_type for node in result.graph.node] == ["MatMul", "Add", "Sin"]
     np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"coords": coords})[0], expected, atol=1e-5)
+
+
+def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    constant = onnx.numpy_helper.from_array
+    model = _model(
+        [
+            onnx.helper.make_node("LayerNormalization", ["x", "gamma", "beta"], ["normed"], name="norm", axis=-1),
+            onnx.helper.make_node("Reshape", ["normed", "shape"], ["tokens"], name="tokens"),
+            onnx.helper.make_node("MatMul", ["tokens", "w"], ["projected"], name="projection"),
+            onnx.helper.make_node("Add", ["b", "projected"], ["y"], name="bias"),
+            onnx.helper.make_node("Relu", ["normed"], ["z"], name="relu"),
+        ],
+        [_value("x", [1, 4, 8])],
+        [_value("y", [4, 8]), _value("z", [1, 4, 8])],
+        [
+            constant(np.ones(8, dtype=np.float32), "gamma"),
+            constant(np.zeros(8, dtype=np.float32), "beta"),
+            constant(np.array([4, 8], dtype=np.int64), "shape"),
+            constant(np.eye(8, dtype=np.float32), "w"),
+            constant(np.zeros(8, dtype=np.float32), "b"),
+        ],
+    )
+
+    marks = surgery._annotate(model, {"norm", "relu"})
+
+    onnx.checker.check_model(model)
+    assert marks == {"bfloat16": 2, "int8": 1}
+    assert [
+        (node.name, *(onnx.helper.get_attribute_value(a).decode() for a in node.attribute if a.name == "precision"))
+        for node in model.graph.node
+    ] == [
+        ("norm",),
+        ("norm/AnnotatePrecision", "bfloat16"),
+        ("tokens",),
+        ("projection",),
+        ("projection/AnnotatePrecision", "int8"),
+        ("bias",),
+        ("relu",),
+        ("relu/AnnotatePrecision", "bfloat16"),
+    ]
+    # Readers and graph outputs keep their value names; the marks sit in between.
+    assert model.graph.node[2].input[0] == "normed" and model.graph.node[7].output[0] == "z"
+    assert [output.name for output in model.graph.output] == ["y", "z"]
+
+
+def test_only_the_outputs_region_promotes_the_operations_producing_backbone_outputs(
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    surgery = load_script("surgery")
+
+    def node(name: str, op_type: str) -> SimpleNamespace:
+        return SimpleNamespace(name=name, op_type=op_type)
+
+    found = {
+        "residual": [node("norm", "LayerNormalization")],
+        "head": [node("exp", "Exp"), node("box", "Add"), node("boxes", "Concat")],
+        "outputs": [node("box", "Add"), node("boxes", "Concat")],
+    }
+
+    assert surgery._promoted(found, ["residual", "head"]) == {"norm", "exp"}
+    assert surgery._promoted(found, ["residual", "head", "outputs"]) == {"norm", "exp", "box", "boxes"}
+
+
+def test_bf16_regions_require_the_mixed_token(load_script: Callable[[str], ModuleType]) -> None:
+    compile_module = load_script("compile")
+    decoder = {"precision": "w16a16"}
+
+    def regions(profile_id: str, backbone: dict, decoder: dict = decoder) -> list[str]:
+        return compile_module._bf16_regions(profile_id, {"backbone": backbone, "decoder": decoder})
+
+    w8a8 = {"precision": "w8a8", "bf16_regions": ["residual", "head"]}
+    assert regions("w8a8_mixed_w16a16", w8a8) == ["residual", "head"]
+    assert regions("w8a8_w16a16", {"precision": "w8a8"}) == []
+    with pytest.raises(ValueError, match="must have the mixed token"):
+        regions("w8a8_w16a16", w8a8)
+    with pytest.raises(ValueError, match="must have the mixed token"):
+        regions("w8a8_mixed_w16a16", {"precision": "w8a8"})
+    with pytest.raises(ValueError, match=r"unknown BF16 regions \['embed'\]"):
+        regions("w8a8_mixed_w16a16", {"precision": "w8a8", "bf16_regions": ["embed"]})
+    with pytest.raises(ValueError, match="distinct regions of a W8A8 backbone"):
+        regions("w8a16_mixed_w16a16", {"precision": "w8a16", "bf16_regions": ["residual"]})
+    with pytest.raises(ValueError, match="distinct regions of a W8A8 backbone"):
+        regions("w8a8_mixed_w16a16", {"precision": "w8a8", "bf16_regions": ["residual", "residual"]})
+    with pytest.raises(ValueError, match="only the backbone"):
+        regions("w8a8_w16a16", {"precision": "w8a8"}, {**decoder, "bf16_regions": ["head"]})
+
+
+def test_the_bf16_guard_requires_the_operations_afe_quantized_in_bf16(
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    compile_module = load_script("compile")
+    bf16 = compile_module.QuantizationPrecision.BFLOAT_16
+    softmax, add = type("SoftmaxOp", (), {}), type("AddActivationOp", (), {})
+
+    def node(operation: type, precision: object) -> SimpleNamespace:
+        config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
+        return SimpleNamespace(ir=SimpleNamespace(operation=operation(), quant_config=config))
+
+    def quantized(*nodes: SimpleNamespace) -> SimpleNamespace:
+        return SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: iter(nodes)))
+
+    global_softmaxes = [node(softmax, bf16) for _ in range(3)]
+    compile_module._require_bf16_regions(quantized(*global_softmaxes, node(softmax, "int8")), ["attention_global"])
+    compile_module._require_bf16_regions(quantized(node(add, bf16), node(softmax, "int8")), ["residual"])
+    with pytest.raises(RuntimeError, match="including 3 softmaxes"):
+        compile_module._require_bf16_regions(quantized(*global_softmaxes[:2]), ["attention_global"])
+    with pytest.raises(RuntimeError, match="including 0 softmaxes"):
+        compile_module._require_bf16_regions(quantized(node(add, "int8")), ["residual"])
+    with pytest.raises(RuntimeError, match="including 0 softmaxes"):
+        compile_module._require_bf16_regions(quantized(node(add, bf16), node(softmax, bf16)), ["residual"])
 
 
 def test_an_afe_system_exit_fails_the_phase(

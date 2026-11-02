@@ -1,8 +1,14 @@
+"""Load and validate models/<id>/model.yaml.
+
+model.yaml says what a model is and what each stage must produce. load_model() expands it into the shape the
+registry works with: each build profile compiles every component in one compile invocation named after the
+profile, and packages them as the `default` package.
+"""
+
 from __future__ import annotations
 
 import json
 import os
-import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -10,12 +16,10 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
-from .accuracy_config import DEVKIT_ACCURACY_ENGINE, accuracy_components
+from .benchmark_declarations import resolve_accuracy_requirements, validate_benchmark_declarations
 from .errors import SourcePolicyError, ValidationError
 from .model_tests import TESTS_DIR, TESTS_SCHEMA, validate_model_tests
-from .performance import validate_benchmarks
-from .published_metrics import load_accuracy_metrics, validate_published_metrics
-from .source import SourceSpec, source_identity
+from .source import SourceSpec
 from .taxonomy import find_taxonomy, load_taxonomy, validate_model_categorization
 
 MODEL_FILE = "model.yaml"
@@ -23,34 +27,14 @@ SCHEMA_RELATIVE_PATH = Path("schemas/model.schema.json")
 SCRIPTS_DIR = "scripts"
 # A model folder holds its manifest, its documentation, model-owned code in scripts/, and its tests in tests/.
 MODEL_FOLDER_ENTRIES = {MODEL_FILE, "README.md", "hero.png", SCRIPTS_DIR, TESTS_DIR}
-STAGES = ("fidelity", "accuracy", "benchmark")
 # vulcan-model-convert.yml runs these files for a model that declares `conversion`.
 CONVERSION_FILES = (f"{SCRIPTS_DIR}/convert.py", f"{SCRIPTS_DIR}/requirements-convert.txt")
-# A devkit_script accuracy entry runs this script on the DevKit.
-ACCURACY_SCRIPT = f"{SCRIPTS_DIR}/accuracy.py"
-ACCURACY_REQUIREMENTS = f"{SCRIPTS_DIR}/requirements-accuracy.txt"
-# A benchmark entry runs this script on the DevKit.
-PERFORMANCE_SCRIPT = f"{SCRIPTS_DIR}/performance.py"
-
-
-def _by_id(items: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
-    indexed: dict[str, dict[str, Any]] = {}
-    for item in items:
-        item_id = str(item["id"])
-        if item_id in indexed:
-            raise ValidationError(f"duplicate {kind} ids: {item_id}")
-        indexed[item_id] = item
-    return indexed
-
-
-def _check_file_set(directory: Path, source: dict[str, Any], label: str) -> None:
-    if source["type"] != "file_set":
-        return
-    member_paths = [member["path"] for member in source["files"]]
-    if len(member_paths) != len(set(member_paths)):
-        raise ValidationError(f"{directory}: {label} source contains duplicate paths")
-    if source["entrypoint"] not in set(member_paths):
-        raise ValidationError(f"{directory}: {label} source entrypoint is not a declared file")
+# The one component of a model that does not list compilation.components.
+SINGLE_COMPONENT = "model"
+DEFAULT_PACKAGE = "default"
+# vulcan-model-convert.yml names the one conversion a model declares.
+DEFAULT_CONVERSION = "default"
+RECIPES = {"onnx": "scripts/compile.py", "huggingface": "scripts/compile.sh"}
 
 
 def component_for(model: dict[str, Any], component_id: str) -> dict[str, Any]:
@@ -87,39 +71,17 @@ def mpk_filename(model: dict[str, Any], profile_id: str, component_id: str) -> s
     return f"{name}_mpk.tar.gz"
 
 
-def profile_component_requires_calibration(model: dict[str, Any], profile_id: str, component_id: str) -> bool:
-    _, binding = profile_component_for(model, profile_id, component_id)
-    return "calibration" in binding
-
-
 def effective_runner_class(profile: dict[str, Any], binding: dict[str, Any]) -> str:
     return str(binding.get("runner_class", profile.get("runner_class", "default")))
 
 
+def effective_runner_market(profile: dict[str, Any], binding: dict[str, Any]) -> str:
+    return binding.get("runner_market", profile.get("runner_market", "spot"))
+
+
 def compile_invocations_for(profile: dict[str, Any]) -> list[dict[str, Any]]:
-    declared = profile.get("compile_invocations")
-    if declared is not None:
-        return declared
-    return [
-        {"id": binding["id"], "components": [binding["id"]]}
-        for binding in profile["components"]
-        if binding.get("status", "supported") == "supported"
-    ]
-
-
-def benchmark_entry(model: dict[str, Any], component_id: str, build_profile_id: str) -> dict[str, Any] | None:
-    """The benchmark a component's build runs in a build profile: the component's own, or that of a package whose
-    last component it is. Vulcan links a benchmark run to one compile run, so a package's runs under its last
-    component's."""
-    return next(
-        (
-            entry
-            for entry in model["benchmark"]
-            if build_profile_id in entry["build_profiles"]
-            and accuracy_components(model, entry)[-1] == component_id
-        ),
-        None,
-    )
+    """A build profile's one compile invocation, which compiles every component."""
+    return profile["compile_invocations"]
 
 
 def source_members(source: dict[str, Any]) -> list[tuple[str, SourceSpec]]:
@@ -137,7 +99,7 @@ def model_file(model_dir: str | Path) -> Path:
     return path
 
 
-def load_model(model_dir: str | Path) -> dict[str, Any]:
+def _read_model(model_dir: str | Path) -> dict[str, Any]:
     path = model_file(model_dir)
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -145,148 +107,108 @@ def load_model(model_dir: str | Path) -> dict[str, Any]:
         raise ValidationError(f"{path}: could not load YAML: {exc}") from exc
     if not isinstance(value, dict):
         raise ValidationError(f"{path}: expected a YAML object")
-    return normalize_model(value, path.parent)
+    return value
+
+
+def load_model(model_dir: str | Path) -> dict[str, Any]:
+    return normalize_model(_read_model(model_dir), model_file(model_dir).parent)
 
 
 def normalize_model(value: dict[str, Any], directory: Path) -> dict[str, Any]:
-    """Expand author shorthand once, without fetching sources or importing execution SDKs."""
-    model = deepcopy(value)
+    """Expand model.yaml into the registry's shape, without fetching sources or importing execution SDKs."""
+    authored = deepcopy(value)
     try:
-        model.setdefault("id", directory.name)
-        model.setdefault("maturity", "experimental")  # Existing catalog API compatibility.
-        for field in ("resources", "calibrations", "fidelity", "accuracy", "benchmark"):
-            model.setdefault(field, [])
-        if isinstance(model.get("architecture"), str):
-            model["architecture"] = {"id": model["architecture"]}
-        components = model.get("components", [])
-        if "upstream" not in model and components:
-            source = components[0].get("source", {})
-            if source.get("repository") and source.get("revision"):
-                model["upstream"] = {"repository": f"https://huggingface.co/{source['repository']}",
-                                     "revision": source["revision"]}
-        for component in components:
-            if "format" in component:
-                if "interface" in component:
-                    raise ValidationError("declare either format or interface, not both")
-                component["interface"] = {"format": component.pop("format")}
-            component.setdefault("role", "inference")
-            recipe = "compile.sh" if component.get("interface", {}).get("format") == "huggingface" else "compile.py"
-            component.setdefault("recipe", f"scripts/{recipe}")
-            if "interface" in component:
-                component["interface"].setdefault("shape_profiles", [])
-            if "source" in component:
-                component["source"] = _expand_source(component["source"])
-        for conversion in model.get("conversion", {}).values():
-            conversion["source"] = _expand_source(conversion["source"])
-        for item in [*model["resources"], *model["calibrations"]]:
-            if "source" in item:
-                item["source"] = _expand_source(item["source"])
-        if "upstream" not in model and components:
-            source = components[0].get("source", {})
-            uri = source.get("uri") or next((f["uri"] for f in source.get("files", [])), "")
-            if uri.startswith("hf://models/"):
-                repository, revision_path = uri.removeprefix("hf://models/").split("@", 1)
-                model["upstream"] = {"repository": f"https://huggingface.co/{repository}",
-                                     "revision": revision_path.split("/", 1)[0]}
+        compilation = authored.pop("compilation")
+        component_ids = compilation.get("components", [SINGLE_COMPONENT])
+        source = _expand_source(compilation["source"])
+        model = {
+            **authored,
+            "id": directory.name,
+            "maturity": "experimental",  # Vulcan's catalog writer requires a maturity.
+            "architecture": {"id": authored["architecture"]},
+            "components": [
+                {
+                    "id": component_id,
+                    "source": source,
+                    "interface": {"format": compilation["format"]},
+                    "role": "inference",
+                    "recipe": RECIPES[compilation["format"]],
+                }
+                for component_id in component_ids
+            ],
+            "calibrations": authored.get("calibrations", []),
+            "build_profiles": [],
+        }
+        if "conversion" in authored:
+            model["conversion"] = {DEFAULT_CONVERSION: {"source": _expand_source(authored["conversion"]["source"])}}
+        if "upstream" not in model and "repository" in compilation["source"]:
+            model["upstream"] = {
+                "repository": f"https://huggingface.co/{compilation['source']['repository']}",
+                "revision": compilation["source"]["revision"],
+            }
         if "upstream" in model:
             model["upstream"].setdefault("model_card", model["upstream"]["repository"])
-        profiles = model.get("build_profiles", [])
-        for profile in profiles:
-            profile.setdefault("target", "modalix")
-        if len(components) > 1 and ("compositions" not in model or "packages" not in model):
-            raise ValidationError("multi-component models require explicit compositions and packages")
-        if len(components) == 1:
-            component = components[0]
-            public_name = component.get("entrypoint", "default")
-            entries = component.get("interface", {}).get("entrypoints", [])
-            if len(entries) == 1:
-                public_name = component.get("entrypoint", entries[0]["id"])
-            model.setdefault("compositions", [{"id": "default", "type": "single",
-                                              "component": component["id"], "entrypoint": public_name}])
-            model.setdefault("packages", [{"id": "default", "default": True,
-                                          "components": [component["id"]], "resources": [],
-                                          "build_profiles": [p["id"] for p in profiles if any(
-                                              b["id"] == component["id"] and b.get("status") != "unsupported"
-                                              for b in p["components"])], "composition": "default"}])
-        for package in model.get("packages", []):
-            package.setdefault("resources", [])
-        datasets = model.get("datasets", {})
-        calibrations = {c["id"] for c in model["calibrations"]}
-        for profile in profiles:
-            for binding in profile["components"]:
-                name = binding.get("calibration")
-                if name in datasets and name not in calibrations:
-                    model["calibrations"].append({"id": name, "status": "ready", "dataset": deepcopy(datasets[name])})
-                    calibrations.add(name)
-        if model["benchmark"] is True:
-            if len(components) != 1 or components[0]["interface"]["format"] != "onnx":
-                raise ValidationError("benchmark: true requires a single ONNX component")
-            model["benchmark"] = [{"id": "modalix_latency"}]
-        for stage in STAGES:
-            for entry in model[stage]:
-                if stage == "accuracy" and entry.get("engine") != DEVKIT_ACCURACY_ENGINE:
-                    continue  # Recorded evidence never becomes executable accuracy.
-                if isinstance(entry.get("dataset"), str):
-                    name = entry["dataset"]
-                    if name not in datasets:
-                        raise ValidationError(f"{stage} {entry.get('id')!r}: unknown dataset {name!r}")
-                    entry["dataset"] = deepcopy(datasets[name])
-                if "scope" not in entry:
-                    if stage == "benchmark" and len(components) == 1:
-                        entry["scope"] = {"type": "component", "component": components[0]["id"]}
-                    elif stage != "benchmark" and len(components) == 1:
-                        defaults = [p for p in model["packages"] if p["default"]]
-                        if len(defaults) != 1:
-                            raise ValidationError(f"{stage}: scope requires one default package")
-                        entry["scope"] = {"type": "package", "package": defaults[0]["id"]}
-                    else:
-                        raise ValidationError(f"{stage} {entry.get('id')!r}: multi-component scope must be explicit")
-                if "build_profiles" not in entry or (stage != "benchmark" and "result_component" not in entry):
-                    scoped = accuracy_components(model, entry)
-                    if stage != "benchmark" and len(scoped) == 1:
-                        entry.setdefault("result_component", scoped[0])
-                    if "build_profiles" not in entry:
-                        compatible = _supported_profiles(profiles, scoped)
-                        if entry["scope"]["type"] == "package":
-                            package = next(p for p in model["packages"] if p["id"] == entry["scope"]["package"])
-                            compatible = [p for p in compatible if p in package["build_profiles"]]
-                        entry["build_profiles"] = compatible
+
+        for profile_id, profile in authored["build_profiles"].items():
+            calibration = profile.get("calibration_dataset")
+            bindings = [{"id": component_id, **binding} for component_id, binding in profile["components"].items()]
+            # The compile recipe calibrates its first component; later components calibrate on its outputs.
+            if calibration is not None and bindings:
+                bindings[0]["calibration"] = calibration
+            model["build_profiles"].append({
+                "id": profile_id,
+                "target": "modalix",
+                **({"runner_class": profile["runner_class"]} if "runner_class" in profile else {}),
+                **({"runner_market": profile["runner_market"]} if "runner_market" in profile else {}),
+                **({"benchmark_baseline": profile["benchmark_baseline"]} if "benchmark_baseline" in profile else {}),
+                "components": bindings,
+                # One invocation compiles every component, so its ID is the profile ID. Vulcan's catalog and
+                # promotion contracts still name each build's compile_invocation_id.
+                "compile_invocations": [{"id": profile_id, "components": list(component_ids)}],
+            })
+
+        model["compositions"] = [
+            {"id": DEFAULT_PACKAGE, "type": "single", "component": SINGLE_COMPONENT,
+             "entrypoint": compilation.get("entrypoint", "default")}
+            if component_ids == [SINGLE_COMPONENT]
+            else {"id": DEFAULT_PACKAGE, "type": "declarative"}
+        ]
+        model["packages"] = [{
+            "id": DEFAULT_PACKAGE, "default": True, "components": list(component_ids),
+            "build_profiles": [profile["id"] for profile in model["build_profiles"]], "composition": DEFAULT_PACKAGE,
+        }]
+        if "accuracy" in model:
+            # Each dataset goes by its Dataset Registry source ID; validate_model() adds its required_metrics.
+            pins = model["accuracy"]["datasets"]
+            datasets = {dataset_name(pin): pin for pin in pins}
+            if len(datasets) != len(pins):
+                raise ValidationError(f"{directory}: accuracy lists a dataset twice")
+            model["accuracy"] = {**model["accuracy"], "datasets": datasets}
         return model
-    except (KeyError, TypeError, AttributeError, StopIteration, ValueError) as exc:
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
         raise ValidationError(f"{directory}: invalid model declaration: {exc}") from exc
 
 
+def dataset_name(pin: dict[str, Any]) -> str:
+    """The Dataset Registry's source ID for a pinned dataset variant, such as coco-2017-val."""
+    return f"{pin['id']}-{pin['variant']}"
+
+
 def _expand_source(source: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(source.get("files"), dict):
-        return source
-    source = deepcopy(source)
-    repository = source.pop("repository", None)
-    revision = source.pop("revision", None)
-    if repository is not None and (not isinstance(repository, str) or not re.fullmatch(r"[^/@]+/[^/@]+", repository)):
-        raise ValidationError("source repository must be owner/repository")
-    if revision is not None and (not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision)):
-        raise ValidationError("source revision must be an immutable 40-character commit")
+    """Expand a source into a file or a file set whose members each have a path and a URI."""
+    if "files" not in source:
+        return {"type": "file", **source}
+    repository = source.get("repository")
+    revision = source.get("revision")
     files = []
     for path, specification in source["files"].items():
-        if "path" in specification:
-            raise ValidationError("source files use their mapping key as the path")
         member = {"path": path, **specification}
         if "uri" not in member:
             if not repository or not revision:
                 raise ValidationError(f"source member {path!r} requires a URI or repository and revision")
             member["uri"] = f"hf://models/{repository}@{revision}/{path}"
         files.append(member)
-    source["files"] = files
-    source.setdefault("type", "file_set")
-    return source
-
-
-def _supported_profiles(profiles: list[dict[str, Any]], components: list[str]) -> list[str]:
-    return [
-        profile["id"] for profile in profiles
-        if all(any(binding["id"] == component and binding.get("status") != "unsupported"
-                   for binding in profile["components"]) for component in components)
-    ]
+    return {"type": "file_set", "entrypoint": source["main_file"], "files": files}
 
 
 def find_schema(model_dir: str | Path, schema_path: str | Path | None = None) -> Path:
@@ -331,606 +253,117 @@ def _error_path(error: Any) -> str:
     return _format_path(parts)
 
 
-def composition_document(declaration: dict[str, Any]) -> dict[str, Any]:
-    """Return a declarative composition as the standalone document packages ship."""
-    return {key: value for key, value in declaration.items() if key not in {"id", "type"}}
-
-
 def component_pipelines(models: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     """Each declared pipeline, keyed by model ID."""
     return {model_id: model["pipeline"] for model_id, model in sorted(models.items()) if "pipeline" in model}
 
 
-def _load_declarative_composition(
-    directory: Path,
-    declaration: dict[str, Any],
-    components: dict[str, dict[str, Any]],
-    schema_directory: Path,
-) -> set[str]:
-    path = f"{directory}: composition {declaration['id']!r}"
-    document = composition_document(declaration)
-    try:
-        schema = json.loads((schema_directory / "composition.schema.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"{path}: could not load the composition schema: {exc}") from exc
-    errors = sorted(
-        Draft202012Validator(schema).iter_errors(document),
-        key=lambda item: tuple(str(part) for part in item.absolute_path),
-    )
-    if errors:
-        details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
-        raise ValidationError(f"{path}: {details}")
-
-    instances = _by_id(document["components"], f"component instance in composition {declaration['id']}")
-    ports: dict[str, tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]] = {}
-    for instance_id, instance in instances.items():
-        component_id = instance["component"]
-        if component_id not in components:
-            raise ValidationError(f"{path}: instance {instance_id!r} references unknown component {component_id!r}")
-        entrypoints = _by_id(components[component_id]["interface"]["entrypoints"], f"entrypoint in {component_id}")
-        entrypoint_id = instance["entrypoint"]
-        if entrypoint_id not in entrypoints:
-            raise ValidationError(f"{path}: instance {instance_id!r} references unknown entrypoint {entrypoint_id!r}")
-        entrypoint = entrypoints[entrypoint_id]
-        ports[instance_id] = (
-            {tensor["name"]: tensor for tensor in entrypoint["inputs"]},
-            {tensor["name"]: tensor for tensor in entrypoint["outputs"]},
-        )
-
-    destinations: set[tuple[str, str]] = set()
-    graph = {instance_id: set() for instance_id in instances}
-    for connection in document["connections"]:
-        source = connection["from"]
-        destination = connection["to"]
-        if source["component"] not in ports or source["output"] not in ports[source["component"]][1]:
-            raise ValidationError(f"{path}: connection references unknown output {source}")
-        if destination["component"] not in ports or destination["input"] not in ports[destination["component"]][0]:
-            raise ValidationError(f"{path}: connection references unknown input {destination}")
-        destination_key = (destination["component"], destination["input"])
-        if destination_key in destinations:
-            raise ValidationError(
-                f"{path}: input {destination_key[0]}.{destination_key[1]} is connected more than once"
-            )
-        destinations.add(destination_key)
-        source_tensor = ports[source["component"]][1][source["output"]]
-        destination_tensor = ports[destination["component"]][0][destination["input"]]
-        if source_tensor["dtype"] != destination_tensor["dtype"]:
-            raise ValidationError(f"{path}: connection {source} -> {destination} has incompatible dtypes")
-        source_shape = source_tensor["shape"]
-        destination_shape = destination_tensor["shape"]
-        if len(source_shape) != len(destination_shape) or any(
-            isinstance(left, int) and isinstance(right, int) and left != right
-            for left, right in zip(source_shape, destination_shape, strict=True)
-        ):
-            raise ValidationError(f"{path}: connection {source} -> {destination} has incompatible shapes")
-        graph[source["component"]].add(destination["component"])
-
-    input_names: set[str] = set()
-    for public_input in document["inputs"]:
-        if public_input["name"] in input_names:
-            raise ValidationError(f"{path}: duplicate public input {public_input['name']!r}")
-        input_names.add(public_input["name"])
-        destination = public_input["to"]
-        if destination["component"] not in ports or destination["input"] not in ports[destination["component"]][0]:
-            raise ValidationError(f"{path}: public input references unknown input {destination}")
-        destination_key = (destination["component"], destination["input"])
-        if destination_key in destinations:
-            raise ValidationError(
-                f"{path}: input {destination_key[0]}.{destination_key[1]} is connected more than once"
-            )
-        destinations.add(destination_key)
-
-    required_destinations = {
-        (instance_id, input_name)
-        for instance_id, (inputs, _) in ports.items()
-        for input_name in inputs
-    }
-    if destinations != required_destinations:
-        missing = ", ".join(f"{instance}.{port}" for instance, port in sorted(required_destinations - destinations))
-        raise ValidationError(f"{path}: composition has unconnected component inputs: {missing}")
-
-    output_names: set[str] = set()
-    for public_output in document["outputs"]:
-        if public_output["name"] in output_names:
-            raise ValidationError(f"{path}: duplicate public output {public_output['name']!r}")
-        output_names.add(public_output["name"])
-        source = public_output["from"]
-        if source["component"] not in ports or source["output"] not in ports[source["component"]][1]:
-            raise ValidationError(f"{path}: public output references unknown output {source}")
-
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit_instance(instance_id: str) -> None:
-        if instance_id in visiting:
-            raise ValidationError(f"{path}: composition connections contain a cycle at {instance_id!r}")
-        if instance_id in visited:
-            return
-        visiting.add(instance_id)
-        for downstream in graph[instance_id]:
-            visit_instance(downstream)
-        visiting.remove(instance_id)
-        visited.add(instance_id)
-
-    for instance_id in instances:
-        visit_instance(instance_id)
-    return {instance["component"] for instance in instances.values()}
-
-
 def validate_model(
     model_dir: str | Path,
-    model: dict[str, Any],
+    authored: dict[str, Any],
     schema_path: str | Path | None = None,
     taxonomy_path: str | Path | None = None,
-) -> None:
+) -> dict[str, Any]:
+    """Validate model.yaml as written and return its expanded form."""
     directory = Path(model_dir).expanduser().resolve()
     schema_file = find_schema(directory, schema_path)
     try:
         schema = json.loads(schema_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(f"{schema_file}: could not load schema: {exc}") from exc
-
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    errors = sorted(validator.iter_errors(model), key=lambda item: tuple(str(part) for part in item.absolute_path))
+    errors = sorted(validator.iter_errors(authored), key=lambda item: tuple(str(part) for part in item.absolute_path))
     if errors:
         details = "; ".join(f"{_error_path(error)}: {error.message}" for error in errors)
         raise ValidationError(f"{directory}: {details}")
 
-    model = normalize_model(model, directory)
+    for profile_id, profile in authored["build_profiles"].items():
+        markets = {effective_runner_market(profile, binding) for binding in profile["components"].values()}
+        if len(markets) != 1:
+            raise ValidationError(
+                f"{directory}: {profile_id} has conflicting runner_market requests in grouped compile"
+            )
+
+    model = normalize_model(authored, directory)
     if "upstream" not in model:
         raise ValidationError(f"{directory}: upstream is required when the source has no Hugging Face repository")
-    taxonomy_file = find_taxonomy(directory, taxonomy_path)
-    taxonomy = load_taxonomy(taxonomy_file)
     try:
-        validate_model_categorization(model, taxonomy)
-        if model.get("published_metrics"):
-            # The accuracy metric vocabulary sits beside the taxonomy.
-            vocabulary = load_accuracy_metrics(taxonomy_file.parent / "accuracy-metrics.yaml")
-            validate_published_metrics(model["published_metrics"], vocabulary)
+        validate_model_categorization(model, load_taxonomy(find_taxonomy(directory, taxonomy_path)))
     except ValidationError as exc:
         raise ValidationError(f"{directory}: {exc}") from exc
 
-    model_id = str(model["id"])
-    if directory.name != model_id:
-        raise ValidationError(f"{directory}: id must match directory name; found {model_id!r}")
-
+    sources = [authored["compilation"]["source"]]
+    if "conversion" in authored:
+        sources.append(authored["conversion"]["source"])
+    for source in sources:
+        if "files" in source and source["main_file"] not in source["files"]:
+            raise ValidationError(f"{directory}: source main_file {source['main_file']!r} is not one of its files")
     try:
-        for component in model["components"]:
+        for component in model["components"][:1]:
             source_members(component["source"])
-        for resource in model["resources"]:
-            source_members(resource["source"])
-        for calibration in model["calibrations"]:
-            if calibration["status"] == "ready" and "source" in calibration:
-                source_members(calibration["source"])
         for conversion in model.get("conversion", {}).values():
             source_members(conversion["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
         raise ValidationError(f"{directory}: source policy: {exc}") from exc
 
-    components = _by_id(model["components"], "component")
-    resources = _by_id(model["resources"], "resource")
-    calibrations = _by_id(model["calibrations"], "calibration")
-    profiles = _by_id(model["build_profiles"], "build profile")
-    compositions = _by_id(model["compositions"], "composition")
-    packages = _by_id(model["packages"], "package")
-
-    for conversion_id, conversion in model.get("conversion", {}).items():
-        _check_file_set(directory, conversion["source"], f"conversion {conversion_id!r}")
-
-    for component_id, component in components.items():
-        _check_file_set(directory, component["source"], f"component {component_id!r}")
-
-        dependency_ids = set(component.get("depends_on", ()))
-        unknown_dependencies = dependency_ids - set(components)
-        if unknown_dependencies:
+    component_ids = [component["id"] for component in model["components"]]
+    if authored["compilation"]["format"] == "huggingface":
+        if (len(component_ids) != 1
+                or Path(authored["compilation"]["source"].get("main_file", "")).name != "config.json"):
             raise ValidationError(
-                f"{directory}: component {component_id!r} references unknown dependencies: "
-                f"{', '.join(sorted(unknown_dependencies))}"
+                f"{directory}: a Hugging Face model is one component compiled from a checkpoint file set "
+                "whose main_file is config.json"
             )
-        if component_id in dependency_ids:
-            raise ValidationError(f"{directory}: component {component_id!r} cannot depend on itself")
-
-        interface = component["interface"]
-        if interface["format"] == "huggingface":
-            if (component["recipe"] != "scripts/compile.sh"
-                    or component["source"]["type"] != "file_set"
-                    or Path(component["source"]["entrypoint"]).name != "config.json"):
-                raise ValidationError(
-                    f"{directory}: Hugging Face components require scripts/compile.sh "
-                    "and a checkpoint file set with config.json as its entrypoint"
-                )
-            if len(components) != 1:
-                raise ValidationError(f"{directory}: declare the complete LLiMa model as one component")
-        elif component["recipe"] != "scripts/compile.py":
-            raise ValidationError(f"{directory}: ONNX components require scripts/compile.py")
-        entrypoints = _by_id(interface.get("entrypoints", []), f"entrypoint in component {component_id}")
-        shape_profiles = _by_id(interface["shape_profiles"], f"shape profile in component {component_id}")
-        symbols: dict[str, set[str]] = {}
-        for entrypoint_id, entrypoint in entrypoints.items():
-            inputs = {tensor["name"] for tensor in entrypoint["inputs"]}
-            outputs = {tensor["name"] for tensor in entrypoint["outputs"]}
-            if len(inputs) != len(entrypoint["inputs"]) or len(outputs) != len(entrypoint["outputs"]):
-                raise ValidationError(
-                    f"{directory}: component {component_id!r} entrypoint {entrypoint_id!r} has duplicate tensor names"
-                )
-            symbols[entrypoint_id] = {
-                dimension
-                for tensor in (*entrypoint["inputs"], *entrypoint["outputs"])
-                for dimension in tensor["shape"]
-                if isinstance(dimension, str)
-            }
-            state_ids: set[str] = set()
-            for state in entrypoint.get("state", ()):
-                if state["id"] in state_ids:
-                    raise ValidationError(
-                        f"{directory}: component {component_id!r} entrypoint {entrypoint_id!r} "
-                        f"duplicates state {state['id']!r}"
-                    )
-                state_ids.add(state["id"])
-                if state["input"] not in inputs or state["output"] not in outputs:
-                    raise ValidationError(
-                        f"{directory}: component {component_id!r} state {state['id']!r} has unresolved bindings"
-                    )
-        for shape_profile_id, shape_profile in shape_profiles.items():
-            entrypoint_id = shape_profile["entrypoint"]
-            if entrypoint_id not in entrypoints:
-                raise ValidationError(
-                    f"{directory}: component {component_id!r} shape profile {shape_profile_id!r} "
-                    f"references unknown entrypoint {entrypoint_id!r}"
-                )
-            unknown_symbols = set(shape_profile["bindings"]) - symbols[entrypoint_id]
-            if unknown_symbols:
-                raise ValidationError(
-                    f"{directory}: component {component_id!r} shape profile {shape_profile_id!r} "
-                    f"references unknown dimensions: {', '.join(sorted(unknown_symbols))}"
-                )
-
-    def visit(component_id: str, path: tuple[str, ...]) -> None:
-        if component_id in path:
-            cycle = " -> ".join((*path, component_id))
-            raise ValidationError(f"{directory}: component dependency cycle: {cycle}")
-        for dependency_id in components[component_id].get("depends_on", ()):
-            visit(dependency_id, (*path, component_id))
-
-    for component_id in components:
-        visit(component_id, ())
-
-    for profile_id, profile in profiles.items():
+    available_calibrations = {item["id"] for item in model["calibrations"]}
+    for profile_id, profile in authored["build_profiles"].items():
         baseline = profile.get("benchmark_baseline")
         if baseline:
-            if (baseline["model_id"], baseline["build_profile"]) == (model_id, profile_id):
+            if (baseline["model_id"], baseline["build_profile"]) == (directory.name, profile_id):
                 raise ValidationError(f"{directory}: benchmark_baseline cannot reference its own build profile")
             try:
-                baseline_model = model if baseline["model_id"] == model_id else load_model(
+                baseline_model = model if baseline["model_id"] == directory.name else load_model(
                     directory.parent / baseline["model_id"]
                 )
                 build_profile_for(baseline_model, baseline["build_profile"])
             except ValidationError as exc:
                 raise ValidationError(f"{directory}: build profile {profile_id!r} benchmark_baseline: {exc}") from exc
-        bindings = _by_id(profile["components"], f"component binding in build profile {profile_id}")
-        unknown_components = set(bindings) - set(components)
-        if unknown_components:
-            raise ValidationError(
-                f"{directory}: build profile {profile_id!r} references unknown components: "
-                f"{', '.join(sorted(unknown_components))}"
-            )
-        for component_id, binding in bindings.items():
-            component = components[component_id]
+        for binding in profile["components"].values():
             draft = binding["parameters"].get("draft_model_path")
-            if component["interface"]["format"] == "huggingface" and draft is not None:
-                source = component["source"]
-                if (not isinstance(draft, str) or f"{draft}/config.json" == source["entrypoint"]
-                        or f"{draft}/config.json" not in {item["path"] for item in source["files"]}):
+            if authored["compilation"]["format"] == "huggingface" and draft is not None:
+                source = authored["compilation"]["source"]
+                if (not isinstance(draft, str) or f"{draft}/config.json" == source["main_file"]
+                        or f"{draft}/config.json" not in source["files"]):
                     raise ValidationError(
                         f"{directory}: draft_model_path must name a separate checkpoint in the source file set"
                     )
-            calibration_id = binding.get("calibration")
-            if calibration_id is not None and calibration_id not in calibrations:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} component {component_id!r} "
-                    f"references unknown calibration {calibration_id!r}"
-                )
-            shape_profile_id = binding.get("shape_profile")
-            available_shapes = {item["id"] for item in components[component_id]["interface"]["shape_profiles"]}
-            if shape_profile_id is not None and shape_profile_id not in available_shapes:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} component {component_id!r} "
-                    f"references unknown shape profile {shape_profile_id!r}"
-                )
-
-        if "compile_invocations" not in profile:
-            continue
-        invocations = _by_id(profile["compile_invocations"], f"compile invocation in build profile {profile_id}")
-        invocation_components = [
-            component_id
-            for invocation in invocations.values()
-            for component_id in invocation["components"]
-        ]
-        unknown_invocation_components = set(invocation_components) - set(bindings)
-        if unknown_invocation_components:
+        if sorted(profile["components"]) != sorted(component_ids):
             raise ValidationError(
-                f"{directory}: build profile {profile_id!r} compile invocations reference unknown components: "
-                f"{', '.join(sorted(unknown_invocation_components))}"
+                f"{directory}: build profile {profile_id!r} must set the parameters of exactly the components "
+                f"{', '.join(component_ids)}"
             )
-        unsupported_invocation_components = {
-            component_id
-            for component_id in invocation_components
-            if bindings[component_id].get("status", "supported") == "unsupported"
-        }
-        if unsupported_invocation_components:
+        calibration = profile.get("calibration_dataset")
+        if calibration is not None and calibration not in available_calibrations:
             raise ValidationError(
-                f"{directory}: build profile {profile_id!r} compile invocations include unsupported components: "
-                f"{', '.join(sorted(unsupported_invocation_components))}"
-            )
-        duplicate_invocation_components = {
-            component_id
-            for component_id in invocation_components
-            if invocation_components.count(component_id) > 1
-        }
-        if duplicate_invocation_components:
-            raise ValidationError(
-                f"{directory}: build profile {profile_id!r} compile invocations duplicate components: "
-                f"{', '.join(sorted(duplicate_invocation_components))}"
-            )
-        supported_components = {
-            component_id
-            for component_id, binding in bindings.items()
-            if binding.get("status", "supported") == "supported"
-        }
-        omitted_components = supported_components - set(invocation_components)
-        if omitted_components:
-            raise ValidationError(
-                f"{directory}: build profile {profile_id!r} compile invocations omit supported components: "
-                f"{', '.join(sorted(omitted_components))}"
-            )
-
-        for invocation_id, invocation in invocations.items():
-            grouped_components = [components[component_id] for component_id in invocation["components"]]
-            source_identities = {source_identity(component["source"]) for component in grouped_components}
-            if len(source_identities) != 1:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
-                    "components must share one source content identity"
-                )
-            runner_classes = {
-                effective_runner_class(profile, bindings[component_id])
-                for component_id in invocation["components"]
-            }
-            if len(runner_classes) != 1:
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
-                    "components must share one effective runner class"
-                )
-            calibration_ids = {
-                bindings[component_id]["calibration"]
-                for component_id in invocation["components"]
-                if "calibration" in bindings[component_id]
-            }
-            primary_calibration = bindings[invocation["components"][0]].get("calibration")
-            if len(calibration_ids) > 1 or (calibration_ids and primary_calibration not in calibration_ids):
-                raise ValidationError(
-                    f"{directory}: build profile {profile_id!r} compile invocation {invocation_id!r} "
-                    "must select one shared calibration on its first component"
-                )
-
-    composition_components: dict[str, set[str]] = {}
-    for composition_id, composition in compositions.items():
-        if composition["type"] == "single":
-            component_id = composition["component"]
-            if component_id not in components:
-                raise ValidationError(
-                    f"{directory}: composition {composition_id!r} references unknown component {component_id!r}"
-                )
-            component = components[component_id]
-            entrypoints = {item["id"] for item in component["interface"].get("entrypoints", [])}
-            if not entrypoints:
-                entrypoints = {component.get("entrypoint", "default")}
-            if composition["entrypoint"] not in entrypoints:
-                raise ValidationError(
-                    f"{directory}: composition {composition_id!r} references unknown entrypoint "
-                    f"{composition['entrypoint']!r}"
-                )
-            composition_components[composition_id] = {component_id}
-        else:
-            composition_components[composition_id] = _load_declarative_composition(
-                directory, composition, components, schema_file.parent
+                f"{directory}: build profile {profile_id!r} names unknown calibration_dataset {calibration!r}"
             )
 
     pipeline_components = [stage["component"] for stage in model.get("pipeline", []) if "component" in stage]
-    if "pipeline" in model and sorted(pipeline_components) != sorted(components):
+    if "pipeline" in model and sorted(pipeline_components) != sorted(component_ids):
         raise ValidationError(f"{directory}: pipeline must list each component exactly once")
 
-    default_packages = [item["id"] for item in model["packages"] if item["default"]]
-    if len(default_packages) != 1:
-        raise ValidationError(f"{directory}: exactly one package must set default: true")
-    for package_id, package in packages.items():
-        for field, available in (
-            ("components", components),
-            ("resources", resources),
-            ("build_profiles", profiles),
-        ):
-            unknown = set(package[field]) - set(available)
-            if unknown:
-                raise ValidationError(
-                    f"{directory}: package {package_id!r} references unknown {field}: {', '.join(sorted(unknown))}"
-                )
-        if package["composition"] not in compositions:
-            raise ValidationError(
-                f"{directory}: package {package_id!r} references unknown composition {package['composition']!r}"
-            )
-        missing_composition_components = composition_components[package["composition"]] - set(package["components"])
-        if missing_composition_components:
-            raise ValidationError(
-                f"{directory}: package {package_id!r} omits components required by composition "
-                f"{package['composition']!r}: {', '.join(sorted(missing_composition_components))}"
-            )
-        for profile_id in package["build_profiles"]:
-            bindings = {item["id"]: item for item in profiles[profile_id]["components"]}
-            missing = set(package["components"]) - set(bindings)
-            unsupported = {
-                component_id
-                for component_id in package["components"]
-                if bindings.get(component_id, {}).get("status", "supported") == "unsupported"
-            }
-            if missing or unsupported:
-                unavailable = sorted(missing | unsupported)
-                raise ValidationError(
-                    f"{directory}: package {package_id!r} is incomplete for build profile {profile_id!r}: "
-                    f"{', '.join(unavailable)}"
-                )
-            # Each compile invocation publishes the packages it completes.
-            if not any(
-                set(package["components"]) <= set(invocation["components"])
-                for invocation in compile_invocations_for(profiles[profile_id])
-            ):
-                raise ValidationError(
-                    f"{directory}: package {package_id!r} must compile {', '.join(package['components'])} "
-                    f"in one compile invocation of build profile {profile_id!r}"
-                )
-
     _check_folder_layout(directory)
-    referenced_paths = [component["recipe"] for component in model["components"]]
-    referenced_paths.extend(
-        component["surgery"]["entrypoint"].split(":", 1)[0]
-        for component in model["components"]
-        if component.get("surgery", {}).get("type") == "python"
-    )
-    if model.get("conversion"):
+    referenced_paths = [model["components"][0]["recipe"]]
+    if "conversion" in model:
         referenced_paths.extend(CONVERSION_FILES)
-    if any(entry.get("engine") == DEVKIT_ACCURACY_ENGINE for entry in model["accuracy"]):
-        referenced_paths.append(ACCURACY_SCRIPT)
     for relative in referenced_paths:
         candidate = (directory / relative).resolve()
         if not candidate.is_relative_to(directory) or not candidate.is_file():
             raise ValidationError(f"{directory}: referenced file does not exist inside model directory: {relative}")
-
-    for stage in STAGES:
-        _by_id(model[stage], f"{stage} entry")
-        coverage_seen: set[tuple[str | None, str, str, str]] = set()
-        for entry in model[stage]:
-            scope = entry["scope"]
-            reference_ids = components if scope["type"] == "component" else packages
-            reference_field = scope["type"]
-            scoped_id = scope[reference_field]
-            if scoped_id not in reference_ids:
-                raise ValidationError(
-                    f"{directory}: {stage} entry {entry['id']!r} references unknown {reference_field} "
-                    f"{scoped_id!r}"
-                )
-            unknown_profiles = set(entry["build_profiles"]) - set(profiles)
-            if unknown_profiles:
-                raise ValidationError(
-                    f"{directory}: {stage} entry {entry['id']!r} references unknown build profiles: "
-                    f"{', '.join(sorted(unknown_profiles))}"
-                )
-            for profile_id in entry["build_profiles"]:
-                coverage = (entry.get("engine"), scope["type"], scoped_id, profile_id)
-                if coverage in coverage_seen:
-                    raise ValidationError(
-                        f"{directory}: more than one {stage} entry covers "
-                        f"{scope['type']} {scoped_id!r} in build profile {profile_id!r}"
-                    )
-                coverage_seen.add(coverage)
-                if scope["type"] == "component":
-                    bindings = {item["id"]: item for item in profiles[profile_id]["components"]}
-                    binding = bindings.get(scoped_id)
-                    if binding is None or binding.get("status", "supported") == "unsupported":
-                        raise ValidationError(
-                            f"{directory}: {stage} entry {entry['id']!r} targets unavailable component "
-                            f"{scoped_id!r} in build profile {profile_id!r}"
-                        )
-                elif profile_id not in packages[scoped_id]["build_profiles"]:
-                    raise ValidationError(
-                        f"{directory}: {stage} entry {entry['id']!r} targets package {scoped_id!r} "
-                        f"outside its build profiles"
-                    )
-
-    for entry in model["fidelity"]:
-        label = f"{directory}: fidelity {entry['id']!r}"
-        if entry["scope"]["type"] != "package":
-            raise ValidationError(f"{label}: fidelity requires package scope")
-        package = packages[entry["scope"]["package"]]
-        result_component = entry["result_component"]
-        if result_component not in package["components"]:
-            raise ValidationError(f"{label}: result_component {result_component!r} is not in the tested package")
-        output_names = {
-            output["name"]
-            for entrypoint in components[result_component]["interface"].get("entrypoints", [])
-            for output in entrypoint["outputs"]
-        }
-        unknown_outputs = set(entry["outputs"]) - output_names
-        if unknown_outputs and components[result_component]["interface"].get("entrypoints"):
-            raise ValidationError(
-                f"{label}: fidelity outputs are not exposed by {result_component!r}: "
-                f"{', '.join(sorted(unknown_outputs))}"
-            )
-
-    devkit_profiles: set[str] = set()
-    for entry in model["accuracy"]:
-        if entry.get("engine") == DEVKIT_ACCURACY_ENGINE:
-            _validate_devkit_accuracy(entry, packages, profiles, directory, devkit_profiles)
-            vocabulary = load_accuracy_metrics(taxonomy_file.parent / "accuracy-metrics.yaml")
-            unknown = set(entry.get("metrics", ())) | set(entry.get("required_metrics", ()))
-            unknown -= set(vocabulary)
-            if unknown:
-                raise ValidationError(f"{directory}: accuracy {entry['id']!r} has unregistered metrics: "
-                                      f"{', '.join(sorted(unknown))}")
-
-    for entry in model["benchmark"]:
-        metric_names = {metric if isinstance(metric, str) else metric["name"] for metric in entry.get("metrics", [])}
-        missing = set(entry.get("required_metrics", ())) - metric_names
-        if missing and "metrics" in entry:
-            raise ValidationError(
-                f"{directory}: benchmark {entry['id']!r} required_metrics are not declared in metrics: "
-                f"{', '.join(sorted(missing))}"
-            )
-    # A benchmark measures one component, or a package's components running as one pipeline.
-    for profile_id in profiles:
-        measured = [
-            component_id
-            for entry in model["benchmark"]
-            if profile_id in entry["build_profiles"]
-            for component_id in accuracy_components(model, entry)
-        ]
-        repeated = sorted({component_id for component_id in measured if measured.count(component_id) > 1})
-        if repeated:
-            raise ValidationError(
-                f"{directory}: more than one benchmark measures component {repeated[0]!r} "
-                f"in build profile {profile_id!r}"
-            )
-
-    validate_benchmarks(model, directory)
+    # The repository that holds the schema holds the dataset requirements.
+    resolve_accuracy_requirements(model, schema_file.parent.parent, directory)
+    validate_benchmark_declarations(model, directory)
     validate_model_tests(directory, model, schema_file.parent / TESTS_SCHEMA)
-
-
-def _validate_devkit_accuracy(
-    entry: dict[str, Any],
-    packages: dict[str, dict[str, Any]],
-    profiles: dict[str, dict[str, Any]],
-    directory: Path,
-    seen_profiles: set[str],
-) -> None:
-    label = f"{directory}: accuracy {entry['id']!r}"
-    scope = entry["scope"]
-    scoped = packages[scope["package"]]["components"] if scope["type"] == "package" else [scope["component"]]
-    if entry["result_component"] not in scoped:
-        raise ValidationError(f"{label}: result_component {entry['result_component']!r} is not in its scope")
-    # The accuracy stage runs with the MPKs of one compile invocation.
-    for profile_id in entry["build_profiles"]:
-        if not any(set(scoped) <= set(item["components"]) for item in compile_invocations_for(profiles[profile_id])):
-            raise ValidationError(
-                f"{label}: build profile {profile_id!r} must compile {', '.join(scoped)} in one compile invocation"
-            )
-    missing = set(entry.get("required_metrics", ())) - set(entry.get("metrics", []))
-    if missing and "metrics" in entry:
-        raise ValidationError(f"{label}: required_metrics are not declared in metrics: {', '.join(sorted(missing))}")
-    # The accuracy stage runs scripts/accuracy.py once per build profile.
-    repeated = seen_profiles & set(entry["build_profiles"])
-    if repeated:
-        raise ValidationError(
-            f"{label}: more than one {DEVKIT_ACCURACY_ENGINE} entry covers build profile {sorted(repeated)[0]!r}"
-        )
-    seen_profiles.update(entry["build_profiles"])
+    return model
 
 
 def _only_python_caches(path: Path) -> bool:
@@ -957,23 +390,16 @@ def load_and_validate_model(
     schema_path: str | Path | None = None,
     taxonomy_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    model = load_model(model_dir)
-    validate_model(model_dir, model, schema_path, taxonomy_path)
-    return model
+    return validate_model(model_dir, _read_model(model_dir), schema_path, taxonomy_path)
 
 
 def load_models(repository: str | Path) -> dict[str, dict[str, Any]]:
     """Load and validate every models/<id>/model.yaml, keyed by model ID."""
     root = Path(repository).expanduser().resolve()
     model_root = root / "models"
-    discovered: dict[str, dict[str, Any]] = {}
     if not model_root.is_dir():
         raise ValidationError(f"models directory not found: {model_root}")
-
-    for definition in sorted(model_root.glob("*/model.yaml")):
-        model = load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
-        model_id = str(model["id"])
-        if model_id in discovered:
-            raise ValidationError(f"duplicate model id {model_id!r}: {definition}")
-        discovered[model_id] = model
-    return discovered
+    return {
+        definition.parent.name: load_and_validate_model(definition.parent, root / "schemas" / "model.schema.json")
+        for definition in sorted(model_root.glob("*/model.yaml"))
+    }

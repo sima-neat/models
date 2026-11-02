@@ -2,75 +2,66 @@ display_name: YOLO26s-pose
 description: A compact YOLO26 pose estimator for people and their 17 COCO keypoints.
 model_type: vision
 tasks: [pose_estimation]
+
 modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores, landmarks]
+
 architecture: yolo
+
 license:
   spdx: AGPL-3.0-only
   redistribution: restricted
   attribution: YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.
+
 upstream:
   repository: https://huggingface.co/Ultralytics/YOLO26
   revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
 conversion:
-  default:
-    source:
-      type: file
-      uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26s-pose.pt
-      sha256: a083adb42303728ae14c4bd6bd56d80da46f82fb2564dbd6f31dcc92ea321646
-      size_bytes: 24151790
-components:
-- id: model
   source:
-    type: file
+    uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26s-pose.pt
+    sha256: a083adb42303728ae14c4bd6bd56d80da46f82fb2564dbd6f31dcc92ea321646
+    size_bytes: 24151790
+
+compilation:
+  format: onnx
+  source:
     uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26s_pose/af52e50bed03ef7ebdac06df4330d92051ee6e27807086265107cb74d241eb2c/38162919915-1/model.onnx
     sha256: af52e50bed03ef7ebdac06df4330d92051ee6e27807086265107cb74d241eb2c
     size_bytes: 41832552
-    media_type: application/onnx
-  format: onnx
-datasets:
-  coco_images:
-    id: coco-2017
-    variant: cal
-    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
-    size_bytes: 187510866
-  accuracy:
-    id: coco-2017
-    variant: val
-    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
-    size_bytes: 898368520
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
 build_profiles:
-- id: w16a16
-  components:
-  - id: model
-    parameters:
-      precision: w16a16
-- id: w8a8
-  components:
-  - id: model
-    calibration: coco_images
-    parameters:
-      precision: w8a8
-      calibration_bins: 2048
-      calibration_samples: 50
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
 accuracy:
-- id: coco_keypoint_accuracy
-  engine: devkit_script
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
-  status: ready
-  dataset: accuracy
-  required_metrics: [coco_keypoint_map]
-published_metrics:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
 - source: https://huggingface.co/Ultralytics/YOLO26/blob/070ac3c51435984d992ba92eb3f234daf4e4500d/README.md
-  dataset:
-    id: coco-2017
-    split: val
+  dataset: {id: coco-2017, split: val}
   conditions: 640x640, NMS-free one-to-one head
-  metrics:
-    coco_keypoint_map: 0.63
-    coco_keypoint_ap50: 0.866
-benchmark:
-- id: modalix_latency
-  required_metrics: [avg_power_watts, energy_per_inference_joules]
+  metrics: {coco_keypoint_map: 0.63, coco_keypoint_ap50: 0.866}

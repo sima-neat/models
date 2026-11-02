@@ -25,9 +25,11 @@ Standalone previews keep a local header when the shared shell is unavailable.
 
 The build selects the audience: Main uses a customer view of its catalog;
 Develop and feature branches keep the developer view, with branch/compiler filters,
-build history and contributor navigation. Both currently use the staging registry
-and publish to the same staging site. Selecting a catalog branch changes data,
-never the audience of the built site.
+build history and contributor navigation. Both default to the staging registry
+and publish to the same staging site; `?env=prod` explicitly previews production
+data with the same staged UI and a Production registry label. Selecting a catalog branch changes data,
+never the audience of the built site. `?branches=0` hides only the branch selector
+and keeps the selected catalog on Main without changing the audience.
 
 Refined minimalism with generous space and progressive disclosure. Light and
 dark themes remain supported. Search is the dominant action; Task and Model family
@@ -41,7 +43,7 @@ table for scanning model names, tasks, precisions, accuracy, and performance.
 Both views use the same filters; the table groups models by task and keeps the
 model-family ordering within each group. Multi-task models appear in each applicable
 group, while the total counts unique models. It names the selected precision and
-keeps component measurements separate. Each card carries one thing per role: the
+shows one whole-model measurement per variant. Each card carries one thing per role: the
 model's hero illustration, its name, a one-line description, and its tasks. A
 card states what the model is, not how a build measured; numbers, precision,
 and build state belong on the model page, where they have context. Card
@@ -57,7 +59,7 @@ Filter dropdowns stay neutral when selected, with a neutral outline for keyboard
 The selected precision tab uses a soft blue fill and border while keeping its
 text neutral and readable in both themes.
 
-Compare starts with a task, then shows measured single-component vision variants
+Compare starts with a task, then shows measured vision variants
 in one scatter plot: accuracy vertically, throughput horizontally. The dataset is
 shown below the chart title, with a Dataset & metric selector when multiple groups
 are available. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
@@ -69,7 +71,8 @@ green and orange palette. LLM/VLM comparisons remain TBD.
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model
 image on the right; narrow screens stack the content and image. The image appears
-once, in the header. Performance and accuracy keep separate stacked sections.
+once, in the header. Performance and accuracy keep separate stacked sections, each
+measuring the whole model once per build profile.
 Validation and source-link icons sit beside Download; CLI commands live inside
 the download dialog.
 Each section shows its key facts directly; longer detail sits behind one kind of control: a

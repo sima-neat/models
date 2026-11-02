@@ -85,10 +85,6 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
-  ssd_mobilenet:
-    display_name: SSD-MobileNet
-    paradigm: cnn
-    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer

@@ -1,4 +1,4 @@
-// Accuracy metric labels in display order; taxonomies/accuracy-metrics.yaml lists the same metrics.
+// Accuracy metric labels in display order; tools/model_report/metrics.json gives the same labels.
 export const ACCURACY_METRIC_LABELS = {
   top1_accuracy: "Top-1",
   top5_accuracy: "Top-5",
@@ -53,15 +53,11 @@ export function orderedMetricNames(names) {
   return [...names].sort((left, right) => rank(left) - rank(right));
 }
 
-// The published score for each metric on a dataset. A result measured on a different dataset has no
-// comparable published score, even when the metric names match. Results published before model.yaml
-// recorded published_metrics carry the score on the metric itself, as its reference.
-export function publishedScores(published, datasetId, metrics = {}) {
+// The score each source model's authors published for a metric on a dataset. A result measured on a
+// different dataset has no comparable reference score, even when the metric names match.
+export function referenceScores(reference, datasetId) {
   const scores = {};
-  for (const [name, metric] of Object.entries(metrics)) {
-    if (Number.isFinite(metric?.reference)) scores[name] = metric.reference;
-  }
-  for (const entry of published || []) {
+  for (const entry of reference || []) {
     if (entry.dataset?.id !== datasetId) continue;
     for (const [name, value] of Object.entries(entry.metrics || {})) {
       if (Number.isFinite(value)) scores[name] = value;

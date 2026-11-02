@@ -31,7 +31,7 @@ if [[ -n "${MODEL_REGISTRY_CACHE_DIR:-}" ]]; then
   cache_args=(--cache-dir "$MODEL_REGISTRY_CACHE_DIR")
 fi
 checkpoint="$("$PYTHON" -m model_registry fetch "$MODEL_DIR" --component "$component_id" \
-  "${cache_args[@]}" --json | "$PYTHON" -c '
+  ${cache_args[@]+"${cache_args[@]}"} --json | "$PYTHON" -c '
 import json, sys
 print(json.load(sys.stdin)["path"])
 ')"
