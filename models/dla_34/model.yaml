@@ -1,0 +1,81 @@
+# Temporary: CI validates but does not compile until Vulcan Model Convert publishes the ONNX pinned below.
+build-on-demand: true
+display_name: DLA-34
+description: Classifies an image into one of the 1,000 ImageNet classes.
+model_type: vision
+tasks: [image_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: dla
+
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: Derived from the DLA authors' DLA-34 ImageNet weights (ucbdrive/dla) as published in timm/dla34.in1k, and distributed under BSD-3-Clause.
+
+upstream:
+  repository: https://huggingface.co/timm/dla34.in1k
+  revision: f9ff14eefc43f8ddd8064d09648bfdee690b0690
+  derived_from: https://github.com/ucbdrive/dla/tree/d477ceb8036ae402f3c7b59ead54963cf864903b
+
+conversion:
+  source:
+    repository: timm/dla34.in1k
+    revision: f9ff14eefc43f8ddd8064d09648bfdee690b0690
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: a7ff2ae9a4601482cbf2358cbd89a0da2e264ed1fa9ecb43788bc2daf1038701, size_bytes: 63051964}
+      config.json: {sha256: 43ecaedae27ed706034a641667fca1b222b8875c1e40d0e0a01bbdb7fd3e9832, size_bytes: 560}
+
+compilation:
+  format: onnx
+  # TODO(convert-pin): replace with the Vulcan Model Convert output for this branch.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/dla_34/af29dc0f688275734191ef0d26b095f3d407eed450fa1f7ca319f40c6e228d2e/0-0/model.onnx
+    sha256: af29dc0f688275734191ef0d26b095f3d407eed450fa1f7ca319f40c6e228d2e
+    size_bytes: 62963234
+
+calibrations:
+- id: imagenet-2012-cal
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 1000
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, center crop 0.875, bilinear, FP32
+  note: timm's dla34.in1k row, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.74632, top5_accuracy: 0.92052}
