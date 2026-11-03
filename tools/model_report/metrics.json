@@ -62,5 +62,7 @@
   "coco_mask_ar_medium": {"stage": "accuracy", "label": "Mask AR medium", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_mask_ar_medium", "aggregation": "raw", "digits": 3},
   "coco_mask_ar_large": {"stage": "accuracy", "label": "Mask AR large", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_mask_ar_large", "aggregation": "raw", "digits": 3},
   "coco_box_map": {"stage": "accuracy", "label": "Box mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_map", "aggregation": "raw", "digits": 3},
-  "coco_box_ap50": {"stage": "accuracy", "label": "Box AP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_ap50", "aggregation": "raw", "digits": 3}
+  "coco_box_ap50": {"stage": "accuracy", "label": "Box AP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_ap50", "aggregation": "raw", "digits": 3},
+  "dota_obb_map50": {"stage": "accuracy", "label": "DOTA mAP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map50", "aggregation": "raw", "digits": 3},
+  "dota_obb_map": {"stage": "accuracy", "label": "DOTA mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map", "aggregation": "raw", "digits": 3}
 }
