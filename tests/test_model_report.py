@@ -238,7 +238,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb"),
+    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb", "YoloV8Obb"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
@@ -331,10 +331,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     (frame,) = requests[0].inputs
     assert_letterboxed_frame(frame)
     report = saved_report(output)
-    if getattr(options, "decode_type", "").startswith("YoloV26"):
+    if getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8Obb")):
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
-        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
+        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg", "YoloV8Obb": "P0003.jpg"}.get(
+            options.decode_type, ".jpg"
+        )
         assert expected in report["workload"]
     else:
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
