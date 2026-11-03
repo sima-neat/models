@@ -1,5 +1,3 @@
-# Temporary: CI validates but does not compile until Vulcan Model Convert publishes the ONNX pinned below.
-build-on-demand: true
 display_name: VGG-16-BN
 description: Classifies an image into one of the 1,000 ImageNet classes.
 model_type: vision
@@ -32,9 +30,8 @@ conversion:
 
 compilation:
   format: onnx
-  # TODO(convert-pin): replace with the Vulcan Model Convert output for this branch.
   source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/vgg_16_bn/5f426881e6f4754cab6fa135ce7d36830fac25077406813096751a1b4119891a/0-0/model.onnx
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/vgg_16_bn/5f426881e6f4754cab6fa135ce7d36830fac25077406813096751a1b4119891a/41688876383-1/model.onnx
     sha256: 5f426881e6f4754cab6fa135ce7d36830fac25077406813096751a1b4119891a
     size_bytes: 553440387
 
