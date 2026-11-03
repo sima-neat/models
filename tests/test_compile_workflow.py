@@ -306,7 +306,9 @@ def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     assert plan_job["permissions"] == {"contents": "read", "id-token": "write"}
     credentials = step(plan_job, "Configure authenticated production registry reads")
     assert credentials["if"] == "needs.select.outputs.vulcan_environment == 'production'"
-    assert plan["env"]["REGISTRY_READ_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    assert plan["env"]["REGISTRY_READ_API_URL"] == (
+        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    )
     assert "model-registry plan-stages" in plan["run"]
     assert '--read-api-url "$REGISTRY_READ_API_URL"' in plan["run"]
     assert "--offline" not in plan["run"]
