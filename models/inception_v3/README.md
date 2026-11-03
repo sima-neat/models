@@ -19,9 +19,13 @@ reference scripts pass this image as a 299×299×3 (height, width,
 channel) float tensor, with Neat's resize, color conversion, and normalization
 turned off.
 
-**Outputs.** `logits` holds 1,000 class scores. Apply a softmax and take the
-five highest. Class index i is the i-th ImageNet-1k WordNet ID in sorted order,
-which is the standard ImageNet-1k class order.
+**Outputs.** `logits` holds 1,000 class scores.
+
+1. Apply a softmax to `logits` to get class probabilities.
+2. Take the five highest probabilities as the top-5 classes.
+
+Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the
+standard ImageNet-1k class order.
 
 ## Building applications
 
