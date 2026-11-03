@@ -238,7 +238,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg"),
+    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
@@ -256,11 +256,12 @@ def write_image(path, value):
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017 and ImageNet's val split. Only the second
-    COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split and DOTA's val images.
+    Only the second COCO image labels a person, so a pose script must pick it."""
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/images/P0003.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -332,8 +333,8 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     report = saved_report(output)
     if getattr(options, "decode_type", "").startswith("YoloV26"):
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
-        # Pose accuracy scores only images with a labelled person.
-        expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
+        # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
+        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     else:
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
