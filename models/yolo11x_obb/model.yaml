@@ -1,5 +1,5 @@
 display_name: YOLO11x-obb
-description: The largest YOLO11 oriented-box detector for the 15 DOTA aerial object classes.
+description: The largest YOLO11 oriented-box detector here, for the 15 DOTA aerial object classes.
 model_type: vision
 tasks: [oriented_object_detection]
 
@@ -14,8 +14,9 @@ license:
   redistribution: restricted
   attribution: YOLO11 is developed by Ultralytics and distributed under AGPL-3.0.
 
-# Ultralytics publishes the YOLO11 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.3.0), which
-# the registry does not accept as sources; conversion.source points at a copy in SiMa's Hugging Face org.
+# Ultralytics publishes the YOLO11 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.3.0),
+# which the registry does not accept as sources; conversion.source will point at a byte-identical copy
+# in SiMa's Hugging Face org once it is uploaded.
 upstream:
   repository: https://github.com/ultralytics/assets
   revision: 0f20d143ac8f9e01322f85dcb5c10dc9b7ca1153
@@ -53,9 +54,14 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
 accuracy:
-  # Ultralytics publishes multiscale test-split scores from the DOTA evaluation server, which the
-  # val split cannot reproduce, so the model records no reference metrics.
   datasets:
   - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
 
 performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/d73ffc6773cb5a44f762d9e46d6a95d2e1664f02/docs/macros/yolo-obb-perf.md
+  dataset: {id: dota-v1-0, split: test}
+  conditions: 1024x1024, single-model multiscale, merged tiles scored by the DOTA evaluation server
+  note: The DOTA-v1.0 test labels are not public, so the measured scores use the val split at a single scale and are not directly comparable.
+  metrics: {dota_obb_map50: 0.813}
