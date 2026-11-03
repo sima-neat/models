@@ -7,39 +7,36 @@
 YOLOv8n-obb is the Nano size of the Ultralytics YOLOv8 oriented-box model,
 trained on the 15 DOTA aerial object classes, such as planes and ships. It
 finds each object in a 1024×1024 RGB tile of an aerial image and returns a
-rotated box around it. It returns raw box, class, and angle outputs at three
-scales, which your application decodes with the steps below.
+rotated box around it as raw box, class, and angle outputs at three scales,
+which your application decodes with the steps below.
 
 ## Inputs and outputs
 
 **Input.** Cut larger images into 1024×1024 windows that overlap by 200 pixels.
 Letterbox each window to 1024×1024 with gray (114, 114, 114) padding, scaling it
-up with bilinear resampling only when it is smaller. Scale the RGB values to
-0–1. Pass the tile as a 1024×1024×3 (height, width, channel) float tensor, with
-Neat's resize, color conversion, and normalization turned off.
+up with bilinear resampling only when it is smaller, and scale RGB values
+to 0–1. Pass a 1024×1024×3 (height, width, channel) float tensor, with Neat's
+resize, color conversion, and normalization off.
 
-**Outputs.** Each tensor is in height, width, channel order, at stride 8, 16, or
-32 (grids of 128, 64, and 32 cells):
+**Outputs.** Height, width, channel tensors at stride 8, 16, and 32 (grids of
+128, 64, and 32 cells; the cell in column c and row r is centered at
+(c + 0.5, r + 0.5)):
 
-- `bbox_0` to `bbox_2`: 64 box logits, 16 for each of the left, top, right, and bottom sides, in that order.
+- `bbox_0` to `bbox_2`: 64 logits, 16 for each of the left, top, right, and bottom sides.
 - `class_logit_0` to `class_logit_2`: 15 class logits.
 - `angle_0` to `angle_2`: one angle logit.
 
-1. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
-2. For each side, apply a softmax to its 16 logits. The side's distance from the cell center, in cells and in the box's rotated frame, is the sum of each bin index (0 to 15) times its weight.
-3. Apply a sigmoid to the class logits. The angle in radians is (sigmoid(angle logit) − 0.25) × π.
-4. The box is left plus right wide and top plus bottom high. Its center is the cell center plus half of (right − left, bottom − top), rotated by the angle. Multiply by the stride.
-5. Keep the cell-class pairs that score above your threshold. Per class, drop boxes that overlap a higher-scoring box by your NMS threshold or more, measured as probabilistic IoU of rotated boxes.
-6. Remove the letterbox padding and scale, and add the window's offset.
-7. Per class, drop boxes that overlap a higher-scoring box from another window by 0.3 or more.
+1. Each side's distance from the cell center, in cells, is the softmax-weighted mean of bin indices 0 to 15.
+2. Class scores are sigmoids of their logits; the angle in radians is (sigmoid(logit) − 0.25) × π.
+3. The box is left + right wide and top + bottom high, centered half of (right − left, bottom − top) from the cell center, rotated by the angle. Multiply by the stride.
+4. Keep scores above your threshold, then apply per-class rotated non-maximum suppression.
+5. Undo the letterbox and add the window's offset.
+6. Per class, drop boxes overlapping a higher-scoring box from another window by 0.3 or more.
 
-The accuracy measurement keeps scores above 0.001, uses 0.7 for step 5, and
-keeps at most 300 boxes per tile.
-
-Class index i is, in order: plane, ship, storage-tank, baseball-diamond,
+Classes 0 to 14 are plane, ship, storage-tank, baseball-diamond,
 tennis-court, basketball-court, ground-track-field, harbor, bridge,
-large-vehicle, small-vehicle, helicopter, roundabout, soccer-ball-field,
-swimming-pool. Neat's `YoloV8Obb` box decoder can also run steps 1 to 5.
+large-vehicle, small-vehicle, helicopter, roundabout, soccer-ball-field, and
+swimming-pool. Neat's `YoloV8Obb` box decoder runs steps 1 to 4.
 
 ## Building applications
 
