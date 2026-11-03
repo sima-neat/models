@@ -85,6 +85,10 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
+  vgg:
+    display_name: VGG
+    paradigm: cnn
+    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer
