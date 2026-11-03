@@ -53,6 +53,10 @@ architectures:
     display_name: Gemma
     paradigm: transformer
     allowed_model_types: [llm]
+  hrnet:
+    display_name: HRNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   lfm:
     display_name: LFM
     paradigm: transformer
