@@ -166,7 +166,8 @@ def compiled(tmp_path, request):
     provenance = {
         "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
         "source_sha256": source_identity(model["components"][0]["source"]),
-        "git_sha": "a" * 40, "environment": getattr(request, "param", "staging"), "compiler_version": compiler["version"],
+        "git_sha": "a" * 40, "environment": getattr(request, "param", "staging"),
+        "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
         "compile_fingerprint": compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, compiler["identity"]),
     }
