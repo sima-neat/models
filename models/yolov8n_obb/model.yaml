@@ -14,11 +14,12 @@ license:
   redistribution: restricted
   attribution: YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.
 
-# Ultralytics publishes the YOLOv8 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.3.0), which
-# the registry does not accept as sources; conversion.source points at a copy in SiMa's Hugging Face org.
+# Ultralytics publishes the YOLOv8 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.4.0),
+# which the registry does not accept as sources; conversion.source will point at a byte-identical copy
+# in SiMa's Hugging Face org once it is uploaded.
 upstream:
   repository: https://github.com/ultralytics/assets
-  revision: 0f20d143ac8f9e01322f85dcb5c10dc9b7ca1153
+  revision: dcececebff9fe00420c144baa5cd25a641d10aa6
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
 
 conversion:
@@ -53,9 +54,14 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
 accuracy:
-  # Ultralytics publishes multiscale test-split scores from the DOTA evaluation server, which the
-  # val split cannot reproduce, so the model records no reference metrics.
   datasets:
   - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
 
 performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolov8.md
+  dataset: {id: dota-v1-0, split: test}
+  conditions: 1024x1024, single-model multiscale, merged tiles scored by the DOTA evaluation server
+  note: The DOTA-v1.0 test labels are not public, so the measured scores use the val split at a single scale and are not directly comparable.
+  metrics: {dota_obb_map50: 0.78}
