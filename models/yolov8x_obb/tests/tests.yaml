@@ -1,0 +1,10 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: false
+  skip_reason: No published accuracy report yet; the checkpoint waits for its Hugging Face source (#518).
+performance:
+  run_tests: false
+  skip_reason: No published performance report yet; the checkpoint waits for its Hugging Face source (#518).

@@ -1,0 +1,61 @@
+display_name: YOLOv8l-obb
+description: A large YOLOv8 oriented-box detector for the 15 DOTA aerial object classes.
+model_type: vision
+tasks: [oriented_object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolo
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.
+
+# Ultralytics publishes the YOLOv8 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.3.0), which
+# the registry does not accept as sources; conversion.source points at a copy in SiMa's Hugging Face org.
+upstream:
+  repository: https://github.com/ultralytics/assets
+  revision: 0f20d143ac8f9e01322f85dcb5c10dc9b7ca1153
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    # TODO(#518): pin once the checkpoint is uploaded to huggingface.co/simaai (same bytes as the GitHub asset).
+    uri: hf://models/simaai/TODO@TODO/yolov8l-obb.pt
+    sha256: 98f829415af7e86e3274e17ad86e8c0db53da26c2e96eb876f9457077553c127
+    size_bytes: 89540998
+
+compilation:
+  format: onnx
+  source:
+    # TODO(#518): pin the source block printed by the Vulcan Model Convert run.
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolov8l_obb/TODO/model.onnx
+    sha256: TODO
+    size_bytes: 0
+
+calibrations:
+- id: dota-v1-0-cal
+  dataset: {id: dota-v1-0, variant: cal, sha256: c6d498eafa142ef134877bade87100fb2472b194f1fc4faffc600aa88231bbd1, size_bytes: 98562300}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: dota-v1-0-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+accuracy:
+  # Ultralytics publishes multiscale test-split scores from the DOTA evaluation server, which the
+  # val split cannot reproduce, so the model records no reference metrics.
+  datasets:
+  - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
+
+performance: {}
