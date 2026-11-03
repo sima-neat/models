@@ -5,7 +5,7 @@
 ## Overview
 
 DLA-34 is a 34-layer deep layer aggregation network for image classification that merges features across layers and stages with tree-structured aggregation nodes, trained on the 1,000 classes of ImageNet-1k. The package uses
-the DLA authors' ImageNet weights (ucbdrive/dla). It takes a 224×224 RGB image and
+the DLA authors' ImageNet weights. It takes a 224×224 RGB image and
 returns one score for each class. Your application turns the scores into
 probabilities with a softmax and reports the most likely classes. The model runs
 as one component.
