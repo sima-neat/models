@@ -93,7 +93,10 @@ def test_verify_artifact_preserves_runner_provenance(monkeypatch, tmp_path):
     assert recorded == expected
 
 
-def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkeypatch, tmp_path, capsys) -> None:
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(
+    monkeypatch, tmp_path, capsys, environment
+) -> None:
     calls = []
     result = {
         "deployment_id": "candidate-id", "manifest_digest": "b" * 64,
@@ -111,7 +114,7 @@ def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkey
         "repository": tmp_path, "dist_dir": tmp_path / "compiled", "output_dir": tmp_path / "candidate",
         "model_id": "qwen3_5_0_8b", "build_profile_id": "w4a16", "api_url": "https://registry.example.invalid",
         "aws_region": "us-west-2", "bucket": "models", "kms_key_id": "key",
-        "environment": "staging", "branch": "feature/llima-models", "git_sha": "a" * 40,
+        "environment": environment, "branch": "feature/llima-models", "git_sha": "a" * 40,
         "github_run_id": "123", "github_run_attempt": "1", "github_run_url": "https://example.invalid/run/123",
     }
     assert main([
@@ -127,6 +130,7 @@ def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkey
     assert calls == [expected]
     assert json.loads(capsys.readouterr().out) == result
     text = summary.read_text()
+    assert f"Candidate ready: **qwen3_5_0_8b/w4a16** ({environment})" in text
     assert all(value in text for value in (result["deployment_id"], result["manifest_digest"], result["commit_sha"]))
     assert "latest_successful" in text
 

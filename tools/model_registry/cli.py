@@ -263,7 +263,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     candidate.add_argument("--aws-region", default="us-west-2")
     candidate.add_argument("--bucket", required=True)
     candidate.add_argument("--kms-key-id")
-    candidate.add_argument("--environment", choices=("staging",), required=True)
+    candidate.add_argument("--environment", choices=("staging", "production"), required=True)
     candidate.add_argument("--branch", required=True)
     candidate.add_argument("--git-sha", required=True)
     candidate.add_argument("--github-run-id", required=True)
