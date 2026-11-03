@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import re
@@ -1091,3 +1092,62 @@ def test_on_demand_planner_does_not_restrict_the_selected_environment() -> None:
     assert '"$VULCAN_ENVIRONMENT" != "staging"' not in plan
     assert 'enabled only in staging' not in plan
     assert '--include-on-demand' in plan
+
+
+@pytest.mark.parametrize("environment,public_url", [
+    ("production", ""), ("production", "https://public.example.test"),
+    ("staging", "https://public.example.test"),
+])
+def test_mpk_candidate_selects_its_branch_with_private_or_public_registry_reads(
+    tmp_path, monkeypatch, environment, public_url,
+):
+    from model_registry import registry
+    from model_registry.candidates import publish_branch_deployment
+
+    private_url = "https://private.example.test"
+    values = {
+        "vars.VULCAN_ARTIFACT_REGISTRY_API_URL": private_url,
+        "vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL": public_url,
+        "needs.select.outputs.vulcan_environment": environment,
+    }
+    job_env = load(WORKFLOW)["jobs"]["publish-candidates"]["env"]
+    read_url = evaluate(job_env["REGISTRY_READ_API_URL"][3:-3], values)
+    iam_url = evaluate(job_env["MODEL_REGISTRY_IAM_READ_API_URL"][3:-3], values)
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", iam_url)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    reads, writes = [], []
+    catalog = {"catalog": {"canonical_sha256": "b" * 64, "document": {"models": []}}}
+
+    def signed(client, method, path, body, key):
+        assert method == "GET" and body is None
+        reads.append(("signed", client.api_url + path))
+        return catalog
+
+    def unsigned(request, timeout):
+        reads.append(("public", request.full_url))
+        return io.BytesIO(json.dumps(catalog).encode())
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "_curl_request", signed)
+    monkeypatch.setattr(registry, "urlopen", unsigned)
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({
+        "deployment_id": "11111111-1111-4111-8111-111111111111", "manifest_digest": "a" * 64,
+        "git_ref": "refs/heads/feature/mpk-model", "state": "finalized",
+    }))
+
+    def write(method, path, body, key):
+        assert method == "POST" and path.endswith("/branch-deployments")
+        assert body["expected_snapshot"] == "b" * 64
+        assert body["git_ref"] == "refs/heads/feature/mpk-model"
+        writes.append(body)
+        return {"selection": {"deployment_id": body["deployment_id"]}, "result_snapshot": "c" * 64}
+
+    result = publish_branch_deployment(
+        candidate, api_url=private_url, read_api_url=read_url,
+        aws_region="us-west-2", request=write,
+    )
+    assert len(reads) == len(writes) == 1
+    assert reads[0][0] == ("signed" if environment == "production" and not public_url else "public")
+    assert reads[0][1].startswith((public_url or private_url) + "/v1/")
+    assert result["selection"]["deployment_id"] == json.loads(candidate.read_text())["deployment_id"]
+    assert json.loads((tmp_path / "branch-publication.json").read_text()) == result

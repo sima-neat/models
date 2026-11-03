@@ -435,7 +435,8 @@ jobs:
       MODEL_ID: ${{ matrix.model_id }}
       BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
       REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+      MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
       AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
       ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
