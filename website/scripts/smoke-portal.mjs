@@ -418,10 +418,17 @@ async function checkTaskComparison(browser, base) {
         const variants = Object.values(classifiers).reduce((total, count) => total + count, 0);
         const choices = (await add.locator('option').allTextContents()).slice(1);
         if (choices.length !== variants || !Object.entries(classifiers).every(([name, count]) => choices.filter(text => text.startsWith(`${name} · `)).length === count)) throw new Error('comparison mixed tasks or omitted a variant');
-        // Only ResNet-50 has published measurements yet, so the chart still plots its three variants on ImageNet mini.
-        const dataset = await page.locator('.compare-chart-dataset').innerText();
-        if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
-        if (await page.locator('.compare-point').count() !== 3) throw new Error('chart omitted a measured classification variant');
+        // ResNet-50 measures accuracy on ImageNet mini and the other classifiers on val, so each plots on its own dataset axis.
+        const datasets = {mini: classifiers['ResNet-50'], val: variants - classifiers['ResNet-50']};
+        const axis = page.locator('[data-compare-control="axis"]');
+        const axes = await axis.locator('option').evaluateAll(options => options.map(option => option.value));
+        if (axes.length !== Object.keys(datasets).length) throw new Error('chart did not offer one axis per classification dataset');
+        for (const value of axes) {
+          await axis.selectOption(value);
+          const [id, variant] = JSON.parse(value);
+          if (id !== 'imagenet-2012' || !(await page.locator('.compare-chart-dataset').innerText()).includes(`/ ${variant} /`)) throw new Error('chart dataset did not follow the selected task');
+          if (await page.locator('.compare-point').count() !== datasets[variant]) throw new Error('chart omitted a measured classification variant');
+        }
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('selected variant is missing from the table');
         await page.locator('.compare-table .compare-remove').click();
