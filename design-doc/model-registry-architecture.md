@@ -188,11 +188,12 @@ benchmarks (Vulcan Model Benchmarking, per build profile)
   -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
 ```
 
-Pushes, including merges to `develop`, select repository variable `VULCAN_ENV`,
-falling back to staging when it is unset. Manual dispatch defaults to `default`
-(use that same repository setting); choosing `staging` or `production` explicitly
-overrides it for that run. Concurrency and the run title use the same selection.
-Selecting production switches model builds and registry publication to production.
+Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
+registry publication target. Set it to `production` for production builds or
+`staging` for staging builds. An unset or invalid value fails before compiler
+runners are requested; a dispatch cannot override it. Concurrency and the run
+title use the same variable. On-demand candidates use the selected environment
+for compilation, publication and feature-branch catalog selection.
 Frontend builds explicitly use staging, and `resolve-staging-browser-config`
 resolves staging publication settings independently of `select` and
 `resolve-vulcan-config`. Frontend publication waits only for this staging resolver
@@ -318,7 +319,7 @@ An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 `profiles`; `plan-stages --include-on-demand` also requires both selectors.
 For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
-In staging, `publish-candidate` waits for every invocation of the selected
+In staging or production, `publish-candidate` waits for every invocation of the selected
 model/profile. A single-component LLiMa build does this in its existing Publish
 job; other on-demand models join their invocations in the orchestrator's
 `publish-candidates` job.

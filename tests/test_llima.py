@@ -156,7 +156,7 @@ COMPILE_TIMING = json.dumps({
 
 
 @pytest.fixture
-def compiled(tmp_path):
+def compiled(tmp_path, request):
     dist = tmp_path / "compiled"
     profile = dist / MODEL / PROFILE
     component = profile / "model"
@@ -166,7 +166,7 @@ def compiled(tmp_path):
     provenance = {
         "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
         "source_sha256": source_identity(model["components"][0]["source"]),
-        "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
+        "git_sha": "a" * 40, "environment": getattr(request, "param", "staging"), "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
         "compile_fingerprint": compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, compiler["identity"]),
     }
@@ -178,7 +178,9 @@ def compiled(tmp_path):
     return dist
 
 
-def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path):
+@pytest.mark.parametrize("compiled,environment", [("staging", "staging"), ("production", "production")],
+                         indirect=["compiled"])
+def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path, environment):
     component = compiled / MODEL / PROFILE / "model"
     source = component / "deployment"
     manifest = validate_compile_outputs(
@@ -187,9 +189,10 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     )
     assert manifest["outputs"][0]["artifact_path"] == str(component / "deployment-manifest.json")
     registry = Registry()
+    arguments = {**registry.args(), "environment": environment}
     candidate = publish_candidate(
         repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
-        model_id=MODEL, build_profile_id=PROFILE, **registry.args(),
+        model_id=MODEL, build_profile_id=PROFILE, **arguments,
     )
     assert candidate["state"] == "finalized"
     published = json.loads((component / "registry-publication.json").read_text())
@@ -522,7 +525,8 @@ class WhisperModel:
     assert os.access(output / "compile.sh", os.X_OK)
 
 
-def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch, environment):
     root = tmp_path / "repository"
     model_dir = root / "models/fixture_model"
     shutil.copytree(ROOT / "tests/fixtures/fixture_model", model_dir)
@@ -558,7 +562,7 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         verify_artifact(output, write_manifest=True, provenance={
             "model_id": "fixture_model", "build_profile_id": "fixture", "component_id": component,
             "target": "modalix", "source_sha256": "a" * 64, "git_sha": "a" * 40,
-            "environment": "staging", "compiler_version": compiler["version"], "compiler_label": compiler["label"],
+            "environment": environment, "compiler_version": compiler["version"], "compiler_label": compiler["label"],
             "compile_fingerprint": key,
         })
         outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
@@ -585,8 +589,9 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         assert [(item["compile_invocation_id"], item["component_ids"]) for item in plan["compile"]["include"]] == [
             ("fixture", ["backbone", "decoder"]),
         ]
+    arguments = {**registry.args(), "environment": environment}
     result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
-                               model_id="fixture_model", build_profile_id="fixture", **registry.args())
+                               model_id="fixture_model", build_profile_id="fixture", **arguments)
     assert result["state"] == "finalized"
     assert set(registry.bindings) == {"compile-backbone", "compile-decoder", "package-default"}
     finalization = next(index for index, (method, path, _) in enumerate(registry.calls)

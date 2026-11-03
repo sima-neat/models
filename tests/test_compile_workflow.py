@@ -69,51 +69,33 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     assert "push" in on and not on["push"]
 
 
-def test_manual_environment_can_override_the_repository_default() -> None:
+def test_build_environment_is_owned_by_vulcan_env() -> None:
     inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
-
-    assert set(inputs) == {"environment", "models", "profiles", "components", "base_branch", "force_rebuild_all"}
-    assert inputs["environment"]["options"] == ["default", "staging", "production"]
-    assert inputs["environment"]["default"] == "default"
+    assert set(inputs) == {"models", "profiles", "components", "base_branch", "force_rebuild_all"}
     assert inputs["force_rebuild_all"]["type"] == "boolean"
 
 
-@pytest.mark.parametrize(
-    ("override", "repository_env", "expected"),
-    [
-        ("", "staging", "staging"),
-        ("", "production", "production"),
-        ("", "", "staging"),
-        ("default", "production", "production"),
-        ("default", "staging", "staging"),
-        ("default", "", "staging"),
-        ("production", "staging", "production"),
-        ("staging", "production", "staging"),
-        ("", "invalid", "invalid"),
-    ],
-)
-def test_environment_selection_and_runner_mapping(tmp_path, override, repository_env, expected) -> None:
+@pytest.mark.parametrize("environment", ["staging", "production", "", "invalid"])
+def test_environment_selection_and_runner_mapping(tmp_path, environment) -> None:
     workflow = load(WORKFLOW)
     resolve = step(workflow["jobs"]["select"], "Resolve Vulcan environment")
-    expression = resolve["env"]["REQUESTED_ENVIRONMENT"][3:-3].strip()
-    selected = evaluate(expression, {"inputs.environment": override, "vars.VULCAN_ENV": repository_env})
-    assert selected == expected
-    assert expression in workflow["concurrency"]["group"]
-    assert expression in workflow["run-name"]
+    assert resolve["env"]["REQUESTED_ENVIRONMENT"] == "${{ vars.VULCAN_ENV }}"
+    assert "${{ vars.VULCAN_ENV }}" in workflow["run-name"]
+    assert "${{ vars.VULCAN_ENV }}" in workflow["concurrency"]["group"]
     output = tmp_path / "outputs"
     result = subprocess.run(
         ["bash", "-c", resolve["run"]],
-        env={**os.environ, "REQUESTED_ENVIRONMENT": selected, "GITHUB_OUTPUT": str(output)},
+        env={**os.environ, "REQUESTED_ENVIRONMENT": environment, "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True,
     )
-    if expected == "invalid":
+    if environment not in {"staging", "production"}:
         assert result.returncode != 0
         assert not output.exists()
     else:
         assert result.returncode == 0, result.stderr
-        runner = "vulcan-stg" if expected == "staging" else "vulcan-production"
+        runner = "vulcan-stg" if environment == "staging" else "vulcan-production"
         assert output.read_text().splitlines() == [
-            f"vulcan_environment={expected}", f"runner_environment={runner}",
+            f"vulcan_environment={environment}", f"runner_environment={runner}",
         ]
 
 
@@ -124,7 +106,7 @@ def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -
     # Only dispatches get a per-run group, so they never cancel or replace one another.
     assert "github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id)" in concurrency["group"]
     assert "github.ref" in concurrency["group"]
-    assert "inputs.environment" in concurrency["group"]
+    assert "vars.VULCAN_ENV" in concurrency["group"]
 
 
 # Job graph and pull-request isolation
@@ -1100,3 +1082,10 @@ def test_benchmark_dispatch_pins_parent_registry_environment(tmp_path, environme
     else:
         assert result.returncode == 2
         assert not calls.exists()
+
+
+def test_on_demand_planner_does_not_restrict_the_selected_environment() -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")["run"]
+    assert '"$VULCAN_ENVIRONMENT" != "staging"' not in plan
+    assert 'enabled only in staging' not in plan
+    assert '--include-on-demand' in plan

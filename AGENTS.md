@@ -133,7 +133,7 @@ Pushes still validate it and publish catalog metadata, but never compile or
 benchmark it. A manual **Vulcan Model Orchestrator** dispatch must select its
 `models` and `profiles`; the planner also requires `--include-on-demand`.
 The flag changes scheduling and catalog metadata only, never fingerprints.
-Staging publication uses `publish-candidate` once per complete model/profile;
+Publication in the selected `VULCAN_ENV` uses `publish-candidate` once per complete model/profile;
 it binds every required compile/package run before registering on-demand
 artifacts. Ordinary catalog documentation remains branch-retained. Publish
 target `build_requirements` using existing compile fingerprints and consume server-owned

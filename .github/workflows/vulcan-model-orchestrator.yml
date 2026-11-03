@@ -1,18 +1,12 @@
 name: Vulcan Model Orchestrator
 
-run-name: Vulcan Model Orchestrator (${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}) — ${{ github.ref_name }}
+run-name: Vulcan Model Orchestrator (${{ vars.VULCAN_ENV }}) — ${{ github.ref_name }}
 
 on:
   # Every push publishes its revision's catalog; unchanged fingerprints compile and benchmark nothing.
   push:
   workflow_dispatch:
     inputs:
-      environment:
-        description: Override Vulcan environment; default uses repository VULCAN_ENV (staging if unset)
-        required: true
-        default: default
-        type: choice
-        options: [default, staging, production]
       models:
         description: Comma-separated model IDs; leave empty to plan the entire catalog
         required: false
@@ -45,7 +39,7 @@ env:
 # builds the cancelled one left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
-    model-compile-${{ github.ref }}-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}${{
+    model-compile-${{ github.ref }}-${{ vars.VULCAN_ENV }}${{
     github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
@@ -82,10 +76,10 @@ jobs:
       - name: Resolve Vulcan environment
         id: environment
         env:
-          REQUESTED_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
+          REQUESTED_ENVIRONMENT: ${{ vars.VULCAN_ENV }}
         run: |
           set -euo pipefail
-          environment="${REQUESTED_ENVIRONMENT:-staging}"
+          environment="${REQUESTED_ENVIRONMENT:?Set VULCAN_ENV to staging or production}"
           case "$environment" in
             staging) runner_environment="vulcan-stg" ;;
             production) runner_environment="vulcan-production" ;;
@@ -272,10 +266,6 @@ jobs:
           compile_count="$(jq -r '.include | length' <<< "$compile_matrix")"
           candidate_matrix="$(jq -c '{include: [.include[] | select(.build_on_demand and .runner_script != "scripts/run_llima_compilation.sh") | {model_id, build_profile_id}] | unique}' <<< "$compile_matrix")"
           candidate_count="$(jq -r '.include | length' <<< "$candidate_matrix")"
-          if [[ "$VULCAN_ENVIRONMENT" != "staging" ]] && jq -e '.include | any(.build_on_demand)' <<< "$compile_matrix" >/dev/null; then
-            echo "On-demand candidate publication is currently enabled only in staging." >&2
-            exit 1
-          fi
           benchmark_count="$(jq -r '.include | length' <<< "$benchmark_matrix")"
           {
             echo "compile_matrix=$compile_matrix"
