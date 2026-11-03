@@ -1,0 +1,83 @@
+# Until Vulcan grants the runner requests below, CI compiles ViT-S only when a dispatch selects it.
+build-on-demand: true
+display_name: EfficientSAM ViT-S
+description: Segments the object that a box or a few clicked points mark in an image.
+model_type: vision
+tasks: [promptable_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: sam
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: EfficientSAM by Yunyang Xiong et al. (Meta AI), distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/yunyangx/EfficientSAM
+  revision: 1cf49585c39567bfc49e991ab8eb31f491ad4877
+  derived_from: https://github.com/yformer/EfficientSAM/tree/d525f622e6f640acf5a0fc37c7ca1f243da5bde0
+
+compilation:
+  format: onnx
+  # The authors' ONNX export of the image encoder and the prompt decoder; compile.py makes both graphs static.
+  source:
+    repository: yunyangx/EfficientSAM
+    revision: 1cf49585c39567bfc49e991ab8eb31f491ad4877
+    main_file: efficientsam_s_encoder.onnx
+    files:
+      efficientsam_s_encoder.onnx: {sha256: 3eea4544db4647570ca5bea8ab6bbe057f2fc767ad089c14b8f67f482a2493ed, size_bytes: 89558337}
+      efficientsam_s_decoder.onnx: {sha256: d40a537f617c8ced3b2034b6971bc16cc291c49d3d80f740a394cdb78f0e1d06, size_bytes: 16565728}
+  # The encoder runs once per image; the decoder once per prompt on its embedding.
+  components: [image_encoder, prompt_decoder]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+# Both precisions calibrate: the encoder on seeded coco-2017 cal images, and the decoder on the float32 encoder's
+# embeddings of the same images, each prompted with the box of its largest annotated object.
+# Both profiles request the expensive runner class: compiled with the pinned Model Compiler outside CI, w16a16 peaked
+# at 80 GiB of memory and took 8.5 h, and w8a8 peaked at 46 GiB and took 5.8 h, while the default runner has 32 GiB
+# and CI lost it about 50 minutes into both compiles. w16a16 also requests on-demand, as a build that long is too
+# costly to lose to a Spot reclamation.
+build_profiles:
+  w16a16:
+    calibration_dataset: coco-2017-cal
+    runner_class: expensive
+    runner_market: on-demand
+    components:
+      image_encoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
+      prompt_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    runner_class: expensive
+    components:
+      image_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+      prompt_decoder:
+        parameters: {precision: w8a8, calibration_bins: 2048}
+
+# Display only: Neat stretches the frame to the encoder's 1024x1024 input; the CPU turns the prompt into the decoder's
+# inputs, and the best of the decoder's masks into the image's mask.
+pipeline:
+- {component: image_encoder}
+- {cpu: Normalize the prompt points}
+- {component: prompt_decoder}
+- {cpu: Upsample the best mask}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+  # The 8 annotated images after the calibration images, each prompted with the box of its largest object. The
+  # quantized encoder feeds the quantized decoder.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 8}
+  outputs: [image_embeddings, iou_predictions, low_res_masks]
+
+performance: {}
