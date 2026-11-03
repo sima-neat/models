@@ -45,6 +45,10 @@ architectures:
     display_name: CLIP
     paradigm: transformer
     allowed_model_types: [vlm]
+  densenet:
+    display_name: DenseNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   depthart:
     display_name: DepthART
     paradigm: transformer
