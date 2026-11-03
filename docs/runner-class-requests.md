@@ -171,17 +171,18 @@ Trusted automation authorizes the compile matrix before queuing self-hosted jobs
 and Vulcan checks it independently before launching capacity.
 
 A normal trusted push builds missing fingerprints. To explicitly select a build,
-use **Vulcan Model Orchestrator** with environment `staging`, the model ID and
-profile ID. For example, from this repository with GitHub CLI access:
+use **Vulcan Model Orchestrator** with the model ID and profile ID. The build
+uses `VULCAN_ENV` for its runner and publication environment. For example, from
+this repository with GitHub CLI access:
 
 ```bash
 gh workflow run vulcan-model-orchestrator.yml --ref develop \
-  -f environment=staging -f models=example_detector -f profiles=w8a8
+  -f models=example_detector -f profiles=w8a8
 ```
 
 The selected ref must contain the request and compatible workflow. A market-only
 change may reuse an existing result and launch no runner. For a deliberate fresh
-staging verification, add `-f force_rebuild_all=true` to that narrowly selected
+verification in the selected environment, add `-f force_rebuild_all=true` to that narrowly selected
 dispatch; this incurs another compile and may run its declared benchmarks. Manual
 selection also permits models with `build-on-demand: true`.
 
