@@ -3,8 +3,20 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      imagenet-2012-val:
+        top1_accuracy: 0.7034
+        top5_accuracy: 0.8981
+    w8a8:
+      imagenet-2012-val:
+        top1_accuracy: 0.7018
+        top5_accuracy: 0.8976
 performance:
-  run_tests: false
-  skip_reason: No build has a published report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 118.7
+    w8a8:
+      throughput_fps: 396.9
