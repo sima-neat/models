@@ -99,3 +99,43 @@ def test_models_and_shared_tooling_download_nothing_from_github_releases() -> No
 def test_vulcan_onnx_source() -> None:
     uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/{DIGEST}/123-1/model.onnx"
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+@pytest.mark.parametrize("path", ["detector.onnx", "temp/model_1.onnx", "project/export-v2.1/segmenter.onnx"])
+def test_production_qat_onnx_source(path: str) -> None:
+    uri = f"https://artifacts.neat.sima.ai/models/qat/{path}"
+    source = SourceSpec.from_mapping({"uri": uri, "sha256": DIGEST, "size_bytes": 10})
+    assert source.resolve_url() == uri
+    assert source.filename == path.rsplit("/", 1)[-1]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://artifacts.neat.sima.ai/models/qat/model.onnx",
+        "https://user:secret@artifacts.neat.sima.ai/models/qat/model.onnx",
+        "https://artifacts.neat.sima.ai:444/models/qat/model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/model.onnx?token=secret",
+        "https://artifacts.neat.sima.ai/models/qat/model.onnx?versionId=version",
+        "https://artifacts.neat.sima.ai/models/qat/model.onnx#fragment",
+        "https://artifacts.neat.sima.ai.evil.test/models/qat/model.onnx",
+        "https://artifacts.neat.sima.ai/models/model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat-other/model.onnx",
+        f"https://artifacts.neat.sima.ai/models-onnx/detector/{DIGEST}/123-1/model.onnx",
+        "https://artifacts.stg.neat.sima.ai/models/qat/model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/./model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/../model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/%2e%2e/model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/%252e%252e/model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/temp%2f..%2fmodel.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/temp\\model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat//model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/temp//model.onnx",
+        "https://artifacts.neat.sima.ai/models/qat/temp/",
+        "https://artifacts.neat.sima.ai/models/qat/temp/model.zip",
+        "https://artifacts.neat.sima.ai/models/qat/temp/model.onnx.tar.gz",
+    ],
+)
+def test_production_qat_rejects_unsafe_or_unbounded_sources(uri: str) -> None:
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()

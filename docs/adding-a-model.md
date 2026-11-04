@@ -73,10 +73,13 @@ keep explicit URIs.
 
 Hugging Face sources use a full 40-character repository commit. Approved HTTPS
 sources include pinned Hugging Face resources and the ONNX files the registry
-converts. GitHub release assets are not sources; datasets come only from the
-Dataset Registry.
-Mutable branches, credentials, query parameters, fragments, and unapproved
-hosts are rejected.
+converts. The production artifact store also accepts `.onnx` files under
+`https://artifacts.neat.sima.ai/models/qat/`. These QAT sources are pinned by
+SHA-256 and byte count, not by an immutable URL; keep the object available for
+clean builds. GitHub release assets are not sources; datasets come only from
+the Dataset Registry.
+Mutable Hugging Face branches, credentials, query parameters, fragments, and
+unapproved hosts are rejected.
 
 Record hashes from the exact bytes the registry will fetch:
 
@@ -263,7 +266,7 @@ builds](#on-demand-builds).
 | conversion | model identity, upstream content, exporter/helpers, dependency specification, validation files and shared conversion tooling (including registry HTTP reads); explicit conversion dispatch publishes a new run |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of every component, the `performance` declaration, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of every component, the `performance` declaration, the first accuracy dataset's name and pin when the profile measures accuracy, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
@@ -284,9 +287,12 @@ is always benchmarked again.
 | conversion recipe, dependency specification, validation code, test fixtures of any format or shared `CONVERSION_TOOLING` | requires a new conversion for registry sources; compilation changes only if output content changes |
 | a model's compile/benchmark tests, or `scripts/run_model_tests.sh` | nothing for direct sources; conversion fingerprints include model test files and the shared test runner, so registry conversions need revalidation |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
-| `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
+| `accuracy.py` or its requirements | that model's accuracy stages |
+| adding, removing or repinning an `accuracy` dataset | that model's accuracy stages; also performance stages that use a different first dataset or pin |
+| the `accuracy` dataset order | performance stages whose first dataset changes |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
-| `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
+| `accuracy.build_profiles` | performance stages whose dataset-input eligibility changes; a newly benchmarked accuracy profile runs because it has no run yet |
+| a new `datasets/` file or an entry for a task no such model has | nothing |
 | `scripts/run_model_performance.sh` | every performance stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, or `scripts/install_dataset_registry.sh` | every accuracy stage |
 | the DevKit runtime pin, the benchmarking workflow, `tools/model_report`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS, benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, compile_invocations_for, load_and_validate_model
@@ -221,7 +221,9 @@ def benchmark_fingerprint(
     the build of every component, the stage's declaration, the model's script, and the shared tooling. An
     accuracy declaration holds each dataset it evaluates with the metrics its datasets/<id>.yaml requires for
     the model's tasks, so changing another task's entry or another dataset's file keeps this fingerprint. The
-    declaration's ``build_profiles`` are left out, so benchmarking another profile keeps it too.
+    declaration's ``build_profiles`` are left out, so benchmarking another profile keeps it too. Performance
+    also covers the first accuracy dataset's pin when the profile measures accuracy: that dataset supplies
+    its benchmark image, but its required accuracy metrics do not affect performance.
     """
     root = Path(repository).expanduser().resolve()
     model_id = str(model["id"])
@@ -234,6 +236,12 @@ def benchmark_fingerprint(
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
+    input_dataset = {}
+    if stage == "performance" and build_profile_id in benchmarked_profiles(model, "accuracy"):
+        name, dataset = next(iter(model["accuracy"]["datasets"].items()))
+        input_dataset = {
+            "input_dataset": {"name": name, **{key: dataset[key] for key in ("id", "variant", "sha256", "size_bytes")}}
+        }
     return _fingerprint({
         "stage": stage,
         "model_id": model_id,
@@ -246,6 +254,7 @@ def benchmark_fingerprint(
             for component_id in components
         },
         stage: {key: value for key, value in model[stage].items() if key != "build_profiles"},
+        **input_dataset,
         "files": _file_digests(root, required, optional),
         "runtime": resolve_benchmark_runtime(root),
     })

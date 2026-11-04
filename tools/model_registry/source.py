@@ -18,7 +18,11 @@ HF_URI_RE = re.compile(
 )
 HF_RESOLVE_RE = re.compile(r"^/(?:(?:datasets|spaces)/)?[^/]+/[^/]+/resolve/[a-f0-9]{40}/.+$")
 VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-[0-9]+/model\.onnx$")
+# First-party manual QAT exports are content-pinned by SHA-256 and size. Their
+# paths do not promise historical-version availability or immutable retention.
+QAT_ONNX_RE = re.compile(r"^/models/qat/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.onnx$")
 DEFAULT_HTTPS_HOSTS = {
+    "artifacts.neat.sima.ai",
     "artifacts.stg.neat.sima.ai",
     "huggingface.co",
 }
@@ -113,4 +117,6 @@ class SourceSpec:
             raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
         if hostname == "artifacts.stg.neat.sima.ai" and not VULCAN_ONNX_RE.fullmatch(parts.path):
             raise SourcePolicyError("Vulcan sources must identify a versioned ONNX file")
+        if hostname == "artifacts.neat.sima.ai" and not QAT_ONNX_RE.fullmatch(parts.path):
+            raise SourcePolicyError("Production QAT sources must identify a safe ONNX path under models/qat")
         return self.uri

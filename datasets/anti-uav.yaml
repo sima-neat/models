@@ -1,0 +1,4 @@
+# These ratios score the registered canonical whole-sequence held-out selections.
+# Custom model-space tiny recall is supplemental report detail, not COCO small AR.
+required_metrics:
+  object_detection: [coco_map, coco_ap50]

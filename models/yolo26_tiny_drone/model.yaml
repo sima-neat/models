@@ -1,0 +1,60 @@
+# Fetch both immutable inputs through the registry before submitting this build.
+display_name: YOLO26n-P2 Tiny Drone
+description: A one-class QAT detector for very small drones in high-resolution thermal
+  frames.
+model_type: vision
+tasks:
+- object_detection
+modalities:
+  inputs:
+  - image
+  outputs:
+  - bounding_boxes
+  - class_scores
+architecture: yolo
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLO26 derives from Ultralytics under AGPL-3.0; Anti-UAV-derived weights
+    and images require separate redistribution permission.
+upstream:
+  repository: https://github.com/ultralytics/ultralytics
+  revision: 1367566337fb8056223a1aeb469360747f1b1bcd
+  model_card: https://github.com/sima-neat/models/issues/415
+  derived_from: https://github.com/ultralytics/ultralytics/tree/1367566337fb8056223a1aeb469360747f1b1bcd
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.neat.sima.ai/models/qat/temp/yolo26_tiny_drone.onnx
+    sha256: 2627762fc29dbd377a3f471a3ab0407569dd39c13cd324d46ca426629ec80f66
+    size_bytes: 2798186
+    media_type: application/onnx
+calibrations:
+- id: anti-uav-cal
+  dataset:
+    id: anti-uav
+    variant: cal
+    sha256: 8418b35d20ced1a9135eb8862e5554544f261023963ec6290e587057d2b11b2b
+    size_bytes: 5990892
+build_profiles:
+  w8a8:
+    calibration_dataset: anti-uav-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          model_size: 1600
+          calibration_samples: 128
+          calibration_tensor_sha256: d8830d19b33fe336c5c2cec4822c3b278be4169d125ca249be476771be5b544e
+accuracy:
+  # Internal whole-sequence selections with canonical annotations, not challenge test sets.
+  datasets:
+  - id: anti-uav
+    variant: val
+    sha256: cce016d663fa8653fbfc4f8aa87ceab899a125d7647e3ad76924426c9c356488
+    size_bytes: 693477146
+  - id: anti-uav
+    variant: test
+    sha256: d8e288e67a32ae21ad7d07bdb1d6cf0025bea95df3910f742b06f6b96eb8d1b7
+    size_bytes: 595482977
+performance: {}

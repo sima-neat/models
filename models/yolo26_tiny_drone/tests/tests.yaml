@@ -1,0 +1,33 @@
+# Initial baselines use complete production-route accuracy and seeded real-image performance.
+# Measurements use the pinned Model Compiler 3.0; shared regression tolerances are unchanged.
+compile:
+  run_tests: true
+performance:
+  run_tests: true
+  expected:
+    w8a8:
+      throughput_fps: 134.29
+accuracy:
+  run_tests: true
+  expected:
+    w8a8:
+      anti-uav-val:
+        coco_map: 0.46306993799312646
+        coco_ap50: 0.952619436648228
+        coco_ap75: 0.36282074938798803
+        coco_ar1: 0.017143604995923205
+        coco_ar10: 0.16910463457119562
+        coco_ar100: 0.5669823864057519
+        coco_ap_small: 0.46306996438392173
+        coco_ar_small: 0.5669823864057519
+      anti-uav-test:
+        coco_map: 0.4981830709120133
+        coco_ap50: 0.9620970532692411
+        coco_ap75: 0.4507096544243654
+        coco_ar1: 0.017467897966967558
+        coco_ar10: 0.17803654604084557
+        coco_ar100: 0.5844440078131321
+        coco_ap_small: 0.5003558228458718
+        coco_ar_small: 0.5870591825846689
+        coco_ap_medium: 0.18928040936118232
+        coco_ar_medium: 0.2517486662714879

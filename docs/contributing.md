@@ -75,9 +75,11 @@ Do not add:
 - credentials, tokens, cookies, signed URLs, or private keys;
 - hand-authored generated catalog, package, checksum, or publication metadata.
 
-Store approved large assets through an immutable location supported by the
-registry source policy and declare its URI, exact byte size, SHA-256, license,
-and provenance.
+Store approved large assets at a retained location supported by the registry
+source policy. Declare its URI, exact byte size, SHA-256, license, and provenance.
+Prefer immutable URLs. A checksum-pinned QAT URL must remain available for clean
+builds; replacing its contents makes acquisition fail rather than change the
+model's inputs.
 The repository `.gitignore` is a guardrail, not permission to omit a review of
 staged files.
 

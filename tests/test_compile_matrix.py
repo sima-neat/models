@@ -392,6 +392,56 @@ def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(t
     assert [change for change, value in unchanged.items() if value != first] == []
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("id", "another-dataset"), ("variant", "mini"), ("sha256", "e" * 64), ("size_bytes", 1)],
+)
+def test_performance_fingerprint_covers_its_selected_dataset_pin(field: str, value: object) -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    first = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance")
+    dataset = next(iter(model["accuracy"]["datasets"].values()))
+    dataset[field] = value
+
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") != first
+
+
+def test_performance_fingerprint_uses_only_the_first_dataset_in_declaration_order() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    first = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance")
+    datasets = model["accuracy"]["datasets"]
+    datasets["coco-2017-mini"] = {**next(iter(datasets.values())), "variant": "mini", "sha256": "e" * 64}
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") == first
+    datasets["coco-2017-mini"].update(sha256="f" * 64, size_bytes=1)
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") == first
+
+    model["accuracy"]["datasets"] = dict(reversed(list(datasets.items())))
+
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") != first
+
+
+def test_performance_fingerprint_ignores_accuracy_metrics_and_other_profiles() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    first = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance")
+    next(iter(model["accuracy"]["datasets"].values()))["required_metrics"].append("coco_ap50")
+    model["accuracy"]["build_profiles"] = ["w8a8_w16a16"]
+
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") == first
+
+
+def test_performance_fingerprint_has_no_dataset_dependency_for_an_accuracy_ineligible_profile() -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    with_dataset = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance")
+    model["accuracy"]["build_profiles"] = ["w8a16_w16a16"]
+    without_dataset = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance")
+    assert without_dataset != with_dataset
+    next(iter(model["accuracy"]["datasets"].values())).update(sha256="f" * 64, size_bytes=1)
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") == without_dataset
+
+    del model["accuracy"]
+
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance") == without_dataset
+
+
 def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
     """A changed test applies the next time its stage runs; it reruns no stage by itself."""
     repository = tmp_path / "repository"

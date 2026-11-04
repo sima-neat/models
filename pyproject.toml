@@ -21,6 +21,7 @@ tests = [
 ]
 dev = [
   "build>=1.2,<2",
+  "faster-coco-eval==1.8.0",
   "numpy>=1.26,<3",
   "onnx>=1.16,<2",
   "opencv-python-headless>=4.10,<5",
