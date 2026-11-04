@@ -49,6 +49,10 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
+  dfine:
+    display_name: D-FINE
+    paradigm: transformer
+    allowed_model_types: [vision]
   gemma:
     display_name: Gemma
     paradigm: transformer

@@ -1,0 +1,44 @@
+# Initial local native baselines: full COCO val2017 and the median-FPS run of
+# five independent 60-second throughput measurements per profile. CI republishes them.
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      coco-2017-val:
+        coco_map: 0.460090849780552
+        coco_ap50: 0.6404913423004998
+        coco_ap75: 0.4940384475601679
+        coco_ap_small: 0.2572983286866724
+        coco_ap_medium: 0.4973710868670344
+        coco_ap_large: 0.6481126987357857
+        coco_ar1: 0.36010965542484363
+        coco_ar10: 0.602602709139198
+        coco_ar100: 0.6751890791046518
+        coco_ar_small: 0.4544242198376784
+        coco_ar_medium: 0.7281705143097007
+        coco_ar_large: 0.86914106588908
+    w8a8_w16a16:
+      coco-2017-val:
+        coco_map: 0.44150848596079456
+        coco_ap50: 0.6179346831980833
+        coco_ap75: 0.47762896983014685
+        coco_ap_small: 0.24202912474964214
+        coco_ap_medium: 0.48191110970067036
+        coco_ap_large: 0.6191760894914897
+        coco_ar1: 0.3499065031051035
+        coco_ar10: 0.5959743872465569
+        coco_ar100: 0.6627580982250066
+        coco_ar_small: 0.4496755384184723
+        coco_ar_medium: 0.714740212015638
+        coco_ar_large: 0.8603753460987593
+performance:
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      throughput_fps: 39.939770715108615
+    w8a8_w16a16:
+      throughput_fps: 44.068262870328

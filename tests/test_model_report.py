@@ -216,6 +216,7 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
+        self.advanced_execution = types.SimpleNamespace()
         self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
 
 
@@ -386,9 +387,13 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
-        "Image", "Stretch", "ImageNet"
-    )
+    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    normalization = options.preprocess.normalize
+    if getattr(normalization, "has_explicit_stats", False):
+        assert normalization.mean == [0.0, 0.0, 0.0]
+        assert normalization.stddev == [1.0, 1.0, 1.0]
+    else:
+        assert options.preprocess.preset == "ImageNet"
 
 
 def test_model_code_uses_cores_mla_stats_names():

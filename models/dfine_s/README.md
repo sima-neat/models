@@ -1,0 +1,45 @@
+# D-FINE Small
+
+![D-FINE Small model hero](hero.png)
+
+## Overview
+
+D-FINE Small detects 80 COCO object classes using a backbone and decoder.
+The backbone extracts features and proposes candidate locations; the decoder
+refines the best 300 into boxes and class scores. Select candidates on the
+CPU, retaining the original feature tensor. Native
+preprocessing accepts original-size RGB images; native decoding returns boxes
+in their image coordinates.
+
+## Inputs and outputs
+
+**Input.** Stretch RGB images to 640×640 with bilinear resampling. Scale pixels
+to 0–1 without ImageNet normalization; retain original dimensions for decoding.
+
+**Between components.** The backbone returns `attention_memory` and
+`query_content`, each shaped (1, 8400, 256), `proposal_scores` (1, 8400), and
+`reference_logits` (1, 8400, 4). Select the 300 highest proposal scores, breaking
+ties by lower proposal index. Gather the corresponding content and raw reference
+rows. Pass these and the original attention tensor to the decoder; retain
+their storage until execution completes.
+
+**Outputs.** The decoder returns `pred_boxes` (1, 300, 4), normalized
+(cx, cy, width, height), and `pred_logits` (1, 300, 80).
+
+1. Apply sigmoid; rank all 300×80 query/class pairs.
+2. Keep 300 pairs, including different classes per box; do not suppress overlaps.
+3. Convert to corners, scale to original dimensions, and clip to the image.
+4. Map class indices through sorted COCO category IDs, including their gaps.
+
+Neat's `DetrFocal` BoxDecode publishes integer boxes with rounded origins and
+sizes. It differs from classic `Detr` decoding.
+
+Public tensor boundaries remain FP32. Choose a package that balances accuracy
+and throughput for your application.
+
+## Building applications
+
+Run the package with the [Neat Model
+API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
+For complete applications, start from the [Neat example
+apps](https://developer.sima.ai/examples).
