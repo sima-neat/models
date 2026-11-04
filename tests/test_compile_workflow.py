@@ -642,19 +642,39 @@ def test_self_hosted_compile_holds_no_publication_credentials() -> None:
 
 def test_conversion_fetch_steps_receive_isolated_reader_credentials() -> None:
     compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
-    expected = {
-        "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID": "${{ steps.conversion-reader.outputs.aws-access-key-id }}",
-        "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY": "${{ steps.conversion-reader.outputs.aws-secret-access-key }}",
-        "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN": "${{ steps.conversion-reader.outputs.aws-session-token }}",
-    }
-    for name in (
-        "Compile the invocation with its model's compile script",
-        "Verify every MPK and record its provenance",
+    for name, reader in (
+        ("Compile the invocation with its model's compile script", "conversion-reader"),
+        ("Verify every MPK and record its provenance", "conversion-verification-reader"),
     ):
+        expected = {
+            "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID": "${{ steps." + reader + ".outputs.aws-access-key-id }}",
+            "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY": "${{ steps." + reader + ".outputs.aws-secret-access-key }}",
+            "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN": "${{ steps." + reader + ".outputs.aws-session-token }}",
+        }
         assert step(compile_job, name).get("env", {}) == expected
     # Dataset downloads must keep the runner's default AWS credential chain.
     for env in [compile_job["env"], *(item.get("env", {}) for item in compile_job["steps"])]:
         assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & env.keys()
+
+
+def test_verification_refreshes_the_restricted_reader_after_compilation() -> None:
+    job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    initial = step(job, "Configure read-only conversion registry credentials")
+    refresh_name = "Refresh read-only conversion registry credentials for verification"
+    refresh = step(job, refresh_name)
+
+    # A six-hour compilation must not leave verification using the original one-hour session.
+    assert job["timeout-minutes"] == "360"
+    assert refresh["id"] == "conversion-verification-reader"
+    assert refresh["if"] == initial["if"]
+    assert refresh["uses"] == initial["uses"]
+    assert {key: value for key, value in refresh["with"].items() if key != "role-session-name"} == {
+        key: value for key, value in initial["with"].items() if key != "role-session-name"
+    }
+    assert refresh["with"]["role-session-name"] == "models-conversion-verifier-${{ github.run_id }}"
+    compilation_index = step_index(job, "Compile the invocation with its model's compile script")
+    assert step_index(job, refresh_name) == compilation_index + 1
+    assert step_index(job, "Verify every MPK and record its provenance") == step_index(job, refresh_name) + 1
 
 
 def test_compile_script_runs_in_activated_model_compiler_shell() -> None:

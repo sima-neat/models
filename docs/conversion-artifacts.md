@@ -108,7 +108,10 @@ When a selection uses the IAM API, compile fetches sign artifact metadata reques
 with SigV4, including cache hits. The compile job assumes the registry role with
 an inline session policy restricted to `GET /v1/runs/*/artifacts/onnx`; the session
 cannot publish, write objects, or access KMS directly. These credentials are
-passed only to the registry reader; dataset access retains the runner credentials. Vulcan must grant that GET
+passed only to the registry reader. Immediately after compilation, the job assumes
+a fresh session with the same restricted policy for provenance verification, so a
+long compilation cannot leave cached-source verification using an expired session.
+Dataset access retains the runner credentials. Vulcan must grant that GET
 route to the role before enabling this path. Public metadata reads stay unsigned,
 and the artifact body uses the version-specific signed download URL. Exact version,
 checksum, size, and validation checks apply to both paths.

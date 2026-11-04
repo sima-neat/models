@@ -417,7 +417,9 @@ for the registry contract, rollout and reproduction.
 
 Production conversion-backed compile jobs obtain a session restricted to ONNX
 artifact metadata GET requests before compilation. They use it for private registry
-reads during compilation and provenance verification, including cache hits. Both
-steps receive isolated reader credentials, preserving the runner credentials used
+reads during compilation, including cache hits. Immediately after compilation,
+the job obtains a fresh session with the same restricted policy for provenance
+verification, so a long compile cannot exhaust the verification session's lifetime.
+Both steps receive isolated reader credentials, preserving the runner credentials used
 for calibration datasets; publication remains in the separate hosted publish job. Public reads do not
 require signing. See [conversion artifacts](../docs/conversion-artifacts.md#private-production-reads).
