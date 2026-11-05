@@ -47,7 +47,7 @@
       "type": "object", "additionalProperties": false, "required": ["format", "source"],
       "properties": {
         "format": {"enum": ["onnx", "huggingface"]},
-        "source": {"$ref": "#/$defs/source"},
+        "source": {"oneOf": [{"$ref": "#/$defs/source"}, {"const": "conversion"}]},
         "components": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
         "entrypoint": {"description": "The package's public entrypoint when it is not default, such as generate.", "$ref": "#/$defs/id"}
       }
@@ -140,7 +140,7 @@
     "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
     "idSet": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "profileIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-    "runnerClass": {"enum": ["default", "expensive", "most-expensive"]},
+    "runnerClass": {"enum": ["default", "moderate", "expensive", "most-expensive"]},
     "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "relativePath": {

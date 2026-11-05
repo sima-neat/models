@@ -81,6 +81,7 @@ this table. Modules marked CI only are removed from the author package by
 | `compile_matrix.py` | the compile matrix: one entry per build profile's compile invocation, with the benchmarks that measure it (`build_matrix`) |
 | `fingerprints.py` | the fingerprints (`compile_fingerprint`, `benchmark_fingerprint`), the files each one hashes, and each benchmark's run type |
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
+| `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
 | `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
 | `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
@@ -91,6 +92,7 @@ this table. Modules marked CI only are removed from the author package by
 | `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
+| `conversion.py` | conversion fingerprints, validated ONNX bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
@@ -122,12 +124,18 @@ tooling and that stage's runner scripts, and the DevKit runtime pin. The
 catalog lists each profile's benchmark fingerprints under
 `benchmark_fingerprints`, and the model browser resolves the runs by those
 fingerprints. A recompiled build gets new benchmark fingerprints and is
-therefore benchmarked again. No fingerprint reads a model's `tests/`, so a
-changed test applies the next time its stage runs. The contributor guide lists
+therefore benchmarked again. Compile and benchmark fingerprints do not read model tests; conversion
+fingerprints include validation files so a changed check requires revalidation. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
+
+Registry release state is a separate production workflow: changes to `state.json`,
+`scripts/publish_registry_state.sh`, or `vulcan-model-state.yml` on `main` publish
+`models/state.json`. Manual runs also require `main`; both jobs and the upload
+script enforce this restriction. Runs share one production concurrency group
+and verify the uploaded file. Merging to `develop` does not deploy this state.
 
 Manual **Deploy Model Browser & Docs** is independent of model builds and tooling
 publication. From `main` or `develop`, select `staging` or `production` and the
@@ -167,7 +175,7 @@ push (Vulcan Model Orchestrator, every push)
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
        -> on main and develop: resolve-staging-browser-config + checked portal -> publish-model-browser to staging
   -> resolve-vulcan-config: after select, resolve the selected environment configuration
-  -> plan (waits for select, portal and resolve-vulcan-config): compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
+  -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
   -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
@@ -182,11 +190,12 @@ benchmarks (Vulcan Model Benchmarking, per build profile)
   -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
 ```
 
-Pushes, including merges to `develop`, select repository variable `VULCAN_ENV`,
-falling back to staging when it is unset. Manual dispatch defaults to `default`
-(use that same repository setting); choosing `staging` or `production` explicitly
-overrides it for that run. Concurrency and the run title use the same selection.
-Selecting production switches model builds and registry publication to production.
+Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
+registry publication target. Set it to `production` for production builds or
+`staging` for staging builds. An unset or invalid value fails before compiler
+runners are requested; a dispatch cannot override it. Concurrency and the run
+title use the same variable. On-demand candidates use the selected environment
+for compilation, publication and feature-branch catalog selection.
 Frontend builds explicitly use staging, and `resolve-staging-browser-config`
 resolves staging publication settings independently of `select` and
 `resolve-vulcan-config`. Frontend publication waits only for this staging resolver
@@ -312,7 +321,7 @@ An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 `profiles`; `plan-stages --include-on-demand` also requires both selectors.
 For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
-In staging, `publish-candidate` waits for every invocation of the selected
+In staging or production, `publish-candidate` waits for every invocation of the selected
 model/profile. A single-component LLiMa build does this in its existing Publish
 job; other on-demand models join their invocations in the orchestrator's
 `publish-candidates` job.
@@ -396,3 +405,21 @@ upload limit. Aggregate deployment size has no limit.
 Empty benchmark declarations schedule no benchmarks. Qwen's defaults
 and the separate performance and accuracy follow-ups are in the
 [author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
+
+## Converted ONNX inputs
+
+Models may declare `compilation.source: conversion`. The planner resolves and
+records the latest validated matching output before deciding build reuse. A
+`model_compile_plan` run retains the selection across workflow retries and
+protects its conversion for 24 hours; retained compile inputs protect it afterward.
+No artifact table or custom resolver is added. See [conversion artifacts](../docs/conversion-artifacts.md)
+for the registry contract, rollout and reproduction.
+
+Production conversion-backed compile jobs obtain a session restricted to ONNX
+artifact metadata GET requests before compilation. They use it for private registry
+reads during compilation, including cache hits. Immediately after compilation,
+the job obtains a fresh session with the same restricted policy for provenance
+verification, so a long compile cannot exhaust the verification session's lifetime.
+Both steps receive isolated reader credentials, preserving the runner credentials used
+for calibration datasets; publication remains in the separate hosted publish job. Public reads do not
+require signing. See [conversion artifacts](../docs/conversion-artifacts.md#private-production-reads).
