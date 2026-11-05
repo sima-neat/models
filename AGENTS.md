@@ -92,7 +92,8 @@ or YAML configuration. Keep its `--mpk` and `--output` CLI. A model with accurac
 also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and benchmarks one
 `random.Random(0)` image from it, letterboxed into a 1280x720 RGB frame by code inside the
 script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
-timed. A stereo model benchmarks one such pair as a side-by-side frame instead. `run_model_performance.sh` passes only the first dataset, and only for a profile
+timed. A stereo model benchmarks one dataset pair as a side-by-side frame instead.
+`run_model_performance.sh` passes only the first dataset, and only for a profile
 accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`
@@ -167,7 +168,8 @@ profile (`performance.expected.<profile>.throughput_fps`,
 it fails when a
 value falls more than `ACCURACY_ALLOWED_DROP` (5%) or
 `PERFORMANCE_ALLOWED_DROP` (10%) in `model_tests.py` below its expected
-value. A performance test also asserts that each component's
+value, or rises by as much for a metric that `metrics.json` marks lower is
+better. A performance test also asserts that each component's
 `execution_plan` in the report is a `sima.neat.execution_plan` version 1 plan
 with nodes and edges, the plan the model browser draws. These limits are shared by every model. When a reviewed
 change moves a published value, update `expected` to the new published result.

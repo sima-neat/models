@@ -157,7 +157,7 @@ for the frame it receives.
 
 A stereo model takes its pair as one side-by-side frame, so it skips the
 letterbox: it picks one pair from the dataset's test list with
-`random.Random(0)` (for Scene Flow, `scene_flow/sceneflow_finalpass_test.txt`),
+`random.Random(0)` (for Scene Flow, `sceneflow_finalpass_test.txt`),
 reads both views as RGB, and passes them as one frame, the left view beside
 the right one (1920x540 for Scene Flow). Its Model resizes with
 `ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
