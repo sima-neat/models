@@ -73,8 +73,10 @@ conversion:
 A model that declares `conversion` must also provide `scripts/convert.py` and
 `scripts/requirements-convert.txt`, which the **Vulcan Model Convert** workflow
 runs through `scripts/run_model_conversion.sh` in a fresh Python environment.
-The workflow publishes `model.onnx` and prints the source pin to copy into
-`compilation.source` after surgery and compiler validation.
+The workflow publishes a validated ONNX bundle to Vulcan. Set
+`compilation.source: conversion` to resolve its latest compatible output during
+compile planning. The declaration remains environment independent; see
+[conversion artifacts](conversion-artifacts.md) for rollout and reproduction.
 
 ## Compilation and sources
 
@@ -174,7 +176,7 @@ recipe maps it to compiler settings. The target is `modalix`.
 
 | Runner field | Values | Default | Access requirement |
 | --- | --- | --- | --- |
-| `runner_class` | `default`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
+| `runner_class` | `default`, `moderate`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
 | `runner_market` | `spot`, `on-demand` | `spot` | On-demand requires an independent v3 `allow_on_demand: true` grant, including at default size. |
 
 Both fields belong on the profile or a component binding, outside `parameters`.
@@ -305,7 +307,7 @@ report yet. Each entry has:
 | `dataset` | `id` and `split` of the evaluation set, such as `{id: coco-2017, split: val}`. |
 | `conditions` | How the authors measured, such as input size, preprocessing, and precision. |
 | `note` | Optional caveat a reader needs, such as a split the source does not name. |
-| `metrics` | A map from metric names to values. |
+| `metrics` | A map from accuracy metric names to values, in each metric's unit from `tools/model_report/metrics.json`. |
 
 ```yaml
 reference_metrics:
@@ -316,7 +318,7 @@ reference_metrics:
 ```
 
 Metric names are accuracy metrics from `tools/model_report/metrics.json`, the
-names `accuracy.py` reports, and every value is a ratio from 0 to 1. Record
+names `accuracy.py` reports, and every value is in its metric's unit. Record
 only numbers the source prints, not values derived from them. Two entries may
 not give the same metric for the same dataset. A reference score appears
 beside a measured one only when both name the same dataset `id`. The field

@@ -344,6 +344,8 @@ def test_reference_metrics_accept_scores_of_known_metrics() -> None:
     authored["reference_metrics"] = [
         _reference_metrics(note="The card does not name the split."),
         _reference_metrics(dataset={"id": "coco-2014", "split": "minival"}),
+        # Disparity errors keep the units their source publishes: EPE in pixels, D1-all in percent.
+        _reference_metrics(dataset={"id": "scene-flow", "split": "test"}, metrics={"epe": 0.73, "d1_all": 2.5}),
     ]
     validate_model(FIXTURE, authored, SCHEMA)
 
@@ -354,6 +356,7 @@ def test_reference_metrics_accept_scores_of_known_metrics() -> None:
         ([_reference_metrics(metrics={"coco_mapp": 0.5})], "'coco_mapp' is not an accuracy metric"),
         ([_reference_metrics(metrics={"throughput_fps": 0.5})], "'throughput_fps' is not an accuracy metric"),
         ([_reference_metrics(metrics={"coco_map": 53.0})], "coco_map must be a ratio from 0 to 1; found 53.0"),
+        ([_reference_metrics(metrics={"d1_all": 250.0})], "d1_all must be a percentage from 0 to 100; found 250.0"),
         (
             [_reference_metrics(), _reference_metrics(source="https://example.com/other")],
             "coco_map on coco-2017 is already published",

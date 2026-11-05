@@ -47,16 +47,6 @@ def image_options() -> pyneat.ModelOptions:
     return options
 
 
-def tensor_options() -> pyneat.ModelOptions:
-    """The decoder's: its inputs are the backbone's features and the selected proposals."""
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
 def select_top_proposals(scores: pyneat.Tensor, boxes: pyneat.Tensor) -> pyneat.Tensor:
     """calibration.select_top_proposals, without the Pillow import this stage cannot load."""
     scores, boxes = scores.to_numpy(), boxes.to_numpy()
@@ -305,7 +295,7 @@ def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
     models = {
         "backbone": pyneat.Model(str(mpks["backbone"]), image_options()),
-        "decoder": pyneat.Model(str(mpks["decoder"]), tensor_options()),
+        "decoder": pyneat.Model(str(mpks["decoder"])),
     }
     path = sample_image(dataset)
     image = frame_tensor(path)
