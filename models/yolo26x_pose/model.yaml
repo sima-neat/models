@@ -1,3 +1,4 @@
+build-on-demand: true
 display_name: YOLO26x-pose
 description: The largest YOLO26 pose estimator here, for people and their 17 COCO keypoints.
 model_type: vision
@@ -49,6 +50,9 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   w8a16:
+    # Measured x86 peak: 47.04 GiB; retry on moderate (64 GiB), with ARM64 still unverified.
+    runner_class: moderate
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w8a16}

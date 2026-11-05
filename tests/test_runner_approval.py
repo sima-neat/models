@@ -152,3 +152,31 @@ def test_unknown_market_fails_closed(market):
     matrix["include"][0]["requested_runner_market"] = market
     with pytest.raises(ValidationError, match="unsupported runner market"):
         _authorize(matrix, _spec())
+
+
+@pytest.mark.parametrize("version", [2, 3])
+@pytest.mark.parametrize("maximum", ["moderate", "expensive", "most-expensive"])
+@pytest.mark.parametrize("requested", ["moderate", "expensive", "most-expensive"])
+def test_extended_runner_classes_respect_maximum(version, maximum, requested):
+    order = ["default", "moderate", "expensive", "most-expensive"]
+    spec = _spec(_approval(maximum, **({"allow_on_demand": False} if version == 3 else {})))
+    spec["model_runner_approvals_schema_version"] = version
+    if order.index(requested) > order.index(maximum):
+        with pytest.raises(ValidationError, match="above approved maximum"):
+            _authorize(_matrix(requested), spec)
+    else:
+        assert _authorize(_matrix(requested), spec)["include"][0]["runner_class"] == requested
+
+
+@pytest.mark.parametrize("requested", ["moderate"])
+def test_new_classes_require_grant_and_independent_market_permission(requested):
+    matrix = _matrix(requested)
+    with pytest.raises(ValidationError, match="has no Vulcan approval"):
+        _authorize(matrix, _spec())
+    matrix["include"][0]["requested_runner_market"] = "on-demand"
+    spec = _spec(_approval(requested, allow_on_demand=False))
+    spec["model_runner_approvals_schema_version"] = 3
+    with pytest.raises(ValidationError, match="has no Vulcan on-demand approval"):
+        _authorize(matrix, spec)
+    spec["model_runner_approvals"][0]["allow_on_demand"] = True
+    assert _authorize(matrix, spec)["include"][0]["runner_market"] == "on-demand"

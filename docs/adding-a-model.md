@@ -104,9 +104,11 @@ When upstream publishes a checkpoint instead of ONNX, declare it under
 scripts/run_model_conversion.sh models/<model-id> default /tmp/<model-id>-export
 ```
 
-The **Vulcan Model Convert** workflow runs the same script, publishes
-`model.onnx`, and prints the `source` block to pin in `model.yaml`. Only that
-pin reaches the compile stage; editing `convert.py` recompiles nothing.
+The **Vulcan Model Convert** workflow runs the same script and publishes
+a validated ONNX bundle. Declare `compilation.source: conversion` after matching
+output is registered. Editing the exporter requires a new conversion; compilation
+reuses a previous build when the resolved output bytes are unchanged. See
+[conversion artifacts](conversion-artifacts.md).
 
 ## 4. Declare the compilation
 
@@ -261,6 +263,7 @@ builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
 | --- | --- |
+| conversion | model identity, upstream content, exporter/helpers, dependency specification, validation files and shared conversion tooling (including registry HTTP reads); explicit conversion dispatch publishes a new run |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
 | performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
@@ -279,9 +282,10 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `convert.py`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
-| a model's tests under `tests/`, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
+| conversion recipe, dependency specification, validation code, test fixtures of any format or shared `CONVERSION_TOOLING` | requires a new conversion for registry sources; compilation changes only if output content changes |
+| a model's compile/benchmark tests, or `scripts/run_model_tests.sh` | nothing for direct sources; conversion fingerprints include model test files and the shared test runner, so registry conversions need revalidation |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
@@ -299,7 +303,9 @@ is always benchmarked again.
 | LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class/market | no LLiMa compilation |
 
 The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprint` in
-`tools/model_registry/fingerprints.py`.
+`tools/model_registry/fingerprints.py`. Conversion fingerprints and the explicit
+`CONVERSION_TOOLING` dependency list live in `tools/model_registry/conversion.py`;
+changes to those shared execution and validation files require a new conversion.
 
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's
@@ -531,9 +537,12 @@ The shared runner forwards these parameters as compiler options after the
 checkpoint and output arguments; `compile.sh` must pass them to `llima-compile`.
 Keep these values in `model.yaml` rather than duplicating them in the recipe.
 
-The executable recipe takes two positional paths followed by compiler options.
-After compilation, it writes a standalone `compile.sh` into its output folder,
-recording the complete arguments it executed. The Qwen recipe shows this pattern.
+The recipe takes two positional paths followed by compiler options and only
+compiles. Put supporting Python code in adjacent `compile.py` or `config.py`.
+The shared runner writes a direct reproduction command with download instructions
+and the resolved graph arguments, alongside those Python files. Reproduction
+defaults to four processes; CI keeps the recipe's process count. The Qwen recipe
+shows the simple command form; Whisper uses `compile.py` and Gemma MTP uses `config.py`.
 
 Run it through the LLiMa runner, with Model Compiler and LLiMa activated. The
 runner passes the selected profile to the recipe as `BUILD_PROFILE_ID`:
@@ -547,7 +556,8 @@ named after `upstream.repository`, preserving the verified cache and giving
 generated files the checkpoint's name. It then runs
 `llima-deploy` into `<output-root>/<model>/<profile>/<component>/deployment/`.
 This folder contains `devkit/`, `elf_files/`, any `npy_files/`, and the standalone
-`compile.sh` with the selected context, image dimensions and other flags. Run
+`compile.sh` with the selected context, image dimensions and other flags,
+plus any `compile.py` or `config.py` needed to rerun it. Run
 `model-registry verify-artifact <component-output> --write-manifest` to check
 the deployment and write `deployment-manifest.json` beside it. The verifier
 checksums every file and rejects folders without ELFs, unsafe paths, and links.

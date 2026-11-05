@@ -51,16 +51,6 @@ PREFETCH = 8
 NORMALIZE = ((np.arange(256, dtype=np.float32)[:, None] / 255.0 - MEAN.ravel()) / STD.ravel()).reshape(1, 256, 3)
 
 
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already resized and normalized the image; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the backbone's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
@@ -81,7 +71,7 @@ def prefetched(load: Callable, items: Sequence) -> Iterator:
 
 class ModelArtifact:
     def __init__(self, path: Path) -> None:
-        self.model = pyneat.Model(str(path), tensor_options())
+        self.model = pyneat.Model(str(path))
         self.runner = None
 
     def __call__(self, *inputs: np.ndarray | pyneat.Tensor) -> list[pyneat.Tensor]:

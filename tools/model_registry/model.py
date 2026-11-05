@@ -194,8 +194,10 @@ def dataset_name(pin: dict[str, Any]) -> str:
     return f"{pin['id']}-{pin['variant']}"
 
 
-def _expand_source(source: dict[str, Any]) -> dict[str, Any]:
+def _expand_source(source: dict[str, Any] | str) -> dict[str, Any]:
     """Expand a source into a file or a file set whose members each have a path and a URI."""
+    if source == "conversion":
+        return {"type": "conversion"}
     if "files" not in source:
         return {"type": "file", **source}
     repository = source.get("repository")
@@ -292,6 +294,10 @@ def validate_model(
     except ValidationError as exc:
         raise ValidationError(f"{directory}: {exc}") from exc
 
+    if authored["compilation"]["source"] == "conversion" and (
+        "conversion" not in authored or authored["compilation"]["format"] != "onnx"
+    ):
+        raise ValidationError("source: conversion requires an ONNX model with a conversion declaration")
     sources = [authored["compilation"]["source"]]
     if "conversion" in authored:
         sources.append(authored["conversion"]["source"])
@@ -300,7 +306,8 @@ def validate_model(
             raise ValidationError(f"{directory}: source main_file {source['main_file']!r} is not one of its files")
     try:
         for component in model["components"][:1]:
-            source_members(component["source"])
+            if component["source"]["type"] != "conversion":
+                source_members(component["source"])
         for conversion in model.get("conversion", {}).values():
             source_members(conversion["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:

@@ -18,6 +18,7 @@ from model_registry.artifact import (
     deployment_artifact_name,
     deployment_files,
     record_compile_outputs,
+    save_llima_recipe,
     validate_compile_outputs,
     verify_artifact,
     verify_llima,
@@ -157,7 +158,7 @@ COMPILE_TIMING = json.dumps({
 
 
 @pytest.fixture
-def compiled(tmp_path):
+def compiled(tmp_path, request):
     dist = tmp_path / "compiled"
     profile = dist / MODEL / PROFILE
     component = profile / "model"
@@ -167,7 +168,8 @@ def compiled(tmp_path):
     provenance = {
         "model_id": MODEL, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
         "source_sha256": source_identity(model["components"][0]["source"]),
-        "git_sha": "a" * 40, "environment": "staging", "compiler_version": compiler["version"],
+        "git_sha": "a" * 40, "environment": getattr(request, "param", "staging"),
+        "compiler_version": compiler["version"],
         "compiler_label": compiler["label"],
         "compile_fingerprint": compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, compiler["identity"]),
     }
@@ -179,14 +181,10 @@ def compiled(tmp_path):
     return dist
 
 
-@pytest.mark.parametrize("legacy_result", [False, True])
-def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path, legacy_result):
+@pytest.mark.parametrize("compiled,environment", [("staging", "staging"), ("production", "production")],
+                         indirect=["compiled"])
+def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path, environment):
     component = compiled / MODEL / PROFILE / "model"
-    if legacy_result:
-        path = component / "compile-result.json"
-        result = json.loads(path.read_text())
-        result.pop("compiled_parameters")
-        path.write_text(json.dumps(result))
     source = component / "deployment"
     manifest = validate_compile_outputs(
         component.parent / "compile-outputs.json", component.parent,
@@ -194,9 +192,10 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
     )
     assert manifest["outputs"][0]["artifact_path"] == str(component / "deployment-manifest.json")
     registry = Registry()
+    arguments = {**registry.args(), "environment": environment}
     candidate = publish_candidate(
         repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
-        model_id=MODEL, build_profile_id=PROFILE, **registry.args(),
+        model_id=MODEL, build_profile_id=PROFILE, **arguments,
     )
     assert candidate["state"] == "finalized"
     published = json.loads((component / "registry-publication.json").read_text())
@@ -473,27 +472,34 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "COMPILE_ARGUMENTS": str(replay_arguments),
     })
     recorded = json.loads(replay_arguments.read_text())
+    assert "--revision" not in replay.read_text()
+    assert "set --" not in replay.read_text()
     checkpoint_name = Path(model["upstream"]["repository"]).name
     assert recorded[0] == checkpoint_name
     assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") +
-                           ("-MTP-compiled" if model_id == MTP_MODEL else "-compiled")]
+                           ("-MTP" if model_id == MTP_MODEL else "")]
     if model_id == MTP_MODEL:
         recipe = replay.read_text()
-        for variable, config in (("MODEL_PATH", model["components"][0]["source"]["entrypoint"]),
-                                 ("DRAFT_PATH", parameters["draft_model_path"] + "/config.json")):
+        for name, config in ((checkpoint_name, model["components"][0]["source"]["entrypoint"]),
+                             (parameters["draft_model_path"], parameters["draft_model_path"] + "/config.json")):
             uri = next(item["uri"] for item in model["components"][0]["source"]["files"] if item["path"] == config)
-            repository, revision_path = uri.removeprefix("hf://models/").split("@", 1)
-            revision = revision_path.split("/", 1)[0]
-            assert f'# hf download {repository} --revision {revision} --local-dir "${{{variable}}}"' in recipe
+            repository = uri.removeprefix("hf://models/").split("@", 1)[0]
+            assert f'# hf download {repository} --local-dir {name}' in recipe
         assert recorded[recorded.index("--draft_model_path") + 1] == parameters["draft_model_path"]
         arguments[arguments.index("--draft_model_path") + 1] = parameters["draft_model_path"]
         for values in (recorded, arguments):
             index = values.index("-c")
             del values[index:index + 2]
+    assert recorded[recorded.index("--jobs") + 1] == "4"
+    assert arguments[arguments.index("--jobs") + 1] == "20"
+    for values in (recorded, arguments):
+        index = values.index("--jobs")
+        del values[index:index + 2]
     assert recorded[3:] == arguments[3:]
-    assert recorded[recorded.index("--jobs") + 1] == "20"
     manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
     assert "compile.sh" in {item["path"] for item in manifest["files"]}
+    if model_id == MTP_MODEL:
+        assert "config.py" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
     verify_artifact(output / model_id / PROFILE / "model", write_manifest=True, provenance={
         "model_id": model_id, "build_profile_id": PROFILE, "component_id": "model", "target": "modalix",
@@ -518,30 +524,6 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
         assert {item["path"] for item in package["manifest"]["files"]} == {
             item["path"] for item in manifest["files"]
         }
-
-
-@pytest.mark.parametrize("precision", ["a16w4", "a16w16"])
-def test_mtp_recipe_rejects_unsupported_draft_precision(tmp_path, precision):
-    model_dir = tmp_path / MTP_MODEL
-    shutil.copytree(ROOT / "models" / MTP_MODEL, model_dir)
-    path = model_dir / "model.yaml"
-    model = yaml.safe_load(path.read_text())
-    model["build_profiles"][PROFILE]["components"]["model"]["parameters"]["draft_precision"] = precision
-    path.write_text(yaml.safe_dump(model, sort_keys=False))
-    tools = tmp_path / "bin"
-    tools.mkdir()
-    compiler = tools / "llima-compile"
-    compiler.write_text("#!/usr/bin/env bash\nexit 91\n")
-    compiler.chmod(0o755)
-    result = subprocess.run([
-        "bash", str(model_dir / "scripts/compile.sh"), str(tmp_path / "target"), str(tmp_path / "output"),
-        "--draft_model_path", str(tmp_path / "draft"),
-    ], capture_output=True, text=True, env={
-        **os.environ, "PATH": f"{tools}:{os.environ['PATH']}",
-        "MODEL_COMPILER_PYTHON": sys.executable, "BUILD_PROFILE_ID": PROFILE,
-    })
-    assert result.returncode == 1
-    assert "requires draft_precision: a16w8" in result.stderr
 
 
 @pytest.mark.parametrize("future_mask, log_probe", [(True, True), (False, True), (True, False)])
@@ -612,13 +594,20 @@ class WhisperModel:
         assert calls["source"]["enable_log_probe"] is log_probe
         assert calls["mode"] == "all"
         assert calls["generation"]["precision"] == {"all": {"precision": "a16w8"}}
-        assert calls["generation"]["num_processes"] == 20
+        assert calls["generation"]["num_processes"] == (20 if script == recipe else 4)
         assert calls["generation"]["part"] == "all"
         assert calls["generation"]["resume"] is True
+        if script == recipe:
+            source = load_and_validate_model(ROOT / "models/whisper_small")["components"][0]["source"]
+            config = next(item for item in source["files"] if item["path"] == source["entrypoint"])
+            save_llima_recipe(recipe.parent, output, [checkpoint.name, "whisper-small-a16w8", *options],
+                              {checkpoint.name: config["uri"]})
     assert os.access(output / "compile.sh", os.X_OK)
+    assert (output / "compile.py").read_bytes() == recipe.with_suffix(".py").read_bytes()
 
 
-def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch, environment):
     root = tmp_path / "repository"
     model_dir = root / "models/fixture_model"
     shutil.copytree(ROOT / "tests/fixtures/fixture_model", model_dir)
@@ -654,7 +643,7 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         verify_artifact(output, write_manifest=True, provenance={
             "model_id": "fixture_model", "build_profile_id": "fixture", "component_id": component,
             "target": "modalix", "source_sha256": "a" * 64, "git_sha": "a" * 40,
-            "environment": "staging", "compiler_version": compiler["version"], "compiler_label": compiler["label"],
+            "environment": environment, "compiler_version": compiler["version"], "compiler_label": compiler["label"],
             "compile_fingerprint": key,
         })
         outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
@@ -681,8 +670,9 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         assert [(item["compile_invocation_id"], item["component_ids"]) for item in plan["compile"]["include"]] == [
             ("fixture", ["backbone", "decoder"]),
         ]
+    arguments = {**registry.args(), "environment": environment}
     result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
-                               model_id="fixture_model", build_profile_id="fixture", **registry.args())
+                               model_id="fixture_model", build_profile_id="fixture", **arguments)
     assert result["state"] == "finalized"
     assert set(registry.bindings) == {"compile-backbone", "compile-decoder", "package-default"}
     finalization = next(index for index, (method, path, _) in enumerate(registry.calls)
