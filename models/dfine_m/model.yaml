@@ -1,0 +1,153 @@
+# Locally qualified with the GridSample/typed-zero compiler fixes; W8A16 also
+# needs the validated current-stage reciprocal-LUT staging fix. Publish those
+# compiler fixes and native Focal BoxDecode dependencies before normal CI builds.
+display_name: D-FINE Medium
+description: Medium D-FINE COCO object detector with default deformable-attention sampling.
+model_type: vision
+tasks:
+- object_detection
+modalities:
+  inputs:
+  - image
+  outputs:
+  - bounding_boxes
+  - class_scores
+architecture: dfine
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: D-FINE is distributed by the D-FINE authors under Apache-2.0; this
+    checkpoint is the USTC community Transformers port.
+upstream:
+  repository: https://huggingface.co/ustc-community/dfine-medium-coco
+  revision: 4ab9f5e466432f4fcf9a9a023da6aa5ecc9c9829
+conversion:
+  source:
+    repository: ustc-community/dfine-medium-coco
+    revision: 4ab9f5e466432f4fcf9a9a023da6aa5ecc9c9829
+    main_file: model.safetensors
+    files:
+      model.safetensors:
+        sha256: 5a53154fb87af91ad1ca3081599f21423a5681c46b613e15f2ff556837b02634
+        size_bytes: 78699728
+      config.json:
+        sha256: 751deb25038ced3c7bbc8515914d71a0b4a5485486cd7c7a119c0adee209175e
+        size_bytes: 6967
+      preprocessor_config.json:
+        sha256: 7e9e2245806aa3ef068a5321f5eebee3116fa4cec560173231954ffaca930eca
+        size_bytes: 470
+compilation:
+  format: onnx
+  source: conversion
+  components:
+  - backbone
+  - decoder
+calibrations:
+- id: coco-2017-cal
+  dataset: &id001
+    id: coco-2017
+    variant: cal
+    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
+    size_bytes: 187510866
+build_profiles:
+  # Weight precision choice, not a throughput optimization.
+  # Peak x86 PSS was 33.5 GiB (BF16) and about 37.2 GiB (W8A16/W8A8). The 64 GiB
+  # Spot request requires an exact dfine_m Vulcan grant before trusted builds;
+  # its deployment and successful ARM64 compilation remain unverified.
+  w8a16_w16a16:
+    runner_class: moderate
+    calibration_dataset: coco-2017-cal
+    components:
+      backbone:
+        parameters:
+          precision: w8a16
+          calibration_bins: 2048
+          calibration_samples: 50
+      decoder:
+        parameters:
+          precision: w16a16
+          calibration_bins: 2048
+          calibration_samples: 50
+  # INT8 body with BF16 output paths and FP32 public tensors. Reference masking
+  # stays BF16 so max-float sentinels do not collapse valid coordinates.
+  w8a8_w16a16:
+    runner_class: moderate
+    calibration_dataset: coco-2017-cal
+    components:
+      backbone:
+        parameters:
+          precision: w8a8
+          calibration_bins: 1024
+          calibration_samples: 50
+      decoder:
+        parameters:
+          precision: w16a16
+          calibration_bins: 2048
+          calibration_samples: 50
+  # COCO/FPS/latency validated on DVT; complete SoM/MLA power awaits SoM hardware.
+  w16a16_w16a16:
+    runner_class: moderate
+    calibration_dataset: coco-2017-cal
+    components:
+      backbone:
+        parameters:
+          precision: w16a16
+          calibration_bins: 2048
+          calibration_samples: 50
+      decoder:
+        parameters:
+          precision: w16a16
+          calibration_bins: 2048
+          calibration_samples: 50
+  # Not yet natively qualified; keep this profile out of CI and the catalog.
+  # w8a8_mixed_w16a16:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     backbone:
+  #       parameters:
+  #         precision: w8a8
+  #         calibration_bins: 1024
+  #         calibration_samples: 50
+  #         # Keep HGNet, non-convolution arithmetic and output producers BF16;
+  #         # the remaining neck/projection convolutions run INT8.
+  #         bf16_regions: [backbone, nonconv, outputs]
+  #     decoder:
+  #       parameters:
+  #         precision: w16a16
+  #         calibration_bins: 2048
+  #         calibration_samples: 50
+pipeline:
+- component: backbone
+- cpu: Top 300 content/reference queries
+- component: decoder
+numerical_fidelity:
+  status: diagnostic
+  dataset: *id001
+  selection:
+    method: seeded_random_without_replacement
+    seed: 42
+    offset: 50
+    samples: 10
+  outputs:
+  - pred_boxes
+  - pred_logits
+accuracy:
+  datasets:
+  - id: coco-2017
+    variant: val
+    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
+    size_bytes: 898368520
+performance: {}
+reference_metrics:
+- source: https://proceedings.iclr.cc/paper_files/paper/2025/file/6cf58a87e3097e7d1f9be3e8693a93de-Paper-Conference.pdf
+  dataset:
+    id: coco-2017
+    split: val
+  conditions: 640x640, D-FINE-M, COCO-only training, Table 7 (not Objects365 pretraining)
+  metrics:
+    coco_map: 0.523
+    coco_ap50: 0.698
+    coco_ap75: 0.564
+    coco_ap_small: 0.332
+    coco_ap_medium: 0.565
+    coco_ap_large: 0.702
