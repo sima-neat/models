@@ -263,7 +263,7 @@ builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
 | --- | --- |
-| conversion | model identity, upstream content, exporter/helpers, dependency specification, validation files and shared conversion tooling (including registry HTTP reads); explicit conversion dispatch publishes a new run |
+| conversion | model identity, upstream content, `convert.py` and the modules it imports, other non-module files under `scripts/`, `requirements-convert.txt` and `CONVERSION_TOOLING`; explicit conversion dispatch publishes a new run |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
 | performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
@@ -284,8 +284,8 @@ is always benchmarked again.
 | --- | --- |
 | README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
-| conversion recipe, dependency specification, validation code, test fixtures of any format or shared `CONVERSION_TOOLING` | requires a new conversion for registry sources; compilation changes only if output content changes |
-| a model's compile/benchmark tests, or `scripts/run_model_tests.sh` | nothing for direct sources; conversion fingerprints include model test files and the shared test runner, so registry conversions need revalidation |
+| conversion recipe, dependency specification or shared `CONVERSION_TOOLING` | requires a new conversion for registry sources; compilation changes only if output content changes |
+| a model's tests, or `scripts/run_model_tests.sh` | nothing; a changed test applies the next time its stage runs |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
@@ -304,8 +304,8 @@ is always benchmarked again.
 
 The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprint` in
 `tools/model_registry/fingerprints.py`. Conversion fingerprints and the explicit
-`CONVERSION_TOOLING` dependency list live in `tools/model_registry/conversion.py`;
-changes to those shared execution and validation files require a new conversion.
+`CONVERSION_TOOLING` list live in `tools/model_registry/conversion.py`; changes to
+those shared files, which can change the ONNX or its bundle, require a new conversion.
 
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's

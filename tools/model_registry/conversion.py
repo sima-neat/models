@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import gzip
 import hashlib
 import json
@@ -23,54 +24,64 @@ REPOSITORY_PATH = "/v1/repositories/sima-neat/models"
 ARTIFACT = "onnx"
 FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media_type")
 
-# Shared execution and validation dependencies. Keep this explicit so unrelated
-# registry/UI changes do not invalidate conversions; update it with new imports.
+# Shared files that can change the ONNX or its bundle. A missing conversion stops the plan for every model, so
+# files that only validate the output or read metadata stay out; a changed check applies on the next conversion.
 CONVERSION_TOOLING = (
     ".github/workflows/vulcan-model-convert.yml",
     "scripts/run_model_conversion.sh",
-    "scripts/run_model_tests.sh",
-    "conftest.py",
-    "pyproject.toml",
     "tools/model_registry/conversion.py",
     "tools/model_registry/fetch.py",
-    "tools/model_registry/registry_http.py",
     "tools/model_registry/source.py",
-    "tools/model_registry/model.py",
-    "tools/model_registry/model_tests.py",
-    "tools/model_registry/benchmark_declarations.py",
-    "tools/model_registry/taxonomy.py",
-    "tools/model_registry/errors.py",
-    "tools/model_report/__init__.py",
-    "tools/model_report/metrics.json",
-    "schemas/model.schema.json",
-    "schemas/model-tests.schema.json",
-    "schemas/dataset-requirements.schema.json",
-    "taxonomies/model-taxonomy.yaml",
 )
+# Other stages' dependencies, which never reach the conversion environment.
+OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt"}
 
 
 def digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _imported_modules(scripts: Path) -> set[Path]:
+    """Return convert.py and every module beside it that it imports, directly or through another such module."""
+    modules = set()
+    pending = [scripts / "convert.py"]
+    while pending:
+        path = pending.pop()
+        if path in modules:
+            continue
+        modules.add(path)
+        try:
+            nodes = ast.walk(ast.parse(path.read_bytes()))
+        except SyntaxError as exc:
+            raise ValidationError(f"{path}: cannot read its imports: {exc}") from exc
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module]
+            else:
+                continue
+            siblings = (scripts / f"{name.partition('.')[0]}.py" for name in names)
+            pending += [sibling for sibling in siblings if sibling.is_file()]
+    return modules
+
+
 def conversion_fingerprint(root: Path, model: dict) -> str:
-    directory = root / "models" / model["id"]
-    paths = [
-        directory / "scripts/convert.py",
-        directory / "scripts/requirements-convert.txt",
-        *(root / path for path in CONVERSION_TOOLING),
-    ]
-    # Include local helpers, exporter patches, and validation, but not compile/benchmark recipes.
+    scripts = root / "models" / model["id"] / "scripts"
+    imported = _imported_modules(scripts)
+    paths = [scripts / "requirements-convert.txt", *(root / path for path in CONVERSION_TOOLING)]
+    # A module beside convert.py counts only when imported: compile, benchmark, calibration and surgery code
+    # does not. Anything else under scripts/, such as an exporter patch or a helper package, always counts.
     paths += [
-        p
-        for p in (directory / "scripts").rglob("*")
-        if p.is_file() and p.name not in {"compile.py", "accuracy.py", "performance.py", "requirements-compile.txt"}
+        path
+        for path in scripts.rglob("*")
+        if path.is_file()
+        and path.name not in OTHER_STAGE_REQUIREMENTS
+        and (path.parent != scripts or path.suffix != ".py" or path in imported)
     ]
-    # Validation can consume images, arrays, or arbitrary binary fixtures.
-    paths += [p for p in (directory / "tests").rglob("*") if p.is_file()]
     files = {}
     for path in sorted(set(paths)):
-        if {"__pycache__", ".pytest_cache"}.intersection(path.relative_to(root).parts):
+        if "__pycache__" in path.relative_to(root).parts:
             continue
         if not path.is_file() or path.is_symlink():
             raise ValidationError(f"conversion input must be a regular file: {path}")

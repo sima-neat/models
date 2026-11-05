@@ -361,31 +361,78 @@ def test_conversion_fingerprint_tracks_recipe_and_dependency_pins(repository):
         compile_fingerprint(repository, "yolo26x", "w16a16", "w16a16", "test", conversion_sources={})
 
 
-@pytest.mark.parametrize("name", ["image.png", "array.npy", "tensor.bin", "expected.json", "extensionless"])
-def test_conversion_fixture_changes_invalidate_saved_selection(repository, name):
-    model = load_and_validate_model(repository / "models/yolo26x")
-    baseline = conversion.conversion_fingerprint(repository, model)
-    fixture = repository / "models/yolo26x/tests/fixtures/nested" / name
-    fixture.parent.mkdir(parents=True, exist_ok=True)
-    fixture.write_bytes(b"\x00\x01fixture")
-    added = conversion.conversion_fingerprint(repository, model)
-    assert added != baseline
-    fixture.write_bytes(b"\x00\x02fixture")
-    assert conversion.conversion_fingerprint(repository, model) != added
-    with pytest.raises(ValidationError, match="checkout's recipe"):
-        conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": added}}, root=repository)
-    fixture.unlink()
-    assert conversion.conversion_fingerprint(repository, model) == baseline
-
-
-def test_conversion_fingerprint_ignores_generated_test_caches(repository):
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "taxonomies/model-taxonomy.yaml",
+        "tools/model_report/metrics.json",
+        "schemas/model.schema.json",
+        "conftest.py",
+        "pyproject.toml",
+        "scripts/run_model_tests.sh",
+        "tools/model_registry/model.py",
+        "models/yolo26x/tests/tests.yaml",
+        "models/yolo26x/tests/build/test_conversion.py",
+        "models/yolo26x/scripts/compile.py",
+        "models/yolo26x/scripts/calibration.py",
+        "models/yolo26x/scripts/surgery.py",
+        "models/yolo26x/scripts/performance.py",
+    ],
+)
+def test_files_that_cannot_change_the_onnx_keep_the_saved_selection(repository, relative):
     model = load_and_validate_model(repository / "models/yolo26x")
     original = conversion.conversion_fingerprint(repository, model)
-    for relative in ("__pycache__/test_conversion.pyc", ".pytest_cache/v/cache/nodeids"):
-        path = repository / "models/yolo26x/tests" / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"generated cache")
+    path = repository / relative
+    path.write_bytes(path.read_bytes() + b"\n")
     assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_other_stage_requirements_keep_the_saved_selection(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    for name in conversion.OTHER_STAGE_REQUIREMENTS:
+        (repository / "models/yolo26x/scripts" / name).write_text("package==1.0\n")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_modules_convert_imports_invalidate_saved_selection(repository):
+    scripts = repository / "models/yolo26x/scripts"
+    model = load_and_validate_model(repository / "models/yolo26x")
+    (scripts / "export_graph.py").write_text("import export_weights\n")
+    (scripts / "export_weights.py").write_text("SCALE = 1\n")
+    unused = conversion.conversion_fingerprint(repository, model)
+    convert = scripts / "convert.py"
+    convert.write_text("from export_graph import rewrite\n" + convert.read_text())
+    imported = conversion.conversion_fingerprint(repository, model)
+    assert imported != unused
+    (scripts / "export_weights.py").write_text("SCALE = 2\n")
+    assert conversion.conversion_fingerprint(repository, model) != imported
+
+
+@pytest.mark.parametrize("relative", ["exporter.patch", "exporter/graph.py"])
+def test_other_files_under_scripts_invalidate_saved_selection(repository, relative):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    baseline = conversion.conversion_fingerprint(repository, model)
+    path = repository / "models/yolo26x/scripts" / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("content\n")
+    assert conversion.conversion_fingerprint(repository, model) != baseline
+
+
+def test_conversion_fingerprint_ignores_generated_caches(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    path = repository / "models/yolo26x/scripts/__pycache__/convert.pyc"
+    path.parent.mkdir()
+    path.write_bytes(b"generated cache")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_conversion_fingerprint_names_an_unparsable_recipe(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    (repository / "models/yolo26x/scripts/convert.py").write_text("def broken(\n")
+    with pytest.raises(ValidationError, match="convert.py: cannot read its imports"):
+        conversion.conversion_fingerprint(repository, model)
 
 
 @pytest.mark.parametrize("relative", conversion.CONVERSION_TOOLING)
