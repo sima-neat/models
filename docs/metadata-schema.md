@@ -176,7 +176,7 @@ recipe maps it to compiler settings. The target is `modalix`.
 
 | Runner field | Values | Default | Access requirement |
 | --- | --- | --- | --- |
-| `runner_class` | `default`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
+| `runner_class` | `default`, `moderate`, `expensive`, `most-expensive` | `default` | Elevated classes require a sufficient Vulcan maximum-class grant. |
 | `runner_market` | `spot`, `on-demand` | `spot` | On-demand requires an independent v3 `allow_on_demand: true` grant, including at default size. |
 
 Both fields belong on the profile or a component binding, outside `parameters`.
