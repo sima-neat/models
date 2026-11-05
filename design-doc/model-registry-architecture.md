@@ -126,7 +126,7 @@ catalog lists each profile's benchmark fingerprints under
 fingerprints. A recompiled build gets new benchmark fingerprints and is
 therefore benchmarked again. Performance fingerprints also include the profile's
 optional `benchmark_baseline`; accuracy and compilation do not. Tests are in no
-fingerprint, so editing one reruns nothing; the new test runs the next time its
+fingerprint, so editing one reruns nothing. The new test runs the next time its
 stage does. The conversion fingerprint covers only what can change the ONNX,
 because when it has no published conversion, planning fails for every model until
 someone reruns Convert. The contributor guide lists

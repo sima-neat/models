@@ -202,7 +202,7 @@ runs one stage's file on that output (the benchmarks also take the build
 profile their `model-report.json` measured) and prints `passed`, `failed`, or `skipped` (the
 stage's `run_tests` is `false`); a plain `pytest` deselects every test that
 takes stage output. Tests are in no fingerprint, so editing `models/<id>/tests/` or
-`run_model_tests.sh` reruns nothing; the new test runs the next time its stage does. To run it now, dispatch `Vulcan Model Orchestrator`
+`run_model_tests.sh` reruns nothing. The new test runs the next time its stage does. To run it now, dispatch `Vulcan Model Orchestrator`
 with `models` set to the model and `force_rebuild_all`, which recompiles and
 remeasures it.
 
