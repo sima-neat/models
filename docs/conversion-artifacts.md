@@ -30,13 +30,26 @@ publishes a deterministic bundle under `models/conversions/`. The bundle contain
 Skipped or failed model tests do not publish successful conversions.
 
 Vulcan stores ordinary `model_conversion` runs with upstream inputs, parameters,
-validation and the `onnx` artifact. Fingerprint version 1 covers what can change
-the ONNX: model identity, upstream content, `convert.py` and the modules it imports,
-other non-module files under `scripts/`, and `CONVERSION_TOOLING` in
-`tools/model_registry/conversion.py`. Tests and metadata stay out, because a missing
-conversion stops planning for every model; a changed check applies on the next
-conversion. This identifies the declared recipe, not a fully locked transitive Python
-environment; pin exporter requirements for reproducibility.
+validation and the `onnx` artifact.
+
+### When to run Convert again
+
+Run **Vulcan Model Convert** again after changing anything that can change the ONNX:
+
+- the upstream pins under `conversion.source`
+- `scripts/convert.py`, `scripts/requirements-convert.txt`, or a module in `scripts/`
+  that `convert.py` imports
+- any other file under `scripts/` that is not a Python module beside `convert.py`,
+  except `requirements-compile.txt` and `requirements-accuracy.txt`
+- shared export code, listed in `CONVERSION_TOOLING` in
+  `tools/model_registry/conversion.py`
+
+Everything else leaves the conversion valid, including tests, compile and benchmark
+code, and the taxonomy. A changed conversion test runs the next time Convert runs.
+
+Use a normal `import` for helpers, because a module loaded dynamically is not
+detected. Pin exporter requirements too, because packages they pull in indirectly
+are not tracked.
 
 Catalog planning resolves conversion declarations for the requested models (all
 models when no `--models` filter is supplied), including on-demand models,
