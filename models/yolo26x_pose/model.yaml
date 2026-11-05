@@ -49,6 +49,9 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   w8a16:
+    # The compiler's simulator check peaks near 47 GiB, above the default 32 GiB runner.
+    runner_class: expensive
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w8a16}
