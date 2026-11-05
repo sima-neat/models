@@ -17,6 +17,7 @@ import posixpath
 import re
 import sys
 import uuid
+from contextlib import contextmanager
 from functools import cache
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +30,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from model_registry.benchmark_declarations import benchmarked_profiles, reference_metrics_by_model  # noqa: E402
 from model_registry.compile_matrix import build_matrix  # noqa: E402
+from model_registry.conversion import apply_selection, conversion_fingerprint  # noqa: E402
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
@@ -65,20 +67,43 @@ def _timestamp(day: str, position: int) -> str:
     return f"{day}T{8 + position // 60:02d}:{position % 60:02d}:00+00:00"
 
 
+@contextmanager
+def _preview_conversions(models: dict):
+    """Synthetic content identities for the local preview, never registry credentials or writes."""
+    selected = {}
+    for model_id, model in models.items():
+        if model["components"][0]["source"]["type"] != "conversion":
+            continue
+        selected[model_id] = {
+            "sha256": _sha256("preview-conversion", model_id), "size_bytes": 1000,
+            "conversion_fingerprint": conversion_fingerprint(ROOT, model),
+        }
+        apply_selection(model, selected, root=ROOT)
+    previous = os.environ.get("MODEL_REGISTRY_CONVERSIONS")
+    os.environ["MODEL_REGISTRY_CONVERSIONS"] = json.dumps(selected)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("MODEL_REGISTRY_CONVERSIONS", None)
+        else:
+            os.environ["MODEL_REGISTRY_CONVERSIONS"] = previous
+
+
 @cache
 def _repository() -> dict[str, Any]:
     models = load_models(ROOT)
     compiler = resolve_model_compiler(ROOT)
-    matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
-    documentation = {
-        model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
-        for model_id, model in models.items()
-    }
-    revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
-    runs = sorted((run for revision in revisions for run in revision["runs"]), key=lambda run: run["created_at"])
-    runs = _old_layout_runs(runs[0]) + runs
-    return {"models": models, "compiler": compiler, "revisions": revisions, "runs": runs[::-1]}
-
+    with _preview_conversions(models):
+        matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
+        documentation = {
+            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
+            for model_id, model in models.items()
+        }
+        revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
+        runs = sorted((run for revision in revisions for run in revision["runs"]), key=lambda run: run["created_at"])
+        runs = _old_layout_runs(runs[0]) + runs
+        return {"models": models, "compiler": compiler, "revisions": revisions, "runs": runs[::-1]}
 
 # Compile runs older Models revisions wrote, keyed by the field they lack; build history hides them.
 OLD_LAYOUT_RUN_IDS = {

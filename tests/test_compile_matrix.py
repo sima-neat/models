@@ -650,3 +650,27 @@ def test_grouped_compile_rejects_conflicting_markets(model_repository):
     path.write_text(yaml.safe_dump(authored))
     with pytest.raises(ValidationError, match="conflicting runner_market"):
         load_and_validate_model(path.parent)
+
+
+def test_yolo26x_pose_requests_moderate_on_demand():
+    model = load_and_validate_model(ROOT / "models/yolo26x_pose", SCHEMA)
+    entries = build_matrix({"yolo26x_pose": model}, ["yolo26x_pose"])["include"]
+    assert {entry["build_profile_id"]: (
+        entry["requested_runner_class"], entry["requested_runner_market"]
+    ) for entry in entries} == {
+        "w8a16": ("moderate", "on-demand"),
+        "w8a8": ("default", "spot"),
+        "w16a16": ("default", "spot"),
+    }
+
+
+@pytest.mark.parametrize("runner_class", ["moderate"])
+def test_new_runner_classes_do_not_change_compile_fingerprint(model_repository, runner_class):
+    path = model_repository / "models/alpha/model.yaml"
+    before = _fingerprint(model_repository, "alpha", COMPILER_VERSION)
+    authored = yaml.safe_load(path.read_text())
+    profile = next(iter(authored["build_profiles"].values()))
+    profile["runner_class"] = runner_class
+    path.write_text(yaml.safe_dump(authored, sort_keys=False))
+    load_and_validate_model(path.parent, model_repository / "schemas/model.schema.json")
+    assert _fingerprint(model_repository, "alpha", COMPILER_VERSION) == before

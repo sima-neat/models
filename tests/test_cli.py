@@ -29,6 +29,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
         "check-report",
         "publish",
         "promotion",
+        "publish-conversion",
         "publish-candidate",
         "publish-branch-deployment",
         "publish-report",
@@ -93,7 +94,10 @@ def test_verify_artifact_preserves_runner_provenance(monkeypatch, tmp_path):
     assert recorded == expected
 
 
-def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkeypatch, tmp_path, capsys) -> None:
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(
+    monkeypatch, tmp_path, capsys, environment
+) -> None:
     calls = []
     result = {
         "deployment_id": "candidate-id", "manifest_digest": "b" * 64,
@@ -111,7 +115,7 @@ def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkey
         "repository": tmp_path, "dist_dir": tmp_path / "compiled", "output_dir": tmp_path / "candidate",
         "model_id": "qwen3_5_0_8b", "build_profile_id": "w4a16", "api_url": "https://registry.example.invalid",
         "aws_region": "us-west-2", "bucket": "models", "kms_key_id": "key",
-        "environment": "staging", "branch": "feature/llima-models", "git_sha": "a" * 40,
+        "environment": environment, "branch": "feature/llima-models", "git_sha": "a" * 40,
         "github_run_id": "123", "github_run_attempt": "1", "github_run_url": "https://example.invalid/run/123",
     }
     assert main([
@@ -127,6 +131,7 @@ def test_publish_candidate_forwards_workflow_arguments_and_writes_summary(monkey
     assert calls == [expected]
     assert json.loads(capsys.readouterr().out) == result
     text = summary.read_text()
+    assert f"Candidate ready: **qwen3_5_0_8b/w4a16** ({environment})" in text
     assert all(value in text for value in (result["deployment_id"], result["manifest_digest"], result["commit_sha"]))
     assert "latest_successful" in text
 
@@ -521,3 +526,38 @@ def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, ba
     assert calls[0]["branch"] == "feat/names"
     assert calls[0]["bucket"] == "model-artifacts"
     assert calls[0]["environment"] == "staging"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_publish_conversion_cli_forwards_arguments_and_workflow(monkeypatch, tmp_path, capsys, environment):
+    calls = []
+    client, store = object(), object()
+    monkeypatch.setattr(
+        "model_registry.registry.SigV4RegistryClient", lambda api, region: calls.append((api, region)) or client,
+    )
+    monkeypatch.setattr(
+        "model_registry.registry.S3ArtifactStore", lambda bucket, **kw: calls.append((bucket, kw)) or store,
+    )
+    monkeypatch.setattr(
+        "model_registry.conversion.publish_conversion",
+        lambda *args, **kw: calls.append((args, kw)) or {"run_id": "converted"},
+    )
+    for key, value in {"GITHUB_REF_NAME": "canary", "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123"}.items():
+        monkeypatch.setenv(key, value)
+    assert main(["publish-conversion", "yolo26n", str(tmp_path / "onnx"),
+                 "--repository", str(tmp_path), "--api-url", "https://registry.test",
+                 "--bucket", "artifacts", "--kms-key-id", "key", "--aws-region", "us-west-2",
+                 "--environment", environment, "--validation", "passed"]) == 0
+    assert calls == [("https://registry.test", "us-west-2"), ("artifacts", {"kms_key_id": "key"}),
+                     ((tmp_path, "yolo26n", tmp_path / "onnx"), {
+                         "client": client, "store": store, "bucket": "artifacts", "environment": environment,
+                         "branch": "canary", "git_sha": "a" * 40, "workflow": "123", "validation": "passed"})]
+    assert json.loads(capsys.readouterr().out) == {"run_id": "converted"}
+
+
+@pytest.mark.parametrize("validation", ["failed", "skipped"])
+def test_publish_conversion_cli_rejects_unvalidated_output(validation):
+    with pytest.raises(SystemExit) as error:
+        main(["publish-conversion", "yolo26n", "output", "--api-url", "https://registry.test",
+              "--bucket", "artifacts", "--environment", "production", "--validation", validation])
+    assert error.value.code == 2
