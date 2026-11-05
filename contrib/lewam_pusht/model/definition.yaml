@@ -1,0 +1,46 @@
+# Staged definition, not an active catalog entry. Add verified publication pins
+# in a reviewed model.yaml only after the compiler and runtime gates are satisfied.
+display_name: LeWAM PushT
+description: Goal-conditioned visual action prediction for the PushT simulation.
+model_type: vision
+tasks: [action_prediction]
+modalities:
+  inputs: [image]
+  outputs: [actions]
+architecture: lewam
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: Copyright 2026 The LeWAM authors; includes credited le-wm portions by Lucas Maes.
+upstream:
+  repository: https://huggingface.co/LeWAM/lewam-pusht
+  revision: d8e7039c6e3d8eaec320ba0d0122a5e9c9ce23c2
+  model_card: https://huggingface.co/LeWAM/lewam-pusht/blob/d8e7039c6e3d8eaec320ba0d0122a5e9c9ce23c2/README.md
+  derived_from: https://github.com/MinghaoFu/lewam/tree/83c47030a80cee28f638680b76998d2f6a410914
+compilation:
+  format: onnx
+  components: [front, body, head, policy]
+  # publication.py bind supplies the verified compilation.source YAML fragment.
+build_profiles:
+  w16a16:
+    calibration_dataset: pusht-cal
+    components:
+      front:
+        parameters: {precision: w16a16, calibration_samples: 50, calibration_bins: 2048}
+      body:
+        parameters: {precision: w16a16, calibration_samples: 50, calibration_bins: 2048}
+      head:
+        parameters: {precision: w16a16, calibration_samples: 50, calibration_bins: 2048}
+      policy:
+        parameters: {precision: w16a16, calibration_samples: 50, calibration_bins: 2048}
+pipeline:
+- {component: front}
+- {component: body}
+- {component: head}
+- {cpu: Assemble observation history and goal conditioning}
+- {component: policy}
+- {cpu: "Eight sequential policy evaluations with Euler feedback, then denormalize ten actions"}
+# No reference scores or 15.39 throughput expectation: the campaign measured a
+# different runtime/input boundary, and two of fourteen numerical cases failed.
+# Performance and accuracy remain undeclared until their protocol, dataset pins
+# and first measured baselines are reviewed.

@@ -1,5 +1,6 @@
 // Accuracy metric labels in display order; tools/model_report/metrics.json gives the same labels.
 export const ACCURACY_METRIC_LABELS = {
+  pusht_success_rate: "PushT success rate",
   top1_accuracy: "Top-1",
   top5_accuracy: "Top-5",
   coco_map: "mAP 50–95",

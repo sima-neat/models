@@ -9,6 +9,7 @@ build/
 # Each model's build-stage tests, including the fixture model's.
 !models/*/tests/build/
 !tests/fixtures/*/tests/build/
+!contrib/lewam_pusht/model/tests/build/
 dist/
 node_modules/
 .docusaurus/

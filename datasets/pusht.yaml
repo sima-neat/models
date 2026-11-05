@@ -1,0 +1,3 @@
+# Goal-reaching success, not block coverage, action error, or planning performance.
+required_metrics:
+  action_prediction: [pusht_success_rate]

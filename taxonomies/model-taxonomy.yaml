@@ -10,6 +10,8 @@ model_types:
     display_name: VLM
 
 modalities:
+  actions:
+    display_name: Actions
   image:
     display_name: Image
   video:
@@ -41,6 +43,10 @@ architecture_paradigms:
 # A family is the upstream model line, named without generation or size
 # (YOLO, not YOLO26n). The model's id and display_name carry those.
 architectures:
+  lewam:
+    display_name: LeWAM
+    paradigm: transformer
+    allowed_model_types: [vision]
   clip:
     display_name: CLIP
     paradigm: transformer
@@ -95,6 +101,9 @@ architectures:
     allowed_model_types: [vision]
 
 tasks:
+  action_prediction:
+    display_name: Action Prediction
+    allowed_model_types: [vision]
   automatic_speech_recognition:
     display_name: Automatic Speech Recognition
     allowed_model_types: [audio]

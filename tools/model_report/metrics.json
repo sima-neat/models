@@ -1,4 +1,5 @@
 {
+  "pusht_success_rate": {"stage": "accuracy", "label": "PushT success rate", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.pusht_success_rate", "aggregation": "raw", "digits": 3},
   "latency_avg_ms": {"stage": "performance", "required": true, "label": "Average latency", "unit": "ms", "direction": "lower", "registry_name": "model.latency.avg", "aggregation": "raw", "digits": 2, "report": "latency_ms"},
   "latency_p50_ms": {"stage": "performance", "label": "Latency p50", "unit": "ms", "direction": "lower", "registry_name": "model.latency.p50", "aggregation": "raw", "digits": 2, "report": "latency_p50_ms"},
   "latency_p95_ms": {"stage": "performance", "label": "Latency p95", "unit": "ms", "direction": "lower", "registry_name": "model.latency.p95", "aggregation": "raw", "digits": 2, "report": "latency_p95_ms"},

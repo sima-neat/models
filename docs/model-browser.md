@@ -223,6 +223,10 @@ in this order:
    Its **Published scores** row lists every reference entry with its dataset,
    conditions, and source. A build with no accuracy result yet shows only the
    published scores.
+   **PushT success rate** is the fraction of evaluated simulation episodes that
+   reach the sampled goal. Check **Evaluation details** for the episode selection
+   and success rule; a reproduction corpus that is not held out does not measure
+   generalization.
 4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
    A single-component package downloads as its MPK. A multi-component package
    downloads as a ZIP of its MPKs and also offers **Download components**.
