@@ -125,11 +125,13 @@ catalog lists each profile's benchmark fingerprints under
 `benchmark_fingerprints`, and the model browser resolves the runs by those
 fingerprints. A recompiled build gets new benchmark fingerprints and is
 therefore benchmarked again. Performance fingerprints also include the profile's
-optional `benchmark_baseline`; accuracy and compilation do not. Tests are in no
-fingerprint, so editing one reruns nothing. The new test runs the next time its
-stage does. The conversion fingerprint covers only what can change the ONNX,
-because when it has no published conversion, planning fails for every model until
-someone reruns Convert. The contributor guide lists
+optional `benchmark_baseline`. Accuracy and compilation fingerprints do not.
+Editing a test reruns nothing, because no fingerprint includes tests. The changed
+test runs the next time its stage runs.
+
+The conversion fingerprint covers only files that can change the ONNX. Keep it
+that narrow: a fingerprint with no published conversion fails the plan for every
+model until someone reruns Convert. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
