@@ -30,10 +30,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_medium/e7647d716ad697d9ee88babbd9a59b2cb9c70cbdce25154a09794b56bd2743b3/37736664059-1/model.onnx
-    sha256: e7647d716ad697d9ee88babbd9a59b2cb9c70cbdce25154a09794b56bd2743b3
-    size_bytes: 120816271
+  source: conversion
   components: [backbone, decoder]
 
 calibrations:

@@ -112,6 +112,9 @@ def assemble_package(
     output_root = Path(output_dir).expanduser().resolve()
     model_dir = root / "models" / model_id
     model = load_and_validate_model(model_dir, root / "schemas" / "model.schema.json")
+    from .conversion import apply_selection
+
+    apply_selection(model, root=root)
     profiles = {item["id"]: item for item in model["build_profiles"]}
     packages = {item["id"]: item for item in model["packages"]}
     components = {item["id"]: item for item in model["components"]}

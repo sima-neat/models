@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
-from model_report import METRICS
+from model_report import METRICS, accuracy_value_error
 
 from .errors import ValidationError
 
@@ -83,15 +83,15 @@ def validate_benchmark_declarations(model: dict[str, Any], directory: Path) -> N
 
 
 def _validate_reference_metrics(entries: list[dict[str, Any]], directory: Path) -> None:
-    """Each published score names an accuracy metric, as a ratio, at most once per dataset."""
+    """Each published score names an accuracy metric, in the metric's unit, at most once per dataset."""
     seen: set[tuple[str, str]] = set()
     for index, entry in enumerate(entries):
         label = f"{directory}: reference_metrics[{index}]"
         for name, value in entry["metrics"].items():
             if METRICS.get(name, {}).get("stage") != "accuracy":
                 raise ValidationError(f"{label}: {name!r} is not an accuracy metric")
-            if not 0 <= value <= 1:
-                raise ValidationError(f"{label}: {name} must be a ratio from 0 to 1; found {value}")
+            if error := accuracy_value_error(name, value):
+                raise ValidationError(f"{label}: {error}")
             if (entry["dataset"]["id"], name) in seen:
                 raise ValidationError(f"{label}: {name} on {entry['dataset']['id']} is already published")
             seen.add((entry["dataset"]["id"], name))

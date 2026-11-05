@@ -103,8 +103,8 @@ def publish_candidate(
     ``dist_dir`` is a compile output tree or a directory of downloaded invocation
     artifacts. Retries of a GitHub run reuse its candidate and publication keys.
     """
-    if environment != "staging":
-        raise ValidationError("candidate publication is currently enabled only in staging")
+    if environment not in {"staging", "production"}:
+        raise ValidationError("candidate publication environment must be staging or production")
     root, dist, output = (Path(path).resolve() for path in (repository, dist_dir, output_dir))
     if not dist.is_dir():
         raise ValidationError(f"compiler output directory not found: {dist}")

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
+import shutil
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -9,6 +11,38 @@ from typing import Any
 
 from .errors import ValidationError
 from .fetch import sha256_file
+from .source import HF_URI_RE
+
+
+def save_llima_recipe(
+    scripts: Path, destination: Path, arguments: list[str], checkpoints: dict[str, str],
+) -> None:
+    """Write a direct reproduction command and copy its Python helpers."""
+    header = "#!/usr/bin/env bash\n\n"
+    for name, uri in checkpoints.items():
+        match = HF_URI_RE.fullmatch(uri)
+        if not match or match["repo_type"] != "models":
+            raise ValidationError("LLiMa reproduction recipes require pinned Hugging Face model sources")
+        repository = f'{match["owner"]}/{match["repo"]}'
+        header += f'# hf download {shlex.quote(repository)} --local-dir {shlex.quote(name)}\n'
+    if (scripts / "compile.py").is_file():
+        command = 'python3 "$(dirname "$0")/compile.py" ' + shlex.join(arguments[:2])
+        jobs = "--num_processes"
+    else:
+        command = f'llima-compile {shlex.quote(arguments[0])} \\\n    -o {shlex.quote(arguments[1])}'
+        if (scripts / "config.py").is_file():
+            command += ' \\\n    -c "$(dirname "$0")/config.py"'
+        jobs = "--jobs"
+    if arguments[2:]:
+        command += " \\\n    " + shlex.join(arguments[2:])
+    command += f' \\\n    {jobs} 4 "$@"\n'
+    destination.mkdir(parents=True, exist_ok=True)
+    saved = destination / "compile.sh"
+    saved.write_text(header + "\n" + command, encoding="utf-8")
+    saved.chmod(0o755)
+    for name in ("compile.py", "config.py"):
+        if (scripts / name).is_file():
+            shutil.copy2(scripts / name, destination / name)
 
 
 def validate_compile_outputs(
@@ -301,9 +335,54 @@ def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict
     if deployment.is_symlink() or not deployment.is_dir():
         raise ValidationError(f"LLiMa deployment not found or is a symbolic link: {deployment}")
     files = verify_deployment(deployment, allow_manifest=allow_manifest)
-    if not any(item["path"].startswith("elf_files/") and item["path"].endswith(".elf") for item in files):
+    if not any("elf_files" in PurePosixPath(item["path"]).parts[:-1] and item["path"].endswith(".elf")
+               for item in files):
         raise ValidationError(f"{deployment}: LLiMa deployment contains no ELF files")
     return files
+
+
+def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:
+    """Read target settings from a single deployment or a speculative pair."""
+    paths = [deployment / "devkit/vlm_config.json", *sorted(deployment.glob("*/devkit/vlm_config.json"))]
+    targets = []
+    drafts = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if ((config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}).get("is_draft"):
+            drafts.append(path)
+        else:
+            targets.append((path, config))
+    if not targets and not drafts:
+        return {}
+    if len(targets) != 1:
+        raise ValidationError(f"{deployment}: expected one target configuration")
+    path, config = targets[0]
+    speculative = (config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}
+    if speculative.get("method") or drafts:
+        if len(drafts) != 1:
+            raise ValidationError(f"{deployment}: expected one draft configuration for speculative decoding")
+        for config_path in (path, *drafts):
+            model = config_path.parent.parent
+            if not any(item.is_file() for item in (model / "elf_files").rglob("*.elf")):
+                raise ValidationError(f"{model}: speculative deployment contains no ELF files")
+    pipeline = config["pipeline_cfg"]
+    parameters = {
+        name: pipeline[field]
+        for name, field in (("max_num_tokens", "max_num_tokens"),
+                            ("language_group_size", "input_token_group_size"))
+        if field in pipeline
+    }
+    image_size = (config.get("vm_cfg") or {}).get("image_size")
+    if type(image_size) is int and image_size > 0:
+        image_size = [image_size, image_size]
+    if (isinstance(image_size, list) and len(image_size) == 2
+            and all(type(value) is int and value > 0 for value in image_size)):
+        parameters.update(input_height=image_size[0], input_width=image_size[1])
+    if speculative.get("method"):
+        parameters["speculative_method"] = speculative["method"]
+    return parameters
 
 
 def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
@@ -316,6 +395,7 @@ def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
     if list(directory.glob("*_mpk.tar.gz")):
         raise ValidationError(f"{directory}: expected one compiled artifact")
     files = verify_llima(deployment)
+    llima_compiled_parameters(deployment)
     payload = json.dumps({"format": "llima", "files": files}, indent=2, sort_keys=True).encode() + b"\n"
     manifest = directory / "deployment-manifest.json"
     if write_manifest:

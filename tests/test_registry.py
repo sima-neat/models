@@ -734,8 +734,30 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
+def test_conversion_input_keeps_the_model_card_the_browser_links_to() -> None:
+    from model_registry.conversion import FIELDS
+    from model_registry.registry import _conversion_input
+
+    source = {
+        **dict.fromkeys(FIELDS, "value"),
+        "run_id": "conversion-run", "artifact_id": "artifact", "conversion_fingerprint": "f" * 64,
+    }
+    metadata = _conversion_input(source, {"model_card": "https://example.test/card"})["metadata"]
+
+    assert metadata["model_card"] == "https://example.test/card"
+    assert metadata["conversion_run_id"] == "conversion-run"
+
+
+def _direct_source_models() -> dict:
+    """The models whose catalog entries need no saved conversion selection."""
+    return {
+        model_id: model for model_id, model in load_models(ROOT).items()
+        if model["components"][0]["source"]["type"] != "conversion"
+    }
+
+
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
@@ -775,7 +797,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 
 def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     model = models["resnet_50"]
     matrix = build_matrix(
         models, sorted(models), repository=ROOT, compiler_version=COMPILER_IDENTITY,
@@ -1315,6 +1337,7 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
 def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
     import io
+
     import model_registry.registry as registry
 
     base = "https://private.example.test"
@@ -1327,10 +1350,12 @@ def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
         return {"authenticated": True}
 
     monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
-    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
     assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
     assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
-    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+    for url in [
+        "https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other",
+    ]:
         assert registry._public_registry_json(url) == {"public": True}
     assert len(calls) == 1
 
@@ -1343,3 +1368,27 @@ def test_iam_registry_reads_require_a_region(monkeypatch):
     monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
     with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
         registry._public_registry_json("https://private.example.test/v1/repositories")
+
+
+def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatch):
+    import subprocess
+
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
+        monkeypatch.setenv("AWS_" + name, "dataset-" + name)
+        monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
+    commands = []
+    def request(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
+    monkeypatch.setattr(registry.subprocess, "run", request)
+    assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
+    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
+    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
+    assert not any("dataset-" in argument for argument in commands[0])
+    import os
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
