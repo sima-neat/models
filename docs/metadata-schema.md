@@ -307,7 +307,7 @@ report yet. Each entry has:
 | `dataset` | `id` and `split` of the evaluation set, such as `{id: coco-2017, split: val}`. |
 | `conditions` | How the authors measured, such as input size, preprocessing, and precision. |
 | `note` | Optional caveat a reader needs, such as a split the source does not name. |
-| `metrics` | A map from metric names to values. |
+| `metrics` | A map from accuracy metric names to values, in each metric's unit from `tools/model_report/metrics.json`. |
 
 ```yaml
 reference_metrics:
@@ -318,7 +318,7 @@ reference_metrics:
 ```
 
 Metric names are accuracy metrics from `tools/model_report/metrics.json`, the
-names `accuracy.py` reports, and every value is a ratio from 0 to 1. Record
+names `accuracy.py` reports, and every value is in its metric's unit. Record
 only numbers the source prints, not values derived from them. Two entries may
 not give the same metric for the same dataset. A reference score appears
 beside a measured one only when both name the same dataset `id`. The field
