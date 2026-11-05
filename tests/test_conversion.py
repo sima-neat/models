@@ -312,11 +312,11 @@ def test_planning_resolves_before_compile_reuse(repository, monkeypatch):
 def test_targeted_direct_source_plan_needs_no_conversion_credentials(repository):
     from model_registry.stage_plan import plan_stages
 
-    shutil.copytree(ROOT / "models/yolo26l", repository / "models/yolo26l")
+    shutil.copytree(ROOT / "models/resnet_50", repository / "models/resnet_50")
     result = plan_stages(repository, compiler_version="test", read=None, read_api_url=None,
-                         branch="feature", model_ids=["yolo26l"])
+                         branch="feature", model_ids=["resnet_50"])
     assert result["conversion_sources"] == {}
-    assert {entry["model_id"] for entry in result["compile"]["include"]} == {"yolo26l"}
+    assert {entry["model_id"] for entry in result["compile"]["include"]} == {"resnet_50"}
 
 
 def test_targeted_conversion_plan_creates_only_selected_plan(repository, monkeypatch):

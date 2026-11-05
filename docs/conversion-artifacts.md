@@ -104,12 +104,9 @@ conversion publication alone does not delete older outputs. The legacy S3
 sweeper skips the shared `models/conversions/` prefix because it has no branch
 `latest.tag`; registry cleanup owns these versioned objects.
 
-Existing pinned model declarations stay usable while the backend rolls out.
-Publish matching validated outputs in each required environment, then change each
-model's `compilation.source` to `conversion` and update its reproduction section.
-This PR does not claim historical uploads were validated registry conversions
-and does not switch those declarations before outputs exist. No cross-environment
-promotion or automatic conversion scheduler is introduced.
+To move a pinned model to `compilation.source: conversion`, publish its conversion in
+each environment that needs it, then change the source. Conversions are not promoted
+between environments, and nothing runs Convert automatically.
 
 ### Private production reads
 

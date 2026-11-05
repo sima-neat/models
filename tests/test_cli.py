@@ -166,9 +166,9 @@ def test_fetch_reports_file_set_root(monkeypatch, tmp_path: Path, capsys) -> Non
     result = main(
         [
             "fetch",
-            str(ROOT / "models" / "rf_detr_small"),
+            str(ROOT / "models" / "resnet_50"),
             "--component",
-            "backbone",
+            "model",
             "--json",
         ]
     )
