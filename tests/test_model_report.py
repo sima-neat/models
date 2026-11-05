@@ -261,7 +261,7 @@ def benchmark_dataset(root):
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
-    write_image(root / "nyu_depth_v2/test/rgb_00000.jpg", 200)
+    write_image(root / "test/rgb_00000.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
