@@ -84,6 +84,21 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
+def test_the_benchmarks_read_the_directory_the_runners_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    """The runners look through the archive's one top-level directory, so the split sits directly under --dataset."""
+    arguments = ["--mpk", "model=m.tar.gz", "--dataset", f"nyu-depth-v2-val={tmp_path}", "--output", str(tmp_path)]
+    message = f"{tmp_path} has no images under test/"
+
+    with pytest.raises(SystemExit, match=message):
+        load_script("accuracy").main(arguments)
+    # performance.py parses its arguments and runs as it loads.
+    monkeypatch.setattr("sys.argv", ["performance.py", *arguments])
+    with pytest.raises(SystemExit, match=message):
+        load_script("performance")
+
+
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")

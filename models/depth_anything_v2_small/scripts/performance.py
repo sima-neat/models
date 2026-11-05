@@ -9,7 +9,7 @@ import model_report
 import numpy as np
 import pyneat
 
-IMAGES = "nyu_depth_v2/test"
+IMAGES = "test"
 # The benchmark input is a 720p camera frame, letterboxed with grey padding.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 

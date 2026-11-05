@@ -21,7 +21,6 @@ import numpy as np
 import pyneat
 from calibration import HEIGHT, VALIDATION_SPLIT, WIDTH, preprocess_image
 
-ROOT = "nyu_depth_v2"
 DEPTH_DIR = "annotations/depth_test"
 # Ground truth is 16-bit millimetres, 0 where the sensor measured nothing, and NYU depth ends at 10 m.
 DEPTH_SCALE = 1000.0
@@ -113,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
-    root = Path(dataset_dir) / ROOT
+    root = Path(dataset_dir)
 
     available = sorted((root / VALIDATION_SPLIT).glob("rgb_*.jpg"))
     if not available:
