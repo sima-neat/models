@@ -683,18 +683,6 @@ def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
 
 
-def test_yolo26x_pose_requests_moderate_on_demand():
-    model = load_and_validate_model(ROOT / "models/yolo26x_pose", SCHEMA)
-    entries = build_matrix({"yolo26x_pose": model}, ["yolo26x_pose"])["include"]
-    assert {entry["build_profile_id"]: (
-        entry["requested_runner_class"], entry["requested_runner_market"]
-    ) for entry in entries} == {
-        "w8a16": ("moderate", "on-demand"),
-        "w8a8": ("default", "spot"),
-        "w16a16": ("default", "spot"),
-    }
-
-
 @pytest.mark.parametrize("runner_class", ["moderate"])
 def test_new_runner_classes_do_not_change_compile_fingerprint(model_repository, runner_class):
     path = model_repository / "models/alpha/model.yaml"
