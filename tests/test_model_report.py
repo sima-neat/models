@@ -273,11 +273,11 @@ def write_image(path, value, size=SOURCE_SIZE):
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val split, and the Scene Flow
     test list. Only the second COCO image labels a person, so a pose script must pick it."""
-    write_image(root / "scene_flow" / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
-    write_image(root / "scene_flow" / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
+    write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
+    write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
     pair = f"{STEREO_PAIR.format(view='left')} {STEREO_PAIR.format(view='right')} {disparity}\n"
-    (root / "scene_flow/sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
+    (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
