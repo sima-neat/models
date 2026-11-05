@@ -199,6 +199,24 @@ def test_compile_reports_the_compilers_silent_exit_as_an_error(
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", "w16a16", None)
 
 
+def test_the_benchmarks_read_the_directory_the_runners_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    """The runners look through the archive's one top-level directory, so its files sit directly under --dataset."""
+    (tmp_path / "pitts30k_test.tsv").write_text(
+        "database\t000/d.jpg\t1\t2\nquery\tqueries_real/q.jpg\t3\t4\n", encoding="utf-8"
+    )
+
+    database, _, queries, _ = load_script("accuracy").read_listing(tmp_path)
+
+    assert list(database) == ["000/d.jpg"] and list(queries) == ["queries_real/q.jpg"]
+    # performance.py parses its arguments and runs as it loads.
+    arguments = ["--mpk", "model=m.tar.gz", "--dataset", f"pitts30k-val={tmp_path}", "--output", str(tmp_path)]
+    monkeypatch.setattr("sys.argv", ["performance.py", *arguments])
+    with pytest.raises(SystemExit, match=f"{tmp_path} has no images under images/"):
+        load_script("performance")
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [

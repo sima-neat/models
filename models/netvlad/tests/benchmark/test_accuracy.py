@@ -14,8 +14,7 @@ def scorer(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 
 def test_listing_splits_database_and_queries_in_official_order(tmp_path: Path, scorer: ModuleType) -> None:
-    listing = tmp_path / "pitts30k" / "pitts30k_test.tsv"
-    listing.parent.mkdir()
+    listing = tmp_path / "pitts30k_test.tsv"
     listing.write_text(
         "database\t000/a.jpg\t10.0\t20.0\ndatabase\t001/b.jpg\t30.0\t40.0\nquery\tqueries_real/000/q.jpg\t11.0\t21.0\n"
     )

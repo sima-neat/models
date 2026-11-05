@@ -9,8 +9,8 @@ import model_report
 import numpy as np
 import pyneat
 
-# pitts30k-val keeps every database and query JPEG under pitts30k/images/.
-IMAGES = "pitts30k/images"
+# pitts30k-val keeps every database and query JPEG under images/.
+IMAGES = "images"
 # The benchmark input is a 720p camera frame, letterboxed with grey padding.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 

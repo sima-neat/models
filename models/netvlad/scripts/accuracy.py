@@ -18,8 +18,8 @@ from calibration import preprocess_image
 
 # pitts30k-val holds the official test split; pitts30k_test.tsv lists role, image path, UTM easting and northing
 # in pitts30k_test.mat order.
-LISTING = "pitts30k/pitts30k_test.tsv"
-IMAGES = "pitts30k/images"
+LISTING = "pitts30k_test.tsv"
+IMAGES = "images"
 SPLIT = "test"
 DESCRIPTOR_SIZE = 4096
 # pitts30k_test.mat posDistThr: a retrieved database image within 25 m of the query is correct.

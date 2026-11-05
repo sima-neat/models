@@ -256,11 +256,12 @@ def write_image(path, value):
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017 and ImageNet's val split. Only the second
-    COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split and Pittsburgh 30k.
+    Only the second COCO image labels a person, so a pose script must pick it."""
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -337,7 +338,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert expected in report["workload"]
     else:
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
-        assert "ILSVRC2012_val_00000001.webp" in report["workload"]
+        # NetVLAD samples a Pittsburgh image; the other classifiers an ImageNet one.
+        expected = "_pitch1_yaw1.jpg" if script.parents[1].name == "netvlad" else "ILSVRC2012_val_00000001.webp"
+        assert expected in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
