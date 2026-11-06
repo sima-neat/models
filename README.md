@@ -9,6 +9,22 @@ Git holds no model binaries, datasets, compiled model packs (MPKs), logs, or
 results. A model declaration pins every input it downloads by URI, byte size,
 and SHA-256.
 
+## Registry release state
+
+[`state.json`](state.json) defines the release experience consumed by the SDK's
+Palette SDK component: `current_state` accepts `GA`, `Beta`, or `Alpha`, and
+`default_branch` accepts `develop` or `main`. Initial values are `Alpha` and
+`develop`, allowing the consumer to display `Current Release: Alpha`.
+
+The [state workflow](.github/workflows/vulcan-model-state.yml) publishes
+`models/state.json` in the production artifact bucket only from `main`. Changes
+to the file, workflow, or publishing script on `main` deploy automatically;
+manual runs must also select `main`. Other branches cannot publish this state.
+Publication validates both fields, sets JSON content type and `Cache-Control:
+no-store`, and verifies the uploaded bytes. CDN configuration must honor that
+cache policy. Palette SDK integration must fetch this file; it is not implemented
+here. This file does not participate in model compilation or fingerprints.
+
 ## How a model is built
 
 A **build** is one compile invocation of one build profile of one model. Each
@@ -30,9 +46,9 @@ reruns](docs/adding-a-model.md#9-know-what-a-change-reruns) lists the inputs of
 each fingerprint, and the [vocabulary](AGENTS.md#vocabulary) defines these
 terms.
 
-Conversion is not a stage. `scripts/convert.py`, run by
-`scripts/run_model_conversion.sh`, exports an upstream checkpoint to the ONNX
-file that `model.yaml` pins as the component source.
+Conversion publishes a validated ONNX output as a Vulcan registry run. Models
+can declare `compilation.source: conversion`; compile planning selects the latest
+matching conversion and records its exact output. See [conversion artifacts](docs/conversion-artifacts.md).
 
 ## Set up the contributor tool
 
@@ -66,7 +82,7 @@ sima-cli models download --id resnet_50 --variant w8a8 --branch develop
 | `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, starts `Vulcan Model Compile` for each changed build, starts the benchmarks reused builds lack, and publishes the branch catalog. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging, independently of `VULCAN_ENV`. |
 | `Vulcan Model Compile` | started by the orchestrator | Compiles one build, runs the model's compile tests on it, publishes it, and starts its benchmarks. |
 | `Vulcan Model Benchmarking` | started by `Vulcan Model Compile` or the orchestrator | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit, runs the model's benchmark tests on each result, and publishes each result with its test outcome. |
-| `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes the ONNX file, and prints its source pin. |
+| `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes a validated ONNX bundle and its provenance to Vulcan. |
 | `Build and Publish Model Registry` | push, manual dispatch | Runs `python -m pytest`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
 | `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
 

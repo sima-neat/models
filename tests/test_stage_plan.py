@@ -384,7 +384,10 @@ def test_everything_published_plans_nothing(stage_repository: Path) -> None:
 
     plan = _plan(stage_repository, registry)
 
-    assert plan == {"compile": {"include": []}, "benchmark": {"include": []}, "catalog_found": True}
+    assert plan == {
+        "compile": {"include": []}, "benchmark": {"include": []},
+        "catalog_found": True, "conversion_sources": {},
+    }
 
 
 def test_resolve_requests_carry_each_stage_run_type(stage_repository: Path) -> None:

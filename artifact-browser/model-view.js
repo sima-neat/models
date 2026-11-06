@@ -1,5 +1,5 @@
 // Model page: performance, accuracy, model card, build details, and license.
-import { accuracyMetricLabel, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
+import { accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
 import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
 import { readAccuracy, readPerformance } from "./model-report.js";
@@ -724,11 +724,13 @@ export function accuracyHeadline(variant) {
   const { metrics, dataset } = result.value.datasets[0];
   const [name, value] = orderedAccuracyMetrics(metrics)[0] || [];
   if (!name) return null;
+  const display = accuracyDisplay(name, value);
   return {
-    label: accuracyMetricLabel(name), value: percentage(value),
-    reference: percentage(referenceScores(variant.reference, dataset.id)[name], { blank: true }),
-    numericValue: value * 100,
-    unit: "%",
+    label: accuracyMetricLabel(name), value: formatAccuracy(name, value),
+    reference: formatAccuracy(name, referenceScores(variant.reference, dataset.id)[name], { blank: true }),
+    numericValue: display.number,
+    unit: display.unit,
+    direction: display.direction,
     dataset,
     comparisonKey: dataset.id ? JSON.stringify([dataset.id, dataset.variant, dataset.split, dataset.sha256, name]) : null,
   };
@@ -763,22 +765,16 @@ function accuracyPanel(variant, modelId) {
   </section>`;
 }
 
-// Accuracy metrics and reference scores are ratios, shown as percentages.
-function percentage(value, { blank = false } = {}) {
-  if (!Number.isFinite(value)) return blank ? "" : "—";
-  return `${(value * 100).toFixed(2)}%`;
-}
-
 function accuracyMetricTiles(metrics, scores) {
   return orderedAccuracyMetrics(metrics).slice(0, ACCURACY_SUMMARY_TILES).map(([name, value], index) => {
-    const published = percentage(scores[name], { blank: true });
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(percentage(value))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
+    const published = formatAccuracy(name, scores[name], { blank: true });
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
   }).join("");
 }
 
 function accuracyMetricTable(metrics, scores) {
   const rows = orderedAccuracyMetrics(metrics).slice(ACCURACY_SUMMARY_TILES).map(([name, value]) => (
-    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(percentage(value))}</td><td>${escapeHtml(percentage(scores[name]))}</td></tr>`
+    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, value))}</td><td>${escapeHtml(formatAccuracy(name, scores[name]))}</td></tr>`
   )).join("");
   if (!rows) return "";
   return `<div class="metric-table"><h4>Additional metrics</h4><div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
@@ -794,7 +790,7 @@ function referenceTables(reference) {
   return reference.map((entry) => {
     const metrics = entry.metrics || {};
     const rows = orderedMetricNames(Object.keys(metrics)).map((name) => (
-      `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(percentage(metrics[name]))}</td></tr>`
+      `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, metrics[name]))}</td></tr>`
     )).join("");
     const source = trustedHttpsUrl(entry.source);
     const link = source ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>` : "";

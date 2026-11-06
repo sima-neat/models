@@ -160,6 +160,15 @@ def test_accuracy_report_validates_against_the_schema(tmp_path):
                                              "details": {}}
 
 
+def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
+    # OpenStereo reports EPE in pixels and D1-all as a percentage, both lower is better; neither is a 0-1 ratio.
+    scene_flow = {"split": "test", "evaluated_samples": 4370, "available_samples": 4370}
+    result = {**scene_flow, "metrics": {"epe": 1.25, "d1_all": 2.82}}
+    model_report.from_accuracy({"scene-flow-val": result}).save(tmp_path)
+
+    assert saved_report(tmp_path)["datasets"]["scene-flow-val"]["metrics"] == {"epe": 1.25, "d1_all": 2.82}
+
+
 SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
@@ -170,6 +179,9 @@ SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
         ({"validation": {**SAMPLES, "metrics": {"made_up_metric": 0.1}}}, "validation: unknown"),
         ({"validation": {**SAMPLES, "metrics": {"latency_avg_ms": 0.1}}}, "validation: unknown"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 1.5}}}, "ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"d1_all": 101.0}}}, "d1_all must be a percentage from 0 to 100"),
+        ({"validation": {**SAMPLES, "metrics": {"epe": -0.1}}}, "epe must be at least 0 px"),
+        ({"validation": {**SAMPLES, "metrics": {"epe": float("inf")}}}, "epe must be at least 0 px"),
         ({"validation": {**SAMPLES, "evaluated_samples": 2, "metrics": {"coco_map": 0.5}}}, "evaluated_samples"),
         ({"validation": {"metrics": {"coco_map": 0.5}}}, "validation must give metrics, split"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 0.5}, "notes": "x"}}, "validation must give"),
@@ -245,19 +257,27 @@ SCRIPT_PYNEAT = {
 }
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+# A Scene Flow view is 960x540; a stereo script joins the pair side by side, left then right, unletterboxed.
+STEREO_VIEW, STEREO_LEFT, STEREO_RIGHT = (540, 960), 60, 90
+STEREO_PAIR = "FlyingThings3D/frames_finalpass/TEST/A/0000/{view}/0006.png"
 
 
-def write_image(path, value):
+def write_image(path, value, size=SOURCE_SIZE):
     import cv2
     import numpy as np
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    assert cv2.imwrite(str(path), np.full((*SOURCE_SIZE, 3), value, np.uint8))
+    assert cv2.imwrite(str(path), np.full((*size, 3), value, np.uint8))
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017 and ImageNet's val split. Only the second
-    COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split, and the Scene Flow
+    test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
+    write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
+    disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
+    pair = f"{STEREO_PAIR.format(view='left')} {STEREO_PAIR.format(view='right')} {disparity}\n"
+    (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
@@ -276,6 +296,20 @@ def assert_letterboxed_frame(tensor):
     assert tensor.options["image_format"] == "RGB"
     assert (frame[:, : IMAGE_COLUMNS.start] == FILL).all() and (frame[:, IMAGE_COLUMNS.stop :] == FILL).all()
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
+
+
+def assert_side_by_side_frame(tensor):
+    """One unletterboxed RGB frame holding the stereo pair: the left view, then the right view."""
+    frame = tensor.array
+    assert (frame.shape, str(frame.dtype)) == ((STEREO_VIEW[0], 2 * STEREO_VIEW[1], 3), "uint8")
+    assert tensor.options["image_format"] == "RGB"
+    assert (frame[:, : STEREO_VIEW[1]] == STEREO_LEFT).all() and (frame[:, STEREO_VIEW[1] :] == STEREO_RIGHT).all()
+
+
+def first_accuracy_dataset(script: Path) -> str | None:
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    datasets = model.get("accuracy", {}).get("datasets", [])
+    return datasets[0]["id"] if datasets else None
 
 
 def performance_scripts(*, components: bool) -> list[Path]:
@@ -328,15 +362,21 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         "On", "On", "On"
     )
     (frame,) = requests[0].inputs
-    assert_letterboxed_frame(frame)
     report = saved_report(output)
-    if getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
+    if first_accuracy_dataset(script) == "scene-flow":
+        # A stereo model benchmarks a Scene Flow test pair as its side-by-side frame, stretched to the model input.
+        assert_side_by_side_frame(frame)
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert STEREO_PAIR.format(view="left") in report["workload"]
+    elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
         # Box decoders take a probability threshold, in [0, 1).
+        assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         # Pose accuracy scores only images with a labelled person.
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
     else:
+        assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert "ILSVRC2012_val_00000001.webp" in report["workload"]
     assert list(report["components"]) == ["model"]
