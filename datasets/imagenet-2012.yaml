@@ -1,0 +1,3 @@
+# What every model evaluating its accuracy on ImageNet 2012 must report, by the model's task.
+required_metrics:
+  image_classification: [top1_accuracy]

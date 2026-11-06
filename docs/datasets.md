@@ -78,14 +78,16 @@ or bypass a checksum failure.
 
 ## Use the dataset through the model contract
 
-`model.yaml` names registered data in three places, each with a dataset ID,
-variant, SHA-256, and byte size:
+`model.yaml` pins each registered archive where a stage uses it, with a
+dataset ID, variant, SHA-256, and byte size. The archive goes by its Registry
+source ID, `<id>-<variant>` such as `coco-2017-val`. Three declarations hold
+pins:
 
 | Declaration | Used by | Resolved with |
 | --- | --- | --- |
-| a `calibrations` entry with a `dataset` | `compile.py --dataset` | `model-registry fetch-calibration` |
-| a `fidelity` entry | `compile.py --fidelity-dataset` | `model-registry fetch-fidelity-dataset` |
-| an `accuracy` entry with `engine: devkit_script` | `accuracy.py --dataset` | `scripts/run_model_accuracy.sh` |
+| a `calibrations` entry, named by a build profile's `calibration_dataset` | `compile.py --dataset` | `model-registry fetch-calibration` |
+| `numerical_fidelity.dataset` | `compile.py --fidelity-dataset` | `model-registry fetch-fidelity-dataset` |
+| each pin in `accuracy.datasets` | `accuracy.py --dataset <source id>=<path>` | `scripts/run_model_accuracy.sh` |
 
 Resolve the compile inputs for one component of a build:
 
@@ -99,11 +101,39 @@ fidelity_json="$(model-registry fetch-fidelity-dataset \
 These commands delegate registered dataset resolution to Dataset Registry and
 then check the SHA-256 and size committed with the model.
 `scripts/run_model_compilation.sh` runs both and passes the paths to the
-recipe. On a DevKit, `scripts/run_model_accuracy.sh` resolves the accuracy
+recipe. On a DevKit, `scripts/run_model_accuracy.sh` resolves each accuracy
 dataset into a shared cache and extracts it for `accuracy.py`. Follow [Qualify
 locally](local-development.md) for the complete command sequence and
 [Accuracy and fidelity](local-accuracy-development.md) for the entry
 contracts.
+
+## Required accuracy metrics
+
+A dataset that models evaluate accuracy on has a file `datasets/<registry
+id>.yaml` in this repository. It lists, per model task, the metrics every
+accuracy report on that dataset must hold:
+
+```yaml
+# datasets/coco-2017.yaml
+required_metrics:
+  object_detection: [coco_map]
+  instance_segmentation: [coco_mask_map]
+  pose_estimation: [coco_keypoint_map]
+```
+
+A model must report, on each of its accuracy datasets, the metrics listed for
+any of its `tasks`. Validation fails when a dataset has no file or the file
+lists nothing for the model's tasks.
+[`dataset-requirements.schema.json`](../schemas/dataset-requirements.schema.json)
+defines the file, and each metric must be an accuracy metric of
+[`tools/model_report/metrics.json`](../tools/model_report/metrics.json).
+
+A change to a task's entry reruns accuracy only for the models with that task
+that evaluate the dataset. A new file or an entry for a task no such model has
+reruns nothing.
+
+To start evaluating on a dataset that has no file yet, add the file with the
+metrics the task needs, in the same change as the model or its new metrics.
 
 ## Introduce a dataset or variant that does not exist
 

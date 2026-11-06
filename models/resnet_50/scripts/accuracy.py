@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import model_report
 import numpy as np
 import pyneat
 from calibration import VALIDATION_SPLIT, preprocess_image, split_names, validation_labels
@@ -18,16 +19,6 @@ from calibration import VALIDATION_SPLIT, preprocess_image, split_names, validat
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
-
-
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already resized and normalized the image; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -55,20 +46,22 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", type=Path, required=True, help="extracted imagenet-2012/mini directory")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dataset", required=True, help="imagenet-2012-mini=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    dataset = Path(dataset_dir)
 
-    available = split_names(args.dataset, VALIDATION_SPLIT)
+    available = split_names(dataset, VALIDATION_SPLIT)
     labels = validation_labels(available)
     names = available[: args.limit] if args.limit else available
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
+    model = pyneat.Model(str(parse_mpks(args.mpk)))
     runner = None
     top1 = top5 = 0
     started = time.monotonic()
-    images = prefetched(lambda name: preprocess_image((args.dataset / name).read_bytes()), names)
+    images = prefetched(lambda name: preprocess_image((dataset / name).read_bytes()), names)
     for count, (name, image) in enumerate(zip(names, images), start=1):
         tensor = pyneat.Tensor.from_numpy(image, copy=False)
         if runner is None:
@@ -82,18 +75,19 @@ def main(argv: list[str] | None = None) -> int:
         if count == 1 or count % 500 == 0 or count == len(names):
             log(f"{count}/{len(names)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
 
-    result = {
-        "core_version": pyneat.__version__,
-        "dataset": {"split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available)},
-        "metrics": {
-            "top1_accuracy": {"value": top1 / len(names), "unit": "ratio", "direction": "higher"},
-            "top5_accuracy": {"value": top5 / len(names), "unit": "ratio", "direction": "higher"},
+    report = model_report.from_accuracy({
+        dataset_id: {
+            "metrics": {
+                "top1_accuracy": top1 / len(names),
+                "top5_accuracy": top5 / len(names),
+            },
+            "split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available),
+            "details": {"inference_seconds": round(time.monotonic() - started, 1)},
         },
-        "details": {"inference_seconds": round(time.monotonic() - started, 1)},
-    }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: round(item["value"], 4) for name, item in result["metrics"].items()}))
+    })
+    report.save(args.output)
+    measured = report.document["datasets"][dataset_id]["metrics"]
+    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 
 

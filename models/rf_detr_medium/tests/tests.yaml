@@ -6,41 +6,53 @@ accuracy:
   run_tests: true
   expected:
     w8a8_w16a16:
-      coco_map: 0.4816
-      coco_ap50: 0.6691
-      coco_ap75: 0.5198
-      coco_ap_small: 0.2590
-      coco_ap_medium: 0.5298
-      coco_ap_large: 0.6938
-      coco_ar1: 0.3732
-      coco_ar10: 0.6169
-      coco_ar100: 0.6742
-      coco_ar_small: 0.4402
-      coco_ar_medium: 0.7467
-      coco_ar_large: 0.8923
+      coco-2017-val:
+        coco_map: 0.4816
+        coco_ap50: 0.6691
+        coco_ap75: 0.5198
+        coco_ap_small: 0.2590
+        coco_ap_medium: 0.5298
+        coco_ap_large: 0.6938
+        coco_ar1: 0.3732
+        coco_ar10: 0.6169
+        coco_ar100: 0.6742
+        coco_ar_small: 0.4402
+        coco_ar_medium: 0.7467
+        coco_ar_large: 0.8923
     w8a16_w16a16:
-      coco_map: 0.5379
-      coco_ap50: 0.7313
-      coco_ap75: 0.5837
-      coco_ap_small: 0.3430
-      coco_ap_medium: 0.5898
-      coco_ap_large: 0.7359
-      coco_ar1: 0.3935
-      coco_ar10: 0.6554
-      coco_ar100: 0.7141
-      coco_ar_small: 0.5153
-      coco_ar_medium: 0.7810
-      coco_ar_large: 0.9062
+      coco-2017-val:
+        coco_map: 0.5379
+        coco_ap50: 0.7313
+        coco_ap75: 0.5837
+        coco_ap_small: 0.3430
+        coco_ap_medium: 0.5898
+        coco_ap_large: 0.7359
+        coco_ar1: 0.3935
+        coco_ar10: 0.6554
+        coco_ar100: 0.7141
+        coco_ar_small: 0.5153
+        coco_ar_medium: 0.7810
+        coco_ar_large: 0.9062
+    w8a8_mixed_w16a16:
+      coco-2017-val:
+        coco_map: 0.5081
+        coco_ap50: 0.6976
+        coco_ap75: 0.5463
+        coco_ap_small: 0.2938
+        coco_ap_medium: 0.5620
+        coco_ap_large: 0.7171
+        coco_ar1: 0.3836
+        coco_ar10: 0.6334
+        coco_ar100: 0.6914
+        coco_ar_small: 0.4641
+        coco_ar_medium: 0.7641
+        coco_ar_large: 0.8962
 performance:
   run_tests: true
   expected:
     w8a8_w16a16:
-      backbone:
-        throughput_fps: 103.1
-      decoder:
-        throughput_fps: 411.2
+      throughput_fps: 82.4
     w8a16_w16a16:
-      backbone:
-        throughput_fps: 65.5
-      decoder:
-        throughput_fps: 407.0
+      throughput_fps: 56.4
+    w8a8_mixed_w16a16:
+      throughput_fps: 72.0

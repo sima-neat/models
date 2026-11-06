@@ -3,9 +3,10 @@
 #
 # Usage: require_source_board_tooling.sh <source_checkout>
 #
-# A dispatch runs the benchmarking workflow from the branch tip, while publication computes the stage
-# keys from the source revision. If the branch has since changed tooling those keys hash, the run would
-# publish under a key that does not describe it; the newer push measures the build with its own keys.
+# A dispatch runs the benchmarking workflow from the branch tip, while publication computes the benchmark
+# fingerprints from the source revision. If the branch has since changed tooling those fingerprints hash, the
+# run would publish under a fingerprint that does not describe it; the newer push benchmarks the build with its
+# own fingerprints.
 # Run from the trusted checkout with model-registry installed.
 
 set -euo pipefail
@@ -19,7 +20,7 @@ python - "$1" <<'PY'
 import sys
 from pathlib import Path
 
-from model_registry.stage_keys import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
+from model_registry.fingerprints import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
 
 source = Path(sys.argv[1])
 
@@ -30,13 +31,14 @@ def content(path: Path) -> bytes | None:
 
 changed = sorted(
     relative
-    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING}
+    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING,
+                     "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}
     if content(Path(relative)) != content(source / relative)
 )
 if changed:
     sys.exit(
         "The branch changed board-stage tooling after the measured revision: "
         + ", ".join(changed)
-        + ". The newer push measures this build with its own stage keys."
+        + ". The newer push benchmarks this build with its own fingerprints."
     )
 PY

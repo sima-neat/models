@@ -59,8 +59,8 @@ def test_file_set_is_verified_and_materialized_with_its_declared_layout(tmp_path
     model = b"onnx"
     weights = b"external weights"
     payloads = {
-        "https://api.github.com/repos/example/models/releases/assets/1": model,
-        "https://api.github.com/repos/example/models/releases/assets/2": weights,
+        "https://huggingface.co/example/models/resolve/0123456789abcdef0123456789abcdef01234567/model-1": model,
+        "https://huggingface.co/example/models/resolve/0123456789abcdef0123456789abcdef01234567/model-2": weights,
     }
 
     def opener(request: Request, timeout: int) -> Response:
@@ -72,14 +72,14 @@ def test_file_set_is_verified_and_materialized_with_its_declared_layout(tmp_path
         "files": [
             {
                 "path": "graph/model.onnx",
-                "uri": "https://api.github.com/repos/example/models/releases/assets/1",
+                "uri": "https://huggingface.co/example/models/resolve/0123456789abcdef0123456789abcdef01234567/model-1",
                 "sha256": hashlib.sha256(model).hexdigest(),
                 "size_bytes": len(model),
                 "media_type": "application/onnx",
             },
             {
                 "path": "graph/model.data",
-                "uri": "https://api.github.com/repos/example/models/releases/assets/2",
+                "uri": "https://huggingface.co/example/models/resolve/0123456789abcdef0123456789abcdef01234567/model-2",
                 "sha256": hashlib.sha256(weights).hexdigest(),
                 "size_bytes": len(weights),
                 "media_type": "application/octet-stream",
@@ -277,31 +277,7 @@ def test_hugging_face_token_is_sent_but_not_logged(tmp_path: Path, monkeypatch: 
     assert observed["redirect_authorization"] is None
 
 
-def test_github_token_is_scoped_to_release_origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    observed = {}
-
-    def opener(request: Request, timeout: int) -> Response:
-        observed["authorization"] = request.get_header("Authorization")
-        observed["accept"] = request.get_header("Accept")
-        redirected = HTTPRedirectHandler().redirect_request(
-            request, None, 302, "Found", {}, "https://objects.githubusercontent.com/signed-data.npz"
-        )
-        observed["redirect_authorization"] = redirected.get_header("Authorization")
-        return Response(PAYLOAD)
-
-    monkeypatch.setenv("GITHUB_TOKEN", "private-release-token")
-    release_source = SourceSpec(
-        uri="https://api.github.com/repos/sima-neat/models/releases/assets/123456",
-        sha256=DIGEST,
-        size_bytes=len(PAYLOAD),
-    )
-    Fetcher(tmp_path, opener=opener).fetch(release_source)
-    assert observed["authorization"] == "Bearer private-release-token"
-    assert observed["accept"] == "application/octet-stream"
-    assert observed["redirect_authorization"] is None
-
-
-def test_github_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     requests = []
     responses = [Response(PAYLOAD[:4]), Response(PAYLOAD)]
 
@@ -309,9 +285,9 @@ def test_github_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch
         requests.append(request)
         return responses.pop(0)
 
-    monkeypatch.setenv("GITHUB_TOKEN", "private-release-token")
+    monkeypatch.setenv("HF_TOKEN", "top-secret-token")
     release_source = SourceSpec(
-        uri="https://api.github.com/repos/sima-neat/models/releases/assets/123456",
+        uri="hf://models/owner/repository@0123456789abcdef0123456789abcdef01234567/model.onnx",
         sha256=DIGEST,
         size_bytes=len(PAYLOAD),
     )
@@ -320,8 +296,8 @@ def test_github_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch
     assert len(requests) == 2
     assert requests[0] is not requests[1]
     assert [request.get_header("Authorization") for request in requests] == [
-        "Bearer private-release-token",
-        "Bearer private-release-token",
+        "Bearer top-secret-token",
+        "Bearer top-secret-token",
     ]
 
 

@@ -29,25 +29,16 @@ def _output(component: str, archive: Path, path: str | None = None) -> dict[str,
     }
 
 
-def _grouped_manifest(tmp_path: Path, outputs: list[dict[str, str]]) -> dict[str, object]:
-    fidelity = tmp_path / "decoder" / "fidelity.json"
-    fidelity.parent.mkdir(exist_ok=True)
-    fidelity.write_text("{}\n", encoding="utf-8")
-    digest, _ = sha256_file(fidelity)
+def _grouped_manifest(outputs: list[dict[str, str]]) -> dict[str, object]:
     return {
         "model_id": "rf_detr_small",
         "build_profile_id": "w8a8_w16a16",
-        "compile_invocation_id": "rf_detr",
+        "compile_invocation_id": "w8a8_w16a16",
         "outputs": outputs,
         "derived_graphs": [
             {"component_id": component, "sha256": "a" * 64}
             for component in ("backbone", "decoder")
         ],
-        "correctness": {
-            "component_id": "decoder",
-            "path": "decoder/fidelity.json",
-            "sha256": digest,
-        },
     }
 
 
@@ -93,7 +84,6 @@ def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) ->
     manifest.write_text(
         json.dumps(
             _grouped_manifest(
-                tmp_path,
                 [
                     _output("backbone", tmp_path / "backbone" / "backbone_mpk.tar.gz"),
                     _output("decoder", tmp_path / "decoder" / "decoder_mpk.tar.gz"),
@@ -108,7 +98,7 @@ def test_validate_compile_outputs_accepts_exact_component_set(tmp_path: Path) ->
         tmp_path,
         model_id="rf_detr_small",
         build_profile_id="w8a8_w16a16",
-        compile_invocation_id="rf_detr",
+        compile_invocation_id="w8a8_w16a16",
         component_ids=["backbone", "decoder"],
     )
 
@@ -133,7 +123,6 @@ def test_validate_compile_outputs_rejects_incomplete_or_unsafe_manifest(
     manifest.write_text(
         json.dumps(
             _grouped_manifest(
-                tmp_path,
                 [_output("backbone", directory / "backbone_mpk.tar.gz", path)],
             )
         ),
@@ -146,7 +135,7 @@ def test_validate_compile_outputs_rejects_incomplete_or_unsafe_manifest(
             tmp_path,
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
-            compile_invocation_id="rf_detr",
+            compile_invocation_id="w8a8_w16a16",
             component_ids=["backbone", "decoder"],
         )
 
@@ -162,7 +151,7 @@ def test_validate_compile_outputs_rejects_mpk_hash_mismatch(tmp_path: Path) -> N
             {
                 "model_id": "rf_detr_small",
                 "build_profile_id": "w8a8_w16a16",
-                "compile_invocation_id": "rf_detr",
+                "compile_invocation_id": "w8a8_w16a16",
                 "outputs": [
                     {
                         "component_id": "backbone",
@@ -181,7 +170,7 @@ def test_validate_compile_outputs_rejects_mpk_hash_mismatch(tmp_path: Path) -> N
             tmp_path,
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
-            compile_invocation_id="rf_detr",
+            compile_invocation_id="w8a8_w16a16",
             component_ids=["backbone"],
         )
 
@@ -200,7 +189,7 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
             {
                 "model_id": "rf_detr_small",
                 "build_profile_id": "w8a8_w16a16",
-                "compile_invocation_id": "backbone",
+                "compile_invocation_id": "w8a8_w16a16",
                 "outputs": [_output("backbone", archive)],
             }
         ),
@@ -213,8 +202,32 @@ def test_validate_compile_outputs_rejects_undeclared_mpk(tmp_path: Path) -> None
             tmp_path,
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
-            compile_invocation_id="backbone",
+            compile_invocation_id="w8a8_w16a16",
             component_ids=["backbone"],
+        )
+
+
+def test_validate_compile_outputs_rejects_a_correctness_result(tmp_path: Path) -> None:
+    # Numerical fidelity is published with the package, so compile outputs no longer name it.
+    for component in ("backbone", "decoder"):
+        directory = tmp_path / component
+        directory.mkdir()
+        _archive(directory / f"{component}_mpk.tar.gz", [f"{component}/model.elf", f"{component}/model_mpk.json"])
+    document = _grouped_manifest(
+        [_output(component, tmp_path / component / f"{component}_mpk.tar.gz") for component in ("backbone", "decoder")]
+    )
+    document["correctness"] = {"component_id": "decoder", "path": "decoder/fidelity.json", "sha256": "a" * 64}
+    manifest = tmp_path / "compile-outputs.json"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="compile outputs must contain"):
+        validate_compile_outputs(
+            manifest,
+            tmp_path,
+            model_id="rf_detr_small",
+            build_profile_id="w8a8_w16a16",
+            compile_invocation_id="w8a8_w16a16",
+            component_ids=["backbone", "decoder"],
         )
 
 
@@ -228,10 +241,10 @@ def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_in
         directory.mkdir()
         _archive(directory / f"{component}_mpk.tar.gz", [f"{component}/model.elf", f"{component}/model_mpk.json"])
     document = _grouped_manifest(
-        tmp_path, [_output(component, tmp_path / component / f"{component}_mpk.tar.gz") for component in components]
+        [_output(component, tmp_path / component / f"{component}_mpk.tar.gz") for component in components]
     )
     if grouped:
-        del document["derived_graphs"], document["correctness"]
+        del document["derived_graphs"]
     manifest = tmp_path / "compile-outputs.json"
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
@@ -241,6 +254,6 @@ def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_in
             tmp_path,
             model_id="rf_detr_small",
             build_profile_id="w8a8_w16a16",
-            compile_invocation_id="rf_detr",
+            compile_invocation_id="w8a8_w16a16",
             component_ids=components,
         )

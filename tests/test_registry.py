@@ -6,11 +6,11 @@ import tarfile
 from pathlib import Path
 
 import pytest
-import yaml
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.model import load_models
+from model_registry.fingerprints import benchmark_fingerprint, compile_fingerprint
+from model_registry.model import load_model, load_models
 from model_registry.package import assemble_package
 from model_registry.registry import (
     RegistryPublicationError,
@@ -27,7 +27,6 @@ from model_registry.registry import (
     publish_packages,
     stage_catalog_build,
 )
-from model_registry.stage_keys import accuracy_key, compile_key, performance_key
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPILER = resolve_model_compiler(ROOT)
@@ -132,6 +131,13 @@ def test_publish_model_documentation_keys_bind_create_request_identity() -> None
     assert first != create_keys("production", "https://github.example.invalid/actions/runs/123")
 
 
+COMPILE_TIMING = {
+    "scope": "compile_recipe",
+    "started_at": "2026-08-13T00:00:00+00:00",
+    "finished_at": "2026-08-13T01:29:52+00:00",
+}
+
+
 def _packaged_result(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
     output = dist / "resnet_50" / "w16a16" / "model"
@@ -161,7 +167,7 @@ def _packaged_result(tmp_path: Path) -> Path:
             "source_sha256": "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50",
             "git_sha": "a" * 40,
             "environment": "staging",
-            "build_fingerprint": compile_key(ROOT, "resnet_50", "w16a16", "model", COMPILER_IDENTITY),
+            "compile_fingerprint": compile_fingerprint(ROOT, "resnet_50", "w16a16", "w16a16", COMPILER_IDENTITY),
         },
     }
     (output / "compile-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -170,7 +176,7 @@ def _packaged_result(tmp_path: Path) -> Path:
             {
                 "model_id": "resnet_50",
                 "build_profile_id": "w16a16",
-                "compile_invocation_id": "model",
+                "compile_invocation_id": "w16a16",
                 "outputs": [
                     {
                         "component_id": "model",
@@ -182,22 +188,21 @@ def _packaged_result(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    # resnet_50 declares fidelity for every build profile, so publication requires its report.
+    (output.parent / "compile-timing.json").write_text(json.dumps(COMPILE_TIMING), encoding="utf-8")
+    # resnet_50 declares numerical fidelity, so its package publication requires the profile's report.
     _add_fidelity_result(dist)
     return dist
 
 
 def _add_fidelity_result(dist: Path) -> Path:
-    config = yaml.safe_load((ROOT / "models" / "resnet_50" / "model.yaml").read_text(encoding="utf-8"))["fidelity"][0]
-    path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
+    config = load_model(ROOT / "models" / "resnet_50")["numerical_fidelity"]
+    path = dist / "resnet_50" / "w16a16" / "fidelity.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "model_id": "resnet_50",
                 "build_profile_id": "w16a16",
-                "component_id": "model",
-                "scope": "component",
                 "status": config["status"],
                 "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
                 "selection": config["selection"],
@@ -222,7 +227,7 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
-def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
+def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
     compiled = _packaged_result(tmp_path)
     component_dir = compiled / "resnet_50/w16a16/model"
     (component_dir / "registry-publication.json").write_text(
@@ -237,6 +242,20 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
         repository=ROOT, compiled_dir=compiled, output_dir=packages,
         model_id="resnet_50", build_profile_id="w16a16", package_id="default",
     )
+    return packages, assembled
+
+
+def _publish_packages(packages: Path, request, store: FakeStore, environment: str = "staging") -> dict:
+    return publish_packages(
+        repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
+        bucket="artifacts", kms_key_id=None, environment=environment, branch="feature/models", git_sha="a" * 40,
+        github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
+        request=request, artifact_store=store,
+    )
+
+
+def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
+    packages, assembled = _assembled_package(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -244,25 +263,169 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
         return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
 
     store = FakeStore()
-    result = publish_packages(
-        repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
-        bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
-        github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
-        request=request, artifact_store=store,
-    )
+    result = _publish_packages(packages, request, store)
 
     assert result["count"] == 1
     assert result["packages"][0]["run_id"] == "package-run"
     assert result["packages"][0]["artifact_sha256"] == assembled["sha256"]
     assert [path for _, path, _, _ in calls] == [
         "/v1/runs", "/v1/runs/package-run/inputs/component-model", "/v1/runs/package-run/parameters",
-        "/v1/runs/package-run/artifacts/package", "/v1/runs/package-run/finalize",
+        "/v1/runs/package-run/artifacts/package",
+        "/v1/runs/package-run/artifacts/numerical-fidelity",
+        "/v1/runs/package-run/test-results/correctness/numerical-fidelity",
+        "/v1/runs/package-run/measurements/batch",
+        "/v1/runs/package-run/finalize",
     ]
     assert calls[0][2]["run_type"] == "model_package"
     assert calls[3][2]["artifact_type"] == "model-package"
     assert store.objects[0][0].name == assembled["archive"]
     assert store.objects[0][3] == "application/gzip"
     assert calls[3][2]["media_type"] == "application/gzip"
+
+
+def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "package-run"}
+        if path.endswith("/artifacts/numerical-fidelity"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000002"}
+        return {"ok": True}
+
+    store = FakeStore()
+    _publish_packages(packages, request, store)
+
+    bodies = {path: body for _, path, body, _ in calls}
+    artifact = bodies["/v1/runs/package-run/artifacts/numerical-fidelity"]
+    assert artifact["metadata"] == {"model_id": "resnet_50", "build_profile_id": "w16a16", "samples": 50}
+    test_result = bodies["/v1/runs/package-run/test-results/correctness/numerical-fidelity"]
+    assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000002"
+    measurements = bodies["/v1/runs/package-run/measurements/batch"]["measurements"]
+    assert {measurement["name"] for measurement in measurements} == {
+        "model.fidelity.cosine_similarity",
+        "model.fidelity.normalized_rmse",
+        "model.fidelity.mean_absolute_error",
+        "model.fidelity.max_absolute_error",
+    }
+    assert all(measurement["dimensions"] == {
+        "model_id": "resnet_50", "build_profile_id": "w16a16", "output": "logits",
+    } for measurement in measurements)
+    maximum = next(
+        measurement for measurement in measurements if measurement["name"] == "model.fidelity.max_absolute_error"
+    )
+    assert maximum["aggregation"] == "max"
+    assert store.objects[1][0] == packages / "resnet_50/w16a16/packages/default/fidelity.json"
+    assert store.objects[1][3] == "application/json"
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    ("extra field", "Additional properties"),
+    ("other output", "metrics must cover exactly"),
+    ("other build profile", "build_profile_id must be 'w16a16'"),
+    ("missing", "the package requires fidelity.json"),
+])
+def test_publish_package_rejects_fidelity_that_does_not_match_the_declaration(
+    tmp_path: Path, change: str, message: str
+) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    fidelity_path = packages / "resnet_50/w16a16/packages/default/fidelity.json"
+    fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
+    if change == "extra field":
+        fidelity["unexpected"] = True
+    elif change == "other output":
+        fidelity["metrics"][0]["name"] = "scores"
+    elif change == "other build profile":
+        fidelity["build_profile_id"] = "w8a8"
+    fidelity_path.write_text(json.dumps(fidelity), encoding="utf-8")
+    if change == "missing":
+        fidelity_path.unlink()
+
+    calls = []
+
+    def request(method, path, *args):
+        calls.append((method, path))
+        return {"run_id": "package-run"}
+
+    with pytest.raises(ValidationError, match=message):
+        _publish_packages(packages, request, FakeStore())
+    assert calls == []
+
+
+def _add_mla_stage_simulation(packages: Path, status: str = "ok") -> Path:
+    path = packages / "resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    stages = [{"stage_index": 0, "effective_ops": 8213719016, "total_ops": 10445905152,
+               "simulated_latency_us": 678.432}] if status == "ok" else []
+    path.write_text(json.dumps({
+        "schema_version": 1, "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "components": {"model": {"status": status, "stages": stages}},
+    }), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize(("status", "test_status"), [("ok", "passed"), ("mla-msim not found", "skipped")])
+def test_package_publishes_the_mla_stage_simulation(
+    tmp_path: Path, status: str, test_status: str, environment: str,
+) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages, status)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "package-run"}
+        if path.endswith("/artifacts/mla-stage-simulation"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000003"}
+        return {"ok": True}
+
+    store = FakeStore()
+    _publish_packages(packages, request, store, environment=environment)
+
+    bodies = {path: body for _, path, body, _ in calls}
+    artifact = bodies["/v1/runs/package-run/artifacts/mla-stage-simulation"]
+    assert artifact["artifact_type"] == "mla-stage-simulation"
+    assert artifact["s3_key"] == "models/feature%2Fmodels/aaaaaaaaaaaa/resnet_50/w16a16/mla-stage-simulation.json"
+    assert bodies["/v1/runs/package-run/test-results/performance/mla-stage-simulation"] == {
+        "status": test_status,
+        "summary": json.loads(simulation_path.read_text(encoding="utf-8")),
+        "report_artifact_id": "00000000-0000-4000-8000-000000000003",
+    }
+    assert [path for _, path, _, _ in calls][-1] == "/v1/runs/package-run/finalize"
+    assert store.objects[-1][0] == simulation_path
+
+
+def test_package_carries_the_profile_mla_stage_simulation(tmp_path: Path) -> None:
+    compiled = _packaged_result(tmp_path)
+    (compiled / "resnet_50/w16a16/mla-stage-simulation.json").write_text('{"simulated": true}', encoding="utf-8")
+
+    assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+    )
+
+    copied = tmp_path / "packages/resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    assert copied.read_text(encoding="utf-8") == '{"simulated": true}'
+
+
+def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages)
+    simulation = json.loads(simulation_path.read_text(encoding="utf-8"))
+    simulation["build_profile_id"] = "w8a8"
+    simulation_path.write_text(json.dumps(simulation), encoding="utf-8")
+    calls = []
+
+    def request(method, path, *args):
+        calls.append((method, path))
+        return {"run_id": "package-run"}
+
+    with pytest.raises(ValidationError, match="build_profile_id must be 'w16a16'"):
+        _publish_packages(packages, request, FakeStore())
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -298,16 +461,8 @@ def test_registry_errors_identify_the_failed_endpoint() -> None:
         client.request("POST", "/v1/runs", {}, "create")
 
 
-@pytest.mark.parametrize("with_timing", [False, True])
-def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatch, with_timing: bool) -> None:
+def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatch) -> None:
     dist = _packaged_result(tmp_path)
-    timing = {
-        "scope": "compile_recipe",
-        "started_at": "2026-08-13T00:00:00+00:00",
-        "finished_at": "2026-08-13T01:29:52+00:00",
-    }
-    if with_timing:
-        (dist / "resnet_50/w16a16/compile-timing.json").write_text(json.dumps(timing))
     calls: list[tuple[str, str, dict | None, str]] = []
 
     def request(method: str, path: str, body: dict | None, key: str) -> dict:
@@ -339,16 +494,12 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         "/v1/runs/00000000-0000-4000-8000-000000000001/parameters",
         "/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/mpk",
         "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/compile/mpk-validation",
-        "/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/numerical-fidelity",
-        "/v1/runs/00000000-0000-4000-8000-000000000001/test-results/correctness/numerical-fidelity",
-        "/v1/runs/00000000-0000-4000-8000-000000000001/measurements/batch",
         "/v1/runs/00000000-0000-4000-8000-000000000001/finalize",
     ]
     create = calls[0][2]
     assert create is not None
     assert create["run_type"] == "model_compile"
-    if with_timing:
-        assert create["metadata"].pop("compile_timing") == timing
+    assert create["metadata"].pop("compile_timing") == COMPILE_TIMING
     assert create["metadata"] == {
         "model_id": "resnet_50",
         "build_profile_id": "w16a16",
@@ -375,7 +526,7 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     }
     parameters = calls[2][2]["parameters"]
     assert parameters["compiler_version"] == COMPILER_VERSION
-    assert parameters["compile_invocation_id"] == "model"
+    assert parameters["compile_invocation_id"] == "w16a16"
     assert parameters["target"] == "modalix"
     artifact = calls[3][2]
     assert result["runs"][0]["artifact_sha256"] == artifact["artifact_sha256"]
@@ -403,6 +554,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
+    # The fresh build carries one whole-model fingerprint for each stage its profile benchmarks.
+    assert resnet["benchmark_fingerprints"] == {"w16a16": {
+        stage: benchmark_fingerprint(ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, stage)
+        for stage in ("performance", "accuracy")
+    }}
     package_dir = tmp_path / "packages" / "resnet_50/w16a16/packages/default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
@@ -421,90 +577,6 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
         "artifact_sha256": "b" * 64, "size_bytes": 123, "package_fingerprint": "c" * 64,
         "component_run_ids": {"model": result["runs"][0]["run_id"]},
     }]
-
-
-def test_publish_attaches_numerical_fidelity_result(tmp_path: Path) -> None:
-    dist = _packaged_result(tmp_path)
-    fidelity_path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
-    calls: list[tuple[str, str, dict | None, str]] = []
-
-    def request(method: str, path: str, body: dict | None, key: str) -> dict:
-        calls.append((method, path, body, key))
-        if path == "/v1/runs":
-            return {"run_id": "00000000-0000-4000-8000-000000000001"}
-        if path.endswith("/artifacts/numerical-fidelity"):
-            return {"artifact_id": "00000000-0000-4000-8000-000000000002"}
-        return {"ok": True}
-
-    store = FakeStore()
-    result = publish_compilations(
-        repository=ROOT,
-        dist_dir=dist,
-        api_url="https://registry.example.invalid",
-        aws_region="us-west-2",
-        bucket="artifacts",
-        kms_key_id=None,
-        environment="staging",
-        branch="develop",
-        git_sha="a" * 40,
-        github_run_id="1234",
-        github_run_attempt="1",
-        github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
-        request=request,
-        artifact_store=store,
-    )
-
-    run_id = "00000000-0000-4000-8000-000000000001"
-    endpoints = [path for _, path, _, _ in calls]
-    assert f"/v1/runs/{run_id}/artifacts/numerical-fidelity" in endpoints
-    assert f"/v1/runs/{run_id}/test-results/correctness/numerical-fidelity" in endpoints
-    measurements = next(
-        body["measurements"] for _, path, body, _ in calls if path.endswith("/measurements/batch") and body is not None
-    )
-    assert {measurement["name"] for measurement in measurements} == {
-        "model.fidelity.cosine_similarity",
-        "model.fidelity.normalized_rmse",
-        "model.fidelity.mean_absolute_error",
-        "model.fidelity.max_absolute_error",
-    }
-    maximum = next(
-        measurement for measurement in measurements if measurement["name"] == "model.fidelity.max_absolute_error"
-    )
-    assert maximum["aggregation"] == "max"
-    assert result["runs"][0]["fidelity"]["samples"] == 50
-    assert store.objects[1][0] == fidelity_path
-    assert store.objects[1][3] == "application/json"
-
-
-def test_publish_preflights_all_evidence_before_external_writes(tmp_path: Path) -> None:
-    dist = _packaged_result(tmp_path)
-    fidelity_path = dist / "resnet_50" / "w16a16" / "model" / "fidelity.json"
-    fidelity = json.loads(fidelity_path.read_text(encoding="utf-8"))
-    fidelity["unexpected"] = True
-    fidelity_path.write_text(json.dumps(fidelity), encoding="utf-8")
-    calls = []
-    store = FakeStore()
-
-    with pytest.raises(ValidationError, match="Additional properties"):
-        publish_compilations(
-            repository=ROOT,
-            dist_dir=dist,
-            api_url="https://registry.example.invalid",
-            aws_region="us-west-2",
-            bucket="artifacts",
-            kms_key_id=None,
-            environment="staging",
-            branch="develop",
-            git_sha="a" * 40,
-            github_run_id="1234",
-            github_run_attempt="1",
-            github_run_url="https://github.com/sima-neat/models/actions/runs/1234",
-            request=lambda *args: calls.append(args),
-            artifact_store=store,
-        )
-
-    assert calls == []
-    assert store.objects == []
 
 
 def test_publish_does_not_record_inherited_catalog_entries(tmp_path: Path) -> None:
@@ -627,7 +699,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
                         {
                             "build_profile_id": entry["build_profile_id"],
                             "component_id": component_id,
-                            "compile_fingerprint": entry["build_fingerprint"],
+                            "compile_fingerprint": entry["compile_fingerprint"],
                             "artifact_sha256": "e" * 64,
                             "run_id": f"00000000-0000-4000-8000-{index:012d}",
                         }
@@ -655,7 +727,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert "parameter_count_billion" not in entries["resnet_50"]
 
 
-def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
+def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
     models = load_models(ROOT)
     model = models["resnet_50"]
     matrix = build_matrix(
@@ -667,7 +739,7 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
             {
                 "build_profile_id": entry["build_profile_id"],
                 "component_id": component_id,
-                "compile_fingerprint": entry["build_fingerprint"],
+                "compile_fingerprint": entry["compile_fingerprint"],
                 "artifact_sha256": "e" * 64,
                 "run_id": f"{run_prefix}-{index:012d}",
             }
@@ -676,27 +748,32 @@ def test_catalog_builds_record_stage_keys_bound_to_their_compile_runs() -> None:
             for component_id in entry["component_ids"]
         ]} for model_id in models]}
         document = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="a" * 40, previous=previous)
-        resnet = next(item for item in document["models"] if item["id"] == "resnet_50")
-        return {build["build_profile_id"]: build for build in resnet["builds"]}
+        return next(item for item in document["models"] if item["id"] == "resnet_50")
 
-    builds = snapshot("00000000-0000-4000-8000")
-    for profile_id, build in builds.items():
-        assert build["benchmark_fingerprint"] == performance_key(
-            ROOT, model, profile_id, "model", compile_run_id=build["run_id"], artifact_sha256="e" * 64,
-        )
-    # Only the profile with DevKit accuracy records an accuracy key, on its result component.
-    assert builds["w16a16"]["validation_fingerprint"] is None
-    assert builds["w8a8"]["validation_fingerprint"] == accuracy_key(
-        ROOT, model, "w8a8", {"model": builds["w8a8"]},
-    )
-    assert builds["w8a8"]["validation_fingerprint"] != builds["w8a8"]["benchmark_fingerprint"]
+    resnet = snapshot("00000000-0000-4000-8000")
+    builds = {build["build_profile_id"]: {"model": build} for build in resnet["builds"]}
+    assert all(set(build["model"]) == {
+        "build_profile_id", "compile_invocation_id", "component_id", "compile_fingerprint", "artifact_sha256", "run_id",
+    } for build in builds.values())
+    # Each profile records one fingerprint per stage it benchmarks.
+    assert resnet["benchmark_fingerprints"] == {
+        profile_id: {
+            stage: benchmark_fingerprint(ROOT, model, profile_id, builds[profile_id], stage)
+            for stage in ("performance", "accuracy")
+        }
+        for profile_id in ("w16a16", "w8a8", "w8a16")
+    }
+    w8a8 = resnet["benchmark_fingerprints"]["w8a8"]
+    assert w8a8["performance"] != w8a8["accuracy"]
 
-    # A new compile run of identical inputs still needs its own board measurements.
+    # A new compile run of identical inputs still needs its own benchmarks.
     rebuilt = snapshot("00000000-0000-4000-9000")
-    for profile_id in builds:
-        assert rebuilt[profile_id]["compile_fingerprint"] == builds[profile_id]["compile_fingerprint"]
-        assert rebuilt[profile_id]["benchmark_fingerprint"] != builds[profile_id]["benchmark_fingerprint"]
-    assert rebuilt["w8a8"]["validation_fingerprint"] != builds["w8a8"]["validation_fingerprint"]
+    assert [build["compile_fingerprint"] for build in rebuilt["builds"]] == [
+        build["compile_fingerprint"] for build in resnet["builds"]
+    ]
+    for profile_id, fingerprints in resnet["benchmark_fingerprints"].items():
+        for stage, fingerprint in fingerprints.items():
+            assert rebuilt["benchmark_fingerprints"][profile_id][stage] != fingerprint
 
 
 def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(monkeypatch) -> None:
@@ -705,7 +782,7 @@ def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(
     invocation = build_matrix(
         models, ["resnet_50"], ["w16a16"], repository=ROOT, compiler_version=compiler_version,
     )["include"][0]
-    changed = dict(invocation, build_fingerprint="f" * 64)
+    changed = dict(invocation, compile_fingerprint="f" * 64)
     monkeypatch.setattr("model_registry.registry.build_matrix", lambda *args, **kwargs: {"include": [changed]})
     prior_build = {
         "build_profile_id": "w16a16",
@@ -713,21 +790,24 @@ def test_incremental_catalog_keeps_prior_builds_for_missing_changed_invocations(
         "component_id": "model",
         "compile_fingerprint": "e" * 64,
         "artifact_sha256": "d" * 64,
-        "validation_fingerprint": None,
-        "benchmark_fingerprint": None,
         "run_id": "00000000-0000-4000-8000-000000000001",
     }
+    prior_benchmark_fingerprints = {"w16a16": {"performance": "a" * 64}}
 
     snapshot = build_catalog_snapshot(
         repository=ROOT,
         branch="develop",
         git_sha="a" * 40,
-        previous={"models": [{"id": "resnet_50", "builds": [prior_build]}]},
+        previous={"models": [
+            {"id": "resnet_50", "builds": [prior_build], "benchmark_fingerprints": prior_benchmark_fingerprints},
+        ]},
         incremental=True,
     )
 
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"] == [prior_build]
+    # The prior build's benchmark fingerprints stay visible with it while the replacement is pending.
+    assert resnet["benchmark_fingerprints"] == prior_benchmark_fingerprints
     assert snapshot["pending_builds"] == [{
         "model_id": "resnet_50",
         "build_profile_id": "w16a16",
@@ -752,10 +832,8 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
         "build_profile_id": "w16a16",
         "compile_invocation_id": invocation["compile_invocation_id"],
         "component_id": "model",
-        "compile_fingerprint": invocation["build_fingerprint"],
+        "compile_fingerprint": invocation["compile_fingerprint"],
         "artifact_sha256": "a" * 64,
-        "validation_fingerprint": None,
-        "benchmark_fingerprint": None,
         "run_id": old_run_id,
     }
     prior_package = {
@@ -781,7 +859,7 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
 
     resnet = next(model for model in initial["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["run_id"] == old_run_id
-    assert resnet["builds"][0]["compile_fingerprint"] == invocation["build_fingerprint"]
+    assert resnet["builds"][0]["compile_fingerprint"] == invocation["compile_fingerprint"]
     assert resnet["packages"] == []
     assert initial["pending_builds"] == []
 
@@ -794,7 +872,7 @@ def test_selected_same_fingerprint_rebuild_replaces_package_after_component_publ
         "component_id": "model",
         "run_id": new_run_id,
         "artifact_sha256": "d" * 64,
-        "compile_fingerprint": invocation["build_fingerprint"],
+        "compile_fingerprint": invocation["compile_fingerprint"],
     }]}), encoding="utf-8")
     component_published = build_catalog_snapshot(
         repository=ROOT,
@@ -1010,7 +1088,7 @@ def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none
     assert published == ["a" * 40]
 
 
-def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
+def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
     dist = _packaged_result(tmp_path)
     source_archive = next(dist.glob("resnet_50/w16a16/model/*_mpk.tar.gz"))
     payload = source_archive.read_bytes()
@@ -1021,11 +1099,12 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
             "id": "resnet_50",
             "builds": [{
                 "build_profile_id": "w16a16",
-                "compile_invocation_id": "model",
+                "compile_invocation_id": "w16a16",
                 "component_id": "model",
                 "run_id": run_id,
                 "artifact_sha256": hashlib.sha256(payload).hexdigest(),
             }],
+            "packages": packages,
         }],
     }
 
@@ -1050,27 +1129,55 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
         catalog_revision="a" * 40,
         model_id="resnet_50",
         build_profile_id="w16a16",
-        compile_invocation_id="model",
+        compile_invocation_id="w16a16",
         read_request=read,
         download_request=lambda url: payload,
     )
-
     assert result["count"] == 1
-    profile = tmp_path / "staged" / "resnet_50" / "w16a16"
-    assert (profile / "registry-staged.json").is_file()
+    return tmp_path / "staged" / "resnet_50" / "w16a16"
+
+
+def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
+    profile = _stage_catalog_build(tmp_path, [])
+
     assert (profile / "model" / "registry-publication.json").is_file()
     # Restored builds carry the manifest a fresh compile writes, so later stages read both alike.
     staged = next((profile / "model").glob("*_mpk.tar.gz"))
     assert json.loads((profile / "compile-outputs.json").read_text(encoding="utf-8")) == {
         "model_id": "resnet_50",
         "build_profile_id": "w16a16",
-        "compile_invocation_id": "model",
+        "compile_invocation_id": "w16a16",
         "outputs": [{
             "component_id": "model",
             "mpk_path": f"model/{staged.name}",
-            "mpk_sha256": hashlib.sha256(payload).hexdigest(),
+            "mpk_sha256": hashlib.sha256(staged.read_bytes()).hexdigest(),
         }],
     }
+
+
+def test_stage_catalog_build_writes_the_receipt_of_the_profile_default_package(tmp_path: Path) -> None:
+    package = {
+        "package_id": "default", "build_profile_id": "w16a16", "run_id": "00000000-0000-4000-8000-000000000002",
+        "artifact_sha256": "b" * 64, "size_bytes": 123, "package_fingerprint": "c" * 64,
+        "component_run_ids": {"model": "00000000-0000-4000-8000-000000000001"},
+    }
+    other_profile = {**package, "build_profile_id": "w8a8", "run_id": "00000000-0000-4000-8000-000000000003"}
+
+    profile = _stage_catalog_build(tmp_path, [other_profile, package])
+
+    # The benchmarks read the package run from the same receipt publish-package writes.
+    receipt = profile / "packages" / "default" / "registry-publication.json"
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {"packages": [{"model_id": "resnet_50", **package}]}
+
+
+def test_stage_catalog_build_writes_no_package_receipt_without_a_cataloged_package(tmp_path: Path) -> None:
+    other_profile = {
+        "package_id": "default", "build_profile_id": "w8a8", "run_id": "00000000-0000-4000-8000-000000000003",
+    }
+
+    profile = _stage_catalog_build(tmp_path, [other_profile])
+
+    assert not (profile / "packages").exists()
 
 
 @pytest.mark.parametrize("timing", [
@@ -1088,9 +1195,10 @@ def test_compile_timing_rejects_invalid_intervals(tmp_path: Path, timing) -> Non
         _compile_timing(path)
 
 
-def test_compile_timing_supports_legacy_outputs_and_utc_timestamps(tmp_path: Path) -> None:
+def test_compile_timing_is_required_and_normalized_to_utc(tmp_path: Path) -> None:
     path = tmp_path / "compile-timing.json"
-    assert _compile_timing(path) is None
+    with pytest.raises(ValidationError, match="invalid compile timing"):
+        _compile_timing(path)
     path.write_text(json.dumps({
         "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00Z", "finished_at": "2026-08-13T01:29:52Z",
     }))
@@ -1098,3 +1206,120 @@ def test_compile_timing_supports_legacy_outputs_and_utc_timestamps(tmp_path: Pat
         "scope": "compile_recipe", "started_at": "2026-08-13T00:00:00+00:00",
         "finished_at": "2026-08-13T01:29:52+00:00",
     }
+
+
+def test_publish_preserves_runner_audit_without_changing_compile_identity(tmp_path):
+    dist = _packaged_result(tmp_path)
+    path = dist / "resnet_50/w16a16/model/compile-result.json"
+    original = json.loads(path.read_text())
+    runner = {
+        "requested_runner_class": "default", "runner_class": "default",
+        "requested_runner_market": "on-demand", "runner_market": "on-demand",
+        "runner_actual_market": "on-demand", "runner_name": "runner-test",
+        "runner_instance_id": "i-test", "runner_instance_type": "c8gd.4xlarge",
+        "runner_approval_id": "sima-neat/models:resnet_50", "runner_approval_spec_revision": "a" * 64,
+    }
+
+    def publish():
+        calls = []
+
+        def request(method, endpoint, body, key):
+            calls.append((endpoint, body, key))
+            return {"run_id": "compile-run"} if endpoint == "/v1/runs" else {"ok": True}
+
+        result = publish_compilations(
+            repository=ROOT, dist_dir=dist, api_url="https://registry.example.invalid", aws_region="us-west-2",
+            bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+            github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
+            request=request, artifact_store=FakeStore(),
+        )
+        parameters = next(body["parameters"] for endpoint, body, _ in calls if endpoint.endswith("/parameters"))
+        return calls[0], parameters, result
+
+    before, legacy_parameters, legacy_result = publish()
+    original["provenance"].update(runner)
+    path.write_text(json.dumps(original))
+    after, parameters, result = publish()
+    assert {field: parameters[field] for field in runner} == runner
+    assert all(field not in legacy_parameters for field in runner)
+    assert before == after  # Includes run fingerprint and idempotency key.
+    assert result["runs"][0]["artifact_sha256"] == legacy_result["runs"][0]["artifact_sha256"]
+    assert parameters["build_fingerprint"] == legacy_parameters["build_fingerprint"]
+
+
+def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
+    packages, assembled = _assembled_package(tmp_path)
+    path = next(packages.rglob("package-result.json"))
+    result = json.loads(path.read_text())
+    result["manifest"]["provenance"].update({
+        "runner_market": "on-demand", "runner_instance_id": "i-test",
+        "runner_actual_market": "on-demand", "runner_approval_spec_revision": "b" * 64,
+    })
+    path.write_text(json.dumps(result))
+    calls = []
+
+    def request(method, endpoint, body, key):
+        calls.append((endpoint, body))
+        return {"run_id": "package-run"} if endpoint == "/v1/runs" else {"ok": True}
+
+    published = _publish_packages(packages, request, FakeStore())
+    parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
+    assert parameters["provenance"] == result["manifest"]["provenance"]
+    assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
+    import io
+
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    calls = []
+
+    def signed(self, method, path, body, key):
+        calls.append((self.api_url, self.region, method, path))
+        return {"authenticated": True}
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
+    assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
+    for url in [
+        "https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other",
+    ]:
+        assert registry._public_registry_json(url) == {"public": True}
+    assert len(calls) == 1
+
+
+def test_iam_registry_reads_require_a_region(monkeypatch):
+    import model_registry.registry as registry
+
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.test")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
+        registry._public_registry_json("https://private.example.test/v1/repositories")
+
+
+def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatch):
+    import subprocess
+
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
+        monkeypatch.setenv("AWS_" + name, "dataset-" + name)
+        monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
+    commands = []
+    def request(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
+    monkeypatch.setattr(registry.subprocess, "run", request)
+    assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
+    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
+    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
+    assert not any("dataset-" in argument for argument in commands[0])
+    import os
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"

@@ -1,111 +1,45 @@
-id: gemma_4_e2b_it_textonly
 build-on-demand: true
 display_name: Gemma 4 E2B Text
 # Includes embeddings, rather than the effective E2B size: https://ai.google.dev/gemma/docs/core/model_card_4
 parameter_count_billion: 5.1
 description: Generates text from instructions and conversation history.
 model_type: llm
-tasks:
-- text_generation
+tasks: [text_generation]
+
 modalities:
-  inputs:
-  - text
-  outputs:
-  - text
-architecture:
-  id: gemma
-owners:
-- '@sima-neat/models'
+  inputs: [text]
+  outputs: [text]
+
+architecture: gemma
+
 license:
   spdx: LicenseRef-Gemma
   redistribution: restricted
   attribution: Derived from google/gemma-4-E2B-it under the Gemma Terms of Use; text-only GPTQ checkpoint provided by SiMa.ai.
+
 upstream:
   repository: https://huggingface.co/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors
   revision: db99280a9577eb98fa639bfa362ef28750c1eb64
-  model_card: https://huggingface.co/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors
   derived_from: https://huggingface.co/google/gemma-4-E2B-it
-components:
-- id: model
-  role: inference
+
+compilation:
+  format: huggingface
   source:
-    type: file_set
-    entrypoint: config.json
+    repository: simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors
+    revision: db99280a9577eb98fa639bfa362ef28750c1eb64
+    main_file: config.json
     files:
-    - path: chat_template.jinja
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/chat_template.jinja
-      sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5
-      size_bytes: 18569
-    - path: config.json
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/config.json
-      sha256: adb90b351ebcd6448f07c2246316a3991d6d0ff9391ba8b31d2c1e09cd6207f0
-      size_bytes: 3122
-    - path: generation_config.json
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/generation_config.json
-      sha256: ca3509307f9760c9ed873072bf385cc224dbb2876e3f7e985c4d09aada0e2062
-      size_bytes: 204
-    - path: model.safetensors
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/model.safetensors
-      sha256: 9287ff776b76601dbc1c0cfaf3eb9471639c87398c5fb4a1738e6e8e67caf5e1
-      size_bytes: 6661173502
-    - path: tokenizer.json
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/tokenizer.json
-      sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
-      size_bytes: 32169626
-    - path: tokenizer_config.json
-      uri: hf://models/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors@db99280a9577eb98fa639bfa362ef28750c1eb64/tokenizer_config.json
-      sha256: a284d1243b62be31faa9c13e1c28cece940c4abaa7bd9ad87b94f61b40687200
-      size_bytes: 2741
-  interface:
-    format: huggingface
-    entrypoints:
-    - id: generate
-      inputs:
-      - name: prompt
-        dtype: string
-        shape: []
-      outputs:
-      - name: text
-        dtype: string
-        shape: []
-      streaming:
-        mode: autoregressive
-        reset: true
-    shape_profiles: []
-  preprocessing:
-    pipeline: []
-  postprocessing:
-    pipeline: []
-  surgery:
-    type: none
-  recipe: scripts/compile.sh
-resources: []
-calibrations: []
-build_profiles:
-- id: w4a16
-  target: modalix
-  runner_class: expensive
-  components:
-  - id: model
-    parameters:
-      precision: a16w4
-      max_num_tokens: 4096
-      language_group_size: 128
-compositions:
-- id: default
-  type: single
-  component: model
+      chat_template.jinja: {sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5, size_bytes: 18569}
+      config.json: {sha256: adb90b351ebcd6448f07c2246316a3991d6d0ff9391ba8b31d2c1e09cd6207f0, size_bytes: 3122}
+      generation_config.json: {sha256: ca3509307f9760c9ed873072bf385cc224dbb2876e3f7e985c4d09aada0e2062, size_bytes: 204}
+      model.safetensors: {sha256: 9287ff776b76601dbc1c0cfaf3eb9471639c87398c5fb4a1738e6e8e67caf5e1, size_bytes: 6661173502}
+      tokenizer.json: {sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f, size_bytes: 32169626}
+      tokenizer_config.json: {sha256: a284d1243b62be31faa9c13e1c28cece940c4abaa7bd9ad87b94f61b40687200, size_bytes: 2741}
   entrypoint: generate
-packages:
-- id: default
-  default: true
-  components:
-  - model
-  resources: []
-  build_profiles:
-  - w4a16
-  composition: default
-fidelity: []
-accuracy: []
-benchmark: []
-maturity: experimental
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}

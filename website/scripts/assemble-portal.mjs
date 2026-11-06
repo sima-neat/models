@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {cpSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -18,28 +19,43 @@ const revision = (
 
 const fingerprintedAssets = [
   'app', 'state', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view',
-  'benchmark-adapters', 'layer-stats', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics', 'brand', 'styles',
-  'config', 'portal-shell',
+  'model-report', 'mla-layer-stats', 'mla-utilization', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics',
+  'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment',
 ];
 const stylesheets = ['brand', 'styles'];
-const config = portalConfig();
+function gitMetadata(args) {
+  try { return execFileSync('git', args, {cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim(); }
+  catch { return null; } // Source archives may have CI metadata but no Git directory.
+}
+const config = {
+  ...portalConfig(),
+  build: {
+    commit: process.env.GITHUB_SHA || execFileSync('git', ['rev-parse', 'HEAD'], {cwd: repository, encoding: 'utf8'}).trim(),
+    branch: process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || gitMetadata(['branch', '--show-current']) || 'Branch unavailable',
+    modified: Boolean(gitMetadata(['status', '--porcelain'])),
+  },
+};
+const configSource = `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`;
+// Audience and backend can change without a source commit. Preserve each configuration
+// so an earlier entry point still loads its original settings after rollback.
+const configFile = `config.${createHash('sha256').update(configSource).digest('hex')}.js`;
 
 rmSync(output, {recursive: true, force: true});
 mkdirSync(output, {recursive: true});
 cpSync(docsBuild, output, {recursive: true});
 cpSync(join(browser, 'favicon.svg'), join(output, 'favicon.svg'));
 
-for (const asset of fingerprintedAssets) {
+for (const asset of fingerprintedAssets.filter((asset) => asset !== 'config')) {
   const extension = stylesheets.includes(asset) ? 'css' : 'js';
   cpSync(join(browser, `${asset}.${extension}`), join(output, `${asset}.${revision}.${extension}`));
 }
-writeFileSync(join(output, `config.${revision}.js`), `window.MODEL_REGISTRY_CONFIG = Object.freeze(${JSON.stringify(config, null, 2)});\n`);
+writeFileSync(join(output, configFile), configSource);
 
 let browserHtml = readFileSync(join(browser, 'index.html'), 'utf8');
 browserHtml = browserHtml
   .replace('href="brand.css"', `href="brand.${revision}.css"`)
   .replace('href="styles.css"', `href="styles.${revision}.css"`)
-  .replace('src="config.js"', `src="config.${revision}.js"`)
+  .replace('src="config.js"', `src="${configFile}"`)
   .replace('src="app.js"', `src="app.${revision}.js"`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
@@ -47,7 +63,7 @@ writeFileSync(join(output, 'index.html'), browserHtml);
 // the scores each source model's authors published. api.js fetches each by its unfingerprinted name.
 const apiModule = join(output, `api.${revision}.js`);
 let apiSource = readFileSync(apiModule, 'utf8');
-for (const name of ['component-pipelines', 'published-metrics']) {
+for (const name of ['component-pipelines', 'reference-metrics']) {
   const url = `./${name}.json`;
   const file = `${name}.${revision}.json`;
   execFileSync(process.env.PYTHON || 'python3', [
@@ -60,7 +76,7 @@ for (const name of ['component-pipelines', 'published-metrics']) {
 }
 writeFileSync(apiModule, apiSource);
 
-const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset));
+const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {
   const path = join(output, `${asset}.${revision}.js`);

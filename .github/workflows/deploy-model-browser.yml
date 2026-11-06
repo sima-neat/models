@@ -1,0 +1,89 @@
+name: Deploy Model Browser & Docs
+
+run-name: Deploy Model Browser & Docs (${{ inputs.environment }}, ${{ inputs.audience }}) — ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Frontend destination and registry backend
+        type: choice
+        options: [staging, production]
+        default: staging
+        required: true
+      audience:
+        description: Developer exposes branch selection; customer shows Main only
+        type: choice
+        options: [developer, customer]
+        default: developer
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Models owners approval
+    if: github.repository == 'sima-neat/models' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: model-browser-deploy
+    permissions:
+      contents: read
+      deployments: read
+      actions: read
+    steps:
+      - name: Check out the authorized revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the owner protection is configured
+        uses: actions/github-script@v8
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOY_AUDIENCE: ${{ inputs.audience }}
+        with:
+          script: |
+            await require('./scripts/authorize-model-browser-deployment.cjs')({github, context, core});
+
+  resolve-vulcan-config:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
+    needs: authorize
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ inputs.environment }}
+
+  build:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
+    needs: authorize
+    uses: ./.github/workflows/developer-docs.yml
+    with:
+      environment: ${{ inputs.environment }}
+      ui_mode: ${{ inputs.audience }}
+
+  publish:
+    if: github.run_attempt == 1 && github.actor == github.triggering_actor
+    needs: [authorize, resolve-vulcan-config, build]
+    concurrency:
+      group: ${{ github.repository }}-model-browser-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
+    with:
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      site_key: DOCS
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}
+      artifact_pattern: model-browser-site
+      s3_prefix: models
+      cloudfront_paths: "/models /models/*"
+      delete_removed: false

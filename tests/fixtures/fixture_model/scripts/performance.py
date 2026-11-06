@@ -1,0 +1,1 @@
+# Performance-stage fixture.

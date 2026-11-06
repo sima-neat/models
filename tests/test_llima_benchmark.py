@@ -1,15 +1,16 @@
 """GenAI measurement boundaries and registered compilation reuse."""
 
-import copy
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from model_registry import llima_benchmark as bench
-from model_registry.benchmark_publication import _measurements, load_benchmark_result, validate_benchmark_set
 from model_registry.board_telemetry import summarize
 from model_registry.errors import ValidationError
+from model_registry.report_publication import check_report
+from model_report import from_generation
+
+from tests.test_report_publication import publish, registered_build
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -113,101 +114,55 @@ def test_exact_prompt_lengths_preserve_native_assistant_suffix():
         assert len(tokens) == length and tokens[0] == 1000 and tokens[-2:] == [1001, 1002]
 
 
-def test_board_measurements_keep_the_workload_dimension():
-    data = report()
-    data["workloads"][0]["telemetry"] = summarize(
-        {
-            "metrics": [{"key": "cpu_usage_pct", "unit": "%"}, {"key": "power_current_watts", "unit": "W"}],
-            "samples": [{"values": {"cpu_usage_pct": 12.5, "power_current_watts": 14.0}}],
-        }
-    )
-    data["workloads"][0]["avg_power_watts"] = 14.0
-    result = {
-        "benchmark_report": data,
-        "benchmark_type": "model.generative",
-        "model": {"id": "qwen3_5_0_8b", "build_profile_id": "w4a16", "component_id": "model"},
-    }
-    readings = _measurements(result, "a" * 64)
-    cpu = next(row for row in readings if row["name"] == "board.cpu_usage.avg")
-    assert cpu["value"] == 12.5 and cpu["unit"] == "%"
-    assert cpu["dimensions"]["workload_id"] == "text_n128"
-    assert cpu["dimensions"]["input_tokens"] == "128"
-    assert sum(row["name"] == "board.power.avg" for row in readings) == 1
 
 
-@pytest.mark.parametrize("missing_workload", [None, "text_n128", "image"])
-def test_required_telemetry_is_checked_for_every_workload(tmp_path, missing_workload):
+
+
+
+
+def generation_report():
     data = report()
+    data["settings"].update(repetitions=5, warmup=1)
     for workload in data["workloads"]:
-        if workload["id"] != missing_workload:
-            workload["avg_power_watts"] = 14.0
-            workload["telemetry"] = summarize({
-                "metrics": [{"key": "cpu_usage_pct", "unit": "%"}],
-                "samples": [{"values": {"cpu_usage_pct": 12.5}}],
-            })
-    result = {
-        "benchmark_report": data,
-        "benchmark_type": "model.generative",
-        "model": {"id": "qwen3_5_0_8b", "build_profile_id": "w4a16", "component_id": "model"},
-        "provenance": {"models_commit": "a" * 40, "compile_run_id": "00000000-0000-4000-8000-000000000001"},
-    }
-    path = tmp_path / "model/performance-result.json"
-    path.parent.mkdir()
-    path.write_text(json.dumps(result))
-    with (
-        patch("model_registry.benchmark_publication.load_benchmark_result", return_value=result),
-        patch("model_registry.benchmark_publication.load_component_performance_config", return_value={
-            "required_metrics": ["ttft_ms", "decode_tps", "avg_cpu_usage_pct", "avg_power_watts"],
-        }),
-    ):
-        args = dict(repository=ROOT, result_root=tmp_path, model_id="qwen3_5_0_8b", build_profile_id="w4a16",
-                    component_ids=["model"], git_sha="a" * 40)
-        if missing_workload:
-            with pytest.raises(ValidationError, match="required benchmark metric .* was not measured"):
-                validate_benchmark_set(**args)
-        else:
-            assert validate_benchmark_set(**args)["count"] == 1
+        workload["telemetry"] = summarize({
+            "metrics": [{"key": "power_current_watts", "unit": "W"}],
+            "samples": [{"values": {"power_current_watts": 14.0}}],
+        })
+    return from_generation(data, {"llima": "0.6.0", "mole": "0.6.0", "build": {}}).document
 
 
-def test_genai_import_and_measurements_preserve_workload_dimensions(tmp_path):
-    data = report()
-    artifact = tmp_path / "deployment-manifest.json"
-    artifact.write_text("{}")
-    manifest = {
-        "model": {
-            "id": "qwen3_5_0_8b",
-            "build_profile_id": "w4a16",
-            "component_id": "model",
-            "path": str(artifact),
-            "sha256": bench.sha256_file(artifact)[0],
-            "uri": "vulcan://runs/00000000-0000-4000-8000-000000000001/artifacts/llima",
-        },
-        "compatibility": {"platform_version": "3.0.0"},
-        "provenance": {"compile_run_id": "00000000-0000-4000-8000-000000000001", "models_commit": "a" * 40},
+def test_generation_uses_the_unified_report_and_checks_every_workload(tmp_path):
+    data = generation_report()
+    path = tmp_path / "model-report.json"
+    path.write_text(json.dumps(data))
+    assert check_report(path, ROOT, "qwen3_5_0_8b", "w4a16", "performance") == data
+    assert data["schema_version"] == 1
+    data["generation"]["workloads"][-1]["telemetry"] = {}
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValidationError, match="required performance metrics were not measured"):
+        check_report(path, ROOT, "qwen3_5_0_8b", "w4a16", "performance")
+
+
+def test_generation_publication_uses_native_inputs_and_keeps_workload_dimensions(tmp_path):
+    import hashlib
+
+    compiled = tmp_path / "_compiled"
+    registered_build(compiled, "qwen3_5_0_8b", "w4a16", ["model"])
+    profile = compiled / "qwen3_5_0_8b/w4a16"
+    manifest = profile / "model/deployment-manifest.json"
+    manifest.write_text("{}")
+    (profile / "compile-outputs.json").write_text(json.dumps({"outputs": [{
+        "component_id": "model", "artifact_path": "model/deployment-manifest.json",
+        "artifact_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    }]}))
+    calls, result = publish(tmp_path, "qwen3_5_0_8b", "w4a16", "performance", generation_report())
+    assert result["run_type"] == "model_performance"
+    inputs = [body for _, path, body in calls if "/inputs/" in path]
+    assert inputs[0]["source_reference"].endswith("/artifacts/llima")
+    measurements = next(body["measurements"] for _, path, body in calls if path.endswith("/measurements/batch"))
+    assert {row["dimensions"]["workload_id"] for row in measurements} == {w["id"] for w in report()["workloads"]}
+    image = [row for row in measurements if row["dimensions"]["workload_id"] == "image"]
+    assert all("input_tokens" not in row["dimensions"] for row in image)
+    assert {row["name"] for row in image} == {
+        "model.generation.ttft", "model.generation.decode_rate", "board.power.avg", "board.power.peak",
     }
-    manifest_path, report_path, result_path = [
-        tmp_path / name for name in ("manifest.json", "report.json", "result.json")
-    ]
-    manifest_path.write_text(json.dumps(manifest))
-    report_path.write_text(json.dumps(data))
-    env = {"buildinfo": "DISTRO_VERSION=3.0.0\n", "fingerprint_version": 2}
-    with (
-        patch("model_registry.core_benchmark.runner_environment", return_value=env),
-        patch.object(bench.subprocess, "check_output", return_value="0.6.0+test"),
-    ):
-        bench.import_benchmark(manifest_path, report_path, result_path, ROOT / "schemas/performance-result.schema.json")
-    result = load_benchmark_result(result_path, ROOT / "schemas/performance-result.schema.json")
-    assert result["schema_version"] == 6
-    assert result["benchmark_report"] == data
-    assert result["execution_plan"] is None
-    readings = _measurements(result, result["identity"]["fingerprint"])
-    assert len(readings) == 20
-    assert {row["dimensions"]["workload_id"] for row in readings} == {w["id"] for w in data["workloads"]}
-    assert all(row["unit"] in ("ms", "tokens/s") for row in readings)
-    image = [row for row in readings if row["dimensions"]["workload_id"] == "image"]
-    assert len(image) == 2 and all("input_tokens" not in row["dimensions"] for row in image)
-    bad = copy.deepcopy(result)
-    bad["benchmark_report"]["workloads"].pop()
-    result_path.write_text(json.dumps(bad))
-    with pytest.raises(ValidationError, match="workloads"):
-        load_benchmark_result(result_path, ROOT / "schemas/performance-result.schema.json")

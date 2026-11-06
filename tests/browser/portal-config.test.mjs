@@ -36,3 +36,28 @@ test('Local previews can build either UI against a local API', () => {
   assert.equal(config.apiBase, 'http://localhost:8767');
   assert.throws(() => portalConfig({MODEL_BROWSER_UI_MODE: 'typo'}), /Unsupported/);
 });
+
+
+test('Production selects its public reader and site independently of audience', () => {
+  for (const uiMode of ['customer', 'developer']) {
+    const config = portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_BROWSER_UI_MODE: uiMode});
+    assert.equal(config.apiBase, 'https://models-registry.neat.sima.ai');
+    assert.equal(config.siteUrl, 'https://developer.sima.ai');
+    assert.equal(config.environment, 'Production');
+    assert.equal(config.allowProductionPreview, false);
+    assert.equal(config.heroCdnBaseUrl, uiMode === 'developer' ? 'https://models-registry.neat.sima.ai/images/sha256' : '');
+    assert.equal(config.defaultBranch, uiMode === 'customer' ? 'main' : 'develop');
+  }
+  assert.throws(() => portalConfig({MODEL_BROWSER_ENVIRONMENT: 'prodution'}), /Unsupported/);
+});
+
+
+test('Deployment identity survives a staging preview of production data', async () => {
+  const {resolveEnvironment} = await import('../../artifact-browser/environment.js');
+  const staged = {...portalConfig({}), build: {branch: 'feature/browser', commit: 'abc123'}};
+  const preview = resolveEnvironment(staged, '?env=prod&branch=main');
+  assert.equal(preview.deploymentEnvironment, 'staging');
+  assert.equal(preview.environment, 'Production');
+  assert.equal(preview.build.branch, 'feature/browser');
+  assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'}).deploymentEnvironment, 'production');
+});

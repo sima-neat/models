@@ -8,7 +8,6 @@ import io
 import json
 import math
 import os
-import re
 import signal
 import socket
 import statistics
@@ -16,7 +15,6 @@ import subprocess
 import time
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -118,26 +116,6 @@ def validate_report(result: dict[str, Any]) -> None:
             raise ValidationError("GenAI metrics disagree with recorded request timings")
         if workload["kind"] == "image_text" and workload["image_size"] != settings["image_size"]:
             raise ValidationError("image does not match the compiled vision encoder size")
-
-
-def registry_metrics(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    from .benchmark_metrics import report_metrics
-
-    return {
-        f"{workload['id']}.{name}": {
-            **metric,
-            "details": {
-                **metric.get("details", {}),
-                "workload": {
-                    "workload_id": workload["id"],
-                    "workload_kind": workload["kind"],
-                    **({"input_tokens": str(workload["input_tokens"])} if workload["kind"] == "text" else {}),
-                },
-            },
-        }
-        for workload in result["benchmark_report"]["workloads"]
-        for name, metric in (workload_metrics(workload) | report_metrics(workload)).items()
-    }
 
 
 def _prompt(tokenizer, length: int) -> list[int]:
@@ -391,58 +369,8 @@ def run_benchmark(deployment: Path, output: Path) -> dict[str, Any]:
     }
     validate_report(report)
     (output / "benchmark-report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
-    return report
+    from model_report import from_generation
 
-
-def import_benchmark(manifest_path: Path, report_path: Path, output_path: Path, schema_path: Path) -> dict:
-    """Attach immutable compilation identity to measured GenAI results without executing a model."""
-    from .benchmark_publication import benchmark_identity_document, load_benchmark_result
-    from .core_benchmark import runner_environment
-    from .registry import canonical_sha256
-
-    manifest = json.loads(manifest_path.read_text())
-    report = json.loads(report_path.read_text())
-    if report["status"] != "passed" or not report["workloads"]:
-        raise ValidationError("GenAI benchmark did not complete")
-    validate_report(report)
-    if sha256_file(Path(manifest["model"]["path"]))[0] != manifest["model"]["sha256"]:
-        raise ValidationError("GenAI deployment manifest digest changed")
-    environment = runner_environment(package_pattern="sima-lmm-*", require_internals=False)
     installed = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "sima-lmm-core"], text=True).strip()
-    environment["llima_version"] = installed
-    environment["fingerprint"] = canonical_sha256(environment)
-    found = re.search(r"^\s*DISTRO_VERSION\s*=\s*(\S+)", environment["buildinfo"], re.MULTILINE)
-    actual_platform = found.group(1) if found else None
-    if actual_platform != manifest["compatibility"]["platform_version"]:
-        raise ValidationError("GenAI benchmark platform differs from the pinned runtime")
-    result = {
-        "schema_version": 6,
-        "status": "passed",
-        "benchmark_type": "model.generative",
-        "tool": {"name": "MoLE / LLiMa web", "version": installed},
-        "identity": {"algorithm": "sha256", "canonicalization_version": 5, "fingerprint": None},
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "model": {**manifest["model"], "contract": None},
-        "compatibility": {
-            "expected_platform_version": manifest["compatibility"]["platform_version"],
-            "actual_platform_version": actual_platform,
-            "expected_neat_version": None,
-            "actual_neat_version": installed,
-        },
-        "configuration": report["settings"],
-        "environment": environment,
-        "benchmark_report": report,
-        "execution_plan": None,
-        "provenance": manifest["provenance"],
-        "orchestration": {
-            "provider": "github-actions-devkit-runner" if os.environ.get("GITHUB_ACTIONS") else "manual",
-            "session_id": os.environ.get("GITHUB_RUN_ID"),
-            "task_id": os.environ.get("GITHUB_JOB"),
-            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
-            "target_correlation_id": os.environ.get("RUNNER_NAME"),
-        },
-    }
-    result["identity"]["fingerprint"] = canonical_sha256(benchmark_identity_document(result))
-    output_path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-    load_benchmark_result(output_path, schema_path)
-    return {"result": str(output_path), "fingerprint": result["identity"]["fingerprint"]}
+    from_generation(report, {"llima": installed, "mole": runtime["mole_version"], "build": {}}).save(output)
+    return report

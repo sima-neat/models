@@ -40,7 +40,7 @@ jobs:
       # still imports each one and reads its tests.yaml entry.
       - name: Collect each model's stage-output tests
         run: >-
-          python -m pytest --collect-only -q models/*/tests/build models/*/tests/measure
+          python -m pytest --collect-only -q models/*/tests/build models/*/tests/benchmark
           --converted=/dev/null --compiled=/dev/null --accuracy=/dev/null --performance=/dev/null
 
       - name: Build wheel and Vulcan metadata

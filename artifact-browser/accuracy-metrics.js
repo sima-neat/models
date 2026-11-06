@@ -1,4 +1,4 @@
-// Accuracy metric labels in display order; taxonomies/accuracy-metrics.yaml lists the same metrics.
+// Accuracy metric labels in display order; tools/model_report/metrics.json gives the same labels.
 export const ACCURACY_METRIC_LABELS = {
   top1_accuracy: "Top-1",
   top5_accuracy: "Top-5",
@@ -40,10 +40,35 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_large: "Mask AR large",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
+  recall_at_1: "Recall@1",
+  recall_at_5: "Recall@5",
+  recall_at_10: "Recall@10",
+  epe: "EPE",
+  d1_all: "D1-all",
+};
+
+// The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and
+// directions.
+export const ACCURACY_METRIC_SCALES = {
+  epe: { unit: "px", direction: "lower" },
+  d1_all: { unit: "%", direction: "lower" },
 };
 
 export function accuracyMetricLabel(name) {
   return ACCURACY_METRIC_LABELS[name] || name;
+}
+
+// A score as a number in its display unit: a ratio as a percentage, any other unit as reported.
+export function accuracyDisplay(name, value) {
+  const { unit, direction } = ACCURACY_METRIC_SCALES[name] || { unit: "ratio", direction: "higher" };
+  return unit === "ratio" ? { number: value * 100, unit: "%", direction } : { number: value, unit, direction };
+}
+
+// A score as text: "40.10%" for a ratio or a percentage, "0.776 px" for pixels, and "—" (or blank) when missing.
+export function formatAccuracy(name, value, { blank = false } = {}) {
+  if (!Number.isFinite(value)) return blank ? "" : "—";
+  const { number, unit } = accuracyDisplay(name, value);
+  return unit === "%" ? `${number.toFixed(2)}%` : `${number.toFixed(3)} ${unit}`;
 }
 
 // Known metrics follow the label order and any others follow them in the order given.
@@ -53,15 +78,11 @@ export function orderedMetricNames(names) {
   return [...names].sort((left, right) => rank(left) - rank(right));
 }
 
-// The published score for each metric on a dataset. A result measured on a different dataset has no
-// comparable published score, even when the metric names match. Results published before model.yaml
-// recorded published_metrics carry the score on the metric itself, as its reference.
-export function publishedScores(published, datasetId, metrics = {}) {
+// The score each source model's authors published for a metric on a dataset. A result measured on a
+// different dataset has no comparable reference score, even when the metric names match.
+export function referenceScores(reference, datasetId) {
   const scores = {};
-  for (const [name, metric] of Object.entries(metrics)) {
-    if (Number.isFinite(metric?.reference)) scores[name] = metric.reference;
-  }
-  for (const entry of published || []) {
+  for (const entry of reference || []) {
     if (entry.dataset?.id !== datasetId) continue;
     for (const [name, value] of Object.entries(entry.metrics || {})) {
       if (Number.isFinite(value)) scores[name] = value;

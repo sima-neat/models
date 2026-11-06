@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
+import shutil
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -9,6 +11,38 @@ from typing import Any
 
 from .errors import ValidationError
 from .fetch import sha256_file
+from .source import HF_URI_RE
+
+
+def save_llima_recipe(
+    scripts: Path, destination: Path, arguments: list[str], checkpoints: dict[str, str],
+) -> None:
+    """Write a direct reproduction command and copy its Python helpers."""
+    header = "#!/usr/bin/env bash\n\n"
+    for name, uri in checkpoints.items():
+        match = HF_URI_RE.fullmatch(uri)
+        if not match or match["repo_type"] != "models":
+            raise ValidationError("LLiMa reproduction recipes require pinned Hugging Face model sources")
+        repository = f'{match["owner"]}/{match["repo"]}'
+        header += f'# hf download {shlex.quote(repository)} --local-dir {shlex.quote(name)}\n'
+    if (scripts / "compile.py").is_file():
+        command = 'python3 "$(dirname "$0")/compile.py" ' + shlex.join(arguments[:2])
+        jobs = "--num_processes"
+    else:
+        command = f'llima-compile {shlex.quote(arguments[0])} \\\n    -o {shlex.quote(arguments[1])}'
+        if (scripts / "config.py").is_file():
+            command += ' \\\n    -c "$(dirname "$0")/config.py"'
+        jobs = "--jobs"
+    if arguments[2:]:
+        command += " \\\n    " + shlex.join(arguments[2:])
+    command += f' \\\n    {jobs} 4 "$@"\n'
+    destination.mkdir(parents=True, exist_ok=True)
+    saved = destination / "compile.sh"
+    saved.write_text(header + "\n" + command, encoding="utf-8")
+    saved.chmod(0o755)
+    for name in ("compile.py", "config.py"):
+        if (scripts / name).is_file():
+            shutil.copy2(scripts / name, destination / name)
 
 
 def validate_compile_outputs(
@@ -28,11 +62,11 @@ def validate_compile_outputs(
         raise ValidationError(f"{manifest_file}: could not load compile outputs: {exc}") from exc
 
     # A grouped invocation compiles several components from one derived graph set, so it must also
-    # record each component's derived graph and the invocation's correctness result.
+    # record each component's derived graph.
     grouped = len(component_ids) > 1
     fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
     if grouped:
-        fields.update({"derived_graphs", "correctness"})
+        fields.add("derived_graphs")
     if not isinstance(manifest, dict) or set(manifest) != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {
@@ -121,33 +155,7 @@ def validate_compile_outputs(
         if graph_ids != expected_components:
             raise ValidationError(f"{manifest_file}: derived_graphs must cover every component")
 
-        correctness = manifest["correctness"]
-        if not isinstance(correctness, dict) or set(correctness) != {"component_id", "path", "sha256"}:
-            raise ValidationError(f"{manifest_file}: correctness must contain component_id, path, and sha256")
-        component_id = correctness["component_id"]
-        if component_id not in expected_components:
-            raise ValidationError(f"{manifest_file}: correctness references unknown component {component_id!r}")
-        relative = PurePosixPath(str(correctness["path"]))
-        if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
-            raise ValidationError(f"{manifest_file}: unsafe correctness path {relative}")
-        if relative.parts[0] != component_id or relative.name != "fidelity.json":
-            raise ValidationError(f"{manifest_file}: correctness must be the owning component's fidelity.json")
-        correctness_path = root.joinpath(*relative.parts)
-        if not correctness_path.is_file():
-            raise ValidationError(f"{manifest_file}: correctness result does not exist: {relative}")
-        digest, _ = sha256_file(correctness_path)
-        if correctness["sha256"] != digest:
-            raise ValidationError(f"{manifest_file}: correctness SHA-256 does not match")
-        result.update(
-            {
-                "derived_graphs": graphs,
-                "correctness": {
-                    "component_id": component_id,
-                    "path": str(correctness_path),
-                    "sha256": digest,
-                },
-            }
-        )
+        result["derived_graphs"] = graphs
     return result
 
 
@@ -296,15 +304,54 @@ def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict
             digest, size = sha256_file(path)
             files.append({"path": relative, "artifact": deployment_artifact_name(relative),
                           "sha256": digest, "size_bytes": size})
-    try:
-        cfg = json.loads((deployment / "devkit/vlm_config.json").read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict) or not {"lm_cfg", "pipeline_cfg"} <= cfg.keys():
-            raise ValueError("missing lm_cfg or pipeline_cfg")
-    except (OSError, ValueError) as exc:
-        raise ValidationError(f"{deployment}: invalid LLiMa deployment: {exc}") from exc
-    if not any(item["path"].startswith("elf_files/") and item["path"].endswith(".elf") for item in files):
+    if not any("elf_files" in PurePosixPath(item["path"]).parts[:-1] and item["path"].endswith(".elf")
+               for item in files):
         raise ValidationError(f"{deployment}: LLiMa deployment contains no ELF files")
     return deployment_files({"files": files})
+
+
+def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:
+    """Read target settings from a single deployment or a speculative pair."""
+    paths = [deployment / "devkit/vlm_config.json", *sorted(deployment.glob("*/devkit/vlm_config.json"))]
+    targets = []
+    drafts = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if ((config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}).get("is_draft"):
+            drafts.append(path)
+        else:
+            targets.append((path, config))
+    if not targets and not drafts:
+        return {}
+    if len(targets) != 1:
+        raise ValidationError(f"{deployment}: expected one target configuration")
+    path, config = targets[0]
+    speculative = (config.get("lm_cfg") or {}).get("speculative_decoding_cfg") or {}
+    if speculative.get("method") or drafts:
+        if len(drafts) != 1:
+            raise ValidationError(f"{deployment}: expected one draft configuration for speculative decoding")
+        for config_path in (path, *drafts):
+            model = config_path.parent.parent
+            if not any(item.is_file() for item in (model / "elf_files").rglob("*.elf")):
+                raise ValidationError(f"{model}: speculative deployment contains no ELF files")
+    pipeline = config["pipeline_cfg"]
+    parameters = {
+        name: pipeline[field]
+        for name, field in (("max_num_tokens", "max_num_tokens"),
+                            ("language_group_size", "input_token_group_size"))
+        if field in pipeline
+    }
+    image_size = (config.get("vm_cfg") or {}).get("image_size")
+    if type(image_size) is int and image_size > 0:
+        image_size = [image_size, image_size]
+    if (isinstance(image_size, list) and len(image_size) == 2
+            and all(type(value) is int and value > 0 for value in image_size)):
+        parameters.update(input_height=image_size[0], input_width=image_size[1])
+    if speculative.get("method"):
+        parameters["speculative_method"] = speculative["method"]
+    return parameters
 
 
 def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
@@ -317,6 +364,7 @@ def verify_artifact(output_dir: str | Path, *, write_manifest: bool = False,
     if list(directory.glob("*_mpk.tar.gz")):
         raise ValidationError(f"{directory}: expected one compiled artifact")
     files = verify_llima(deployment)
+    llima_compiled_parameters(deployment)
     payload = json.dumps({"format": "llima", "files": files}, indent=2, sort_keys=True).encode() + b"\n"
     manifest = directory / "deployment-manifest.json"
     if write_manifest:

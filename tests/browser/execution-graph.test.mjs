@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 
-const {adaptBenchmarkResult, executionGraph} = await import(new URL('../../artifact-browser/benchmark-adapters.js', import.meta.url));
+const {executionGraph, readPerformance} = await import(new URL('../../artifact-browser/model-report.js', import.meta.url));
 const plan = {
   schema: 'sima.neat.execution_plan', schema_version: 1,
   model: {name: 'yolo26n', batch: 1},
@@ -45,12 +45,30 @@ test('lists each connection once above its tensors and skips a connection that r
   ]);
 });
 
+const report = () => JSON.parse(readFileSync(
+  new URL('../../artifact-browser/fixtures/model-report-performance.json', import.meta.url), 'utf8'));
+
 test('reads the plan the performance script recorded and shows nothing for another plan schema', () => {
-  const saved = JSON.parse(readFileSync(
-    new URL('../../artifact-browser/fixtures/performance-result.json', import.meta.url), 'utf8'));
-  assert.deepEqual(adaptBenchmarkResult({...saved, execution_plan: plan}).value.executionGraph, executionGraph(plan));
-  const older = {schema_version: 5, metrics: {}, core_report: {execution_plan: plan}};
-  assert.deepEqual(adaptBenchmarkResult(older).value.executionGraph, executionGraph(plan));
-  assert.equal(adaptBenchmarkResult({schema_version: 5, metrics: {}, core_report: {}}).value.executionGraph, null);
-  assert.equal(executionGraph({...plan, schema_version: 2}), null);
+  const saved = report();
+  saved.components.model.execution_plan = plan;
+  assert.deepEqual(readPerformance({report: saved}).value.components[0].executionGraph, executionGraph(plan));
+  saved.components.model.execution_plan = {...plan, schema_version: 2};
+  assert.equal(readPerformance({report: saved}).value.components[0].executionGraph, null);
+  assert.equal(executionGraph(null), null);
+});
+
+test('reads a multi-component report as one score with each component\'s layers and execution graph', () => {
+  const saved = report();
+  const layers = [{stage_index: 0, name: 'MLA_0/conv2d_0', latency_us: 120.5}];
+  saved.components = {
+    backbone: {mla_layer_stats: {status: 'ok', layers}, execution_plan: plan},
+    decoder: {mla_layer_stats: {status: 'not requested', layers: []}, execution_plan: null},
+  };
+  const benchmark = readPerformance({report: saved}).value;
+  assert.equal(benchmark.measurements.throughput_fps.value, saved.metrics.throughput_fps);
+  assert.deepEqual(benchmark.components.map(({id}) => id), ['backbone', 'decoder']);
+  assert.deepEqual(benchmark.components[0].executionGraph, executionGraph(plan));
+  assert.equal(benchmark.components[0].layerAnalysis.layers.length, 1);
+  assert.equal(benchmark.components[1].executionGraph, null);
+  assert.equal(benchmark.components[1].layerAnalysis, null);
 });

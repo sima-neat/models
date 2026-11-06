@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from model_registry import board_telemetry as board
-from model_registry.benchmark_metrics import measurement_name, report_metrics
+from model_report import METRICS, telemetry_metrics
 
 
 def sentinel_run():
@@ -57,14 +57,14 @@ def test_sentinel_summary_matches_vision_sensor_and_memory_semantics():
         "cpu_core_10_usage_pct",
     ]
     assert telemetry["cpu_cores_usage_pct"][1]["samples"] == 1
-    metrics = report_metrics({"telemetry": telemetry, "avg_power_watts": 12.0})
-    assert metrics["avg_cpu_usage_pct"]["value"] == 10.0
-    assert metrics["peak_cpu_core_usage_pct"]["value"] == 80.0
-    assert metrics["avg_linux_memory_mib"]["value"] == 550.0
-    assert metrics["mla_memory_peak_mib"]["unit"] == "MiB"
-    assert metrics["peak_power_watts"]["details"]["breakdown"][0]["key"] == "power_rail_mla_watts"
-    assert measurement_name("text_n128.avg_cpu_usage_pct") == "board.cpu_usage.avg"
-    assert measurement_name("image.ttft_ms") == "model.generation.ttft"
+    metrics = telemetry_metrics(telemetry)
+    assert metrics["avg_cpu_usage_pct"] == 10.0
+    assert metrics["peak_cpu_core_usage_pct"] == 80.0
+    assert metrics["avg_linux_memory_mib"] == 550.0
+    assert METRICS["mla_memory_peak_mib"]["unit"] == "MiB"
+    assert telemetry["power_rails_watts"][0]["key"] == "power_rail_mla_watts"
+    assert METRICS["avg_cpu_usage_pct"]["registry_name"] == "board.cpu_usage.avg"
+    assert METRICS["ttft_ms"]["registry_name"] == "model.generation.ttft"
 
 
 def test_trace_excludes_warmup_and_stops_only_its_id_even_if_generation_raises():
@@ -93,4 +93,4 @@ def test_busy_sentinel_does_not_stop_another_trace_or_fail_generation():
     report = sampler.report()
     assert report["telemetry"]["status"] == "another trace is active"
     assert report["telemetry"]["samples"] == 0
-    assert report_metrics(report) == {}
+    assert telemetry_metrics(report["telemetry"]) == {}

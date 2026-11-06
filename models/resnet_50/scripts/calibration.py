@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 from PIL import Image
 
-# The preprocessing declared for the model component in model.yaml, in HWC order.
+# ImageNet input preprocessing, with channel constants in HWC order.
 SHORTEST_EDGE = 256
 CROP = 224
 RESCALE = np.float32(1 / 255)

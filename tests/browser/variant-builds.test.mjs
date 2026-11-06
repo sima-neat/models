@@ -13,11 +13,9 @@ const resnet = {
   metadata: {model_id: 'resnet_50', build_profile_id: 'w8a8', component_id: 'model', github_run_id: 'workflow'},
 };
 
-test('workflow identity falls back from GitHub run to CI URL, compile invocation and run id', () => {
-  assert.equal(workflowIdentity({id: 'r', ci_run_url: 'u', metadata: {github_run_id: 'g', compile_invocation_id: 'c'}}), 'g');
-  assert.equal(workflowIdentity({id: 'r', ci_run_url: 'u', metadata: {compile_invocation_id: 'c'}}), 'u');
-  assert.equal(workflowIdentity({id: 'r', metadata: {compile_invocation_id: 'c'}}), 'c');
-  assert.equal(workflowIdentity({id: 'r'}), 'r');
+test('workflow identity is the GitHub run, else the run itself', () => {
+  assert.equal(workflowIdentity({id: 'r', metadata: {github_run_id: 'g'}}), 'g');
+  assert.equal(workflowIdentity({id: 'r', metadata: {}}), 'r');
 });
 
 test('groups the components of one build and keeps single-component builds separate', () => {

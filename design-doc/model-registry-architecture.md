@@ -16,13 +16,14 @@ byte size, and SHA-256.
 
 | Component | Responsibility |
 | --- | --- |
-| Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the declared fidelity report. |
+| Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the profile's numerical fidelity report when declared. |
 | Model-owned `scripts/compile.sh` | Calls `llima-compile`; receives checkpoint/output paths, the profile's compiler options and `BUILD_PROFILE_ID`. |
-| Model-owned `scripts/performance.py` | Benchmarks one MPK with Neat Core on a Modalix DevKit. |
-| Model-owned `scripts/accuracy.py` | Measures task accuracy with a build's MPKs on a Modalix DevKit, when declared. |
+| Model-owned `scripts/performance.py` | Measures a build profile's whole model on a Modalix DevKit with Neat Core and writes its report with `tools/model_report`, when declared. |
+| Model-owned `scripts/accuracy.py` | Measures a build profile's whole-model task accuracy on a Modalix DevKit and writes its report with `tools/model_report`, when declared. |
+| `tools/model_report` | Board-side report writer, standard library only: builds `model-report.json` from what Core returned, with the metric vocabulary in `metrics.json`. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_llima_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
 | `model-registry` | Author-safe `sima-cli` package for validation, verified input handling, the compile matrix, and compile-output and MPK checks. CI installs the full command surface for stage planning, packaging, provenance, and publication. |
-| GitHub Actions | Plans stages from their keys, runs them, publishes results, and reports status. Pull requests run only `Target Branch Checks` and the description check, `PR Sanitization`. |
+| GitHub Actions | Plans stages from their fingerprints, runs them, publishes results, and reports status. Pull requests run only `Target Branch Checks` and the description check, `PR Sanitization`. |
 | Model Compiler runner | An ephemeral self-hosted runner with the pinned Model Compiler. Compiles one build with read-only repository access. |
 | Modalix DevKit runner | Runs the performance and accuracy stages of one build. Holds no publication credentials. |
 | S3/object storage | Stores immutable compiled artifacts, packages, logs, and results. |
@@ -38,16 +39,16 @@ design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
 models/<model-id>/         model.yaml, README.md, hero.png, model code in scripts/, and its tests in tests/
 packaging/model-registry/  Build and installer for the author-safe sima-cli package
-schemas/                   Model, composition, package, and result JSON Schemas
+schemas/                   Model, tests, package, model report, and fidelity JSON Schemas
 scripts/                   Stage runner scripts and CI helpers
 taxonomies/                Sanctioned model categories and display labels
 tests/                     Repository-wide unit and contract tests and their fixtures
 tools/model_registry/      Shared CLI and lifecycle implementation
-training/                  Declared training code that is a compile input of its model
+tools/model_report/        Board-side model report writer and metric vocabulary
 website/                   Developer documentation site
 ```
 
-Common download, checksum, cache, MPK validation, result import, and
+Common download, checksum, cache, MPK validation, report writing, and
 publication logic stays under `tools/`. A model directory owns the code that is
 specific to that model: the compile recipe, any surgery that cannot be
 expressed as shared parameters, and its performance, accuracy, and conversion
@@ -63,7 +64,7 @@ Model authors install the non-publishing `model-registry` command through
 `sima-cli`; its installer finds the Model Compiler environment and installs
 alongside it without replacing compiler-owned dependencies.
 `packaging/model-registry/build.sh` removes the publication modules from that
-package. Packaging and publication remain automation-only.
+package and adds `model_report`, whose metric vocabulary validation reads. Packaging and publication remain automation-only.
 
 ## Shared tooling
 
@@ -76,59 +77,89 @@ this table. Modules marked CI only are removed from the author package by
 | Module | Owns |
 | --- | --- |
 | `cli.py` | the `model-registry` command; `AUTHOR_COMMANDS` lists the commands the author package exposes |
-| `model.py` | loading and validating `model.yaml` and the model folder (`load_models`), and reading a model's declarations: compile invocations, profiles, components |
-| `compile_matrix.py` | the compile matrix: one entry per declared compile invocation (`build_matrix`) |
-| `stage_keys.py` | the stage keys (`compile_key`, `performance_key`, `accuracy_key`) and the files each one hashes |
-| `stage_plan.py` | which builds compile and which DevKit stages run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
-| `registry.py` | publishing compile runs, packages, model documentation, and the branch catalog the browser reads (CI only) |
+| `model.py` | loading and validating `model.yaml` and the model folder (`load_models`), and expanding it into components, build profiles with their one compile invocation, and the `default` package |
+| `compile_matrix.py` | the compile matrix: one entry per build profile's compile invocation, with the benchmarks that measure it (`build_matrix`) |
+| `fingerprints.py` | the fingerprints (`compile_fingerprint`, `benchmark_fingerprint`), the files each one hashes, and each benchmark's run type |
+| `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
+| `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
+| `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
 | `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
-| `benchmark_manifest.py` | the DevKit benchmark manifest for a compiled build (CI only) |
-| `benchmark_publication.py` | publishing performance and accuracy runs (CI only) |
-| `benchmark_metrics.py` | reading registry metrics from saved Core and LLiMa reports |
-| `core_benchmark.py` | packaging the saved Core report for publication |
-| `accuracy_config.py`, `accuracy_result.py` | finding a build's DevKit accuracy entry; accuracy result documents |
-| `published_metrics.py` | the accuracy metric vocabulary, validating each model's `published_metrics`, and the published scores the portal ships |
-| `fidelity_config.py` | finding a build's fidelity entry and checking its result |
-| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and deployment file indexes |
-| `artifact_metadata.py` | publication metadata validation |
-| `package.py` | assembling model packages from component MPKs or a complete native deployment folder |
+| `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
+| `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
+| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
+| `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
+| `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
-| `llima_benchmark.py` | MoLE text buckets, encoder-sized HTTP image measurements, and GenAI result import |
-| `board_telemetry.py` | Sentinel traces and board telemetry summaries for measured LLiMa requests |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
+| `conversion.py` | conversion fingerprints, validated ONNX bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
-| `runner_approval.py` | authorizing requested compile runner classes |
-| `model_tests.py` | each model's test files and `tests/tests.yaml`, the comparison of a measured result with its expected values, and the outcomes a stage's tests report |
+| `runner_approval.py` | authorizing requested compile runner classes/markets and selecting optional runner audit fields for durable publication |
+| `model_tests.py` | each model's test files and `tests/tests.yaml`, the comparison of a report's metrics with its build profile's expected values, and the outcomes a stage's tests report |
 | `errors.py` | the error types every module raises |
 
-## Stages and stage keys
+## Stages and fingerprints
 
-A build is one compile invocation of one build profile of one model. It passes
-through up to three stages, each with a stage key: a SHA-256 of everything its
-result depends on.
+A build is one build profile of one model, compiled in one compile invocation
+named after the profile. It passes through up to three stages, each with a
+fingerprint: a SHA-256 of every input that decides its result. The performance
+and accuracy stages are the build's benchmarks.
 
-| Stage | Model script | Key | Registry record |
+| Stage | Model script | Fingerprint | Registry record |
 | --- | --- | --- | --- |
-| compile | `compile.py` or `compile.sh` | `compile_key` in `stage_keys.py` | compile run per component, recorded in the branch catalog |
-| performance | `performance.py` | `performance_key` in `stage_keys.py` | `model_benchmark` run under the component's compile run |
-| accuracy | `accuracy.py` | `accuracy_key` in `stage_keys.py` | `model_accuracy` run under the result component's compile run |
+| compile | `compile.py` or `compile.sh` | `compile_fingerprint` in `fingerprints.py` | compile run per component and a `model_package` run per profile, recorded in the branch catalog |
+| performance | `scripts/performance.py` | `benchmark_fingerprint` in `fingerprints.py` | `model_performance` run under the profile's package run |
+| accuracy | `scripts/accuracy.py` | `benchmark_fingerprint` in `fingerprints.py` | `model_accuracy` run under the profile's package run |
 
-The ONNX compile key covers the invocation's `model.yaml` projection, the fidelity
-entries, the model's compile scripts, declared training code, and the compiler
-version. The LLiMa key covers checkpoint content, target, declared graph
-parameters and pinned compiler identity; scripts and registry helpers are not
-compile inputs. The performance and accuracy keys cover the compile runs and MPK
-digests they measure, their `model.yaml` entries and model script, the shared
-tooling of that stage, and the DevKit runtime pin. A recompiled build gets new
-DevKit keys and is therefore remeasured. No key reads a model's `tests/`, so a
-changed test applies the next time its stage runs. The contributor guide lists
+The ONNX compile fingerprint covers the profile's `model.yaml` projection, the
+`numerical_fidelity` section, the model's compile scripts, shared model loader,
+and the compiler version. The LLiMa compile fingerprint
+covers checkpoint content, target, declared graph parameters and pinned
+compiler identity; scripts and registry helpers are not compile inputs. The
+benchmark fingerprints cover the compile run and MPK digest of every component,
+the stage's `model.yaml` declaration and model script, the shared benchmark
+tooling and that stage's runner scripts, and the DevKit runtime pin. The
+catalog lists each profile's benchmark fingerprints under
+`benchmark_fingerprints`, and the model browser resolves the runs by those
+fingerprints. A recompiled build gets new benchmark fingerprints and is
+therefore benchmarked again. Performance fingerprints also include the profile's
+optional `benchmark_baseline`; accuracy and compilation do not. Compile and
+benchmark fingerprints do not read model tests; conversion fingerprints include
+validation files so a changed check requires revalidation. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
+
+Registry release state is a separate production workflow: changes to `state.json`,
+`scripts/publish_registry_state.sh`, or `vulcan-model-state.yml` on `main` publish
+`models/state.json`. Manual runs also require `main`; both jobs and the upload
+script enforce this restriction. Runs share one production concurrency group
+and verify the uploaded file. Merging to `develop` does not deploy this state.
+
+Manual **Deploy Model Browser & Docs** is independent of model builds and tooling
+publication. From `main` or `develop`, select `staging` or `production` and the
+`developer` or `customer` audience. The `authorize` job waits on the
+`model-browser-deploy` environment's sole reviewer team, `owners-models`, with
+administrator bypass disabled. The dispatching owner must approve their own run;
+reruns must be replaced by a new dispatch. Every downstream job independently
+requires attempt 1 and the original triggering actor, so rerunning only failed
+jobs cannot reuse a completed authorization job. The named authorization script verifies
+the gate and approval before configuration resolution or deployment credentials.
+The reusable docs workflow builds and smoke-tests the selected frontend, then the
+shared static publisher uploads only `models/`, retains old assets, and invalidates
+`/models` and `/models/*`. Its publish concurrency group is
+`${{ github.repository }}-model-browser-${{ inputs.environment }}`, with
+`cancel-in-progress: false`; staging shares the automatic publisher's group so
+manual and automatic uploads cannot run concurrently. Automatic staging publication
+on `main`/`develop` uses a separate staging configuration regardless of `VULCAN_ENV`;
+production frontend publication requires this manual dispatch. See [browser deployment](../docs/model-browser.md).
+
+**Vulcan Model Registry** tooling publication selects repository `VULCAN_ENV`
+(default `staging`) for both pushes and manual runs. It has no separate environment
+input and publishes to the selected Vulcan backend independently of frontend deployment.
 
 Manual **Promote model** takes a model ID and build profile, resolves the newest matching
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
@@ -144,54 +175,98 @@ configuration, retries, and the staging acceptance boundary.
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
      portal (in parallel): build and smoke-test the model browser; a failure stops the run here
-       -> on main and develop: publish that model browser to staging
-  -> plan: compare stage keys with the branch catalog and registry runs; skip on-demand models on pushes
+       -> on main and develop: resolve-staging-browser-config + checked portal -> publish-model-browser to staging
+  -> resolve-vulcan-config: after select, resolve the selected environment configuration
+  -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
+  -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
-       publish: compile runs, fidelity, start DevKit stages, packages, catalog entry
+       publish: compile runs, the package with its fidelity report, start the benchmarks, catalog entry
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
   -> publish the catalog snapshot
-  -> measure: start the DevKit stages that reused builds still lack
-DevKit stages (per build)
-  -> performance and accuracy on a DevKit, then the model's measure tests on each result
-  -> publish each result with its test outcome; a failed test then fails the run
+benchmarks (Vulcan Model Benchmarking, per build profile)
+  -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
+  -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
 ```
 
+Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
+registry publication target. Set it to `production` for production builds or
+`staging` for staging builds. An unset or invalid value fails before compiler
+runners are requested; a dispatch cannot override it. Concurrency and the run
+title use the same variable. On-demand candidates use the selected environment
+for compilation, publication and feature-branch catalog selection.
+Frontend builds explicitly use staging, and `resolve-staging-browser-config`
+resolves staging publication settings independently of `select` and
+`resolve-vulcan-config`. Frontend publication waits only for this staging resolver
+and the checked portal. The selected model configuration
+supplies the compiler runner environment, artifact bucket and dataset bucket; compile
+workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
+
+The `plan` job requests `id-token: write` and waits for configuration resolution
+as well as validation and the portal check. Only production assumes the selected
+GitHub environment's `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` via OIDC before
+planning. That role must authorize catalog/resolve reads for this repository;
+planning uses a publisher-capable identity even though its registry operations
+are reads. Missing trust or read permissions fail the job before compilation.
+Staging skips this credential step and continues using public registry reads.
+
+Read URLs prefer `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL`, falling back to
+`VULCAN_ARTIFACT_REGISTRY_API_URL`. For production, `MODEL_REGISTRY_IAM_READ_API_URL`
+is set to the configured API base: only reads below that exact base's `/v1/`
+path are SigV4-signed. Public-reader URLs, other hosts and artifact downloads
+retain their existing behavior. An unset public-read URL therefore permits
+private production planning without enabling public access. Catalog initialization
+and final publication use the same read selection alongside their existing write
+authentication. Pull-request validation does not acquire this planning identity.
+
 `plan-stages` reads the branch's prior catalog (see below). A build compiles when the catalog records no build with its current
-compile key, or when a maintainer forces a rebuild. A reused build is queued
-for the DevKit stages whose keys have no completed run. DevKit stages run only
-in staging and only for Modalix targets. On-demand models require the explicit
-manual selection described below before either stage can run.
+compile fingerprint, or when a maintainer forces a rebuild. A reused build is
+queued for the benchmarks whose fingerprints have no completed run. Benchmarks
+run on staging DevKits for either registry environment, only for Modalix targets, and only after the profile's
+package publishes. On-demand models compile only on the explicit manual
+selection described below, and their builds are not benchmarked.
+
+Benchmark dispatch passes the parent build's resolved `VULCAN_ENV` explicitly.
+Standalone benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
+staging fallback and per-run override. Registry reads, datasets, and report
+publication use that selection; DevKit discovery independently requests
+`vulcan-staging`, and execution consumes the resolver's labels. Production
+registry restoration and report publication use the production GitHub environment
+on hosted runners. The board receives staged artifacts and dataset-reader access.
+Benchmark concurrency includes the registry environment so staging and production
+runs do not share a concurrency group. This routing does not change model or
+benchmark fingerprints.
 
 ### Branches, merges, and concurrent pushes
 
-- **One registry per environment.** Pushes publish to staging. Each branch has
+- **One registry per environment.** Pushes publish to the environment selected by `VULCAN_ENV`. Each branch has
   its own catalog in that registry, keyed by Git ref; runs are shared by every
   branch.
-- **Where each decision looks.** The compile decision compares compile keys
-  with the branch's prior catalog. The DevKit decision looks for a completed
-  run with the stage key from any branch; that key names the compile run and
-  MPK digest, so it matches only a measurement of the same build.
+- **Where each decision looks.** The compile decision compares compile
+  fingerprints with the branch's prior catalog. The benchmark decision looks
+  for a completed run with the benchmark fingerprint from any branch; that
+  fingerprint names every component's compile run and MPK digest, so it
+  matches only a benchmark of the same build.
 - **Base branches.** `develop`, `main`, `release-*` and `integration/*` are
   long-lived. `select` lists the long-lived branches that share history with
   the head, closest first, or only the dispatch base when one is given; Git does not record which branch another was cut from.
 - **Prior catalog.** A long-lived branch keeps to its own catalog; on its first
   push it inherits from the closest base branch that has one. A feature branch
   takes each model build profile from the first catalog whose builds carry
-  every current compile key of that profile: its own, then its base branches
+  every current compile fingerprint of that profile: its own, then its base branches
   in order. A feature branch that merged `develop` therefore reuses both its
   own builds and the builds `develop` recompiled. A profile no catalog matches
   compiles. A sibling feature branch is never a source.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Automatic builds changed by the merge compile again on `develop`,
-  and their DevKit stages run again; builds the branch compiled are not reused.
+  and their benchmarks run again; builds the branch compiled are not reused.
 - **Newer push.** It cancels the running orchestrator of the same ref
   (manual dispatches run to completion). Builds that already published stay;
   builds left pending are planned again. Dispatched DevKit runs continue. A
-  DevKit stage still running when the next plan runs has no completed run yet,
+  benchmark still running when the next plan runs has no completed run yet,
   so it is dispatched again.
 - **Model browser.** A branch's view lists its catalog's builds: what the
   branch delivers (#181). A completed build compiled on the branch that is
@@ -199,7 +274,7 @@ manual selection described below before either stage can run.
   entry, so a build missing from the catalog still shows. Each build keeps its
   own compile run's branch, commit and compiler, so a reused build still names
   the branch that compiled it. Every push publishes a catalog, so a branch that
-  changes no stage key still lists every model.
+  changes no fingerprint still lists every model.
 
 ## Compile workflow trust boundary
 
@@ -222,10 +297,11 @@ verifies its output and publishes it.
 Each published ONNX build verifies its MPKs and provenance, uploads each archive to
 a collision-resistant immutable S3 key with native SHA-256, and records one
 compile run per component through IAM-authenticated, idempotent API calls. The
-run records the immutable source, the compile key, the compiler identity, the
-exact S3 object version and checksum, the MPK validation result, and the
-fidelity report when one is declared. A sibling build failure cannot roll back
-or hide a completed run.
+run records the immutable source, the compile fingerprint, the compiler identity, the
+exact S3 object version and checksum, and the MPK validation result. The
+profile's `model_package` run carries its numerical fidelity report when one
+is declared. A sibling build failure cannot roll back or hide a completed
+run.
 
 The registry database is the discovery and lifecycle source of truth. Each
 push publishes a catalog snapshot for its revision, and public read APIs serve
@@ -242,12 +318,12 @@ operates on registered runs and exact S3 object versions.
 Any expensive model may set top-level `build-on-demand: true`; the default is
 `false`. Pushes validate its contract and publish catalog metadata but never
 compile or measure it. Existing automatic models keep their scheduling.
-The flag changes scheduling and catalog metadata only, never compile keys.
+The flag changes scheduling and catalog metadata only, never compile fingerprints.
 An explicit **Vulcan Model Orchestrator** dispatch selects both `models` and
 `profiles`; `plan-stages --include-on-demand` also requires both selectors.
 For Qwen3.5-0.8B use `models=qwen3_5_0_8b`, `profiles=w4a16`.
 
-In staging, `publish-candidate` waits for every invocation of the selected
+In staging or production, `publish-candidate` waits for every invocation of the selected
 model/profile. A single-component LLiMa build does this in its existing Publish
 job; other on-demand models join their invocations in the orchestrator's
 `publish-candidates` job.
@@ -268,9 +344,8 @@ not remove protected candidates. The summary and `candidate.json` report the
 actual returned protection, digest and provenance. Stable keys resume the same
 GitHub run across attempts, including interrupted publication; expired assembly
 requires a new workflow run. Compiler outputs and publication receipts remain
-GitHub artifacts for recovery. When one on-demand invocation needs rebuilding,
-the complete profile is built, since older source runs cannot be rebound as new
-provenance. Ordinary automatic stage-key reuse is unchanged.
+GitHub artifacts for recovery. An on-demand profile is always rebuilt whole,
+since older source runs cannot be rebound as new provenance. Ordinary automatic fingerprint reuse is unchanged.
 
 Vulcan limits a candidate to 32 roles, 512 required names, 512 actual S3
 dependencies and a 1 MiB frozen manifest. The producer checks the role/name
@@ -278,7 +353,7 @@ limits before publication; the backend validates the actual frozen dependency
 set. Candidate IDs and scheduling policy do not enter compilation fingerprints.
 
 Catalog publication includes versioned `build_requirements` from the checkout's
-existing compile keys, compiler pin, and package topology, even before a build
+existing compile fingerprints, compiler pin, and package topology, even before a build
 exists. Vulcan owns `approved_deployments`; readers resolve its original compile
 and package roots through the existing artifact APIs. The producer never
 manufactures approval or copies candidate requirements into the target.
@@ -290,8 +365,7 @@ snapshot conflict reloads the catalog and retries with a new body-bound key;
 failed selection can be retried without recompilation. Vulcan atomically selects
 and protects the deployment in `branch_deployments`, without approving it.
 Readers prefer that profile's branch selection over inherited approvals and
-legacy builds; unselected completed runs cannot replace it. PR #256's API and
-migration must be deployed before using this publication step.
+catalog builds; unselected completed runs cannot replace it.
 
 Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
 approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).
@@ -312,12 +386,14 @@ approved roots; the CLI downloads and verifies files.
 
 The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging
 Face component. The shared downloader assembles its pinned, verified file
-set; the recipe calls `llima-compile` and records a standalone `compile.sh` with
-the complete arguments it used. The runner then runs
+set; the recipe only compiles. The runner writes a direct reproduction command
+in `compile.sh` with download instructions and the resolved graph arguments,
+defaulting to four processes, plus any adjacent
+`compile.py` or `config.py`. It then runs
 `llima-deploy` into `<model>/<profile>/<component>/deployment/`, containing
-`devkit/`, `elf_files/`, any `npy_files/`, and that script. `verify-artifact --write-manifest`
+`devkit/`, `elf_files/`, any `npy_files/`, and those reproduction files. `verify-artifact --write-manifest`
 writes `deployment-manifest.json` beside the folder. Compile outputs point to
-that index and its SHA-256. ONNX builds retain their runner and compile-key
+that index and its SHA-256. ONNX builds retain their runner and compile-fingerprint
 inputs.
 
 Publication registers deployment files as `model-file` artifacts and the
@@ -330,6 +406,26 @@ through public resolved URLs. See the [metadata contract](../docs/metadata-schem
 for manifest fields, publication metadata, and the temporary 5 GiB per-file
 upload limit. Aggregate deployment size has no limit.
 
-Empty measurement declarations schedule no board stages. Qwen's defaults
+Empty benchmark declarations schedule no benchmarks. Qwen's defaults
 and the separate performance and accuracy follow-ups are in the
 [author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
+
+## Converted ONNX inputs
+
+Models may declare `compilation.source: conversion`. The planner resolves and
+records the latest validated matching output before deciding build reuse. A
+`model_compile_plan` run retains the selection across workflow retries and
+protects its conversion for 24 hours; retained compile inputs protect it afterward.
+No artifact table or custom resolver is added. See [conversion artifacts](../docs/conversion-artifacts.md)
+for the registry contract, rollout and reproduction.
+
+Production conversion-backed compile jobs obtain a session restricted to ONNX
+artifact metadata GET requests before compilation. They use it for private registry
+reads during compilation, including cache hits. Immediately after compilation,
+the job obtains a fresh session with the same restricted policy for provenance
+verification, so a long compile cannot exhaust the verification session's lifetime.
+Both steps receive isolated reader credentials, preserving the runner credentials used
+for calibration datasets; publication remains in the separate hosted publish job. Public reads do not
+require signing. See [conversion artifacts](../docs/conversion-artifacts.md#private-production-reads).
+
+Native performance uses `llima_benchmark.py` for MoLE text buckets and image HTTP timings and `board_telemetry.py` for measured-request Sentinel traces. `model_report.from_generation()` writes the unified report; `report_publication.py` validates and publishes its per-workload measurements under the model package.

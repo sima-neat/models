@@ -1,68 +1,16 @@
 # DevKit performance
 
-The performance stage measures each compiled component on a Modalix DevKit.
-Each model owns `scripts/performance.py`, which loads one MPK with
-`pyneat.Model` and calls Neat Core's benchmark API. Core owns the synthetic
-inputs, warmup, latency and throughput measurement, board telemetry, and runner
-lifetime. There is no shared benchmark executor and no model-specific timing
-loop.
-
-## LLM and VLM performance
-
-LLiMa models use the same DevKit performance stage with a deployed folder instead of an MPK.
-The workflow installs the LLiMa runtime and MoLE from the same LLiMa pin in `deps/manifest.json` for
-LLMs/VLMs. Core is only installed for ONNX benchmarks. Install LLiMa/MoLE with
-`scripts/install_llima_benchmark_runtime.sh` after setting
-`REGISTRY_PYTHON` and resolving the runtime JSON. `LLIMA_MOLE_PYTHON` can select an existing MoLE
-interpreter; its default is `~/sima-mole-venv/bin/python`.
-The installer also installs Sentinel independently of Core.
-
-Run the model script locally in that environment:
-
-```bash
-PYTHONPATH=tools ~/sima-mole-venv/bin/python models/qwen3_5_0_8b/scripts/performance.py \
-  --deployment /media/nvme/model-registry/Qwen3.5-0.8B --output /media/nvme/benchmark/qwen
-```
-
-Both LLMs and VLMs measure text buckets 128, 256, 512, 1024, and successive powers of two,
-plus a final `max_context - 1024` bucket. A 4K deployment measures 128/256/512/1024/2048/3072.
-MoLE uses a fixed local passage, the deployment's native tokenizer/template with thinking off,
-greedy decoding and native EOS. Each bucket has one warmup and five measured requests, with
-empty KV/state cache. The output budget is the first token plus 256 decode steps, subject to EOS.
-
-| Measurement | Definition |
-| --- | --- |
-| Text TTFT (ms) | Language prefill through the first generated token; excludes tokenization and input-buffer preparation |
-| Prefill (tokens/s) | Total measured input tokens divided by total TTFT |
-| Text decode (tokens/s) | Actual tokens after the first divided by their total duration; TTFT is excluded |
-| Image TTFT (ms) | Server image preprocessing, vision encoding and language prefill through the first token |
-| Image decode (tokens/s) | Mean streamed TPS per request, averaged across measured requests |
-
-VLMs also use the runtime's pinned airport image, resized to the compiled vision encoder input
-and encoded as JPEG (quality 90), with “Describe what you see in the image.” The image workload
-has one warmup and five measured requests, each with a fresh owned web server to avoid prefix
-reuse. Model loading, client resizing/encoding and HTTP upload are outside server TTFT. The image
-response ends at native EOS/context capacity; the current HTTP API does not enforce an output-token
-budget or expose exact token counts. Those counts remain unavailable, and image TPS is the agreed
-mean of streamed observations. Image source/encoded checksums and dimensions are recorded.
-
-Sentinel records power rails, die/board temperatures, overall and per-core CPU utilization,
-and MLA/CMA/Linux memory for each workload's measured requests. Warmup and model loading are
-excluded. Readings use the same units and statistics as vision benchmarks, including board-wide
-memory. The saved telemetry includes sample counts and trace IDs; unavailable readings retain
-their reason. Sentinel normally samples every two seconds, so very short requests may have none.
-
-`benchmark-report.json` retains per-request timings/counts and workload settings. The registry's
-`performance-result.json` uses the same schema and envelope as Core, retaining the tool's saved
-report under `benchmark_report` and adding compilation identity and runtime provenance. The browser
-shows each bucket and image workload in its own row.
-
-On-demand models are never measured by an ordinary push. Manually dispatch **Vulcan Model
-Benchmarking** with `stages=performance`, the model/profile/component, the current measured source
-revision, and either the current catalog build or `compile_run_id` for an existing compatible LLiMa
-candidate. Explicit selection verifies the source/compiler/graph fingerprint and does not approve
-or promote the candidate. A successful explicit compilation can also launch its declared benchmark.
-Measurement changes alter performance keys only; they do not recompile the model.
+The performance stage measures each build profile's whole model on a Modalix
+DevKit: every compiled MPK and the CPU work between them. Each model's
+standalone `scripts/performance.py` contains its benchmark setup, including
+its input: one image from the model's accuracy dataset in a 1280x720 frame,
+which Neat preprocesses inside the measurement (see [Benchmark
+input](#benchmark-input)). Scripts of single-component models load the MPK
+with `pyneat.Model` and call Neat Core's benchmark API; RF-DETR, a
+multi-component model, times its pipeline itself in its script. Core owns
+warmup, latency and throughput measurement, board telemetry, and runner
+lifetime. The scripts hand Core's results to `tools/model_report`, which
+writes the one report the registry publishes.
 
 ## Set up a DevKit
 
@@ -98,61 +46,79 @@ The runner user therefore needs passwordless `sudo` for both writes.
 
 ## The performance script
 
-`scripts/performance.py` takes `--mpk <archive>` and `--output <directory>`:
+Every model that declares `performance` includes `scripts/performance.py` in
+its own GitHub folder. CI runs that same script. Copy the model folder and
+`tools/model_report` to the DevKit, extract the model's accuracy dataset, and
+run the script with PyNeat; no registry installation or YAML configuration is
+needed:
 
 ```bash
-~/pyneat/bin/python models/resnet_50/scripts/performance.py \
-  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/benchmark
+PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
+  --mpk /workspace/resnet_50_mpk.tar.gz \
+  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --output /workspace/performance
 ```
 
-Every model's script follows the same pattern:
+The script takes:
+
+- `--mpk`: the MPK, or `<component>=<path>` once per component for a
+  [multi-component model](#multi-component-models);
+- `--dataset <source id>=<directory>`: the model's accuracy dataset,
+  extracted, as `accuracy.py` takes it (see [the accuracy
+  script](local-accuracy-development.md#the-accuracy-script)); a model that
+  declares no accuracy dataset takes no `--dataset`; and
+- `--output <directory>`.
+
+The script contains the exact model selection and measurement settings. For
+example, YOLO26 boxes explicitly selects `BoxDecodeType.YoloV26` and keeps the
+top 10 detections that score above 0.25, as an application would; pose and
+segmentation use their corresponding decoders with the same limits. The
+current scripts of single-component models request 1000 samples, a 60000 ms
+minimum duration and MLA layer and stage stats. Customers can read or adapt
+these settings directly in the model's script.
+
+The script hands what Core returned to `model_report.from_performance()`:
 
 ```python
-import argparse
-import json
-from pathlib import Path
-
-import pyneat
-
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--output", required=True, help="directory for benchmark-report.json and benchmark-context.json")
-args = parser.parse_args()
-output = Path(args.output)
-output.mkdir(parents=True, exist_ok=True)
-
-model = pyneat.Model(args.mpk)
-# Request 1000 samples and a 60 s minimum measurement duration.
-benchmark_options = pyneat.BenchmarkOptions()
-benchmark_options.num_samples = 1000
-benchmark_options.min_duration_ms = 60000
-benchmark_options.include_layer_stats = True
-model.benchmark(benchmark_options).save(output / "benchmark-report.json")
-# What the report does not record: the Core release, the requested run, and the graph that ran.
-context = {
-    "core_version": pyneat.__version__,
-    "num_samples": benchmark_options.num_samples,
-    "min_duration_ms": benchmark_options.min_duration_ms,
-    "include_layer_stats": benchmark_options.include_layer_stats,
-    "execution_plan": json.loads(model.execution_plan().to_json()),
-}
-(output / "benchmark-context.json").write_text(json.dumps(context, allow_nan=False), encoding="utf-8")
+report = model_report.from_performance(
+    model.benchmark(benchmark_options),
+    {"model": model},
+    workload=f"{dataset_id} {image.name} in a 1280x720 RGB frame, Neat preprocessing, ...",
+)
+report.save(args.output)
 ```
 
-`BenchmarkReport.save()` writes `benchmark-report.json`, the whole Core report
-including its `telemetry` and `layer_stats`, so a field Core adds later reaches
-the registry without a script change. `benchmark-context.json` records what the
-report does not: the Core version, the requested sample count and minimum
-duration, and the execution plan the model browser draws.
+`report.save()` writes `model-report.json`, the whole-model report the
+registry publishes unchanged and the model browser reads, and Core's own
+`benchmark-report.json` beside it as evidence.
+[`model-report.schema.json`](../schemas/model-report.schema.json) defines the
+report. Its `metrics` hold one number per measured metric, named as
+[`tools/model_report/metrics.json`](../tools/model_report/metrics.json)
+defines them. It also keeps Core's whole `telemetry` and, for each component,
+its execution plan and MLA layer and stage stats. `workload` is one line that says what
+ran, such as the selected decoder and postprocessing.
 
-Scripts measure 1000 samples rather than Core's default of 100. The samples
-size the latency pass and the energy the registry divides per inference, so the
-script reports its sample count. Scripts also keep the throughput pass running
-for at least 60 seconds (`BenchmarkOptions.min_duration_ms`) rather than Core's
-default of 30, so Sentinel, which samples every 2 seconds, records about 30
-readings of the loaded board instead of about 15.
+`model.yaml` declares that the model is measured and, optionally, which build
+profiles:
 
-The script also records the Model's execution plan: each step, the processor
+```yaml
+performance: {}
+```
+
+Without `build_profiles`, every build profile is measured. Every report must
+hold the metrics [`metrics.json`](../tools/model_report/metrics.json) marks
+`required`: average latency, throughput, average SoM power, and energy per
+inference. Decoder and
+measurement settings have one source of truth in `performance.py`; they are
+not repeated in YAML.
+
+Scripts measure 1000 samples rather than Core's default of 100, which sizes
+the latency pass. Scripts also keep the throughput pass running for at least
+60 seconds (`BenchmarkOptions.min_duration_ms`) rather than Core's default of
+30, so Sentinel, which samples every 2 seconds, records about 30 readings of
+the loaded board instead of about 15.
+
+The report records each component's execution plan: each step, the processor
 it runs on, and the tensors between steps. The plan comes from the same Model
 the script benchmarks, so it reflects that script's options, such as a box
 decoder. The model page draws it as the component's execution graph.
@@ -160,19 +126,96 @@ decoder. The model page draws it as the component's execution graph.
 A failed call exits unsuccessfully. Keep the log: a missing report is not a
 successful benchmark. Keep archives and results outside Git.
 
-The script runs once for each component that a `benchmark` entry covers in the
-build profile. RF-DETR's backbone and decoder therefore produce separate
-results; their numbers are not a measured combined pipeline.
+The script runs once per benchmarked build profile, with every component's MPK.
 
-## Per-layer profiling
+### Benchmark input
 
-Every performance script explicitly enables `BenchmarkOptions.include_layer_stats`.
-After latency and throughput measurement, Core profiles each MLA stage using
-MLA-RT and includes the compiled layer's `name`, zero-based `stage_index`, and
-`total_execution_time_us` in `benchmark_report.layer_stats`. A stage index counts
-all executable stages, including A65 stages, so MLA indices can have gaps.
-Zero-time entries are kept in compiler order. Names describe compiled layers,
-which may fuse or split source ONNX operators.
+The benchmark repeats one real camera-sized frame, so its throughput is what
+an application gets from a 720p frame to decoded results, not the MPK alone:
+
+1. The script picks one image from the dataset's validation split with
+   `random.Random(0)`, so every run measures the same image. Pose models pick
+   among the images with labelled people, which pose accuracy scores.
+2. It reads the image as RGB and letterboxes it into a 1280x720 frame with
+   `letterbox_to_720p`: scaled to fit, centered, and padded with grey (114).
+   The function is OpenCV and NumPy code inside the script, not a shared
+   module.
+3. It passes the frame to Core in `BenchmarkOptions.inputs` as an RGB
+   `pyneat.Tensor`. The Model uses the image route
+   (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
+   normalizes, quantizes and tessellates the frame in every timed inference.
+   YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
+   scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
+   `ResizeMode.Stretch` and set `preprocess.preset =
+   NormalizePreset.ImageNet`; without a preset, Neat applies no mean or
+   standard deviation.
+
+The report's `workload` names the dataset, the image, the frame, and the
+decoder settings. Preprocessing is part of the measurement and can bound
+throughput. Give a Model one frame size only: Core builds the benchmark runner
+for the frame it receives.
+
+A stereo model takes its pair as one side-by-side frame, so it skips the
+letterbox: it picks one pair from the dataset's test list with
+`random.Random(0)` (for Scene Flow, `sceneflow_finalpass_test.txt`),
+reads both views as RGB, and passes them as one frame, the left view beside
+the right one (1920x540 for Scene Flow). Its Model resizes with
+`ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
+pair's left image.
+
+A model without an accuracy dataset builds a fixed, realistic input in its
+own script and takes no `--dataset`.
+
+## Multi-component models
+
+A multi-component model's script measures every MPK and the CPU work between
+them, running as one pipeline. It gets one `--mpk component=<archive>` per
+component, in `model.yaml` order:
+
+```bash
+PYTHONPATH=tools ~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py \
+  --mpk backbone=/workspace/backbone_mpk.tar.gz \
+  --mpk decoder=/workspace/decoder_mpk.tar.gz \
+  --dataset coco-2017-val=/media/nvme/datasets/coco-2017-val \
+  --output /workspace/performance
+```
+
+RF-DETR's script first runs Core's benchmark on each MPK, with Core's
+synthetic inputs, only for its MLA layer and stage stats. It then feeds the
+[benchmark input](#benchmark-input) frame to the backbone, which stretches it
+to the model input on the image route, and runs each Model through its async
+runner (`Model.build`, `push`, `pull`) in two passes, each measuring at least
+1000 frames over at least 60 seconds after 100 warm-up frames. The latency pass sends one frame at
+a time. The throughput pass runs one thread per stage, so the backbone, the
+CPU step, and the decoder each work on a different frame, and each stage ends
+the next one's input when it finishes. One `pyneat.TelemetryMonitor` samples
+the board over the throughput window.
+
+The script fills a `pyneat.BenchmarkReport` with what it timed and passes it
+to `model_report.from_performance()` with the monitor's telemetry, each component's
+Model, and each component's MLA layer and stage stats. The report's scores are the whole
+model's; component numbers are never added together.
+
+Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
+component rates measured on the same board, because the MLA runs one MPK at a
+time. A result well below that rate points at the pipeline, not the model.
+
+## MLA profiling
+
+The model scripts enable `BenchmarkOptions.include_mla_layer_stats` and
+`include_mla_stage_stats` explicitly. RF-DETR requests them separately for each
+component. After latency and throughput measurement, Core profiles each MLA
+stage with MLA-RT. Its BenchmarkReport holds two results, which the model report
+keeps under each component:
+
+- `mla_layer_stats`: each compiled layer's `stage_index`, `name` and
+  `latency_us`. Zero-time entries are kept in compiler order. Names describe
+  compiled layers, which may fuse or split source ONNX operators.
+- `mla_stage_stats`: each MLA stage's `stage_index` and mean `latency_us`.
+
+Each also has a `status`: `ok`, `not requested`, or why Core could not profile.
+A stage index counts all executable stages, including A65 stages, so MLA
+indices can have gaps.
 
 Use an idle DevKit with `mla-rt` in `PATH` and the MIP-to-kernel handoff fix
 (verified with MLA-RT `603a8c6` on eLxr B2121). Core runs profiling after its
@@ -180,12 +223,31 @@ benchmark runners close. The profile is a separate pass with MLA-RT's default
 inputs; its summed time is not the model's end-to-end latency or a breakdown of
 throughput-pass telemetry. Ordinary inference can resume when it returns.
 
-The importer preserves the saved report unchanged, validates every layer timing,
-and fails when a requested profile is absent. Each model's performance stage
-test also requires nonempty timings with at least one nonzero layer. Changing
-these performance scripts reruns measurement for existing builds without
-invalidating their compile keys. Historical results without layer stats stay
-readable; new measurements add the analysis view.
+`model_report` keeps each component's stats unchanged, and each model's
+performance stage test requires both statuses to be `ok`, nonempty stage stats,
+and at least one nonzero layer. Changing a performance script remeasures
+existing builds without invalidating their compile fingerprints.
+
+### MLA utilization
+
+After an MPK compile, `scripts/run_model_compilation.sh` runs
+`model-registry simulate-mla-stages`. It runs the Model Compiler's `mla-msim
+--dry-run` on each MLA stage's ELF and writes `mla-stage-simulation.json` beside
+`compile-outputs.json`: for each component, each MLA stage's `stage_index`
+(numbered as Core numbers it), `effective_ops`, `total_ops`, and
+`simulated_latency_us`. A missing or failing `mla-msim` is recorded in the
+component's `status` rather than failing the build.
+[`mla-stage-simulation.schema.json`](../schemas/mla-stage-simulation.schema.json)
+defines the file. The package carries it, and a staging package run publishes it
+as the `performance/mla-stage-simulation` test result.
+
+The model browser's developer mode compares it with the measured
+`mla_stage_stats` as **MLA Utilization**. Effective TOPS divides a stage's
+effective operations by its measured latency; packing is
+`effective_ops / total_ops`; and utilization is its effective TOPS as a share of
+the MLA's peak: 50 TOPS at INT8, and 12.5 TOPS for a stage with BF16
+activations (w16a16, w8a16, w4a16), because the MLA multiplies only INT8 or
+BF16 operands and a BF16 multiply takes four times the cycles.
 
 The model browser's **Runtime Layer Analysis** shows the profiled MLA time, layer
 count, and share in the ten slowest layers. **Duration** displays a ranked chart
@@ -199,108 +261,124 @@ threshold includes zero-time layers. Stage indices remain visible per layer.
 
 ## Workload and measurements
 
-The workload is the default route Core selects from the MPK, with Core's
-synthetic inputs and the script's benchmark options. A script that configures the
-model, such as YOLO26's box decoder, adds its selection and postprocessing to
-its report, and CI records them in place of the defaults. CI records the
-script's sample count, and records the input shapes, batch size,
-preprocessing, and postprocessing separately using Core's model-inspection API;
-that step loads the MPK but runs no inference.
-
-Default-MPK results are a baseline of their own. Do not compare them with
-historical YOLO measurements that configured image preprocessing and
-BoxDecode explicitly.
+The workload is the script's [benchmark input](#benchmark-input) on the image
+route, with the script's model and benchmark options; the report's `workload`
+states both. Results measured before scripts took a dataset image used Core's
+synthetic inputs without image preprocessing, and YOLO26 decoded up to 100
+detections at any score. Do not compare those results with current ones.
 
 Core reports mean latency and its p50, p95, and p99 percentiles, throughput in
-logical inferences per second, average SoM power, and total energy. The
-registry derives energy per inference by dividing total energy by the sample
-count times the compiled batch size.
-Missing power stays unavailable. A `benchmark` entry's `required_metrics` must
-be present for publication; RF-DETR requires average power and energy per
-inference.
+logical inferences per second, and average SoM power. Throughput counts every
+inference in a batch, so `model_report` derives energy per inference by
+dividing average power by throughput alone. Core writes 0 for a headline value
+it did not measure, and Sentinel provides 0 samples for a reading it did not
+take; those metrics are absent from the report and the browser shows them as
+unavailable. A missing required metric fails the stage before
+publication.
 
-The benchmark importer maps Sentinel telemetry to these metrics, over Core's throughput pass
-or each LLiMa workload's measured requests:
+`model_report` reads these Sentinel metrics from the telemetry, each over the
+throughput pass:
 
 | Metric | Reading |
 | --- | --- |
-| `peak_power_watts` | Peak SoM power, with the average and peak of each power rail in its details |
+| `peak_power_watts` | Peak SoM power; the browser shows each power rail from the report's telemetry |
 | `avg_mla_power_watts`, `peak_mla_power_watts` | MLA rail power |
 | `avg_die_temperature_c`, `peak_die_temperature_c` | SoC temperature: the hottest on-die sensor at each sample |
 | `avg_board_temperature_c`, `peak_board_temperature_c` | SoM temperature: the hotter of the top-side and bottom-side board sensors |
 | `avg_cpu_usage_pct`, `peak_cpu_usage_pct` | CPU usage averaged over all cores |
 | `avg_cpu_core_usage_pct`, `peak_cpu_core_usage_pct` | The busiest CPU core: the highest per-core average, and the highest per-core peak, which can be different cores |
-| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory |
-| `avg_cma_memory_mib`, `peak_cma_memory_mib` | The contiguous memory (CMA) pool in use |
-| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Linux memory in use |
+| `mla_memory_avg_mib`, `mla_memory_peak_mib` | MLA memory: buffers from the MLA memory pool, plus shared buffers only the MLA uses |
+| `ev74_memory_avg_mib`, `ev74_memory_peak_mib` | EV74 memory: buffers EV74 holds, such as the frames it preprocesses for the MLA |
+| `avg_linux_memory_mib`, `peak_linux_memory_mib` | Memory the whole board uses (Linux `MemTotal - MemAvailable`) |
 
-The CMA reading covers the whole pool, which EV74 and other drivers share and
-Linux lends to other memory, so it is not the model's memory alone. The
+Sentinel gives each buffer one owner, so MLA and EV74 memory add up to the
+model's accelerator memory: a shared buffer EV74 also uses counts as EV74, and
+frames a video decoder or camera ISP produced count as neither. Linux memory
+covers every process on the board and includes EV74's buffers, so it is board
+context, not the model's memory, and does not add to the other two. EV74
+memory needs Sentinel with `ev74_mem_allocated_mb`; with an older daemon the
+report has no EV74 memory. Reports measured before that change carried the
+whole contiguous memory (CMA) pool in use instead; the browser no longer shows
+it, and their MLA memory also counted the buffers EV74 hands to the MLA. The
 individual temperature sensors and CPU cores are not registry metrics; they
-stay in the result's `benchmark_report`, where the browser reads the per-core
-load.
+stay in the report's `telemetry`, where the browser reads the per-core load.
 
-The registry and the model browser read every metric from the saved report
-with the same table: `REPORT_METRICS` and `TELEMETRY_METRICS` in
-`tools/model_registry/benchmark_metrics.py`, mirrored in the browser's
-`benchmark-adapters.js`. Core writes 0 for a headline value it did not measure
-and 0 samples for a reading Sentinel did not provide; those metrics are not
-published and the browser shows them as unavailable. Add a reading by adding a
-row to both tables, with its Vulcan measurement name, and its label in the
-browser's `metrics.js`. It
-appears under **Other measurements** until `DETAIL_CARDS` in
-`model-view.js` gives it a row in one of the Benchmark details cards.
+`tools/model_report/metrics.json` is the one metric vocabulary: each metric's
+label, unit, direction, Vulcan measurement name (`registry_name`), and the Core report field or
+telemetry statistic it comes from. Add a reading by adding a row there and its
+display entry in the browser's `metrics.js`; a test keeps the labels, units,
+and directions of the two in step. It appears under **Other measurements**
+until `DETAIL_CARDS` in `model-view.js` gives it a row in one of the
+Performance Details cards.
 
 Initialization timings and MLA memory before and after the run are not exported
-by this Core API, so results do not carry them. Adding them belongs in Core before
-Models consumes them.
+by this Core API, so reports do not carry them. Adding them belongs in Core
+before Models consumes them.
 
 ## CI and registry publication
 
-Model authors do not publish benchmark results directly. After a build
-compiles and publishes, **Vulcan Model Compile** starts **Vulcan Model
-Benchmarking** on the same branch for each build whose performance or accuracy
-stage key has no completed run. The DevKit has no publication credentials.
+Model authors do not publish benchmark results directly. After a build profile's
+package publishes, **Vulcan Model Compile** starts **Vulcan Model
+Benchmarking** on the same branch for each build profile whose performance or
+accuracy benchmark fingerprint has no completed run. On-demand builds are not
+benchmarked. The DevKit has no publication credentials.
 
-On the DevKit, `scripts/run_model_performance.sh` sets the MLA and CPU
-clocks, then handles each component:
+On the DevKit, the workflow first checks that the profile's components are
+registered and its package receipt is present. It then caches the model's
+accuracy datasets on the DevKit's NVMe, the same step the accuracy stage uses;
+the performance stage does not run when that step fails.
+`scripts/run_model_performance.sh` then:
 
-1. `make-benchmark-manifest` writes `performance-test.json` with the
-   compilation's identity.
-2. `performance.py` writes `benchmark-report.json`, `benchmark-context.json`,
-   and `benchmark.log`.
-3. The workload is recorded in the manifest.
-4. `import-core-benchmark` stores the saved report unchanged as
-   `benchmark_report` and the plan as `execution_plan` in
-   `performance-result.json`, following
-   [`performance-result.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/performance-result.schema.json)
-   (`schema_version` 6). It records the compilation identity, the script
-   digest, the source revision, the actual Core and platform versions, and
-   the MLA and CPU clocks. It never runs or times a model.
+1. lists each component's MPK with `model-registry model-component-mpks`;
+2. resolves the model's first accuracy dataset from that cache with
+   `model-registry resolve-devkit-accuracy` and extracts it under
+   `/media/nvme/neat-tests/`, which it removes when it exits; a build profile
+   that accuracy does not measure gets no `--dataset`;
+3. sets the MLA and CPU clocks;
+4. runs the model's `performance.py`, which writes `model-report.json` and
+   `benchmark-report.json`, and copies its output to `performance.log`;
+5. runs `model-registry check-report`, which validates the report against
+   [`model-report.schema.json`](../schemas/model-report.schema.json) and the
+   `model.yaml` declaration and writes the board's installed packages and
+   clocks to `environment.json`.
 
 `scripts/run_model_tests.sh` then runs the model's
-`tests/measure/test_performance.py` on each component's result, which
-compares its throughput with the expected value in `tests/tests.yaml`, checks
-that the result records the execution plan the model browser draws, and
-records `passed`, `failed`, or `skipped` ([set up
+`tests/benchmark/test_performance.py` on the report, which compares its
+throughput with the expected value for that build profile in
+`tests/tests.yaml`, checks the execution plans and layer timings, and records
+`passed`, `failed`, or `skipped` ([set up
 `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)).
 
-A separate hosted job validates the result set and publishes each result as a
-`model_benchmark` run under the component's compile run. The run records the
-performance stage key and carries a `performance-result` artifact, the
-benchmark log, a `performance/model-synthetic` test result whose status is the
-test outcome, and the measurements. A failed test still publishes the result
-and completes its run, then fails the workflow run. The model browser reads
-performance results with `schema_version` 1 through 6, shows measured values
-with their units, and marks absent metrics unavailable. Its Speed card shows the
-MLA and CPU clocks when the result records them. A failed measurement keeps its
-workflow evidence and is not published as a successful measurement. Performance
-and accuracy publish on their own outcomes: when one stage fails, the other's
-result is still published, and the next push reruns only the stage that has no
-run. A dispatched run stops before measuring when its branch has since changed
-the tooling the stage keys hash; the newer push measures that build instead.
+A hosted job then runs `model-registry publish-report`, which publishes the
+report as one `model_performance` run under the build profile's `model_package`
+run. Its `run_fingerprint` is the performance benchmark fingerprint. The run
+has one `compiled-model-<component>` input per component, the `model-report`,
+Core report, and log artifacts, a `performance/model` test result whose summary
+is the whole report and whose status is the test outcome, and one measurement
+per metric. The board's clocks and installation go in the run environment. A
+failed test still publishes the report and completes its run, then fails the
+workflow run. A failed measurement keeps its workflow evidence and is not
+published. Performance and accuracy publish on their own outcomes: when one
+stage fails, the other's report is still published, and the next push reruns
+only the stage that has no run. A dispatched run stops before measuring when
+its branch has since changed the tooling the benchmark fingerprints hash; the
+newer push benchmarks that build instead.
 
-Because the performance stage has its own key, editing `performance.py`, a
-`benchmark` entry, or the DevKit runtime pin remeasures performance from the
-published MPKs without recompiling. See [what a change
+The catalog lists each build profile's benchmark fingerprints under
+`benchmark_fingerprints`, and the model browser resolves the runs by those
+fingerprints. A build profile with no completed run shows "Not measured at this
+revision."
+
+Because the performance stage has its own fingerprint, editing the model's
+`performance.py`, its `performance` declaration, the shared report and
+publication tooling, or the DevKit runtime pin reruns the performance benchmark
+from the published MPKs without recompiling. See [what a change
 reruns](adding-a-model.md#9-know-what-a-change-reruns).
+
+## LLiMa text and image performance
+
+A native LLM/VLM declares `performance: {}` and keeps its `scripts/performance.py` entry point. The workflow installs the pinned LLiMa runtime and its MoLE package instead of Core. Its script accepts `--deployment` and writes the same version-1 `model-report.json`, with a `generation` payload containing request timings and telemetry for each workload.
+
+Text inputs cover 128, 256, 512 and doubling buckets through the compiled context minus 1024 tokens, including that final boundary. Each workload uses one warmup and five measured requests, with 256 decode steps after the first token, subject to EOS. A VLM also measures one encoder-sized image with “Describe what you see in the image.” Image decode TPS averages the streamed TPS readings. Each workload retains its own power, temperature, CPU and memory readings.
+
+On-demand models remain manual: a benchmarking dispatch needs an already compiled, registered build and its package. Results are published under that package with workload dimensions; ordinary pushes do not start their benchmarks.

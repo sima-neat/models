@@ -96,18 +96,12 @@ class Fetcher:
         return isinstance(exc, (URLError, _TransferError))
 
     @staticmethod
-    def _request(url: str, hostname: str, hf_token: str, github_token: str) -> Request:
+    def _request(url: str, hostname: str, hf_token: str) -> Request:
         request = Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
         if hf_token and hostname == "huggingface.co":
             # urllib does not copy unredirected headers to Hugging Face's signed
             # CDN redirect, so the bearer token remains scoped to huggingface.co.
             request.add_unredirected_header("Authorization", f"Bearer {hf_token}")
-        if github_token and hostname in {"api.github.com", "github.com"}:
-            # Private release downloads redirect to a signed object URL. Keep
-            # repository credentials scoped to GitHub; the redirect itself is
-            # authorized by its short-lived signature.
-            request.add_unredirected_header("Authorization", f"Bearer {github_token}")
-            request.add_header("Accept", "application/octet-stream")
         return request
 
     def _download_once(self, request: Request, source: SourceSpec, destination: Path) -> None:
@@ -154,12 +148,11 @@ class Fetcher:
         url = source.resolve_url(self.allowed_https_hosts)
         hostname = urlsplit_hostname(url)
         hf_token = os.environ.get("HF_TOKEN", "").strip()
-        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
 
         failures: list[str] = []
         for attempt in range(1, self.max_attempts + 1):
             try:
-                request = self._request(url, hostname, hf_token, github_token)
+                request = self._request(url, hostname, hf_token)
                 self._download_once(request, source, destination)
                 return destination, False
             except (HTTPError, URLError, OSError, TimeoutError, HTTPException, FetchError) as exc:
@@ -210,7 +203,6 @@ class Fetcher:
                 except OSError:
                     shutil.copyfile(cached, destination)
             manifest = {
-                "schema_version": 1,
                 "identity": identity,
                 "entrypoint": source["entrypoint"],
                 "files": sorted(members, key=lambda item: str(item["path"])),
@@ -285,3 +277,28 @@ def _resolve_with_dataset_registry(dataset: dict[str, Any], cache_dir: Path | No
         detail = getattr(exc, "stderr", "") or str(exc)
         raise FetchError(f"dataset-registry resolution failed: {detail.strip()}") from exc
     return path
+
+
+def read_registry_json(url: str) -> dict[str, Any]:
+    try:
+        with urlopen(Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
+            value = json.load(response)
+    except HTTPError as exc:
+        code = "unknown_error"
+        message = str(exc)
+        try:
+            payload = json.loads(exc.read())
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                code = str(error.get("code", code))
+                message = str(error.get("message", message))
+        except (OSError, json.JSONDecodeError):
+            pass
+        raise FetchError(
+            f"public artifact registry HTTP {exc.code} {code}: {message}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FetchError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise FetchError(f"artifact registry endpoint did not return an object: {url}")
+    return value

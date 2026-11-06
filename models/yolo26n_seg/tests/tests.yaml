@@ -6,41 +6,58 @@ accuracy:
   run_tests: true
   expected:
     w16a16:
-      coco_mask_map: 0.3354
-      coco_mask_ap50: 0.5255
-      coco_mask_ap75: 0.3559
-      coco_mask_ap_small: 0.1402
-      coco_mask_ap_medium: 0.3732
-      coco_mask_ap_large: 0.5147
-      coco_mask_ar1: 0.2907
-      coco_mask_ar10: 0.4637
-      coco_mask_ar100: 0.5052
-      coco_mask_ar_small: 0.2861
-      coco_mask_ar_medium: 0.5590
-      coco_mask_ar_large: 0.7069
-      coco_box_map: 0.3965
-      coco_box_ap50: 0.5542
+      coco-2017-val:
+        coco_mask_map: 0.3354
+        coco_mask_ap50: 0.5255
+        coco_mask_ap75: 0.3559
+        coco_mask_ap_small: 0.1402
+        coco_mask_ap_medium: 0.3732
+        coco_mask_ap_large: 0.5147
+        coco_mask_ar1: 0.2907
+        coco_mask_ar10: 0.4637
+        coco_mask_ar100: 0.5052
+        coco_mask_ar_small: 0.2861
+        coco_mask_ar_medium: 0.5590
+        coco_mask_ar_large: 0.7069
+        coco_box_map: 0.3965
+        coco_box_ap50: 0.5542
     w8a8:
-      coco_mask_map: 0.3155
-      coco_mask_ap50: 0.5008
-      coco_mask_ap75: 0.3333
-      coco_mask_ap_small: 0.1307
-      coco_mask_ap_medium: 0.3499
-      coco_mask_ap_large: 0.4873
-      coco_mask_ar1: 0.2808
-      coco_mask_ar10: 0.4539
-      coco_mask_ar100: 0.4969
-      coco_mask_ar_small: 0.2791
-      coco_mask_ar_medium: 0.5543
-      coco_mask_ar_large: 0.6919
-      coco_box_map: 0.3708
-      coco_box_ap50: 0.5304
+      coco-2017-val:
+        coco_mask_map: 0.3155
+        coco_mask_ap50: 0.5008
+        coco_mask_ap75: 0.3333
+        coco_mask_ap_small: 0.1307
+        coco_mask_ap_medium: 0.3499
+        coco_mask_ap_large: 0.4873
+        coco_mask_ar1: 0.2808
+        coco_mask_ar10: 0.4539
+        coco_mask_ar100: 0.4969
+        coco_mask_ar_small: 0.2791
+        coco_mask_ar_medium: 0.5543
+        coco_mask_ar_large: 0.6919
+        coco_box_map: 0.3708
+        coco_box_ap50: 0.5304
+    w8a16:
+      coco-2017-val:
+        coco_mask_map: 0.3241
+        coco_mask_ap50: 0.5084
+        coco_mask_ap75: 0.3450
+        coco_mask_ap_small: 0.1325
+        coco_mask_ap_medium: 0.3637
+        coco_mask_ap_large: 0.4997
+        coco_mask_ar1: 0.2853
+        coco_mask_ar10: 0.4541
+        coco_mask_ar100: 0.4962
+        coco_mask_ar_small: 0.2788
+        coco_mask_ar_medium: 0.5497
+        coco_mask_ar_large: 0.6945
+        coco_box_map: 0.3827
+        coco_box_ap50: 0.5423
 performance:
-  run_tests: true
+  run_tests: false
+  skip_reason: The w8a16 build has no published report to expect values from yet.
   expected:
     w16a16:
-      model:
-        throughput_fps: 231.5
+      throughput_fps: 231.5
     w8a8:
-      model:
-        throughput_fps: 5.9
+      throughput_fps: 5.9

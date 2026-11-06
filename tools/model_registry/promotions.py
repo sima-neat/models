@@ -88,7 +88,7 @@ def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity
         "target_git_ref": TARGET, "expected_target_snapshot": target["catalog"]["canonical_sha256"],
         "reason": reason, "workflow": workflow,
     }
-    return {"version": 1, "body": body, "key": "promotion-request-" + canonical_sha256([identity, body])}
+    return {"body": body, "key": "promotion-request-" + canonical_sha256([identity, body])}
 
 
 def check_request(record: dict, body: dict) -> None:

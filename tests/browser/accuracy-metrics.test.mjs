@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {orderedMetricNames, publishedScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
+const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
 
 test('detection metrics follow the label order whatever order the registry returns', () => {
   // The registry returned RF-DETR Small's metrics in this order.
@@ -36,19 +36,28 @@ test('segmentation metrics lead with mask mAP', () => {
   ]);
 });
 
-const published = [
+const reference = [
   {dataset: {id: 'coco-2017', split: 'val'}, metrics: {coco_map: 0.53, coco_ap50: 0.721}},
   {dataset: {id: 'coco-2014', split: 'minival'}, metrics: {coco_ap75: 0.6}},
 ];
 
-test('published scores sit beside measurements of the same dataset only', () => {
-  assert.deepEqual(publishedScores(published, 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
-  assert.deepEqual(publishedScores(published, 'imagenet-2012'), {});
-  assert.deepEqual(publishedScores(undefined, 'coco-2017'), {});
+test('reference scores sit beside measurements of the same dataset only', () => {
+  assert.deepEqual(referenceScores(reference, 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
+  assert.deepEqual(referenceScores(reference, 'imagenet-2012'), {});
+  assert.deepEqual(referenceScores(undefined, 'coco-2017'), {});
 });
 
-test('model.yaml scores replace the ones older results carry', () => {
-  // Results published before published_metrics embed the score on each metric as its reference.
-  const metrics = {coco_map: {value: 0.47, reference: 0.52}, coco_ar1: {value: 0.3, reference: 0.4}, coco_ap75: {value: 0.5}};
-  assert.deepEqual(publishedScores(published, 'coco-2017', metrics), {coco_map: 0.53, coco_ar1: 0.4, coco_ap50: 0.721});
+test('ratios show as percentages and other units as reported, each with its direction', () => {
+  assert.equal(formatAccuracy('coco_map', 0.401), '40.10%');
+  assert.equal(formatAccuracy('epe', 0.7763), '0.776 px');
+  assert.equal(formatAccuracy('d1_all', 2.8183), '2.82%');
+  assert.equal(formatAccuracy('epe', undefined), '—');
+  assert.equal(formatAccuracy('epe', undefined, {blank: true}), '');
+  assert.deepEqual(accuracyDisplay('coco_map', 0.401), {number: 40.1, unit: '%', direction: 'higher'});
+  assert.deepEqual(accuracyDisplay('epe', 0.73), {number: 0.73, unit: 'px', direction: 'lower'});
+  assert.deepEqual(accuracyDisplay('d1_all', 2.82), {number: 2.82, unit: '%', direction: 'lower'});
+});
+
+test('disparity metrics lead with EPE', () => {
+  assert.deepEqual(orderedMetricNames(['d1_all', 'epe']), ['epe', 'd1_all']);
 });

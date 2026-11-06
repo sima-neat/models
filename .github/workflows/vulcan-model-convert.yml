@@ -3,6 +3,12 @@ run-name: Convert ${{ inputs.model }} (${{ inputs.conversion }})
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: Registry and runner environment
+        type: choice
+        options: [staging, production]
+        default: staging
+        required: true
       model:
         description: Model directory ID
         required: true
@@ -14,14 +20,29 @@ on:
 permissions:
   contents: read
 jobs:
+  config:
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ inputs.environment }}
+    secrets: inherit
   convert:
-    environment: staging
-    runs-on: [self-hosted, linux, arm64, vulcan-stg, ubuntu, default]
+    needs: config
+    # The resolver emits stg/prod aliases; GitHub environments use canonical names.
+    environment: ${{ inputs.environment }}
+    runs-on: [self-hosted, linux, arm64, "${{ inputs.environment == 'staging' && 'vulcan-stg' || 'vulcan-production' }}", ubuntu, default]
     timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
     env:
+      AWS_REGION: ${{ needs.config.outputs.aws_region }}
+      REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+      ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
+      KMS_KEY_ID: ${{ needs.config.outputs.artifact_kms_key_id }}
+      VULCAN_ENVIRONMENT: ${{ inputs.environment }}
       MODEL_ID: ${{ inputs.model }}
       CONVERSION: ${{ inputs.conversion }}
       EXPORT_VENV: /mnt/nvme/model-export-${{ github.run_id }}-${{ github.run_attempt }}-venv
@@ -42,7 +63,7 @@ jobs:
       - name: Validate model selection
         run: |
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9_]*$ ]]
-          [[ "$CONVERSION" =~ ^[a-z][a-z0-9_]*$ ]]
+          [[ "$CONVERSION" == default ]]
           test -f "models/$MODEL_ID/scripts/convert.py"
       - uses: actions/cache@v4
         with:
@@ -57,26 +78,16 @@ jobs:
       - name: Test the converted model with the model's conversion tests
         run: |
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" '.[tests]'
-          REGISTRY_PYTHON="$EXPORT_VENV/bin/python" \
-            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/model.onnx"
+          outcome="$(REGISTRY_PYTHON="$EXPORT_VENV/bin/python" \
+            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/model.onnx")"
+          [[ "$outcome" == passed ]]
       - uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: us-west-2
+          aws-region: ${{ needs.config.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-      - name: Publish ONNX and print source pin
+      - name: Publish validated conversion to the registry
         run: |
-          model="$EXPORT_DIR/model.onnx"
-          sha="$(sha256sum "$model" | cut -d ' ' -f 1)"
-          size="$(stat -c %s "$model")"
-          key="models-onnx/$MODEL_ID/$sha/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/model.onnx"
-          aws s3api put-object --bucket sima-neat-artifacts-staging --key "$key" --body "$model" \
-            --if-none-match '*' --server-side-encryption aws:kms --ssekms-key-id alias/sima-neat-artifacts-staging \
-            --checksum-sha256 "$(openssl dgst -sha256 -binary "$model" | base64 -w0)" \
-            --metadata "git-sha=$GITHUB_SHA,config=$CONVERSION"
-          uri="https://artifacts.stg.neat.sima.ai/$key"
-          curl --fail --silent --show-error "$uri" -o "$RUNNER_TEMP/downloaded.onnx"
-          echo "$sha  $RUNNER_TEMP/downloaded.onnx" | sha256sum --check
-          printf 'source:\n  type: file\n  uri: %s\n  sha256: %s\n  size_bytes: %s\n' "$uri" "$sha" "$size" > "$EXPORT_DIR/source.yaml"
-          cat "$EXPORT_DIR/source.yaml"
-          # shellcheck disable=SC2016
-          printf '```yaml\n%s\n```\n' "$(cat "$EXPORT_DIR/source.yaml")" >> "$GITHUB_STEP_SUMMARY"
+          "$EXPORT_VENV/bin/python" -E -s -m model_registry publish-conversion "$MODEL_ID" "$EXPORT_DIR" \
+            --api-url "$REGISTRY_API_URL" --bucket "$ARTIFACT_BUCKET" --kms-key-id "$KMS_KEY_ID" \
+            --environment "$VULCAN_ENVIRONMENT" --aws-region "$AWS_REGION" --validation passed | tee "$EXPORT_DIR/registry-publication.json"
+          cat "$EXPORT_DIR/registry-publication.json" >> "$GITHUB_STEP_SUMMARY"

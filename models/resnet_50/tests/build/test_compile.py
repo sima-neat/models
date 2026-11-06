@@ -10,7 +10,6 @@ from types import ModuleType
 
 import numpy as np
 import pytest
-import yaml
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
@@ -31,16 +30,14 @@ def _write_archive(path: Path, files: dict[str, bytes]) -> Path:
     return path
 
 
-def test_preprocessing_matches_the_pipeline_declared_in_model_yaml(load_script: Callable[[str], ModuleType]) -> None:
+def test_preprocessing_uses_imagenet_resize_and_normalization(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    component = yaml.safe_load((MODEL_DIR / "model.yaml").read_text(encoding="utf-8"))["components"][0]
-    steps = {step["op"]: step.get("parameters", {}) for step in component["preprocessing"]["pipeline"]}
 
-    assert steps["resize"] == {"shortest_edge": calibration.SHORTEST_EDGE, "resample": "bicubic"}
-    assert steps["center_crop"] == {"height": calibration.CROP, "width": calibration.CROP}
-    assert steps["rescale"]["factor"] == pytest.approx(float(calibration.RESCALE))
-    np.testing.assert_allclose(steps["normalize"]["mean"], calibration.MEAN)
-    np.testing.assert_allclose(steps["normalize"]["std"], calibration.STD)
+    assert calibration.SHORTEST_EDGE == 256
+    assert calibration.CROP == 224
+    assert calibration.RESCALE == pytest.approx(1 / 255)
+    np.testing.assert_allclose(calibration.MEAN, [0.485, 0.456, 0.406])
+    np.testing.assert_allclose(calibration.STD, [0.229, 0.224, 0.225])
 
 
 def test_preprocessing_resizes_the_shortest_edge_then_crops_the_centre(
@@ -137,13 +134,21 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
-def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    recipe = load_script("compile")
+    parameters = recipe._variant(recipe._metadata(), profile_id)["parameters"]
+
+    assert parameters["precision"] == profile_id
+    if profile_id == "w8a8":
+        assert parameters["calibration_samples"] == 500
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe._metadata()
 
-    assert recipe._variant(metadata, "w16a16")["parameters"]["precision"] == "w16a16"
-    assert recipe._variant(metadata, "w8a8")["parameters"]["calibration_samples"] == 500
-    assert recipe._fidelity_config(metadata, "w8a8")["id"] == "logits_fidelity"
+    assert metadata["numerical_fidelity"]["outputs"] == ["logits"]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._variant(metadata, "w32a32")
 
@@ -155,19 +160,20 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
 ) -> None:
     recipe = load_script("compile")
     metadata = recipe._metadata()
-    metadata["build_profiles"][0]["components"][0]["parameters"]["precision"] = "fp32"
+    profile = metadata["build_profiles"][0]
+    profile["components"][0]["parameters"]["precision"] = "fp32"
     monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
 
     with pytest.raises(ValueError, match="only the declared Modalix BF16 and INT8 variants"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
     assert not (tmp_path / "model").exists()
 
 
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        (["--compile-invocation", "backbone"], "unsupported compile invocation: backbone"),
-        (["--compile-invocation", "model"], "pass --fidelity-dataset"),
+        (["--compile-invocation", "model"], "a build profile compiles in one invocation named after it"),
+        (["--compile-invocation", "w16a16"], "pass --fidelity-dataset"),
     ],
 )
 def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(

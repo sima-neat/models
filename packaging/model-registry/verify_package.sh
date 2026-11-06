@@ -29,7 +29,7 @@ test "${help_text}" = "${module_help_text}"
 for command in validate validate-models fetch fetch-calibration matrix resolve-compiler verify-mpk; do
   grep -q "${command}" <<< "${help_text}"
 done
-for command in package publish publish-benchmark publish-catalog; do
+for command in package publish publish-report publish-catalog; do
   if "${model_registry}" "${command}" --help >/dev/null 2>&1; then
     echo "author CLI unexpectedly exposes ${command}" >&2
     exit 1
