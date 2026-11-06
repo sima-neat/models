@@ -92,7 +92,7 @@ this table. Modules marked CI only are removed from the author package by
 | `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
-| `conversion.py` | conversion fingerprints, validated ONNX bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
+| `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
@@ -125,9 +125,13 @@ catalog lists each profile's benchmark fingerprints under
 `benchmark_fingerprints`, and the model browser resolves the runs by those
 fingerprints. A recompiled build gets new benchmark fingerprints and is
 therefore benchmarked again. Performance fingerprints also include the profile's
-optional `benchmark_baseline`; accuracy and compilation do not. Compile and
-benchmark fingerprints do not read model tests; conversion fingerprints include
-validation files so a changed check requires revalidation. The contributor guide lists
+optional `benchmark_baseline`. Accuracy and compilation fingerprints do not.
+Editing a test reruns nothing, because no fingerprint includes tests. The changed
+test runs the next time its stage runs.
+
+The conversion fingerprint covers only files that can change the ONNX. Keep it
+that narrow: a fingerprint with no published conversion fails the plan for every
+model until someone reruns Convert. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 

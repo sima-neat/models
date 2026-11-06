@@ -118,13 +118,14 @@ def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor) -> tupl
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
     backbone = models["backbone"].build([image], run_options=run_options)
     features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
-    decoder = models["decoder"].build([features, select_top_proposals(scores, boxes)], run_options=run_options)
+    # The decoder's EV74 input stage cannot read the backbone's output memory, so features are copied with cvu().
+    decoder = models["decoder"].build([features.cvu(), select_top_proposals(scores, boxes)], run_options=run_options)
     return backbone, decoder
 
 
 def infer_one(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> None:
     features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
-    decoder.run([features, select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
+    decoder.run([features.cvu(), select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
 
 
 def measure_latency(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> list[float]:
@@ -217,7 +218,7 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
         try:
             for features, scores, boxes in drain(backbone, "backbone", pushed):
                 proposals = select_top_proposals(scores, boxes)
-                push(decoder, [features, proposals], "decoder")
+                push(decoder, [features.cvu(), proposals], "decoder")
                 pushed["decoder"] += 1
                 # The decoder holds its inputs now, so the backbone gets its output buffers back.
                 del features, scores, boxes, proposals
