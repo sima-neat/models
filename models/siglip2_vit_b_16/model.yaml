@@ -34,10 +34,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/siglip2_vit_b_16/ee51a26d60fda5551f62f02504f378583e91fba46a30e665ac5cd250346d9c3e/40755046423-1/model.onnx
-    sha256: ee51a26d60fda5551f62f02504f378583e91fba46a30e665ac5cd250346d9c3e
-    size_bytes: 727941268
+  source: conversion
   components: [image_encoder, text_encoder]
 
 calibrations:
