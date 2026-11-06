@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from model_registry import package as package_module
-from model_registry.artifact import deployment_files
 from model_registry.errors import ValidationError
 from model_registry.package import assemble_available_packages, assemble_package
 
@@ -219,7 +218,7 @@ def _declare_runtime_file(compiled: Path, name: str, payload: bytes) -> None:
     }), encoding="utf-8")
 
 
-def test_package_with_resources_and_runtime_files_is_a_deterministic_folder_of_files(
+def test_package_with_resources_and_runtime_files_is_a_flat_deterministic_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     compiled = _model_with_resource(monkeypatch, tmp_path, "runtime")
@@ -233,53 +232,17 @@ def test_package_with_resources_and_runtime_files_is_a_deterministic_folder_of_f
     ]
 
     assert results[0]["sha256"] == results[1]["sha256"]
-    assert results[0]["layout"] == "directory"
-    assert results[0]["manifest_path"] == "deployment/manifest.json"
-    assert "archive" not in results[0]
-    package_dir = tmp_path / "packages-a" / "resnet_50" / "w16a16" / "packages" / "default"
-    assert not list(package_dir.rglob("*.zip"))
+    assert results[0]["archive"] == "resnet_50_w16a16_default.zip"
+    bundle = tmp_path / "packages-a" / "resnet_50" / "w16a16" / "packages" / "default" / results[0]["archive"]
+    with zipfile.ZipFile(bundle) as stream:
+        assert stream.namelist() == [MPK_NAME, "runtime/config.json", "runtime/voices/a.json", "tables.npz"]
+        assert stream.read("tables.npz") == b"tables"
     manifest = results[0]["manifest"]
-    assert [item["path"] for item in manifest["files"]] == [
-        MPK_NAME, "runtime/config.json", "runtime/voices/a.json", "tables.npz",
-    ]
-    assert deployment_files(manifest) == manifest["files"]
-    deployment = package_dir / "deployment"
-    assert (deployment / "tables.npz").read_bytes() == b"tables"
-    assert (deployment / MPK_NAME).read_bytes() == (compiled / "resnet_50/w16a16/model" / MPK_NAME).read_bytes()
-    assert json.loads((deployment / "manifest.json").read_text()) == manifest
-    assert results[0]["size_bytes"] == sum(item["size_bytes"] for item in manifest["files"])
-    assert manifest["components"][0]["path"] == MPK_NAME
     assert manifest["resources"] == [{
         "id": "runtime", "paths": ["runtime/config.json", "runtime/voices/a.json"],
         "source_sha256": "b" * 64, "size_bytes": 24,
     }]
-
-
-def test_package_of_an_mpk_and_a_runtime_file_is_a_folder(tmp_path: Path) -> None:
-    compiled = _compiled_component(tmp_path)
-    _declare_runtime_file(compiled, "tables.npz", b"tables")
-
-    result = assemble_package(
-        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages", model_id="resnet_50",
-        build_profile_id="w16a16", package_id="default",
-    )
-
-    assert result["layout"] == "directory"
-    assert [item["path"] for item in result["manifest"]["files"]] == [MPK_NAME, "tables.npz"]
-
-
-def test_build_on_demand_package_rejects_files_beyond_its_mpks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    compiled = _model_with_resource(monkeypatch, tmp_path, "runtime")
-    # The patched loader returns the same model object on every call.
-    package_module.load_and_validate_model()["build-on-demand"] = True
-
-    with pytest.raises(ValidationError, match="build-on-demand package carries only its MPKs"):
-        assemble_package(
-            repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages", model_id="resnet_50",
-            build_profile_id="w16a16", package_id="default", resource_cache_dir=tmp_path / "cache",
-        )
+    assert [item["path"] for item in manifest["files"]] == stream.namelist()
 
 
 def test_package_rejects_a_runtime_file_that_changed_after_the_compile(

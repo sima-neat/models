@@ -13,11 +13,11 @@ duration predictor on the CPU, and the guidance and update between steps.
 
 ## Inputs and outputs
 
-The package holds everything the pipeline reads: both compiled components,
-`supertonic_runtime_data.npz`, and Supertone's CPU files and license under
-`supertonic-3/`, from the same
+The ZIP package, once extracted, holds everything the pipeline reads: both
+components, `supertonic_runtime_data.npz`, and Supertone's CPU files and license
+under `supertonic-3/`, from the
 [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3)
-revision the components were compiled from.
+revision they were compiled from.
 
 **Input.** Wrap the text in its language tag, such as `<en>Hello.</en>`, and map each
 character to an index with `supertonic-3/onnx/unicode_indexer.json`, at most 192.

@@ -24,7 +24,6 @@ from .artifact import (
     llima_compiled_parameters,
     validate_compile_outputs,
     verify_artifact,
-    verify_deployment,
     verify_llima,
 )
 from .compile_matrix import build_matrix
@@ -552,10 +551,6 @@ def build_catalog_snapshot(
         if model.get("build-on-demand", False):
             entry["build_on_demand"] = True
             components = {item["id"]: item for item in model["components"]}
-            if model.get("resources"):
-                # The on-demand service is told each package's layout before it builds; a package of files is not
-                # one of the layouts it accepts yet.
-                raise ValidationError(f"{model_id}: a build-on-demand model cannot declare resources")
             requirements = {}
             for profile in sorted(model["build_profiles"], key=lambda item: item["id"]):
                 packages = []
@@ -1764,15 +1759,11 @@ def publish_packages(
         declaration = next((item for item in model["packages"] if item["id"] == package_id), None)
         if declaration is None or profile_id not in declaration["build_profiles"]:
             raise ValidationError(f"{result_path}: package is not declared for {model_id}/{profile_id}/{package_id}")
-        # A LLiMa deployment, or MPKs with files beyond them, publish as a folder of files; other MPKs as one archive.
         native = result.get("layout") == "directory"
-        llima = any(item["interface"]["format"] == "huggingface" for item in model["components"]
-                    if item["id"] in declaration["components"])
-        component_paths = {item.get("path") for item in manifest.get("components") or [] if isinstance(item, dict)}
-        extra_files = any(isinstance(item, dict) and item.get("path") not in component_paths
-                          for item in manifest.get("files") or [])
-        if native != (llima or extra_files):
-            raise ValidationError(f"{result_path}: package layout does not match its component interfaces and files")
+        expected_native = any(item["interface"]["format"] == "huggingface" for item in model["components"]
+                              if item["id"] in declaration["components"])
+        if native != expected_native:
+            raise ValidationError(f"{result_path}: package layout does not match its component interfaces")
         on_demand = model.get("build-on-demand", False)
         if on_demand and candidate is None:
             raise ValidationError("on-demand publication requires publish-candidate")
@@ -1785,10 +1776,8 @@ def publish_packages(
                 or media_type is None):
             raise ValidationError(f"{result_path}: package artifact is missing or unsafe")
         files = deployment_files(manifest) if native else []
-        verify_folder = verify_llima if llima else verify_deployment
         if native and (json.loads(archive.read_text(encoding="utf-8")) != manifest
-                       or sorted(verify_folder(archive.parent, allow_manifest=True), key=lambda item: item["path"])
-                       != sorted(files, key=lambda item: item["path"])):
+                       or verify_llima(archive.parent, allow_manifest=True) != files):
             raise ValidationError(f"{result_path}: deployment files do not match the package manifest")
         artifact_sha, artifact_size = sha256_file(archive)
         package_size = sum(item["size_bytes"] for item in files) if native else artifact_size
@@ -1886,7 +1875,7 @@ def publish_packages(
                 "input_type": "model-pack", "source_reference": f"registry-run:{component_run_id}",
                 "sha256": next(item["sha256"] for item in components if item["id"] == component_id),
                 "size_bytes": next(item["size_bytes"] for item in components if item["id"] == component_id),
-                "media_type": "application/json" if llima else "application/gzip",
+                "media_type": "application/json" if native else "application/gzip",
                 "metadata": {"component_id": component_id, "compile_run_id": component_run_id},
             }, f"{stable_key}-component-{component_id}")
         client.request("PUT", f"/v1/runs/{run_id}/parameters", {
@@ -1936,11 +1925,9 @@ def publish_packages(
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/{SIMULATION_FILE}"),
             )
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
-        # The catalog's size is the stored package artifact's, as the registry checks; a folder's total is
-        # deployment_size_bytes.
         published.append({
             "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id, "run_id": run_id,
-            "artifact_sha256": artifact_sha, "size_bytes": stored.size_bytes, "manifest_sha256": manifest_sha,
+            "artifact_sha256": artifact_sha, "size_bytes": package_size, "manifest_sha256": manifest_sha,
             "package_fingerprint": manifest_sha, "component_run_ids": component_runs, "s3_key": stored.key,
             **({key: artifact_metadata[key] for key in
                 ("layout", "storage_backend", "file_count", "deployment_size_bytes")} if native else {}),

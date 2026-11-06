@@ -227,7 +227,8 @@ the manifest is not shipped inside the package.
 An ONNX model whose application also runs files on the CPU, such as CPU-side
 ONNX graphs, tokenizer tables or voice data, lists them in `resources`, pinned
 like a source. Every package of the model installs each resource's files
-under its `install_path`:
+under its `install_path`, and the package is then a ZIP even with one
+component:
 
 ```yaml
 resources:
@@ -247,16 +248,6 @@ relative to the profile's output directory, and `sha256`. The package carries
 it at that path, beside the MPKs it was derived with. A resource is a compile
 input, so changing one recompiles the model; LLiMa packages ship their
 deployment folder and take neither.
-
-A package with files beyond its MPKs is a folder rather than an archive: the
-MPKs at its root, each runtime file at its path, and each resource under its
-`install_path`, with `manifest.json` at the root. Its manifest lists every
-file with the fields of a [LLiMa deployment](#llima-checkpoint-and-deployment-formats),
-`path`, `artifact`, `sha256` and `size_bytes`, and publication stores each
-file once under its SHA-256, so a later package reuses every file that did not
-change. `sima-cli` 2.1.19 and later downloads the folder and checks each file.
-A build-on-demand model's package carries only its MPKs or a LLiMa deployment,
-so such a model declares no `resources`.
 
 A multi-component model can add `pipeline` so the model browser shows the
 order its components run in. List each component once, in run order, and

@@ -306,10 +306,10 @@ def deployment_files(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return files
 
 
-def verify_deployment(deployment: Path, *, allow_manifest: bool = False) -> list[dict[str, Any]]:
-    """Validate a deployment folder and checksum every regular file."""
+def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict[str, Any]]:
+    """Validate a deployed LLiMa folder and checksum every regular file."""
     if deployment.is_symlink() or not deployment.is_dir():
-        raise ValidationError(f"deployment not found or is a symbolic link: {deployment}")
+        raise ValidationError(f"LLiMa deployment not found or is a symbolic link: {deployment}")
     files = []
     names: set[str] = set()
     for path in sorted(deployment.rglob("*")):
@@ -327,18 +327,10 @@ def verify_deployment(deployment: Path, *, allow_manifest: bool = False) -> list
             digest, size = sha256_file(path)
             files.append({"path": relative, "artifact": deployment_artifact_name(relative),
                           "sha256": digest, "size_bytes": size})
-    return deployment_files({"files": files})
-
-
-def verify_llima(deployment: Path, *, allow_manifest: bool = False) -> list[dict[str, Any]]:
-    """Validate a deployed LLiMa folder, which must hold its ELF files."""
-    if deployment.is_symlink() or not deployment.is_dir():
-        raise ValidationError(f"LLiMa deployment not found or is a symbolic link: {deployment}")
-    files = verify_deployment(deployment, allow_manifest=allow_manifest)
     if not any("elf_files" in PurePosixPath(item["path"]).parts[:-1] and item["path"].endswith(".elf")
                for item in files):
         raise ValidationError(f"{deployment}: LLiMa deployment contains no ELF files")
-    return files
+    return deployment_files({"files": files})
 
 
 def llima_compiled_parameters(deployment: Path) -> dict[str, Any]:

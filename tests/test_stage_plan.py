@@ -736,20 +736,6 @@ def test_catalog_lists_unbuilt_on_demand_models_without_pending_builds(
         assert profile["compiler_version"] == resolve_model_compiler(stage_repository)["version"]
 
 
-def test_catalog_rejects_an_on_demand_model_with_resources(stage_repository: Path) -> None:
-    _mark_on_demand(stage_repository)
-    definition = stage_repository / "models" / PLAN_MODEL / "model.yaml"
-    model = yaml.safe_load(definition.read_text(encoding="utf-8"))
-    model["resources"] = {"runtime": {
-        "source": {"uri": "https://example.invalid/tables.json", "sha256": "b" * 64, "size_bytes": 1},
-        "install_path": "runtime/tables.json",
-    }}
-    definition.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="build-on-demand model cannot declare resources"):
-        build_catalog_snapshot(repository=stage_repository, branch=BRANCH, git_sha="b" * 40)
-
-
 @pytest.mark.parametrize("candidate_receipts", [False, True])
 def test_catalog_keeps_approved_on_demand_builds_and_packages_after_input_changes(
     stage_repository: Path, tmp_path: Path, candidate_receipts: bool,

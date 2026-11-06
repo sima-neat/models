@@ -227,15 +227,9 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
-def _assembled_package(tmp_path: Path, runtime_file: bytes | None = None) -> tuple[Path, dict]:
+def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
     compiled = _packaged_result(tmp_path)
     component_dir = compiled / "resnet_50/w16a16/model"
-    if runtime_file is not None:
-        (component_dir.parent / "tables.npz").write_bytes(runtime_file)
-        outputs_path = component_dir.parent / "compile-outputs.json"
-        outputs = json.loads(outputs_path.read_text(encoding="utf-8"))
-        outputs["runtime_files"] = [{"path": "tables.npz", "sha256": hashlib.sha256(runtime_file).hexdigest()}]
-        outputs_path.write_text(json.dumps(outputs), encoding="utf-8")
     (component_dir / "registry-publication.json").write_text(
         json.dumps({"runs": [{
             "run_id": "component-run", "model_id": "resnet_50",
@@ -287,51 +281,6 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
     assert store.objects[0][0].name == assembled["archive"]
     assert store.objects[0][3] == "application/gzip"
     assert calls[3][2]["media_type"] == "application/gzip"
-
-
-def test_publish_package_with_a_runtime_file_publishes_each_file_by_checksum(tmp_path: Path) -> None:
-    packages, assembled = _assembled_package(tmp_path, runtime_file=b"tables")
-    calls: list[tuple[str, str, dict | None, str]] = []
-
-    def request(method: str, path: str, body: dict | None, key: str) -> dict:
-        calls.append((method, path, body, key))
-        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
-
-    store = FakeStore()
-    result = _publish_packages(packages, request, store)
-
-    files = assembled["manifest"]["files"]
-    bodies = {path: body for _, path, body, _ in calls}
-    assert assembled["layout"] == "directory"
-    assert result["packages"][0]["layout"] == "directory"
-    assert result["packages"][0]["file_count"] == 2
-    # The registry compares the catalog size with the stored artifact, which for a folder is its manifest.
-    assert result["packages"][0]["size_bytes"] == bodies["/v1/runs/package-run/artifacts/package"]["size_bytes"]
-    assert result["packages"][0]["deployment_size_bytes"] == sum(item["size_bytes"] for item in files)
-    # The component input is still the compiled MPK; only the package is a folder.
-    assert bodies["/v1/runs/package-run/inputs/component-model"]["media_type"] == "application/gzip"
-    for item in files:
-        artifact = bodies[f"/v1/runs/package-run/artifacts/{item['artifact']}"]
-        assert artifact["artifact_type"] == "model-file"
-        assert artifact["sha256"] == item["sha256"]
-        assert artifact["metadata"]["path"] == item["path"]
-        # Content-addressed keys let a later package reuse an unchanged file.
-        assert artifact["s3_key"] == f"models/files/{item['sha256']}/{Path(item['path']).name}"
-    package = bodies["/v1/runs/package-run/artifacts/package"]
-    assert package["media_type"] == "application/json"
-    assert package["metadata"]["layout"] == "directory"
-    assert package["sha256"] == assembled["sha256"]
-
-
-def test_publish_package_rejects_an_archive_that_carries_files_beyond_its_mpks(tmp_path: Path) -> None:
-    packages, _ = _assembled_package(tmp_path, runtime_file=b"tables")
-    result_path = packages / "resnet_50/w16a16/packages/default/package-result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    result["layout"] = "archive"
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    with pytest.raises(ValidationError, match="package layout does not match its component interfaces and files"):
-        _publish_packages(packages, lambda *_args: {"run_id": "package-run"}, FakeStore())
 
 
 def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .artifact import deployment_artifact_name, deployment_files, verify_artifact, verify_deployment
+from .artifact import deployment_files, verify_artifact
 from .errors import ValidationError
 from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
@@ -229,14 +229,8 @@ def assemble_package(
             raise ValidationError(f"package path is declared more than once: {package_path}")
         occupied_paths.add(package_path)
     packaged_files = sorted((*component_files, *extra_files))
-    # Files beyond the MPKs make the package a folder: each file is published once by its checksum, so a rebuild
-    # republishes only the files that changed.
-    as_folder = native_deployment is None and bool(extra_files)
-    if as_folder and model.get("build-on-demand", False):
-        raise ValidationError("A build-on-demand package carries only its MPKs or a LLiMa deployment")
     installed_files = [
-        {"path": name, **({"artifact": deployment_artifact_name(name)} if as_folder else {}),
-         "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
+        {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
     ]
     if native_deployment is not None:
@@ -272,20 +266,13 @@ def assemble_package(
         result_file = compiled / model_id / build_profile_id / name
         if result_file.is_file():
             shutil.copyfile(result_file, package_dir / name)
-    if native_deployment is not None or as_folder:
+    if native_deployment is not None:
         deployment = package_dir / "deployment"
-        if native_deployment is not None and deployment.resolve().is_relative_to(native_deployment.resolve()):
+        if deployment.resolve().is_relative_to(native_deployment.resolve()):
             raise ValidationError("package output must be outside the compiled deployment")
         if deployment.exists():
             shutil.rmtree(deployment)
-        if native_deployment is not None:
-            shutil.copytree(native_deployment, deployment, copy_function=_link_or_copy)
-        else:
-            for name, path in packaged_files:
-                (deployment / name).parent.mkdir(parents=True, exist_ok=True)
-                _link_or_copy(str(path), str(deployment / name))
-            if sorted(verify_deployment(deployment), key=lambda item: item["path"]) != installed_files:
-                raise ValidationError(f"{deployment}: package files do not match the package manifest")
+        shutil.copytree(native_deployment, deployment, copy_function=_link_or_copy)
         (deployment / "manifest.json").write_bytes(manifest_bytes)
         result = {
             "status": "success", "model_id": model_id, "package_id": package_id,
@@ -299,7 +286,7 @@ def assemble_package(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         return result
-    # A single-component model's MPK is the package itself; several MPKs ship as a flat ZIP.
+    # A single-component model's MPK is the package itself; anything more ships as a flat ZIP of the installed files.
     if len(packaged_files) == 1:
         bundle_name = packaged_files[0][0]
     else:
