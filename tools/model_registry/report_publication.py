@@ -21,7 +21,7 @@ from typing import Any
 from urllib.parse import quote
 
 from jsonschema import Draft202012Validator
-from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS
+from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
 from .benchmark_declarations import benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
@@ -184,6 +184,11 @@ def _check_metrics(label: str, stage: str, metrics: dict[str, float], required: 
     missing = [name for name in required if name not in metrics]
     if missing:
         raise ValidationError(f"{label}: required {stage} metrics were not measured: {', '.join(missing)}")
+    if stage == "accuracy":
+        # The schema cannot bound a score by its metric's unit, so a report written without from_accuracy() stops here.
+        errors = [error for name, value in metrics.items() if (error := accuracy_value_error(name, value))]
+        if errors:
+            raise ValidationError(f"{label}: {'; '.join(errors)}")
 
 
 def _put_file(
