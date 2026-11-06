@@ -1770,12 +1770,8 @@ def publish_compilations(
 
 
 def _package_media_type(archive_name: str) -> str | None:
-    """Return the media type of a single-component model's MPK package or a ZIP package, or None otherwise."""
-    if archive_name.endswith("_mpk.tar.gz"):
-        return "application/gzip"
-    if archive_name.endswith(".zip"):
-        return "application/zip"
-    return None
+    """Return the media type of a ZIP package, or None for any other archive."""
+    return "application/zip" if archive_name.endswith(".zip") else None
 
 
 def publish_packages(
@@ -1909,8 +1905,8 @@ def publish_packages(
             "component_run_ids": component_runs,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
-        # Single-component packages publish the MPK without an embedded manifest;
-        # retain its provenance in the durable package run as well.
+        # Packages publish without an embedded manifest; retain its provenance
+        # in the durable package run as well.
         parameters["provenance"] = manifest.get("provenance", {})
         environment_document = {
             "vulcan_environment": environment,

@@ -265,7 +265,7 @@ def _publish_packages(packages: Path, request, store: FakeStore, environment: st
     )
 
 
-def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
+def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path: Path) -> None:
     packages, assembled = _assembled_package(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -290,8 +290,8 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
     assert calls[0][2]["run_type"] == "model_package"
     assert calls[3][2]["artifact_type"] == "model-package"
     assert store.objects[0][0].name == assembled["archive"]
-    assert store.objects[0][3] == "application/gzip"
-    assert calls[3][2]["media_type"] == "application/gzip"
+    assert store.objects[0][3] == "application/zip"
+    assert calls[3][2]["media_type"] == "application/zip"
 
 
 def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path) -> None:
@@ -442,12 +442,12 @@ def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path:
 @pytest.mark.parametrize(
     ("archive", "expected"),
     [
-        ("resnet_50_w16a16_mpk.tar.gz", "application/gzip"),
+        ("resnet_50_w16a16_mpk.tar.gz", None),
         ("rf_detr_nano_w8a8_w16a16_default.zip", "application/zip"),
         ("resnet_50_w16a16.tar.gz", None),
     ],
 )
-def test_package_media_type_accepts_only_mpk_and_zip_packages(archive: str, expected: str | None) -> None:
+def test_package_media_type_accepts_only_zip_packages(archive: str, expected: str | None) -> None:
     assert _package_media_type(archive) == expected
 
 

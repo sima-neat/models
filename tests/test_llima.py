@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 from threading import Lock
 
@@ -27,7 +28,7 @@ from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import COMPILE_TOOLING, compile_fingerprint
-from model_registry.model import load_and_validate_model, load_models
+from model_registry.model import load_and_validate_model, load_models, mpk_filename
 from model_registry.registry import (
     RegistryPublicationError,
     S3ArtifactStore,
@@ -612,8 +613,8 @@ class WhisperModel:
     assert (output / "compile.py").read_bytes() == recipe.with_suffix(".py").read_bytes()
 
 
-@pytest.mark.parametrize("environment", ["staging", "production"])
-def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch, environment):
+def _compiled_candidate(tmp_path, environment, components):
+    """A repository whose on-demand fixture_model compiled components, with their compile output."""
     root = tmp_path / "repository"
     model_dir = root / "models/fixture_model"
     shutil.copytree(ROOT / "tests/fixtures/fixture_model", model_dir)
@@ -626,21 +627,21 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
     model["build-on-demand"] = True
-    model["compilation"]["components"] = ["backbone", "decoder"]
-    model["build_profiles"]["fixture"]["components"] = {
-        "backbone": {"parameters": {}}, "decoder": {"parameters": {}},
-    }
+    if components != ("model",):
+        model["compilation"]["components"] = list(components)
+        model["build_profiles"]["fixture"]["components"] = {
+            component: {"parameters": {}} for component in components
+        }
     path.write_text(yaml.safe_dump(model, sort_keys=False))
     compiler = resolve_model_compiler(root)
     key = compile_fingerprint(root, "fixture_model", "fixture", "fixture", compiler["identity"])
-    registry = Registry()
-    # The profile's one compile invocation compiles both components.
+    # The profile's one compile invocation compiles every component.
     invocation = tmp_path / "invocations" / "fixture" / "fixture_model/fixture"
     outputs = []
-    for component in ("backbone", "decoder"):
+    for component in components:
         output = invocation / component
         output.mkdir(parents=True)
-        archive = output / f"fixture_model_fixture_{component}_mpk.tar.gz"
+        archive = output / mpk_filename(load_and_validate_model(model_dir), "fixture", component)
         with tarfile.open(archive, "w:gz") as stream:
             for name, payload in (("layer.elf", b"synthetic-elf"), ("fixture_mpk.json", b"{}")):
                 info = tarfile.TarInfo(name)
@@ -655,16 +656,28 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
                         "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()})
     (invocation / "compile-timing.json").write_text(COMPILE_TIMING)
-    runtime_files = []
-    for name in ("backbone/tokenizer.json", "vocabulary.txt"):
-        path = invocation / name
-        path.write_bytes(b"supporting-file")
-        runtime_files.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    grouped = {}
+    if len(components) > 1:
+        runtime_files = []
+        for name in ("backbone/tokenizer.json", "vocabulary.txt"):
+            path = invocation / name
+            path.write_bytes(b"supporting-file")
+            runtime_files.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+        grouped = {
+            "runtime_files": runtime_files,
+            "derived_graphs": [{"component_id": component, "sha256": "a" * 64} for component in components],
+        }
     (invocation / "compile-outputs.json").write_text(json.dumps({
         "model_id": "fixture_model", "build_profile_id": "fixture", "compile_invocation_id": "fixture",
-        "outputs": outputs, "runtime_files": runtime_files,
-        "derived_graphs": [{"component_id": component, "sha256": "a" * 64} for component in ("backbone", "decoder")],
+        "outputs": outputs, **grouped,
     }))
+    return root, compiler, key
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeypatch, environment):
+    root, compiler, key = _compiled_candidate(tmp_path, environment, ("backbone", "decoder"))
+    registry = Registry()
     from model_registry import stage_plan
 
     # A catalog build of one component at the head key cannot join a candidate built from another source.
@@ -686,10 +699,10 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
                                model_id="fixture_model", build_profile_id="fixture", **arguments)
     from model_registry.runtime_files import read_runtime_files
 
+    compiled = json.loads((tmp_path / "invocations/fixture/fixture_model/fixture/compile-outputs.json").read_text())
+    runtime_files = compiled["runtime_files"]
     assert read_runtime_files(tmp_path / "candidate/compiled/fixture_model/fixture") == runtime_files
     package = next((tmp_path / "candidate/packages").rglob("*.zip"))
-    import zipfile
-
     with zipfile.ZipFile(package) as archive:
         for item in runtime_files:
             assert archive.read(item["path"]) == b"supporting-file"
@@ -699,6 +712,21 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
                         if path.startswith(DEPLOYMENTS) and path.endswith("/finalize"))
     assert all(index < finalization for index, (_, path, _) in enumerate(registry.calls)
                if path.startswith("/v1/runs/") and path.endswith("/finalize"))
+
+
+def test_single_component_candidate_publishes_a_zip_package(tmp_path):
+    """Vulcan opens an archive package as a ZIP at promotion, so one MPK still ships inside one."""
+    root, _, _ = _compiled_candidate(tmp_path, "production", ("model",))
+    registry = Registry()
+    publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
+                      model_id="fixture_model", build_profile_id="fixture",
+                      **{**registry.args(), "environment": "production"})
+
+    assert registry.candidate["state"] == "finalized"
+    package = registry.artifacts[f"/v1/runs/{registry.bindings['package-default']}/artifacts/package"]
+    assert package["media_type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(registry.objects[package["s3_key"]])) as stream:
+        assert stream.namelist() == ["fixture_model_fixture_mpk.tar.gz"]
 
 
 def test_llima_compile_fingerprint_names_no_compile_invocation():

@@ -235,8 +235,8 @@ in this order:
    build with no accuracy result yet shows only the reference scores, each
    origin under its own explanation.
 4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
-   A single-component package downloads as its MPK. A multi-component package
-   downloads as a ZIP of its MPKs and also offers **Download components**.
+   A package downloads as a ZIP of its MPKs. A single-component build published before
+   packages became ZIPs downloads as its MPK.
    Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, the package's numerical fidelity, and each
    component's files, checksum, and compile parameters.
