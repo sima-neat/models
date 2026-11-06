@@ -438,8 +438,7 @@ def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
 
     for profile in model["build_profiles"]:
         assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
-    assert model["components"][0]["source"]["type"] == "file"
-    assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
+    assert model["components"][0]["source"]["type"] == "conversion"
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert model["numerical_fidelity"]["outputs"] == ["dets", "labels"]
     assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]

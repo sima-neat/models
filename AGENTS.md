@@ -56,6 +56,9 @@ each kind of change reruns, are listed once in
 read both before changing what a stage depends on. Conversion
 (`scripts/convert.py`, run by `scripts/run_model_conversion.sh`) produces the
 ONNX consumed as either a pinned source or `compilation.source: conversion`.
+It writes `model.onnx` unless `conversion.outputs` lists other files: several
+ONNX models, or a `.pt`/`.pth` checkpoint that `surgery.py` exports to ONNX.
+`compile.py` receives the first as `--model`, with the rest beside it.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
@@ -203,9 +206,8 @@ A test's fixtures decide where it runs:
 runs one stage's file on that output (the benchmarks also take the build
 profile their `model-report.json` measured) and prints `passed`, `failed`, or `skipped` (the
 stage's `run_tests` is `false`); a plain `pytest` deselects every test that
-takes stage output. Compile and benchmark fingerprints do not read `models/<id>/tests/` or
-`run_model_tests.sh`. Conversion fingerprints include validation files, so
-changed checks require a new conversion before registry sources can compile. To apply it now, dispatch `Vulcan Model Orchestrator`
+takes stage output. Editing `models/<id>/tests/` or `run_model_tests.sh` reruns nothing,
+because no fingerprint includes them. The changed test runs the next time its stage runs. To run it now, dispatch `Vulcan Model Orchestrator`
 with `models` set to the model and `force_rebuild_all`, which recompiles and
 remeasures it.
 
@@ -297,6 +299,9 @@ Conventions the code relies on:
   `--fidelity-dataset`, `--mpk`); data enters only through the dataset registry
   declared in `model.yaml`. Benchmark scripts run without registry
   credentials.
+- When a model declares `conversion.outputs`, every script reads those names
+  with `conversion_outputs()` and never hard-codes one, so renaming a file only
+  changes `model.yaml`.
 - Schemas under `schemas/` reject unknown fields. Published reports keep
   their `schema_version` (model report 1, numerical fidelity 1) because the
   artifact browser and `sima-cli` choose a renderer by it. Registry

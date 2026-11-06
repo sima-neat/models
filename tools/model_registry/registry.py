@@ -1439,10 +1439,11 @@ def _preflight_compilations(
     return prepared
 
 
-def _conversion_input(source):
+def _conversion_input(source, source_metadata):
     from .conversion import input_record
 
-    return input_record(source)
+    record = input_record(source)
+    return {**record, "metadata": {**source_metadata, **record["metadata"]}}
 
 
 def publish_compilations(
@@ -1604,7 +1605,7 @@ def publish_compilations(
                 ),
                 "media_type": _component_source_media_type(source),
                 "metadata": source_metadata,
-                **(_conversion_input(source) if source["type"] == "conversion" else {}),
+                **(_conversion_input(source, source_metadata) if source["type"] == "conversion" else {}),
             },
             f"{stable_key}-input",
         )

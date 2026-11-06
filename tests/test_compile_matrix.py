@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from model_registry.compile_matrix import build_matrix
+from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
@@ -399,8 +400,14 @@ def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
 
     def fingerprints() -> list[str]:
         model = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
+        selected = {"rf_detr_small": {
+            "sha256": "a" * 64, "conversion_fingerprint": conversion_fingerprint(repository, model),
+        }}
         return [
-            compile_fingerprint(repository, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION),
+            compile_fingerprint(
+                repository, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                conversion_sources=selected,
+            ),
             benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance"),
             benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy"),
         ]
