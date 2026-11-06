@@ -12,10 +12,10 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .artifact import deployment_files, verify_artifact
-from .errors import ValidationError
+from .errors import SourcePolicyError, ValidationError
 from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import _expand_source, load_and_validate_model
+from .model import _expand_source, load_and_validate_model, source_members
 from .runner_approval import runner_provenance
 from .source import source_identity
 
@@ -63,6 +63,20 @@ def package_resources(model: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": resource_id, "source": _expand_source(resource["source"]), "install_path": resource["install_path"]}
         for resource_id, resource in sorted(model.get("resources", {}).items())
     ]
+
+
+def validate_package_resources(model: dict[str, Any]) -> None:
+    """Hold each resource's source to the compile source's rules, so a bad one fails before the compile."""
+    for resource in package_resources(model):
+        source = resource["source"]
+        try:
+            members = dict(source_members(source))
+        except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
+            raise ValidationError(f"{model['id']}: resource {resource['id']}: source policy: {exc}") from exc
+        if source["type"] == "file_set" and source["entrypoint"] not in members:
+            raise ValidationError(
+                f"{model['id']}: resource {resource['id']}: main_file {source['entrypoint']!r} is not one of its files"
+            )
 
 
 def _runtime_files(profile_dir: Path) -> list[tuple[str, Path]]:

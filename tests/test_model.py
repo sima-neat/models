@@ -199,6 +199,17 @@ def test_hugging_face_model_is_one_component_compiled_from_its_config() -> None:
         validate_model(ROOT / "models" / "qwen3_5_0_8b", authored, SCHEMA)
 
 
+def test_only_an_onnx_model_declares_resources() -> None:
+    authored = _authored(ROOT / "models" / "qwen3_5_0_8b")
+    authored["resources"] = {"runtime": {
+        "source": {"uri": "hf://models/example/runtime@" + "0" * 40 + "/tables.json", "sha256": "b" * 64,
+                   "size_bytes": 1},
+        "install_path": "runtime/tables.json",
+    }}
+    with pytest.raises(ValidationError, match="compilation.format.*'onnx' was expected"):
+        validate_model(ROOT / "models" / "qwen3_5_0_8b", authored, SCHEMA)
+
+
 RUN_TESTS = {"run_tests": True}
 DATASET = {"id": "imagenet-2012", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1}
 BENCHMARK_DECLARATIONS = {

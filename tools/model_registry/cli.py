@@ -392,16 +392,22 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
 
 
 def _validate(args: argparse.Namespace) -> int:
+    from .package import validate_package_resources
+
     model = load_and_validate_model(args.model_dir, args.schema)
+    validate_package_resources(model)
     result = {"model_id": model["id"], "model_dir": str(args.model_dir.resolve()), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model: {model['id']}")
     return 0
 
 
 def _validate_models(args: argparse.Namespace) -> int:
+    from .package import validate_package_resources
+
     repository = args.repository.expanduser().resolve()
     models = load_models(repository)
     for model_id, model in sorted(models.items()):
+        validate_package_resources(model)
         load_model_documentation(
             repository / "models" / model_id,
             model["display_name"],

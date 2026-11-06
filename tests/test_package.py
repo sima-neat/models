@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from model_registry import package as package_module
 from model_registry.errors import ValidationError
-from model_registry.package import assemble_available_packages, assemble_package
+from model_registry.package import assemble_available_packages, assemble_package, validate_package_resources
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
@@ -216,6 +216,19 @@ def _declare_runtime_file(compiled: Path, name: str, payload: bytes) -> None:
     (profile_dir / "compile-outputs.json").write_text(json.dumps({
         "runtime_files": [{"path": name, "sha256": hashlib.sha256(payload).hexdigest()}],
     }), encoding="utf-8")
+
+
+@pytest.mark.parametrize(("source", "message"), (
+    ({"uri": "https://unapproved.example/tables.json", "sha256": "b" * 64, "size_bytes": 1},
+     "resource runtime: source policy.*not approved"),
+    ({"repository": "example/runtime", "revision": "0" * 40, "main_file": "missing.json",
+      "files": {"tables.json": {"sha256": "b" * 64, "size_bytes": 1}}},
+     "resource runtime: main_file 'missing.json' is not one of its files"),
+))
+def test_a_resource_source_follows_the_compile_source_rules(source: dict, message: str) -> None:
+    model = {"id": "resnet_50", "resources": {"runtime": {"source": source, "install_path": "runtime"}}}
+    with pytest.raises(ValidationError, match=message):
+        validate_package_resources(model)
 
 
 def test_package_with_resources_and_runtime_files_is_a_flat_deterministic_zip(

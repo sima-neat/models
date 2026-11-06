@@ -242,6 +242,9 @@ resources:
     install_path: supertonic-3
 ```
 
+`model-registry validate` and `validate-models` hold each resource's source to
+the rules of a compile source, before any compile runs.
+
 A file the compile recipe derives for the CPU, such as tables from graph
 surgery, goes in `compile-outputs.json` as `runtime_files`: a list of `path`,
 relative to the profile's output directory, and `sha256`. The package carries
