@@ -33,8 +33,9 @@ TEXT_SHAPE = (1, 77, EMBED_DIM)
 # The accuracy fingerprint hashes this script but not the file beside it, so the script pins the file's checksum.
 TEXT_PROBE = Path(__file__).with_name("text_probe.npz")
 TEXT_PROBE_SHA256 = "0c2b26bbee9ee7587a0b39df3e2e354eef3b2a434c6f7d97bad7398a36df5aac"
-# BF16 keeps the text encoder's end-of-text rows within rounding of FP32: the w16a16 build scores 0.9998 or more on
-# every probe prompt on a DevKit. A broken text encoder scores far lower; token rows shifted by one score 0.27 to 0.56.
+# BF16 activations keep the text encoder's end-of-text rows close to FP32: on every probe prompt on a DevKit, the
+# w16a16 build scores 0.9998 or more and the w8a16 build, with INT8 weights, 0.9975 or more. A broken text encoder
+# scores far lower; token rows shifted by one score 0.27 to 0.56.
 MIN_TEXT_COSINE = 0.99
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
