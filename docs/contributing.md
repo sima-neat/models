@@ -31,6 +31,7 @@ models/<model-id>/README.md
 models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, performance
 models/<model-id>/scripts/compile.py
 models/<model-id>/scripts/performance.py
+models/<model-id>/scripts/requirements-performance.txt # optional, with performance.py
 models/<model-id>/scripts/accuracy.py               # only with an accuracy declaration
 models/<model-id>/scripts/requirements-accuracy.txt # optional, with accuracy.py
 models/<model-id>/scripts/convert.py                # only with a declared conversion

@@ -294,6 +294,11 @@ def test_validation_rejects_a_resource_outside_the_source_policy(command: str, m
     assert "resource runtime: source policy" in capsys.readouterr().err
 
 
+def test_fetch_resources_prints_nothing_for_a_model_without_resources(capsys, tmp_path: Path) -> None:
+    assert main(["fetch-resources", str(ROOT / "models" / "resnet_50"), "--output-dir", str(tmp_path / "out")]) == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_matrix_emits_workflow_json(capsys) -> None:
     result = main(["matrix", "--repository", str(ROOT), "--models", "resnet_50", "--compiler-version", "fixture"])
     assert result == 0

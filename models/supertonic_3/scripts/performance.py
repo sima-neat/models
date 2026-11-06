@@ -1,23 +1,33 @@
 """Benchmark Supertonic 3 with Neat Core and save its report.
 
-Given --mpk vector_estimator=<path> --mpk vocoder=<path>, the script measures what the accelerator does for
-one sentence at the longest length the model takes: eight denoising steps of the vector estimator, with the
-classifier-free guidance and Euler update on the CPU between them, then the vocoder. A batch-2 vector
-estimator runs both guidance branches of a step in one call; a batch-1 one runs them as two calls. Each
-sentence depends on its own previous step, so sentences run one after another and throughput is sentences
-per second. It also records each MPK's MLA layer and stage stats and its execution plan.
+Given --mpk vector_estimator=<path> --mpk vocoder=<path> and --resources <path>, the script measures one
+sentence at the longest length the model takes: the duration predictor and text encoder on the CPU, eight
+denoising steps of the vector estimator, with the classifier-free guidance and Euler update on the CPU between
+them, then the vocoder. A batch-2 vector estimator runs both guidance branches of a step in one call; a batch-1
+one runs them as two calls. Each sentence depends on its own previous step, so sentences run one after another
+and throughput is sentences per second. It also records each MPK's MLA layer and stage stats and its execution
+plan.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import time
 from pathlib import Path
 
 import model_report
 import numpy as np
+import onnxruntime as ort
 import pyneat
 
+# A fixed sentence as long as the text limit allows, in its language tag.
+SENTENCE = (
+    "<en>The morning train to the coast leaves at seven, stops at every small town along the river, and reaches "
+    "the harbor just before noon, when the fishing boats return and the market opens.</en>"
+)
+VOICE = "F1"
 STEPS = 8
 LATENT_LENGTH = 192
 # Public HWC shapes of the vector estimator's inputs, in compiled order, and of its output.
@@ -77,10 +87,17 @@ def build_runner(model: pyneat.Model, seeds: list[np.ndarray]) -> pyneat.ModelRu
     return model.build([tensor(seed) for seed in seeds], run_options=run_options)
 
 
-class Sentence:
-    """One full-length sentence's accelerator work, with seeded synthetic inputs."""
+def cpu_session(path: Path) -> ort.InferenceSession:
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = min(8, os.cpu_count() or 1)
+    options.inter_op_num_threads = 1
+    return ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
 
-    def __init__(self, models: dict[str, pyneat.Model]) -> None:
+
+class Sentence:
+    """One full-length sentence: the fixed text through the CPU graphs, then seeded synthetic accelerator inputs."""
+
+    def __init__(self, models: dict[str, pyneat.Model], resources: Path) -> None:
         rng = np.random.default_rng(1101)
         self.batch = int(models["vector_estimator"].compiled_batch_size())
         if self.batch not in (1, 2):
@@ -93,6 +110,22 @@ class Sentence:
         for branch in self.branches:
             branch["latent_mask"].fill(1.0)
             branch["text_mask"].fill(1.0)
+        supertone = resources / "supertonic-3"
+        indexer = json.loads((supertone / "onnx/unicode_indexer.json").read_text(encoding="utf-8"))
+        voice = json.loads((supertone / f"voice_styles/{VOICE}.json").read_text(encoding="utf-8"))
+        style_ttl, style_dp = (
+            np.asarray(voice[name]["data"], dtype=np.float32).reshape(voice[name]["dims"])
+            for name in ("style_ttl", "style_dp")
+        )
+        text_ids = np.asarray([[indexer[ord(character)] for character in SENTENCE]], dtype=np.int64)
+        if text_ids.shape[1] > LATENT_LENGTH:
+            raise SystemExit(f"the sentence has {text_ids.shape[1]} characters; the limit is {LATENT_LENGTH}")
+        text_mask = np.ones((1, 1, text_ids.shape[1]), dtype=np.float32)
+        self.duration_inputs = {"text_ids": text_ids, "style_dp": style_dp, "text_mask": text_mask}
+        self.text_inputs = {"text_ids": text_ids, "style_ttl": style_ttl, "text_mask": text_mask}
+        self.duration = cpu_session(supertone / "onnx/duration_predictor.onnx")
+        self.text = cpu_session(supertone / "onnx/text_encoder.onnx")
+        self.branches[0]["style_ttl"] = style_ttl
         self.latent = rng.standard_normal(LATENT, dtype=np.float32)
         self.vector = build_runner(models["vector_estimator"], self._vector_inputs(self.latent, 0)[0])
         self.vocoder = build_runner(models["vocoder"], [self.latent])
@@ -108,7 +141,15 @@ class Sentence:
             return [[np.stack(pair) for pair in zip(*calls, strict=True)]]
         return calls
 
+    def _front_end(self) -> None:
+        """The CPU graphs. The compiled length is fixed, so the predicted duration changes no later work."""
+        self.duration.run(None, self.duration_inputs)
+        text_emb = self.text.run(None, self.text_inputs)[0].transpose(0, 2, 1)
+        self.branches[0]["text_emb"] = np.zeros(VECTOR_INPUTS["text_emb"], dtype=np.float32)
+        self.branches[0]["text_emb"][:, :text_emb.shape[1]] = text_emb
+
     def run(self) -> None:
+        self._front_end()
         latent = self.latent
         for step in range(STEPS):
             velocities = []
@@ -143,12 +184,12 @@ def measure(sentence: Sentence) -> tuple[list[float], float, pyneat.Telemetry]:
     return seconds, span, telemetry
 
 
-def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
+def benchmark_pipeline(mpks: dict[str, Path], resources: Path, output: Path) -> None:
     mla_layer_stats, mla_stage_stats = {}, {}
     for name, mpk in mpks.items():
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
     models = {name: pyneat.Model(str(mpk)) for name, mpk in mpks.items()}
-    sentence = Sentence(models)
+    sentence = Sentence(models, resources)
     try:
         latencies, span, telemetry = measure(sentence)
     finally:
@@ -166,8 +207,9 @@ def benchmark_pipeline(mpks: dict[str, Path], output: Path) -> None:
         benchmark,
         models,
         workload=(
-            f"One {LATENT_LENGTH}-frame sentence: {STEPS} vector-estimator steps of {calls} each with guidance and "
-            "the Euler update on the CPU, then the vocoder; throughput is sentences per second"
+            f"One {LATENT_LENGTH}-frame sentence: the duration predictor and text encoder on the CPU, {STEPS} "
+            f"vector-estimator steps of {calls} each with guidance and the Euler update on the CPU, then the "
+            "vocoder; throughput is sentences per second"
         ),
         telemetry=telemetry,
         mla_layer_stats=mla_layer_stats,
@@ -188,9 +230,10 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
+    parser.add_argument("--resources", required=True, help="directory holding the package's supertonic-3 folder")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
-    benchmark_pipeline(parse_mpks(args.mpk), Path(args.output))
+    benchmark_pipeline(parse_mpks(args.mpk), Path(args.resources), Path(args.output))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from .errors import ValidationError
 BENCHMARK_STAGES = ("performance", "accuracy")
 SCRIPTS = {"performance": "scripts/performance.py", "accuracy": "scripts/accuracy.py"}
 ACCURACY_REQUIREMENTS = "scripts/requirements-accuracy.txt"
+PERFORMANCE_REQUIREMENTS = "scripts/requirements-performance.txt"
 DATASET_REQUIREMENTS_DIR = "datasets"
 DATASET_REQUIREMENTS_SCHEMA = "schemas/dataset-requirements.schema.json"
 

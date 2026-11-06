@@ -408,6 +408,7 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
 

@@ -79,6 +79,20 @@ def validate_package_resources(model: dict[str, Any]) -> None:
             )
 
 
+def fetch_package_resources(model: dict[str, Any], output_dir: Path, cache_dir: Path | None = None) -> Path | None:
+    """Lay out the model's resources as its package installs them; None for a model without resources."""
+    resources = package_resources(model)
+    if not resources:
+        return None
+    fetcher = Fetcher(cache_dir)
+    for resource in resources:
+        for name, path in _resource_files(fetcher, resource)[1]:
+            destination = output_dir / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+    return output_dir
+
+
 def _runtime_files(profile_dir: Path) -> list[tuple[str, Path]]:
     """Files the compile recipe declared beside its MPKs in compile-outputs.json, such as runtime tables."""
     manifest_file = profile_dir / "compile-outputs.json"

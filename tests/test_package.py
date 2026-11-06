@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 from model_registry import package as package_module
 from model_registry.errors import ValidationError
-from model_registry.package import assemble_available_packages, assemble_package, validate_package_resources
+from model_registry.package import (
+    assemble_available_packages,
+    assemble_package,
+    fetch_package_resources,
+    validate_package_resources,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
@@ -216,6 +221,20 @@ def _declare_runtime_file(compiled: Path, name: str, payload: bytes) -> None:
     (profile_dir / "compile-outputs.json").write_text(json.dumps({
         "runtime_files": [{"path": name, "sha256": hashlib.sha256(payload).hexdigest()}],
     }), encoding="utf-8")
+
+
+def test_fetched_resources_are_laid_out_as_the_package_installs_them(monkeypatch, tmp_path: Path) -> None:
+    _model_with_resource(monkeypatch, tmp_path, "runtime")
+    model = package_module.load_and_validate_model()
+
+    assert fetch_package_resources(model, tmp_path / "out") == tmp_path / "out"
+    assert (tmp_path / "out" / "runtime" / "config.json").read_bytes() == b'{"fixture":true}\n'
+    assert (tmp_path / "out" / "runtime" / "voices" / "a.json").read_bytes() == b"[1, 2]\n"
+
+
+def test_a_model_without_resources_fetches_none(tmp_path: Path) -> None:
+    assert fetch_package_resources({"id": "resnet_50"}, tmp_path / "out") is None
+    assert not (tmp_path / "out").exists()
 
 
 @pytest.mark.parametrize(("source", "message"), (

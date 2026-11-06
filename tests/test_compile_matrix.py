@@ -534,6 +534,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     "relative",
     [
         "scripts/performance.py",
+        "scripts/requirements-performance.txt",
         "scripts/accuracy.py",
         "scripts/requirements-accuracy.txt",
         "scripts/convert.py",

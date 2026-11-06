@@ -82,6 +82,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     fetch.add_argument("--component", help="component ID; optional when the model contains one component")
     fetch.add_argument("--json", action="store_true", dest="json_output")
 
+    resources = subcommands.add_parser(
+        "fetch-resources", help="download a model's pinned resources, laid out as its package installs them"
+    )
+    resources.add_argument("model_dir", type=Path)
+    resources.add_argument("--output-dir", type=Path, required=True)
+    resources.add_argument("--cache-dir", type=Path)
+
     calibration = subcommands.add_parser(
         "fetch-calibration", help="download and verify a model's immutable calibration snapshot"
     )
@@ -444,6 +451,16 @@ def _selected_component(model: dict[str, object], component_id: str | None) -> d
             raise ModelRegistryError("--component is required when the model contains multiple components")
         return components[0]
     return component_for(model, component_id)
+
+
+def _fetch_resources(args: argparse.Namespace) -> int:
+    from .package import fetch_package_resources
+
+    model = load_and_validate_model(args.model_dir)
+    output = fetch_package_resources(model, args.output_dir.expanduser().resolve(), args.cache_dir)
+    if output is not None:
+        print(output)
+    return 0
 
 
 def _fetch(args: argparse.Namespace) -> int:
@@ -942,6 +959,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "fetch":
             return _fetch(args)
+        if args.command == "fetch-resources":
+            return _fetch_resources(args)
         if args.command == "fetch-calibration":
             return _fetch_calibration(args)
         if args.command == "fetch-fidelity-dataset":

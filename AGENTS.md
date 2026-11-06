@@ -46,7 +46,7 @@ tooling list in `fingerprints.py`.
 |---|---|---|---|
 | compile (ONNX) | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | Model Compiler | `scripts/compile.sh` | `scripts/run_llima_compilation.sh` |
-| performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
+| performance | DevKit | `scripts/performance.py` + `requirements-performance.txt` | `scripts/run_model_performance.sh` |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` |
 
 `compile_fingerprint` and `benchmark_fingerprint` in
@@ -95,7 +95,8 @@ also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and bench
 script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
 timed. A stereo model benchmarks one dataset pair as a side-by-side frame instead.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
-accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
+accuracy measures. A model with `resources` also takes `--resources <directory>`,
+laid out as its package installs them. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`
 and `accuracy.py` write `model-report.json` with `model_report.from_performance()`

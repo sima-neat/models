@@ -4,4 +4,4 @@ performance:
   run_tests: true
   expected:
     w8a16_w16a16:
-      throughput_fps: 5.59
+      throughput_fps: 3.65
