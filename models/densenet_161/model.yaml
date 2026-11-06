@@ -30,10 +30,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/densenet_161/02c808cf10968376808a811d4a1b0b572c555ddddc037e240e3f177b16aee860/41593169006-1/model.onnx
-    sha256: 02c808cf10968376808a811d4a1b0b572c555ddddc037e240e3f177b16aee860
-    size_bytes: 115684121
+  source: conversion
 
 calibrations:
 - id: imagenet-2012-cal
