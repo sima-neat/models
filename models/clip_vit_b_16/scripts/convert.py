@@ -6,15 +6,22 @@ board scores ImageNet without a tokenizer. The text encoder takes token embeddin
 data-dependent gather the MLA cannot run; the CPU looks them up and takes the row at the end-of-text token. Its
 causal mask uses -1e4 instead of float32's minimum: softmax gives exactly 0 there either way, and -1e4 stays finite in
 BF16. The export also returns fixed token embeddings for 64 prompts, which calibrate and check the text encoder.
+
+With --text-probe <converted ONNX>, the script converts nothing, and it refuses any ONNX but the one compilation.source
+pins in model.yaml. It writes text_probe.npz, accuracy.py's check of the text encoder, into --output-dir:
+TEXT_PROBE_PROMPTS, their token IDs padded to 77 with the end-of-text token, only the rows of the checkpoint's token
+embedding table those IDs use, and that ONNX's FP32 end-of-text row for each prompt. Copy the file to scripts/ and its
+SHA-256 to TEXT_PROBE_SHA256 in accuracy.py.
 """
 
 import argparse
 import json
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import onnx
-from model_registry.fetch import Fetcher
+from model_registry.fetch import Fetcher, sha256_file
 from model_registry.model import load_and_validate_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -227,6 +234,9 @@ TEMPLATES = (
     "graffiti of the {}.", "a toy {}.", "itap of my {}.", "a photo of a cool {}.",
     "a photo of a small {}.", "a tattoo of the {}.",
 )
+# accuracy.py's check of the text encoder: OpenAI's "a photo of a {}." template on every 125th class. The text
+# encoder calibrates on none of these prompts.
+TEXT_PROBE_PROMPTS = tuple(f"a photo of a {CLASS_NAMES[index]}." for index in range(0, CLASS_COUNT, 125))
 
 
 def validate_source(source):
@@ -362,18 +372,68 @@ def convert(source, output_dir):
     return output
 
 
+def write_text_probe(source, converted, output_dir):
+    import onnxruntime as ort
+    import torch
+    from transformers import CLIPProcessor
+
+    validate_config(source.parent)
+    validate_export(converted)
+    tokenizer = CLIPProcessor.from_pretrained(source.parent, local_files_only=True).tokenizer
+    token_ids = tokenizer(list(TEXT_PROBE_PROMPTS), padding="max_length", max_length=TEXT_LENGTH, truncation=True,
+                          return_tensors="np")["input_ids"]
+    table = torch.load(source, map_location="cpu", weights_only=True)["text_model.embeddings.token_embedding.weight"]
+    table = table.numpy()
+    session = ort.InferenceSession(str(converted), providers=["CPUExecutionProvider"])
+    pixel_values = np.zeros(INTERFACE["pixel_values"], dtype=np.float32)
+    text_embeds = []
+    for ids in token_ids:
+        (rows,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": table[ids][None]})
+        # The end-of-text token has the highest id in CLIP's vocabulary.
+        text_embeds.append(rows[0, ids.argmax()])
+    row_ids = np.unique(token_ids)
+    arrays = {
+        "prompts": np.asarray(TEXT_PROBE_PROMPTS),
+        "token_ids": token_ids.astype(np.int32),
+        "row_ids": row_ids.astype(np.int32),
+        "rows": table[row_ids],
+        "text_embeds": np.stack(text_embeds),
+    }
+    output_dir.mkdir(parents=True, exist_ok=False)
+    output = output_dir / "text_probe.npz"
+    # zipfile dates each member 1980-01-01, so the same arrays give the same bytes. np.savez does too, but it adds
+    # ZIP64 fields, so its bytes differ from the file TEXT_PROBE_SHA256 pins.
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, array in arrays.items():
+            with archive.open(zipfile.ZipInfo(f"{name}.npy"), "w") as stream:
+                np.lib.format.write_array(stream, array, allow_pickle=False)
+    print(f"Text probe written: {output}")
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--conversion", default="default", help="conversion entry in model.yaml")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--text-probe", type=Path, metavar="ONNX",
+                        help="write text_probe.npz for the pinned ONNX into --output-dir instead of converting")
     args = parser.parse_args()
-    conversions = load_and_validate_model(MODEL_DIR).get("conversion", {})
+    model = load_and_validate_model(MODEL_DIR)
+    conversions = model.get("conversion", {})
     if args.conversion not in conversions:
         parser.error(f"unknown conversion {args.conversion!r}; model.yaml declares: {', '.join(sorted(conversions))}")
+    # Both components compile from the one pinned ONNX; the probe's FP32 rows must come from it.
+    pinned = model["components"][0]["source"]
+    if args.text_probe and sha256_file(args.text_probe) != (pinned["sha256"], pinned["size_bytes"]):
+        parser.error(f"--text-probe takes the ONNX compilation.source pins: SHA-256 {pinned['sha256']}, "
+                     f"{pinned['size_bytes']} bytes")
     source = conversions[args.conversion]["source"]
     validate_source(source)
     path, *_ = Fetcher().fetch_source(source)
-    convert(path, args.output_dir.resolve())
+    if args.text_probe:
+        write_text_probe(path, args.text_probe.resolve(), args.output_dir.resolve())
+    else:
+        convert(path, args.output_dir.resolve())
 
 
 if __name__ == "__main__":

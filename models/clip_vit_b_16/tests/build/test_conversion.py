@@ -1,9 +1,10 @@
 """Checks of the conversion's fixed interface, its source and prompt tables, and the converted ONNX."""
 
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import onnx
@@ -24,6 +25,54 @@ def test_prompt_tables_are_openais_imagenet_classes_and_templates(converter: Mod
     assert (converter.CLASS_NAMES[0], converter.CLASS_NAMES[-1]) == ("tench", "toilet paper")
     assert len(converter.TEMPLATES) == 80
     assert all(template.count("{}") == 1 for template in converter.TEMPLATES)
+
+
+def _text_probe() -> dict[str, np.ndarray]:
+    with np.load(ROOT / "models/clip_vit_b_16/scripts/text_probe.npz") as saved:
+        return {name: saved[name] for name in saved.files}
+
+
+def test_the_text_probe_holds_the_prompts_convert_writes(converter: ModuleType):
+    assert "a photo of a {}." in converter.TEMPLATES
+    assert _text_probe()["prompts"].tolist() == list(converter.TEXT_PROBE_PROMPTS)
+
+
+def test_the_text_probe_matches_the_converted_onnx(converted: Path, converter: ModuleType):
+    import onnxruntime as ort
+
+    probe = _text_probe()
+    table = dict(zip(probe["row_ids"].tolist(), probe["rows"]))
+    session = ort.InferenceSession(str(converted), providers=["CPUExecutionProvider"])
+    pixel_values = np.zeros(converter.INTERFACE["pixel_values"], dtype=np.float32)
+    for ids, expected in zip(probe["token_ids"], probe["text_embeds"]):
+        token_embeds = np.stack([table[token] for token in ids.tolist()])[None]
+        (text_embeds,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": token_embeds})
+        np.testing.assert_allclose(text_embeds[0, ids.argmax()], expected, rtol=1e-4, atol=1e-4)
+
+
+def test_the_text_probe_takes_only_the_pinned_onnx(tmp_path, monkeypatch, capsys, converter: ModuleType):
+    content = b"another ONNX"
+    onnx_path, checkpoint, output = tmp_path / "model.onnx", tmp_path / "pytorch_model.bin", tmp_path / "probe"
+    onnx_path.write_bytes(content)
+    written = []
+    # Nothing downloads, and the probe writer only records what it is given.
+    monkeypatch.setattr(converter, "Fetcher", lambda: SimpleNamespace(fetch_source=lambda source: (checkpoint,)))
+    monkeypatch.setattr(converter, "write_text_probe", lambda *arguments: written.append(arguments))
+    monkeypatch.setattr("sys.argv", ["convert.py", "--output-dir", str(output), "--text-probe", str(onnx_path)])
+
+    with pytest.raises(SystemExit) as stopped:
+        converter.main()
+    assert stopped.value.code == 2 and written == []
+    assert "--text-probe takes the ONNX compilation.source pins: SHA-256 0ee2db88" in capsys.readouterr().err
+    # Pinned with its size but another SHA-256, the file is refused too; pinned with its own, it passes.
+    model = converter.load_and_validate_model(converter.MODEL_DIR)
+    monkeypatch.setattr(converter, "load_and_validate_model", lambda directory: model)
+    model["components"][0]["source"].update(sha256="0" * 64, size_bytes=len(content))
+    with pytest.raises(SystemExit):
+        converter.main()
+    model["components"][0]["source"].update(sha256=hashlib.sha256(content).hexdigest())
+    converter.main()
+    assert written == [(checkpoint, onnx_path.resolve(), output.resolve())]
 
 
 def _interface_model(converter: ModuleType, case: str) -> onnx.ModelProto:
