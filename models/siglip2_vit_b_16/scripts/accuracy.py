@@ -36,8 +36,9 @@ TIMEOUT_MS = 120000
 # file needs a new value here, which reruns the stage.
 TEXT_CHECK = Path(__file__).with_name("text_encoder_check.npz")
 TEXT_CHECK_SHA256 = "273bfe20216fb3c1ef681f453335b37b066f687744dec2893154384e3c1305e5"
-# BF16 keeps the text embeddings within rounding of the ONNX's (the compile's fidelity cosine is 0.9999); a missing,
-# corrupt or mismatched text encoder falls far below.
+# BF16 activations keep the text embeddings close to the ONNX's: on every check prompt on a DevKit, the w16a16 build
+# scores 0.9999 or more and the w8a16 build, with INT8 weights, 0.995 or more. A missing, corrupt or mismatched text
+# encoder falls far below.
 MIN_TEXT_COSINE = 0.99
 
 
