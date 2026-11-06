@@ -6,6 +6,12 @@ model's logit scale, plus its logit bias, so the board scores ImageNet without a
 token embeddings, because looking tokens up in the 256,000-token vocabulary is a data-dependent gather the MLA cannot
 run; the CPU looks them up. It returns the pooled text embedding, which SigLIP takes from the last of its 64 tokens.
 The export also returns fixed token embeddings for 64 prompts, which calibrate and check the text encoder.
+
+With --text-check <file>, the script writes the accuracy stage's text-encoder check instead: 7 more prompts, one per
+template, with their token IDs, the checkpoint's token embedding rows for those IDs, and each prompt's FP32 text
+embedding from the pinned converted ONNX (compilation.source in model.yaml). accuracy.py looks the rows up as an
+application does, runs the text encoder's MPK on each prompt, and compares its embeddings with these. A new file needs
+its SHA-256, which the script prints, in TEXT_CHECK_SHA256 in accuracy.py.
 """
 
 import argparse
@@ -14,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
-from model_registry.fetch import Fetcher
+from model_registry.fetch import Fetcher, sha256_file
 from model_registry.model import load_and_validate_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -207,6 +213,11 @@ TEMPLATES = (
     "itap of a {}.", "a bad photo of the {}.", "a origami {}.", "a photo of the large {}.", "a {} in a video game.",
     "art of the {}.", "a photo of the small {}.",
 )
+# The text-encoder check's classes, one per template: ImageNet classes the 64 embedded prompts leave out, each named by
+# one token, so the check file stores few token embedding rows.
+CHECK_CLASSES = (1, 107, 291, 340, 879, 963, 980)
+# The checkpoint's token embedding table, which the CPU looks token IDs up in.
+TOKEN_EMBEDDING = "text_model.embeddings.token_embedding.weight"
 
 
 def validate_source(source):
@@ -255,6 +266,74 @@ def prompts(class_names, templates):
     return [template.format(name).lower() for name in class_names for template in templates]
 
 
+def calibration_prompts():
+    """The 64 prompts the export embeds: the templates in turn, with classes spread over the 1,000."""
+    return [
+        TEMPLATES[index % len(TEMPLATES)].format(CLASS_NAMES[index * CLASS_COUNT // CALIBRATION_PROMPTS]).lower()
+        for index in range(CALIBRATION_PROMPTS)
+    ]
+
+
+def check_prompts():
+    """The text-encoder check's prompts: each template once, with the class CHECK_CLASSES gives it."""
+    pairs = zip(TEMPLATES, CHECK_CLASSES, strict=True)
+    return [template.format(CLASS_NAMES[index]).lower() for template, index in pairs]
+
+
+def write_text_check(checkpoint, onnx_path, output):
+    """Write the text-encoder check: each check prompt's token IDs, the token embedding rows they use, and each
+    prompt's text embedding from the FP32 ONNX."""
+    import onnxruntime as ort
+    from safetensors import safe_open
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint.parent, local_files_only=True)
+
+    def token_ids(texts):
+        # Padded to the end to 64 tokens, as convert() tokenizes.
+        return np.asarray(
+            tokenizer(texts, padding="max_length", max_length=TEXT_LENGTH, truncation=True)["input_ids"], np.int32
+        )
+
+    texts = check_prompts()
+    check_ids, calibration_ids = token_ids(texts), token_ids(calibration_prompts())
+    with safe_open(checkpoint, framework="np") as weights:
+        table = weights.get_slice(TOKEN_EMBEDDING)
+        needed = np.unique(np.concatenate([check_ids, calibration_ids])).tolist()
+        rows = {token: table[token : token + 1][0] for token in needed}
+
+    def lookup(ids):
+        return np.stack([rows[token] for token in ids.tolist()])
+
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    pixel_values = np.zeros(INTERFACE["pixel_values"], np.float32)
+
+    def text_embeds(token_embeds):
+        (embeds,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": token_embeds[None]})
+        return embeds[0]
+
+    # The ONNX holds the token embeddings convert() looked up for its calibration prompts; this tokenizer and lookup
+    # must reproduce them exactly.
+    (embedded,) = session.run(
+        ["calibration_token_embeds"],
+        {"pixel_values": pixel_values, "token_embeds": np.zeros(INTERFACE["token_embeds"], np.float32)},
+    )
+    np.testing.assert_array_equal(np.stack([lookup(ids) for ids in calibration_ids]), embedded,
+                                  err_msg="this tokenizer and lookup differ from the conversion's")
+    row_ids = np.unique(check_ids)
+    # Given an open file, np.savez keeps the output's name; it dates every entry 1980-01-01, so the same arrays give
+    # the same bytes.
+    with open(output, "wb") as stream:
+        np.savez(
+            stream,
+            prompts=np.asarray(texts),
+            token_ids=check_ids,
+            row_ids=row_ids,
+            rows=lookup(row_ids),
+            text_embeds=np.stack([text_embeds(lookup(ids)) for ids in check_ids]),
+        )
+
+
 def convert(source, output_dir):
     import onnxruntime as ort
     import torch
@@ -289,10 +368,7 @@ def convert(source, output_dir):
         features = torch.nn.functional.normalize(features, dim=-1).reshape(CLASS_COUNT, len(TEMPLATES), EMBED_DIM)
         class_embeds = torch.nn.functional.normalize(features.mean(1), dim=-1)
         class_weights = class_embeds.T * siglip.logit_scale.exp()
-        calibration_ids = tokens(
-            TEMPLATES[index % len(TEMPLATES)].format(CLASS_NAMES[index * CLASS_COUNT // CALIBRATION_PROMPTS]).lower()
-            for index in range(CALIBRATION_PROMPTS)
-        )
+        calibration_ids = tokens(calibration_prompts())
         calibration_embeds = siglip.text_model.embeddings.token_embedding(calibration_ids)
 
     class SigLIP(torch.nn.Module):
@@ -343,15 +419,24 @@ def convert(source, output_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--conversion", default="default", help="conversion entry in model.yaml")
-    parser.add_argument("--output-dir", type=Path, required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--output-dir", type=Path)
+    target.add_argument("--text-check", type=Path, help="write the accuracy stage's text-encoder check to this file")
     args = parser.parse_args()
-    conversions = load_and_validate_model(MODEL_DIR).get("conversion", {})
+    model = load_and_validate_model(MODEL_DIR)
+    conversions = model.get("conversion", {})
     if args.conversion not in conversions:
         parser.error(f"unknown conversion {args.conversion!r}; model.yaml declares: {', '.join(sorted(conversions))}")
     source = conversions[args.conversion]["source"]
     validate_source(source)
     path, *_ = Fetcher().fetch_source(source)
-    convert(path, args.output_dir.resolve())
+    if args.output_dir:
+        convert(path, args.output_dir.resolve())
+    else:
+        # Both components compile from the one pinned ONNX.
+        onnx_path, *_ = Fetcher().fetch_source(model["components"][0]["source"])
+        write_text_check(path, onnx_path, args.text_check.resolve())
+        print(f"Wrote {args.text_check}; set TEXT_CHECK_SHA256 in accuracy.py to {sha256_file(args.text_check)[0]}")
 
 
 if __name__ == "__main__":

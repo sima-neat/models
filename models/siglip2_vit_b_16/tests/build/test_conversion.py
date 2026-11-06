@@ -12,6 +12,7 @@ import pytest
 from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
+TEXT_CHECK = ROOT / "models/siglip2_vit_b_16/scripts/text_encoder_check.npz"
 
 
 @pytest.fixture
@@ -30,6 +31,19 @@ def test_prompts_are_lowercased_class_by_class(converter: ModuleType):
     assert converter.prompts(["American robin", "tench"], ["a photo of a {}.", "art of the {}."]) == [
         "a photo of a american robin.", "art of the american robin.", "a photo of a tench.", "art of the tench."
     ]
+
+
+def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompts_leave_out(converter: ModuleType):
+    embedded = converter.calibration_prompts()
+    assert len(embedded) == converter.CALIBRATION_PROMPTS
+    assert embedded[:2] == ["itap of a tench.", "a bad photo of the american robin."]
+    check = converter.check_prompts()
+    assert len(check) == len(converter.TEMPLATES) and check[0] == "itap of a goldfish."
+    assert not set(check) & set(embedded)
+    embedded_classes = {index * converter.CLASS_COUNT // len(embedded) for index in range(len(embedded))}
+    assert not embedded_classes & set(converter.CHECK_CLASSES)
+    with np.load(TEXT_CHECK, allow_pickle=False) as saved:
+        assert saved["prompts"].tolist() == check, "the stored check holds these prompts"
 
 
 def _interface_model(converter: ModuleType, case: str) -> onnx.ModelProto:
