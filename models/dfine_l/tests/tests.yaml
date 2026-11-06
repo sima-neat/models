@@ -1,0 +1,60 @@
+# Initial local native baselines: full COCO val2017 and median FPS from five
+# independent performance runs per profile. CI republishes measured reports.
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      coco-2017-val:
+        coco_map: 0.5140678022764119
+        coco_ap50: 0.7062016191892552
+        coco_ap75: 0.553868461332358
+        coco_ap_small: 0.3156611463417567
+        coco_ap_medium: 0.559282782592006
+        coco_ap_large: 0.7118061462092516
+        coco_ar1: 0.3808317633773963
+        coco_ar10: 0.6383045105371249
+        coco_ar100: 0.7040704652326287
+        coco_ar_small: 0.5095742884073053
+        coco_ar_medium: 0.7574722119842306
+        coco_ar_large: 0.8875382694501299
+    w8a8_w16a16:
+      coco-2017-val:
+        coco_map: 0.5139658486692715
+        coco_ap50: 0.7065366575943697
+        coco_ap75: 0.5541858273961169
+        coco_ap_small: 0.31897491488453994
+        coco_ap_medium: 0.5631749984396232
+        coco_ap_large: 0.7117612971503069
+        coco_ar1: 0.38152526731229613
+        coco_ar10: 0.6388619283194124
+        coco_ar100: 0.7053417405619983
+        coco_ar_small: 0.5189116832552487
+        coco_ar_medium: 0.7587637863331619
+        coco_ar_large: 0.8901714318917737
+    w16a16_w16a16:
+      coco-2017-val:
+        coco_map: 0.5166064008815924
+        coco_ap50: 0.7086560088630344
+        coco_ap75: 0.5565964143110783
+        coco_ap_small: 0.3233244267770162
+        coco_ap_medium: 0.5625374779570173
+        coco_ap_large: 0.7137272568394728
+        coco_ar1: 0.3819470938289769
+        coco_ar10: 0.6403250263769741
+        coco_ar100: 0.705348313442022
+        coco_ar_small: 0.5217275579405738
+        coco_ar_medium: 0.7586308195099393
+        coco_ar_large: 0.8927058384649333
+performance:
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      throughput_fps: 21.04364530768153
+    w8a8_w16a16:
+      throughput_fps: 24.356197457213664
+    w16a16_w16a16:
+      throughput_fps: 20.00185899343938
