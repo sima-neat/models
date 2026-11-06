@@ -27,17 +27,30 @@ def test_mpk_arguments_name_exactly_both_encoders(load_script: Callable[[str], M
         script.parse_mpks(["image_encoder=/data/image_mpk.tar.gz"])
 
 
+def test_the_cpu_looks_the_probe_prompt_up_for_the_text_encoder(load_script: Callable[[str], ModuleType]) -> None:
+    script = load_script("performance")
+    prompt = script.load_prompt()
+
+    embeds = script.token_embeddings(prompt)
+    assert embeds.shape == (1, 77, 512)
+    for position, token in enumerate(prompt.token_ids):
+        np.testing.assert_array_equal(embeds[0, position], prompt.rows[token])
+    # "a photo of a tench." is the start token, seven tokens, then the first end-of-text token at row 8.
+    assert prompt.end == 8
+    assert prompt.token_ids[prompt.end] == max(prompt.token_ids)
+
+
 def test_the_cpu_step_scores_the_image_against_the_end_of_text_row(load_script: Callable[[str], ModuleType]) -> None:
     script = load_script("performance")
     image = np.zeros(512, np.float32)
     image[0] = 2.0
     text = np.zeros((1, 77, 512), np.float32)
-    text[0, script.TEXT_END, :2] = [1.0, 1.0]
+    text[0, 8, :2] = [1.0, 1.0]
     text[0, 0, 0] = -5.0
 
     embedding = script.image_embedding([_Tensor(np.zeros((1, 1000), np.float32)), _Tensor(image[None])])
     np.testing.assert_array_equal(embedding, image)
-    assert script.similarity(embedding, [_Tensor(text)]) == pytest.approx(np.sqrt(0.5))
+    assert script.similarity(embedding, [_Tensor(text)], 8) == pytest.approx(np.sqrt(0.5))
 
 
 def test_performance_meets_its_expected_values(
