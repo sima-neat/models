@@ -2,15 +2,18 @@
 
 Given --mpk image_encoder=<path> --mpk text_encoder=<path> and --dataset imagenet-2012-val=<extracted directory>,
 the script measures the whole model on one image-text pair per frame: Neat's preprocessing and the image encoder on
-one ImageNet image in a 720p frame, the text encoder on a 64-token prompt, and their cosine similarity on the CPU,
-each stage working on a different frame at the same time. The package carries no tokenizer, so the prompt is a fixed
-tensor of token embeddings; the text encoder's time does not depend on their values. The script also records each
-MPK's MLA layer and stage stats and its execution plan.
+one ImageNet image in a 720p frame, the CPU's token embedding lookup and the text encoder on a 64-token prompt, and
+their cosine similarity on the CPU, each stage working on a different frame at the same time. The package carries no
+tokenizer, so the prompt comes tokenized: the first prompt of text_encoder_check.npz, the file accuracy.py checks the
+text encoder with, which holds its token IDs and the embedding rows they use. The script also records each MPK's MLA
+layer and stage stats and its execution plan.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import queue
 import random
 import threading
@@ -27,6 +30,10 @@ import pyneat
 IMAGE_SIZE = 224
 TEXT_SHAPE = (1, 64, 768)
 EMBED_DIM = 768
+# The prompt's token IDs and the embedding rows they use. The stage's fingerprint covers this script but not the check
+# file, so the script names the file's SHA-256.
+TEXT_CHECK = Path(__file__).with_name("text_encoder_check.npz")
+TEXT_CHECK_SHA256 = "273bfe20216fb3c1ef681f453335b37b066f687744dec2893154384e3c1305e5"
 # The image mean and std, from the checkpoint's preprocessor_config.json.
 MEAN = [0.5, 0.5, 0.5]
 STD = [0.5, 0.5, 0.5]
@@ -135,37 +142,60 @@ def frame_tensor(path: Path) -> pyneat.Tensor:
     )
 
 
-def prompt_tensor() -> pyneat.Tensor:
-    """A fixed 64-token prompt of token-embedding scale, reused for every frame.
+@dataclass(frozen=True)
+class Prompt:
+    """A tokenized prompt: its token IDs and the embedding rows they use."""
+
+    token_ids: list[int]
+    rows: dict[int, np.ndarray]
+
+
+def load_prompt(path: Path = TEXT_CHECK) -> Prompt:
+    """The first prompt of the text encoder check, from a file with the SHA-256 the script names."""
+    content = path.read_bytes()
+    if hashlib.sha256(content).hexdigest() != TEXT_CHECK_SHA256:
+        raise SystemExit(f"{path} does not have TEXT_CHECK_SHA256")
+    with np.load(io.BytesIO(content), allow_pickle=False) as check:
+        token_ids = check["token_ids"][0]
+        rows = dict(zip(check["row_ids"].tolist(), check["rows"]))
+    return Prompt(token_ids.tolist(), rows)
+
+
+def token_embeddings(prompt: Prompt) -> np.ndarray:
+    """The CPU step before the text encoder: each of the prompt's token IDs replaced by its embedding row."""
+    return np.stack([prompt.rows[token] for token in prompt.token_ids])[None]
+
+
+def look_up(prompt: Prompt) -> pyneat.Tensor:
+    """The prompt's token embeddings, looked up for every frame and placed in the memory the text encoder reads.
 
     Neat sizes the text input as height 1, width 64 and depth 768, so the tensor declares HWC axes; untagged, a 3-D
     tensor counts as CHW, and its width, 768, exceeds the input's 64.
     """
-    embeds = np.random.default_rng(0).normal(0.0, 0.02, TEXT_SHAPE).astype(np.float32)
     return pyneat.Tensor.from_numpy(
-        embeds, copy=True, memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC
+        token_embeddings(prompt), copy=True, memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC
     )
 
 
 def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor,
-                  prompt: pyneat.Tensor) -> tuple[pyneat.ModelRunner, pyneat.ModelRunner]:
+                  prompt: Prompt) -> tuple[pyneat.ModelRunner, pyneat.ModelRunner]:
     run_options = pyneat.RunOptions()
     run_options.queue_depth = QUEUE_DEPTH
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
     image_encoder = models["image_encoder"].build([image], run_options=run_options)
-    text_encoder = models["text_encoder"].build([prompt], run_options=run_options)
+    text_encoder = models["text_encoder"].build([look_up(prompt)], run_options=run_options)
     return image_encoder, text_encoder
 
 
 def infer_one(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-              prompt: pyneat.Tensor) -> None:
+              prompt: Prompt) -> None:
     embedding = image_embedding(image_encoder.run([image], timeout_ms=TIMEOUT_MS))
-    similarity(embedding, text_encoder.run([prompt], timeout_ms=TIMEOUT_MS))
+    similarity(embedding, text_encoder.run([look_up(prompt)], timeout_ms=TIMEOUT_MS))
 
 
 def measure_latency(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                    prompt: pyneat.Tensor) -> list[float]:
-    """Seconds per frame through all three stages with nothing else in flight, after the warm-up."""
+                    prompt: Prompt) -> list[float]:
+    """Seconds per frame through every stage with nothing else in flight, after the warm-up."""
     for _ in range(WARMUP_FRAMES):
         infer_one(image_encoder, text_encoder, image, prompt)
     seconds: list[float] = []
@@ -234,7 +264,7 @@ def run_together(*stages: Callable[[], None], runners: tuple[pyneat.ModelRunner,
 
 
 def measure_throughput(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                       prompt: pyneat.Tensor) -> Throughput:
+                       prompt: Prompt) -> Throughput:
     """Frames per second and board telemetry with every stage busy, each on a different frame. The measured span
     starts after WARMUP_FRAMES outputs and lasts at least MEASURED_FRAMES frames and MIN_DURATION_S seconds."""
     monitor = pyneat.TelemetryMonitor()
@@ -258,7 +288,7 @@ def measure_throughput(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.M
                 embeddings.put(image_embedding(outputs))
                 # The embedding is copied, so the image encoder gets its output buffers back.
                 del outputs
-                push(text_encoder, [prompt], "text encoder")
+                push(text_encoder, [look_up(prompt)], "text encoder")
                 pushed["text encoder"] += 1
         finally:
             text_encoder.close_input()
@@ -315,8 +345,8 @@ def write_report(
         models,
         workload=(
             f"{image} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-            f"{IMAGE_SIZE}x{IMAGE_SIZE}, image encoder, text encoder on a fixed {TEXT_SHAPE[1]}-token prompt, and "
-            f"cosine similarity on the CPU, pipelined {QUEUE_DEPTH} frames deep"
+            f"{IMAGE_SIZE}x{IMAGE_SIZE}, image encoder, token embedding lookup on the CPU and text encoder on a "
+            f"{TEXT_SHAPE[1]}-token prompt, and cosine similarity on the CPU, pipelined {QUEUE_DEPTH} frames deep"
         ),
         telemetry=throughput.telemetry,
         mla_layer_stats=mla_layer_stats,
@@ -338,7 +368,7 @@ def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
         "text_encoder": pyneat.Model(str(mpks["text_encoder"]), tensor_options()),
     }
     path = sample_image(dataset)
-    image, prompt = frame_tensor(path), prompt_tensor()
+    image, prompt = frame_tensor(path), load_prompt()
     image_encoder, text_encoder = build_runners(models, image, prompt)
     latencies = measure_latency(image_encoder, text_encoder, image, prompt)
     throughput = measure_throughput(image_encoder, text_encoder, image, prompt)

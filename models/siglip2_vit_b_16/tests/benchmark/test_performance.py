@@ -27,6 +27,16 @@ def test_mpk_arguments_name_exactly_both_encoders(load_script: Callable[[str], M
         script.parse_mpks(["image_encoder=/data/image_mpk.tar.gz"])
 
 
+def test_the_cpu_looks_the_check_prompt_up_for_the_text_encoder(load_script: Callable[[str], ModuleType]) -> None:
+    script = load_script("performance")
+    prompt = script.load_prompt()
+
+    embeds = script.token_embeddings(prompt)
+    assert embeds.shape == (1, 64, 768)
+    for position, token in enumerate(prompt.token_ids):
+        np.testing.assert_array_equal(embeds[0, position], prompt.rows[token])
+
+
 def test_the_cpu_step_scores_the_image_against_the_pooled_text(load_script: Callable[[str], ModuleType]) -> None:
     script = load_script("performance")
     image = np.zeros(768, np.float32)
