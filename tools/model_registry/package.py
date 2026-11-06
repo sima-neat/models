@@ -256,6 +256,9 @@ def assemble_package(
         if package_path in occupied_paths:
             raise ValidationError(f"package path is declared more than once: {package_path}")
         occupied_paths.add(package_path)
+    for package_path in sorted(occupied_paths):
+        if any(parent.as_posix() in occupied_paths for parent in PurePosixPath(package_path).parents):
+            raise ValidationError(f"package paths overlap: {package_path}")
     packaged_files = sorted((*component_files, *extra_files))
     installed_files = [
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}

@@ -291,6 +291,18 @@ def test_package_rejects_a_runtime_file_that_changed_after_the_compile(
         )
 
 
+def test_package_rejects_a_resource_installed_below_another_packaged_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compiled = _model_with_resource(monkeypatch, tmp_path, MPK_NAME)
+
+    with pytest.raises(ValidationError, match=f"package paths overlap: {MPK_NAME}/config.json"):
+        assemble_package(
+            repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages", model_id="resnet_50",
+            build_profile_id="w16a16", package_id="default",
+        )
+
+
 def test_package_rejects_a_runtime_file_that_collides_with_a_resource(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
