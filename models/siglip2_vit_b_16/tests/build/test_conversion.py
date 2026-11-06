@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import onnx
@@ -44,6 +44,50 @@ def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompt
     assert not embedded_classes & set(converter.CHECK_CLASSES)
     with np.load(TEXT_CHECK, allow_pickle=False) as saved:
         assert saved["prompts"].tolist() == check, "the stored check holds these prompts"
+
+
+def test_the_text_check_matches_the_converted_onnx(converted: Path, converter: ModuleType):
+    import onnxruntime as ort
+
+    with np.load(TEXT_CHECK, allow_pickle=False) as saved:
+        check = {name: saved[name] for name in saved.files}
+    rows = dict(zip(check["row_ids"].tolist(), check["rows"]))
+    session = ort.InferenceSession(str(converted), providers=["CPUExecutionProvider"])
+    pixel_values = np.zeros(converter.INTERFACE["pixel_values"], dtype=np.float32)
+    for ids, expected in zip(check["token_ids"], check["text_embeds"], strict=True):
+        token_embeds = np.stack([rows[token] for token in ids.tolist()])[None]
+        (text_embeds,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": token_embeds})
+        np.testing.assert_allclose(text_embeds[0], expected, rtol=1e-4, atol=1e-4)
+
+
+def test_the_text_check_embeds_with_the_given_onnx_and_downloads_only_the_checkpoint(
+    tmp_path, monkeypatch, capsys, converter: ModuleType
+):
+    onnx_path, checkpoint, output = tmp_path / "model.onnx", tmp_path / "model.safetensors", tmp_path / "check.npz"
+    fetched, written = [], []
+
+    def fetch_source(source):
+        fetched.append(source)
+        return (checkpoint,)
+
+    def write_text_check(*arguments):
+        written.append(arguments)
+        output.write_bytes(b"check")
+
+    # Nothing downloads, and the check writer records what it is given and leaves a file for main() to hash.
+    monkeypatch.setattr(converter, "Fetcher", lambda: SimpleNamespace(fetch_source=fetch_source))
+    monkeypatch.setattr(converter, "write_text_check", write_text_check)
+    for arguments in (["--text-check", str(output)], ["--output-dir", str(tmp_path), "--onnx", str(onnx_path)]):
+        monkeypatch.setattr("sys.argv", ["convert.py", *arguments])
+        with pytest.raises(SystemExit) as stopped:
+            converter.main()
+        assert stopped.value.code == 2 and "--text-check and --onnx go together" in capsys.readouterr().err
+    monkeypatch.setattr("sys.argv", ["convert.py", "--text-check", str(output), "--onnx", str(onnx_path)])
+    converter.main()
+    # Only the checkpoint downloads: the ONNX comes from --onnx, because compilation.source names no file once it is
+    # a conversion.
+    assert fetched == [load_metadata(ROOT / "models/siglip2_vit_b_16")["conversion"]["default"]["source"]]
+    assert written == [(checkpoint, onnx_path.resolve(), output.resolve())]
 
 
 def _interface_model(converter: ModuleType, case: str) -> onnx.ModelProto:

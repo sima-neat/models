@@ -7,11 +7,14 @@ token embeddings, because looking tokens up in the 256,000-token vocabulary is a
 run; the CPU looks them up. It returns the pooled text embedding, which SigLIP takes from the last of its 64 tokens.
 The export also returns fixed token embeddings for 64 prompts, which calibrate and check the text encoder.
 
-With --text-check <file>, the script writes the accuracy stage's text-encoder check instead: 7 more prompts, one per
-template, with their token IDs, the checkpoint's token embedding rows for those IDs, and each prompt's FP32 text
-embedding from the pinned converted ONNX (compilation.source in model.yaml). accuracy.py looks the rows up as an
-application does, runs the text encoder's MPK on each prompt, and compares its embeddings with these. A new file needs
-its SHA-256, which the script prints, in TEXT_CHECK_SHA256 in accuracy.py.
+With --text-check <file> --onnx <converted ONNX>, the script converts nothing. It writes the accuracy stage's
+text-encoder check to <file>: 7 more prompts, one per template, with their token IDs, the checkpoint's token embedding
+rows for those IDs, and each prompt's FP32 text embedding from the ONNX, the model.onnx a conversion wrote into
+--output-dir. accuracy.py looks the rows up as an application does, runs the text encoder's MPK on each prompt, and
+compares its embeddings with these. The conversion tests check that the converted ONNX reproduces the stored
+embeddings, so a conversion that disagrees with the file is not published. To change the file, convert, run
+--text-check on that model.onnx, and commit the file with its SHA-256, which the script prints, as TEXT_CHECK_SHA256
+in accuracy.py.
 """
 
 import argparse
@@ -422,7 +425,11 @@ def main():
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--output-dir", type=Path)
     target.add_argument("--text-check", type=Path, help="write the accuracy stage's text-encoder check to this file")
+    parser.add_argument("--onnx", type=Path, metavar="ONNX",
+                        help="with --text-check: the converted model.onnx whose text encoder embeds the check prompts")
     args = parser.parse_args()
+    if (args.text_check is None) != (args.onnx is None):
+        parser.error("--text-check and --onnx go together")
     model = load_and_validate_model(MODEL_DIR)
     conversions = model.get("conversion", {})
     if args.conversion not in conversions:
@@ -433,9 +440,7 @@ def main():
     if args.output_dir:
         convert(path, args.output_dir.resolve())
     else:
-        # Both components compile from the one pinned ONNX.
-        onnx_path, *_ = Fetcher().fetch_source(model["components"][0]["source"])
-        write_text_check(path, onnx_path, args.text_check.resolve())
+        write_text_check(path, args.onnx.resolve(), args.text_check.resolve())
         print(f"Wrote {args.text_check}; set TEXT_CHECK_SHA256 in accuracy.py to {sha256_file(args.text_check)[0]}")
 
 
