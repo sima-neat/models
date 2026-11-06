@@ -271,9 +271,8 @@ model-registry assemble-package \
   --package default
 ```
 
-A single-component package is that component's MPK. Otherwise, confirm the
-ZIP holds every component MPK at its top level. Package assembly does not replace MPK
-validation or application testing.
+Confirm the ZIP holds every component MPK at its top level. Package assembly
+does not replace MPK validation or application testing.
 
 Keep MPKs and compiler intermediates outside the repository or in an ignored
 directory, and never commit them. If the pinned compiler is not installed, get

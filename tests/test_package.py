@@ -59,7 +59,7 @@ def _two_component_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, head_a
     return _compiled_component(tmp_path, "head", head_archive)
 
 
-def test_single_component_package_is_the_compiled_mpk(tmp_path: Path) -> None:
+def test_single_component_package_is_a_zip_of_the_compiled_mpk(tmp_path: Path) -> None:
     compiled = _compiled_component(tmp_path)
     result = assemble_package(
         repository=ROOT,
@@ -71,9 +71,11 @@ def test_single_component_package_is_the_compiled_mpk(tmp_path: Path) -> None:
     )
     package_dir = tmp_path / "packages" / "resnet_50" / "w16a16" / "packages" / "default"
     compiled_mpk = compiled / "resnet_50" / "w16a16" / "model" / MPK_NAME
-    assert result["archive"] == MPK_NAME
-    assert sorted(path.name for path in package_dir.iterdir()) == ["package-result.json", MPK_NAME]
-    assert (package_dir / MPK_NAME).read_bytes() == compiled_mpk.read_bytes()
+    assert result["archive"] == "resnet_50_w16a16_default.zip"
+    assert sorted(path.name for path in package_dir.iterdir()) == ["package-result.json", result["archive"]]
+    with zipfile.ZipFile(package_dir / result["archive"]) as stream:
+        assert stream.namelist() == [MPK_NAME]
+        assert stream.read(MPK_NAME) == compiled_mpk.read_bytes()
     manifest = result["manifest"]
     assert manifest["components"][0]["id"] == "model"
     assert manifest["components"][0]["path"] == MPK_NAME
@@ -155,7 +157,7 @@ def test_package_records_declarative_composition_without_shipping_a_document(
         package_id="default",
     )
 
-    assert result["archive"] == MPK_NAME
+    assert result["archive"] == "resnet_50_w16a16_default.zip"
     assert result["manifest"]["composition"] == {"id": "default", "type": "declarative"}
     assert [item["path"] for item in result["manifest"]["files"]] == [MPK_NAME]
 

@@ -983,20 +983,15 @@ function sectionNavigation(sections) {
   )).join("")}</nav>`;
 }
 
-// The package is the glance view of Details: its size and checksum, and the ways to download it.
-// A single-component package is that component's MPK, so only multi-component builds offer components.
-function packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent) {
-  const run = variant.anchor;
+// The package is the glance view of Details: its size and checksum, and the download.
+function packageCard(fullPackage, packageArtifact) {
+  if (!fullPackage) return "";
   const folder = packageArtifact && artifactDelivery(packageArtifact) !== "archive";
   const location = packageArtifact && huggingFaceLocation(packageArtifact);
-  const components = hasArtifacts && !(fullPackage && singleComponent)
-    ? `<button class="action-button" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>Download components</span></button>`
-    : "";
-  if (!fullPackage) return components ? `<div class="package-actions">${components}</div>` : "";
   return `<div class="package-card">
     <div class="package-card-copy"><strong>Full package</strong><span>${folder ? "Download the model folder with sima-cli using its verified manifest." : packageFormat(packageArtifact) === "MPK" ? "The compiled model in one verified MPK." : "All components and declared runtime resources in one verified ZIP."}</span>${location ? `<a href="${escapeHtml(location.url)}" target="_blank" rel="noreferrer">Deployment on Hugging Face ↗</a>` : ""}</div>
     ${packageArtifact ? `<dl class="package-facts"><div><dt>Size</dt><dd>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</dd></div><div><dt>${folder ? "Manifest SHA-256" : "SHA-256"}</dt><dd class="artifact-hash"><code>${escapeHtml(packageArtifact.sha256)}</code><button type="button" class="copy-button" data-copy="${escapeHtml(packageArtifact.sha256)}" aria-label="Copy package checksum">${icons.copy}</button></dd></div></dl>` : ""}
-    <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button>${components}</div>
+    <div class="package-actions"><button class="action-button" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>Download package</span></button></div>
   </div>`;
 }
 
@@ -1083,7 +1078,7 @@ export function renderDetail(variant) {
     ${accuracyMarkup}
 
     ${customerView ? "" : `<section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
-      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent)}
+      ${packageCard(fullPackage, packageArtifact)}
       ${fullPackage ? fidelityPanel(variant.packageTests?.test_results || [], fullPackage.run_id) : ""}
       <div class="disclosure-list">
         ${disclosure("provenance", "Build provenance", `<dl class="key-grid">

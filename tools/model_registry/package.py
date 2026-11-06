@@ -230,20 +230,14 @@ def assemble_package(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         return result
-    # A single-component model's MPK is the package itself; anything more ships as a flat ZIP of the installed files.
-    if len(packaged_files) == 1:
-        bundle_name = packaged_files[0][0]
-    else:
-        bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
+    # Every archive package is a flat ZIP of the installed files; Vulcan rejects any other archive at promotion.
+    bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
     bundle_path = package_dir / bundle_name
     temporary = package_dir / f".{bundle_name}.partial"
     try:
-        if len(packaged_files) == 1:
-            shutil.copyfile(packaged_files[0][1], temporary)
-        else:
-            with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
-                for name, path in packaged_files:
-                    _add_file(archive, name, path)
+        with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
+            for name, path in packaged_files:
+                _add_file(archive, name, path)
         temporary.replace(bundle_path)
     finally:
         temporary.unlink(missing_ok=True)

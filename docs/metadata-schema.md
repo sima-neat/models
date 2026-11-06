@@ -221,10 +221,11 @@ package, and the browser and CLI downloads all use this name.
 ## Packages and pipeline
 
 Every build profile publishes one package, `default`, holding all its
-components. A single-component package is that component's MPK,
-`<model_id>_<profile_id>_mpk.tar.gz`. A multi-component package is a
-deterministic `<model_id>_<profile_id>_default.zip` holding the MPKs at its
-top level. Trusted assembly keeps each MPK intact and records the package
+components. An ONNX model's package is a deterministic
+`<model_id>_<profile_id>_default.zip` holding the MPKs at its top level, one
+for a single-component model. A single-component build published before
+packages became ZIPs stays a bare `<model_id>_<profile_id>_mpk.tar.gz` until
+its next compile. Trusted assembly keeps each MPK intact and records the package
 manifest in `package-result.json`, validated against
 [`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
 the manifest is not shipped inside the package.

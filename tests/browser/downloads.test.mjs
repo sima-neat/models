@@ -140,7 +140,7 @@ test('shows the actual archive filename instead of the logical artifact name', a
 });
 
 
-test('a single-component package is an MPK and any other package is a ZIP', () => {
+test('a package published before ZIPs stays an MPK and any other package is a ZIP', () => {
   assert.equal(packageFormat({media_type: 'application/gzip'}), 'MPK');
   assert.equal(packageFormat({}, 'yolo26n_w8a8_mpk.tar.gz'), 'MPK');
   assert.equal(packageFormat({media_type: 'application/zip'}, 'rf_detr_nano_w8a8_w16a16_default.zip'), 'ZIP');

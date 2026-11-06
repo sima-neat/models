@@ -203,8 +203,8 @@ everything longer sits in one expandable row.
   with its dataset, conditions, and source; a published score sits beside a
   measured one only when both name the same dataset. A build without an
   accuracy result shows only the published scores.
-- **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
-  and **Download components** for a multi-component build) and the package's numerical
+- **Details**, in the developer UI only, shows the package card (size, SHA-256, and
+  **Download package**) and the package's numerical
   fidelity, then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, and a nested
   **Compile parameters** row.
@@ -310,8 +310,9 @@ packages covering every shown component are offered as full-model downloads.
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
 
-The model download button includes every model-pack component from the selected
-variant's workflow build, commit, branch, target, and compiler. All
+A build with no package falls back to a download button that includes every
+model-pack component from the selected variant's workflow build, commit, branch,
+target, and compiler. All
 variants show a confirmation dialog listing component names, actual archive filenames, and file sizes.
 Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
@@ -319,8 +320,9 @@ links are being prepared. Single-file variants require confirmation with **Downl
 Numerical-fidelity **Download JSON** remains a separate report download.
 
 **Download package** saves the published package under its registry filename:
-the MPK itself for a single-component model, or a ZIP of the component MPKs
-and declared resources otherwise. The dialog labels the file MPK or ZIP.
+a ZIP of the component MPKs and declared resources. A single-component build
+published before packages became ZIPs stays a bare MPK until its next compile.
+The dialog labels the file MPK or ZIP.
 
 All temporary URLs are prepared before any transfer starts. If preparation
 fails, the dialog reports the error and allows retrying. Files stream directly

@@ -842,12 +842,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
 
 def _package_file(model: dict, package: dict) -> tuple[str, str]:
-    """The published path and media type of a native folder index, a single-component model's MPK, or ZIP."""
+    """The published path and media type of a native folder index or ZIP."""
     if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
         return "deployment/manifest.json", "application/json"
-    declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
-    if len(declaration["components"]) == 1:
-        return mpk_filename(model, package["build_profile_id"], declaration["components"][0]), "application/gzip"
     return f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip", "application/zip"
 
 

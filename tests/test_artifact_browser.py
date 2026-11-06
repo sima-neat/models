@@ -247,9 +247,9 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
     for model_id, items in artifacts.items():
         assert [(item["name"], item["artifact_type"]) for item in items] == [("package", "model-package")]
         assert items[0]["metadata"]["component_run_ids"] == packages[model_id]["component_run_ids"]
-    # A single-component package is its MPK; a multi-component package is a ZIP.
-    assert artifacts["resnet_50"][0]["media_type"] == "application/gzip"
-    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_mpk.tar.gz")
+    # Every archive package is a ZIP, whatever its component count.
+    assert artifacts["resnet_50"][0]["media_type"] == "application/zip"
+    assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_default.zip")
     assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
     assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js")
@@ -1249,9 +1249,9 @@ def test_download_is_promoted_and_artifacts_show_only_size_and_checksum() -> Non
     assert "modelDownloadCommand(run.metadata.model_id, runProfile(run)" in app
     # The CLI fetches the catalog build, so an older build from history offers no command.
     assert "const current = state.models.some" in app
-    # Details lead with the package card: size, checksum, and both downloads as icon buttons.
+    # Details lead with the package card: size, checksum, and the download as an icon button.
     assert "${icons.download}<span>Download package</span>" in script
-    assert "${icons.download}<span>Download components</span>" in script
+    assert "${icons.download}<span>Download components</span>" not in script
     assert '<dl class="package-facts">' in script
     assert '<dt>Size</dt>' in script
     assert 'Manifest SHA-256' in script
@@ -1786,7 +1786,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     # Build-level sections render once per variant, in the page order.
     order = [
         "detailBuildSwitcher(variant)", "${overviewMarkup}", 'id="components-section"', "${accuracyMarkup}",
-        "packageCard(variant,", 'disclosure("provenance", "Build provenance"', "sourceInputPanel(inputs)",
+        "packageCard(fullPackage,", 'disclosure("provenance", "Build provenance"', "sourceInputPanel(inputs)",
         "licensePanel(license)",
     ]
     positions = [render_detail.index(marker) for marker in order]
@@ -1840,9 +1840,8 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
         assert marker not in render_detail
     # Numerical fidelity belongs to the package run, beside the package; no performance sits in a file row.
     assert "fidelityPanel(" not in component_row and "Performance(" not in component_row
-    assert render_detail.index("packageCard(variant,") < render_detail.index("fidelityPanel(") < render_detail.index(
-        'disclosure("provenance"'
-    )
+    assert render_detail.index("packageCard(fullPackage,") < render_detail.index("fidelityPanel(")
+    assert render_detail.index("fidelityPanel(") < render_detail.index('disclosure("provenance"')
     # A component row is a disclosure keyed by its run, with compile parameters nested inside it.
     assert 'disclosure(`component:${run.id}`, single ? "Files and checksums" : component, body, meta)' in component_row
     assert 'disclosure(`parameters:${run.id}`, "Compile parameters"' in component_row
