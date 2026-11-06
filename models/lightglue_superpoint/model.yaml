@@ -32,10 +32,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightglue_superpoint/aa5977c2a74e272d56535f78b92faf1b0e1cdb1d91ed59a740f4e2df8e980f21/41044977290-1/model.onnx
-    sha256: aa5977c2a74e272d56535f78b92faf1b0e1cdb1d91ed59a740f4e2df8e980f21
-    size_bytes: 47752170
+  source: conversion
 
 calibrations:
 - id: yfcc100m-keypoints-cal
