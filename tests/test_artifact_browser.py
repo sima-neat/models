@@ -477,6 +477,24 @@ def test_browser_accuracy_labels_match_the_model_report_metrics() -> None:
     assert labels == [(name, metric["label"]) for name, metric in _report_metrics("accuracy").items()]
 
 
+def test_browser_accuracy_scales_match_the_model_report_metrics() -> None:
+    # Accuracy metrics that are not 0-1 ratios with higher better show in their own unit and rank by their direction.
+    scales = subprocess.run(
+        [
+            "node", "--input-type=module", "--eval",
+            "const {ACCURACY_METRIC_SCALES} = await import('./artifact-browser/accuracy-metrics.js');"
+            "console.log(JSON.stringify(ACCURACY_METRIC_SCALES));",
+        ],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )  # fmt: skip
+    expected = {
+        name: {"unit": metric["unit"], "direction": metric["direction"]}
+        for name, metric in _report_metrics("accuracy").items()
+        if (metric["unit"], metric["direction"]) != ("ratio", "higher")
+    }
+    assert json.loads(scales.stdout) == expected
+
+
 def test_browser_performance_metrics_match_the_model_report_metrics() -> None:
     # Each performance metric shows in its display unit and scale, when metrics.json gives one, else its own.
     definitions = subprocess.run(
@@ -1427,7 +1445,7 @@ def test_benchmark_runs_are_resolved_from_catalog_fingerprints_and_accuracy_is_r
     assert "referenceScores(reference, entry.dataset.id)" in script
     assert "const { metrics, dataset } = result.value.datasets[0];" in script
     assert "metric.reference" not in script
-    assert "<strong>${escapeHtml(percentage(value))}</strong>" in script
+    assert "<strong>${escapeHtml(formatAccuracy(name, value))}</strong>" in script
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:

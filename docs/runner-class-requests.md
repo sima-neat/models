@@ -38,10 +38,17 @@ without claiming a measured interruption rate.
 | Request | Purpose | Vulcan approval |
 | --- | --- | --- |
 | `runner_class: default`, `runner_market: spot` | Normal compilation; both fields may be omitted. | No model-specific grant. |
-| `runner_class: expensive`, `runner_market: spot` | More compile capacity while retaining Spot pricing. | Maximum class of `expensive` or `most-expensive`. |
-| `runner_class: most-expensive`, `runner_market: spot` | Highest supported logical compile class. | Maximum class of `most-expensive`. |
+| `runner_class: moderate`, `runner_market: spot` | 64 GiB compile capacity while retaining Spot pricing. | Maximum class of `moderate` or higher. |
+| `runner_class: expensive`, `runner_market: spot` | More compile capacity while retaining Spot pricing. | Maximum class of `expensive` or higher. |
+| `runner_class: most-expensive`, `runner_market: spot` | 384 GiB compile capacity. | Maximum class of `most-expensive`. |
 | `runner_class: default`, `runner_market: on-demand` | Avoid Spot reclamation without increasing runner size. | Published policy v3 with `allow_on_demand: true`. |
 | `runner_class: expensive`, `runner_market: on-demand` | More capacity and avoidance of Spot reclamation. | Both a sufficient maximum class and `allow_on_demand: true`. |
+
+Class order is `default < moderate < expensive < most-expensive`.
+Deploy [Vulcan tier support and YOLO26x-pose approval](https://github.com/sima-neat/vulcan/pull/414)
+before running a YOLO26x-pose W8A16 compile with `moderate`. Its measured
+47.04 GiB peak was on x86 with a 128 GiB limit; success on 64 GiB ARM64 remains
+unverified. On-demand permission is retained independently of size.
 
 Vulcan owns the mapping from class to EC2 instance types. Do not put instance
 types in the model manifest. Permission does not select a larger runner or a
@@ -171,17 +178,18 @@ Trusted automation authorizes the compile matrix before queuing self-hosted jobs
 and Vulcan checks it independently before launching capacity.
 
 A normal trusted push builds missing fingerprints. To explicitly select a build,
-use **Vulcan Model Orchestrator** with environment `staging`, the model ID and
-profile ID. For example, from this repository with GitHub CLI access:
+use **Vulcan Model Orchestrator** with the model ID and profile ID. The build
+uses `VULCAN_ENV` for its runner and publication environment. For example, from
+this repository with GitHub CLI access:
 
 ```bash
 gh workflow run vulcan-model-orchestrator.yml --ref develop \
-  -f environment=staging -f models=example_detector -f profiles=w8a8
+  -f models=example_detector -f profiles=w8a8
 ```
 
 The selected ref must contain the request and compatible workflow. A market-only
 change may reuse an existing result and launch no runner. For a deliberate fresh
-staging verification, add `-f force_rebuild_all=true` to that narrowly selected
+verification in the selected environment, add `-f force_rebuild_all=true` to that narrowly selected
 dispatch; this incurs another compile and may run its declared benchmarks. Manual
 selection also permits models with `build-on-demand: true`.
 
