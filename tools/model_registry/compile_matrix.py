@@ -19,7 +19,11 @@ def build_matrix(
     *,
     repository: str | Path | None = None,
     compiler_version: str | None = None,
+    conversion_sources: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
+    from .conversion import selections
+
+    conversion_sources = selections() if conversion_sources is None else conversion_sources
     unknown = sorted(set(model_ids) - set(models))
     if unknown:
         raise ValidationError(f"unknown model id(s): {', '.join(unknown)}")
@@ -80,7 +84,8 @@ def build_matrix(
                     entry["build_on_demand"] = True
                 if repository is not None and compiler_version is not None:
                     entry["compile_fingerprint"] = compile_fingerprint(
-                        repository, model_id, profile["id"], invocation["id"], compiler_version
+                        repository, model_id, profile["id"], invocation["id"], compiler_version,
+                        conversion_sources=conversion_sources
                     )
                 include.append(entry)
     return {"include": include}

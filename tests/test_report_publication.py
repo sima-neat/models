@@ -12,6 +12,7 @@ from model_registry.fingerprints import benchmark_fingerprint
 from model_registry.model import load_and_validate_model
 from model_registry.registry import S3Object
 from model_registry.report_publication import (
+    _check_metrics,
     _registered_builds,
     check_report,
     compiled_mpks,
@@ -167,6 +168,25 @@ def test_check_report_holds_the_report_to_model_yaml(
 
     with pytest.raises(ValidationError, match=message):
         check_report(tmp_path / REPORT_FILE, ROOT, model_id, profile_id, stage)
+
+
+@pytest.mark.parametrize(
+    ("metric", "value", "message"),
+    [
+        ("coco_map", 53.0, "coco_map must be a ratio from 0 to 1"),
+        ("coco_map", float("nan"), "coco_map must be a ratio from 0 to 1"),
+        ("d1_all", 101.0, "d1_all must be a percentage from 0 to 100"),
+        ("epe", float("inf"), "epe must be at least 0 px"),
+        ("epe", -1.0, "epe must be at least 0 px"),
+    ],
+)
+def test_accuracy_scores_must_lie_in_their_units_range(metric: str, value: float, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        _check_metrics("report", "accuracy", {metric: value}, [metric])
+
+
+def test_an_accuracy_score_in_its_units_range_passes() -> None:
+    _check_metrics("report", "accuracy", {"coco_map": 0.5, "d1_all": 53.0, "epe": 2.5}, ["coco_map"])
 
 
 def test_check_report_rejects_a_stage_the_profile_does_not_measure(tmp_path: Path) -> None:
