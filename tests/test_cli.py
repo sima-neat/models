@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from model_registry import cli
 from model_registry.cli import main
 
@@ -29,6 +30,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
         "check-report",
         "publish",
         "promotion",
+        "conversion-entrypoint",
         "publish-conversion",
         "publish-candidate",
         "publish-branch-deployment",
@@ -526,6 +528,13 @@ def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, ba
     assert calls[0]["branch"] == "feat/names"
     assert calls[0]["bucket"] == "model-artifacts"
     assert calls[0]["environment"] == "staging"
+
+
+@pytest.mark.parametrize(("declared", "printed"), [({}, "model.onnx"), ({"outputs": ["a.onnx", "b.pth"]}, "a.onnx")])
+def test_conversion_entrypoint_prints_the_first_output(tmp_path, capsys, declared, printed):
+    (tmp_path / "model.yaml").write_text(yaml.safe_dump({"conversion": declared}))
+    assert main(["conversion-entrypoint", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == printed + "\n"
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])

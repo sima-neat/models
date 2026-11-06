@@ -38,9 +38,16 @@
       }
     },
     "conversion": {
-      "description": "The source scripts/convert.py turns into compilation.source.",
+      "description": "The source scripts/convert.py turns into compilation.source, and the files it writes.",
       "type": "object", "additionalProperties": false, "required": ["source"],
-      "properties": {"source": {"$ref": "#/$defs/source"}}
+      "properties": {
+        "source": {"$ref": "#/$defs/source"},
+        "outputs": {
+          "description": "File names scripts/convert.py writes, default [model.onnx]. compile.py receives the first as --model.",
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*\\.(onnx|pt|pth)$"}
+        }
+      }
     },
     "compilation": {
       "description": "The source scripts/compile.py (ONNX) or scripts/compile.sh (Hugging Face) compiles, and the components it must produce. One component is named model.",

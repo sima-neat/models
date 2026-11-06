@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -171,7 +172,7 @@ def test_bundle_rejects_output_collisions_without_changing_model_data(tmp_path, 
     directory = output(tmp_path / "output", external=True, external_location=location)
     original = {p.name: p.read_bytes() for p in directory.iterdir()}
     with pytest.raises(ValidationError, match="would overwrite model data"):
-        conversion.bundle_onnx(directory, directory / filename)
+        conversion.bundle_conversion(directory, directory / filename, ["model.onnx"])
     assert {p.name: p.read_bytes() for p in directory.iterdir()} == original
 
 
@@ -186,7 +187,7 @@ def test_bundle_rejects_output_alias_of_tensor_data(tmp_path, link_type):
         destination.hardlink_to(tensor)
     original = tensor.read_bytes()
     with pytest.raises(ValidationError, match="would overwrite model data"):
-        conversion.bundle_onnx(directory, destination)
+        conversion.bundle_conversion(directory, destination, ["model.onnx"])
     assert tensor.read_bytes() == original
 
 
@@ -194,8 +195,8 @@ def test_bundle_rejects_output_alias_of_tensor_data(tmp_path, link_type):
 @pytest.mark.parametrize("private", [False, True])
 def test_bundle_is_deterministic_and_fetch_checks_exact_version(tmp_path, monkeypatch, external, private):
     directory = output(tmp_path / "output", external)
-    first = conversion.bundle_onnx(directory, tmp_path / "first.tar.gz")
-    second = conversion.bundle_onnx(directory, tmp_path / "second.tar.gz")
+    first = conversion.bundle_conversion(directory, tmp_path / "first.tar.gz", ["model.onnx"])
+    second = conversion.bundle_conversion(directory, tmp_path / "second.tar.gz", ["model.onnx"])
     assert first.read_bytes() == second.read_bytes()
     sha, size = conversion.sha256_file(first)
     source = {
@@ -242,6 +243,125 @@ def test_bundle_is_deterministic_and_fetch_checks_exact_version(tmp_path, monkey
     artifact["s3_version_id"] = "v2"
     with pytest.raises(ValidationError, match="saved plan"):
         conversion.fetch_conversion(source, tmp_path / "cache")
+
+
+def declare_outputs(repository, outputs):
+    path = repository / "models/yolo26x/model.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["conversion"]["outputs"] = outputs
+    path.write_text(yaml.safe_dump(doc))
+    return path.parent
+
+
+def fetch_bundle(bundle, cache, monkeypatch):
+    sha, size = conversion.sha256_file(bundle)
+    source = {
+        "type": "conversion", "run_id": "run", "artifact_id": "artifact", "sha256": sha, "size_bytes": size,
+        "s3_bucket": "bucket", "s3_key": "key", "s3_version_id": "v1", "media_type": "application/gzip",
+        "read_api_url": "https://registry.test",
+    }
+    artifact = {
+        **source, "id": "artifact", "artifact_type": "model-onnx", "object_status": "available",
+        "metadata": {"validation": "passed"}, "download_url": bundle.as_uri(),
+    }
+    monkeypatch.delenv("MODEL_REGISTRY_IAM_READ_API_URL", raising=False)
+    monkeypatch.setattr("model_registry.fetch.read_registry_json", lambda _: {"artifact": artifact})
+    return conversion.fetch_conversion(source, cache)[0]
+
+
+def test_conversion_outputs_default_to_one_onnx(repository):
+    assert conversion.conversion_outputs(repository / "models/yolo26x") == ["model.onnx"]
+
+
+def test_default_bundle_manifest_keeps_its_published_bytes(tmp_path):
+    import json
+    import tarfile
+
+    directory = output(tmp_path / "output")
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx"])
+    sha, size = conversion.sha256_file(directory / "model.onnx")
+    files = [{"path": "model.onnx", "sha256": sha, "size_bytes": size}]
+    expected = {"version": 1, "entrypoint": "model.onnx", "files": files}
+    with tarfile.open(bundle) as archive:
+        assert archive.getnames() == ["manifest.json", "model.onnx"]
+        assert archive.extractfile("manifest.json").read() == json.dumps(expected, sort_keys=True).encode()
+
+
+def test_bundle_delivers_every_output_beside_the_first(tmp_path, monkeypatch):
+    directory = output(tmp_path / "output", external=True)
+    (directory / "model.onnx").rename(directory / "vector_estimator.onnx")
+    shutil.copyfile(directory / "vector_estimator.onnx", directory / "vocoder.onnx")
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    (directory / "registry-publication.json").write_text("{}")
+    outputs = ["vector_estimator.onnx", "vocoder.onnx", "weights.pth"]
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", outputs)
+    entrypoint = fetch_bundle(bundle, tmp_path / "cache", monkeypatch)
+    assert entrypoint.name == "vector_estimator.onnx"
+    assert sorted(p.name for p in entrypoint.parent.iterdir() if p.name[0] != ".") == [
+        "manifest.json", "vector_estimator.onnx", "vocoder.onnx", "weights.bin", "weights.pth",
+    ]
+    assert fetch_bundle(bundle, tmp_path / "cache", monkeypatch) == entrypoint
+
+
+def test_pth_only_bundle_needs_no_onnx_package(tmp_path, monkeypatch):
+    directory = tmp_path / "output"
+    directory.mkdir()
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    monkeypatch.setitem(sys.modules, "onnx", None)
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["weights.pth"])
+    assert fetch_bundle(bundle, tmp_path / "cache", monkeypatch).read_bytes() == b"checkpoint"
+
+
+def test_bundle_names_a_declared_output_convert_did_not_write(tmp_path):
+    directory = output(tmp_path / "output")
+    with pytest.raises(ValidationError, match="declared outputs: vocoder.onnx"):
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx", "vocoder.onnx"])
+    assert not (tmp_path / "bundle.tar.gz").exists()
+
+
+def test_bundle_checks_every_onnx_output(tmp_path):
+    directory = output(tmp_path / "output")
+    broken = onnx.load(directory / "model.onnx")
+    broken.graph.node[0].op_type = ""
+    onnx.save(broken, directory / "broken.onnx")
+    with pytest.raises(onnx.checker.ValidationError):
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx", "broken.onnx"])
+
+
+@pytest.mark.parametrize(
+    "outputs",
+    [[], ["model.onnx", "model.onnx"], ["manifest.json"], ["onnx.tar.gz"], ["nested/model.onnx"], ["model.ONNX"],
+     [".model.onnx"]],
+)
+def test_schema_rejects_outputs_a_bundle_cannot_hold(repository, outputs):
+    with pytest.raises(ValidationError):
+        load_and_validate_model(declare_outputs(repository, outputs))
+
+
+def test_publication_records_declared_outputs(repository, tmp_path):
+    directory = output(tmp_path / "output")
+    (directory / "model.onnx").rename(directory / "encoder.onnx")
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    declare_outputs(repository, ["encoder.onnx", "weights.pth"])
+    registry = Registry()
+    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: SimpleNamespace(key=key, version_id="v1"))
+    conversion.publish_conversion(
+        repository, "yolo26x", directory, client=registry, store=store, bucket="bucket", environment="staging",
+        branch="feature", git_sha="a" * 40, workflow="42", validation="passed",
+    )
+    bodies = {call[1].rsplit("/", 1)[-1]: call[2] for call in registry.calls}
+    assert bodies["onnx"]["metadata"]["entrypoint"] == "encoder.onnx"
+    assert bodies["parameters"]["parameters"]["outputs"] == ["encoder.onnx", "weights.pth"]
+    assert bodies["conversion"]["summary"]["onnx_checked"] == ["encoder.onnx"]
+
+
+def test_changing_outputs_invalidates_saved_selection(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    declare_outputs(repository, ["renamed.onnx"])
+    assert conversion.conversion_fingerprint(repository, model) != original
+    with pytest.raises(ValidationError, match="checkout's recipe"):
+        conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
 
 
 def test_publication_completes_only_after_validated_output(repository, tmp_path):
@@ -500,7 +620,7 @@ def test_bundle_rejects_reserved_directory_prefix(tmp_path, reserved):
     onnx.save(model, directory / "model.onnx")
     shutil.copyfile(other / "weights.bin", directory / reserved / "weights.bin")
     with pytest.raises(ValidationError, match="reserved ONNX bundle path"):
-        conversion.bundle_onnx(directory, tmp_path / "bundle.tar.gz")
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx"])
     assert not (tmp_path / "bundle.tar.gz").exists()
 
 
@@ -585,11 +705,11 @@ import resource
 import sys
 from pathlib import Path
 import onnx
-from model_registry.conversion import bundle_onnx
+from model_registry.conversion import bundle_conversion
 _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 limit = 64 if hard == resource.RLIM_INFINITY else min(64, hard)
 resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
-bundle_onnx(Path(sys.argv[1]), Path(sys.argv[2]))
+bundle_conversion(Path(sys.argv[1]), Path(sys.argv[2]), ["model.onnx"])
 """, str(directory), str(archive)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     with tarfile.open(archive) as bundle:
@@ -621,7 +741,7 @@ def test_bundle_closes_streams_when_archive_write_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", track_open)
     monkeypatch.setattr(tarfile.TarFile, "addfile", fail_tensor_write)
     with pytest.raises(OSError, match="simulated disk failure"):
-        conversion.bundle_onnx(directory, archive)
+        conversion.bundle_conversion(directory, archive, ["model.onnx"])
     assert opened and all(stream.closed for stream in opened)
 
 

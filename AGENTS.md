@@ -56,6 +56,9 @@ each kind of change reruns, are listed once in
 read both before changing what a stage depends on. Conversion
 (`scripts/convert.py`, run by `scripts/run_model_conversion.sh`) produces the
 ONNX consumed as either a pinned source or `compilation.source: conversion`.
+It writes `model.onnx` unless `conversion.outputs` lists other files: several
+ONNX models, or a `.pt`/`.pth` checkpoint that `surgery.py` exports to ONNX.
+`compile.py` receives the first as `--model`, with the rest beside it.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
@@ -294,6 +297,9 @@ Conventions the code relies on:
   `--fidelity-dataset`, `--mpk`); data enters only through the dataset registry
   declared in `model.yaml`. Benchmark scripts run without registry
   credentials.
+- When a model declares `conversion.outputs`, every script reads those names
+  with `conversion_outputs()` and never hard-codes one, so renaming a file only
+  changes `model.yaml`.
 - Schemas under `schemas/` reject unknown fields. Published reports keep
   their `schema_version` (model report 1, numerical fidelity 1) because the
   artifact browser and `sima-cli` choose a renderer by it. Registry

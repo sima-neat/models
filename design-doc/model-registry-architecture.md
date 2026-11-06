@@ -92,7 +92,7 @@ this table. Modules marked CI only are removed from the author package by
 | `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
-| `conversion.py` | conversion fingerprints, validated ONNX bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
+| `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
