@@ -242,6 +242,7 @@ def plan_stages(
     component_ids: list[str] | None = None,
     force_rebuild_all: bool = False,
     include_on_demand: bool = False,
+    conversion_client: Any = None,
 ) -> dict[str, Any]:
     """Select compile invocations whose compile fingerprint changed, and the benchmarks reused builds lack.
 
@@ -250,13 +251,24 @@ def plan_stages(
     """
     root = Path(repository).expanduser().resolve()
     models = load_models(root)
+    from .conversion import plan_conversions
+
+    selected_ids = model_ids or sorted(models)
+    unknown = sorted(set(selected_ids) - set(models))
+    if unknown:
+        raise ValidationError(f"unknown model id(s): {', '.join(unknown)}")
+    conversion_sources = plan_conversions(
+        root, {model_id: models[model_id] for model_id in sorted(set(selected_ids))},
+        read=read, read_api_url=read_api_url, client=conversion_client, branch=branch,
+    )
     head = build_matrix(
         models,
-        model_ids or sorted(models),
+        selected_ids,
         profile_ids,
         component_ids,
         repository=root,
         compiler_version=compiler_version,
+        conversion_sources=conversion_sources,
     )["include"]
     if include_on_demand and any(entry.get("build_on_demand", False) for entry in head) and not (
         model_ids and profile_ids
@@ -303,4 +315,5 @@ def plan_stages(
         "compile": {"include": compile_entries},
         "benchmark": {"include": benchmark_entries},
         "catalog_found": document is not None,
+        "conversion_sources": conversion_sources,
     }

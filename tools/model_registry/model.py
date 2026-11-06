@@ -160,6 +160,7 @@ def normalize_model(value: dict[str, Any], directory: Path) -> dict[str, Any]:
                 "target": "modalix",
                 **({"runner_class": profile["runner_class"]} if "runner_class" in profile else {}),
                 **({"runner_market": profile["runner_market"]} if "runner_market" in profile else {}),
+                **({"benchmark_baseline": profile["benchmark_baseline"]} if "benchmark_baseline" in profile else {}),
                 "components": bindings,
                 # One invocation compiles every component, so its ID is the profile ID. Vulcan's catalog and
                 # promotion contracts still name each build's compile_invocation_id.
@@ -193,8 +194,10 @@ def dataset_name(pin: dict[str, Any]) -> str:
     return f"{pin['id']}-{pin['variant']}"
 
 
-def _expand_source(source: dict[str, Any]) -> dict[str, Any]:
+def _expand_source(source: dict[str, Any] | str) -> dict[str, Any]:
     """Expand a source into a file or a file set whose members each have a path and a URI."""
+    if source == "conversion":
+        return {"type": "conversion"}
     if "files" not in source:
         return {"type": "file", **source}
     repository = source.get("repository")
@@ -291,6 +294,10 @@ def validate_model(
     except ValidationError as exc:
         raise ValidationError(f"{directory}: {exc}") from exc
 
+    if authored["compilation"]["source"] == "conversion" and (
+        "conversion" not in authored or authored["compilation"]["format"] != "onnx"
+    ):
+        raise ValidationError("source: conversion requires an ONNX model with a conversion declaration")
     sources = [authored["compilation"]["source"]]
     if "conversion" in authored:
         sources.append(authored["conversion"]["source"])
@@ -299,7 +306,8 @@ def validate_model(
             raise ValidationError(f"{directory}: source main_file {source['main_file']!r} is not one of its files")
     try:
         for component in model["components"][:1]:
-            source_members(component["source"])
+            if component["source"]["type"] != "conversion":
+                source_members(component["source"])
         for conversion in model.get("conversion", {}).values():
             source_members(conversion["source"])
     except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
@@ -307,13 +315,34 @@ def validate_model(
 
     component_ids = [component["id"] for component in model["components"]]
     if authored["compilation"]["format"] == "huggingface":
-        if len(component_ids) != 1 or authored["compilation"]["source"].get("main_file") != "config.json":
+        if (len(component_ids) != 1
+                or Path(authored["compilation"]["source"].get("main_file", "")).name != "config.json"):
             raise ValidationError(
                 f"{directory}: a Hugging Face model is one component compiled from a checkpoint file set "
                 "whose main_file is config.json"
             )
     available_calibrations = {item["id"] for item in model["calibrations"]}
     for profile_id, profile in authored["build_profiles"].items():
+        baseline = profile.get("benchmark_baseline")
+        if baseline:
+            if (baseline["model_id"], baseline["build_profile"]) == (directory.name, profile_id):
+                raise ValidationError(f"{directory}: benchmark_baseline cannot reference its own build profile")
+            try:
+                baseline_model = model if baseline["model_id"] == directory.name else load_model(
+                    directory.parent / baseline["model_id"]
+                )
+                build_profile_for(baseline_model, baseline["build_profile"])
+            except ValidationError as exc:
+                raise ValidationError(f"{directory}: build profile {profile_id!r} benchmark_baseline: {exc}") from exc
+        for binding in profile["components"].values():
+            draft = binding["parameters"].get("draft_model_path")
+            if authored["compilation"]["format"] == "huggingface" and draft is not None:
+                source = authored["compilation"]["source"]
+                if (not isinstance(draft, str) or f"{draft}/config.json" == source["main_file"]
+                        or f"{draft}/config.json" not in source["files"]):
+                    raise ValidationError(
+                        f"{directory}: draft_model_path must name a separate checkpoint in the source file set"
+                    )
         if sorted(profile["components"]) != sorted(component_ids):
             raise ValidationError(
                 f"{directory}: build profile {profile_id!r} must set the parameters of exactly the components "

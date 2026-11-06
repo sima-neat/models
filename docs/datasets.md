@@ -133,7 +133,7 @@ that evaluate the dataset. A new file or an entry for a task no such model has
 reruns nothing.
 
 To start evaluating on a dataset that has no file yet, add the file with the
-metrics the task needs, in the same change as the model.
+metrics the task needs, in the same change as the model or its new metrics.
 
 ## Introduce a dataset or variant that does not exist
 
