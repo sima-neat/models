@@ -96,7 +96,7 @@ function cpuCores(telemetry) {
 const RETIRED_METRICS = new Set(["avg_cma_memory_mib", "peak_cma_memory_mib"]);
 
 function generationWorkloads(generation) {
-  return (generation?.workloads || []).map(workload => {
+  const adapt = workload => {
     const telemetry = workload.telemetry || {};
     const values = Object.fromEntries(Object.entries(workload.metrics || {}).map(([key, metric]) => [key, metric.value]));
     for (const [key, [field, statistic]] of Object.entries(TELEMETRY_METRICS)) {
@@ -106,14 +106,18 @@ function generationWorkloads(generation) {
     return {
       ...workload,
       key: workload.kind === "text" ? `text_${workload.input_tokens}` : workload.id,
-      label: workload.kind === "text" ? `${workload.input_tokens} input tokens` : `Image ${workload.image_size.join(" × ")} + text`,
+      label: workload.dataset ? ({gsm8k: "GSM8K", "bfcl-v3": "BFCL v3", alpacaeval: "AlpacaEval",
+        realworldqa: "RealWorldQA", docvqa_val: "DocVQA", chartqa: "ChartQA"}[workload.dataset.name] || workload.dataset.name)
+        : workload.kind === "text" ? `${workload.input_tokens} input tokens` : `Image ${workload.image_size.join(" × ")} + text`,
+      baseline: workload.baseline ? adapt(workload.baseline) : null,
       inputTokens: workload.input_tokens,
       measurements: Object.fromEntries(Object.entries(values).filter(([, value]) => Number.isFinite(value))
         .map(([key, value]) => [key, measurement(key, value, telemetry)])),
       telemetry: telemetrySource(telemetry),
       cpuCores: cpuCores(telemetry),
     };
-  });
+  };
+  return (generation?.workloads || []).map(adapt);
 }
 
 // A performance report measures the whole model, however many components it runs, and records each

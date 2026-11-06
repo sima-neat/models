@@ -34,7 +34,13 @@ from model_registry.conversion import apply_selection, conversion_fingerprint  #
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
-from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
+from model_registry.model import (  # noqa: E402
+    build_profile_for,
+    component_pipelines,
+    load_models,
+    mpk_filename,
+    profile_component_for,
+)
 from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 from model_report import METRICS  # noqa: E402
@@ -95,10 +101,13 @@ def _preview_conversions(models: dict):
 @cache
 def _repository() -> dict[str, Any]:
     models = load_models(ROOT)
-    if SYNTHETIC_GENAI:
-        for model in models.values():
-            if model["model_type"] in ("llm", "vlm"):
+    recorded = json.loads((BROWSER / "fixtures/genai-model-report.json").read_text())["preview_model_id"]
+    for model in models.values():
+        if model["model_type"] in ("llm", "vlm"):
+            if SYNTHETIC_GENAI:
                 model.setdefault("performance", {})
+            elif model["id"] != recorded:
+                model.pop("performance", None)
     compiler = resolve_model_compiler(ROOT)
     with _preview_conversions(models):
         matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
@@ -408,6 +417,47 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
     if model["model_type"] in ("llm", "vlm"):
         report = json.loads((BROWSER / "fixtures/genai-model-report.json").read_text())
         recorded = report.pop("preview_model_id")
+        report["generation"].setdefault("settings", {"max_context": 4096, "max_new_tokens": 256,
+            "repetitions": 5, "image_size": next((w["image_size"] for w in report["generation"]["workloads"]
+                                                  if w["kind"] == "image_text"), None)})
+        baseline = build_profile_for(model, profile_id).get("benchmark_baseline")
+        if baseline:
+            from model_registry.llima_benchmark import IMAGE_DATASETS, TEXT_DATASETS, workload_metrics
+
+            template = report["generation"]["workloads"][0]
+            names = (*TEXT_DATASETS, *(IMAGE_DATASETS if model["model_type"] == "vlm" else ()))
+            workloads = []
+            for name in names:
+                workload = {"id": f"dataset_{name}",
+                    "kind": "image_dataset" if name in IMAGE_DATASETS else "text_dataset",
+                    "dataset": {"name": name, "available_samples": 5, "selection": "illustrative"},
+                    "telemetry": {}, "requests": [{
+                        "phase": "warmup" if index == 0 else "measure",
+                        "input_tokens": template["input_tokens"],
+                        "ttft_s": template["metrics"]["ttft_ms"]["value"] / 1000,
+                        "token_durations_s": [template["metrics"]["ttft_ms"]["value"] / 1000,
+                                              *([1 / template["metrics"]["decode_tps"]["value"]] * 255)],
+                    } for index in range(6)]}
+                for index, row in enumerate(workload["requests"]):
+                    durations = row["token_durations_s"][:256]
+                    row.update(token_durations_s=durations, generated_tokens=len(durations),
+                        decode_tokens=len(durations) - 1, decode_time_s=sum(durations[1:]),
+                        sample_id=f"example-{max(0, index - 1)}", output_budget=256, accepted_draft_tokens=None)
+                reference = copy.deepcopy(workload)
+                reference["metrics"] = workload_metrics(reference)
+                for row in workload["requests"]:
+                    durations = [row["ttft_s"], *[duration / 1.6 for duration in row["token_durations_s"][1:]]]
+                    row.update(token_durations_s=durations, decode_time_s=sum(durations[1:]),
+                               accepted_draft_tokens=row["generated_tokens"] // 2)
+                workload["baseline"] = reference
+                workload["metrics"] = workload_metrics(workload)
+                workloads.append(workload)
+            report["generation"].update(synthetic=True, workloads=workloads, baseline={
+                "model_id": baseline["model_id"], "build_profile_id": baseline["build_profile"],
+                "display_name": _repository()["models"][baseline["model_id"]]["display_name"]})
+            report["generation"]["settings"].update(decoding="speculative", repetitions=1,
+                image_size=report["generation"]["settings"].get("image_size") if model["model_type"] == "vlm" else None)
+            return report
         if model["id"] != recorded:
             report["generation"]["synthetic"] = True
             report["generation"]["workloads"] = [w for w in report["generation"]["workloads"] if w["kind"] == "text"]

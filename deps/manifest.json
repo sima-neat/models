@@ -13,6 +13,6 @@
     "install_target": "core@develop"
   },
   "llima": {
-    "install_target": "llima@develop:b972c9ac35f9"
+    "install_target": "llima@develop:abcfe372a575"
   }
 }

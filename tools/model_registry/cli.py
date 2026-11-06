@@ -379,6 +379,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--model-id", required=True)
     stage_registry.add_argument("--build-profile-id", required=True)
     stage_registry.add_argument("--compile-invocation-id", required=True)
+    stage_registry.add_argument("--benchmark-baseline", action="store_true",
+                                help="restore only the declared ordinary benchmark baseline")
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
 
     if not author_safe:
@@ -884,9 +886,10 @@ def _publish_catalog(args: argparse.Namespace) -> int:
 
 
 def _stage_registry_build(args: argparse.Namespace) -> int:
-    from .registry import stage_catalog_build
+    from .registry import stage_benchmark_baseline, stage_catalog_build
 
-    result = stage_catalog_build(
+    stage = stage_benchmark_baseline if args.benchmark_baseline else stage_catalog_build
+    result = stage(
         repository=args.repository,
         output_dir=args.output_dir,
         api_url=args.api_url,
@@ -894,7 +897,7 @@ def _stage_registry_build(args: argparse.Namespace) -> int:
         catalog_revision=args.catalog_revision,
         model_id=args.model_id,
         build_profile_id=args.build_profile_id,
-        compile_invocation_id=args.compile_invocation_id,
+        **({} if args.benchmark_baseline else {"compile_invocation_id": args.compile_invocation_id}),
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Staged {result['count']} registry MPK(s)")
     return 0

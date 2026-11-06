@@ -79,7 +79,10 @@ function comparisonTable(columns) {
   const row = (label, cells) => `<tr><th scope="row">${escapeHtml(label)}</th>${cells.join("")}</tr>`;
   const text = (value) => `<td>${escapeHtml(value || "—")}</td>`;
   const rows = generative ? [
-    ["ttft_ms", "Time to first token"], ["prefill_tps", "Prefill"], ["decode_tps", "Decode"],
+    ["ttft_ms", "Time to first token"],
+    ...(state.compareTask === "visual_question_answering" ? [] : [["prefill_tps", "Prefill"]]),
+    ["decode_tps", "Decode"],
+    ["draft_contribution_pct", "Draft contribution"], ["decode_speedup", "Decode speedup"],
     ...PERFORMANCE_ROWS.filter(([key]) => !["throughput_fps", "latency_avg_ms", "energy_per_inference_joules"].includes(key)),
   ] : PERFORMANCE_ROWS;
   const performance = rows.map(([key, label]) => {
@@ -134,17 +137,16 @@ function workloadMeasurements(column) {
 }
 
 function comparisonWorkload(component) {
-  return component?.workloads?.find(workload => state.compareTask === "visual_question_answering"
-    ? workload.kind === "image_text" : workload.key === state.compareWorkload);
+  return component?.workloads?.find(workload => workload.key === state.compareWorkload);
 }
 
 function generativePlot(columns) {
   const image = state.compareTask === "visual_question_answering";
   const workloads = [...new Map(columns.flatMap(column => (column.performance?.workloads || []))
-    .filter(workload => workload.kind === "text").map(workload => [workload.key, workload])).values()]
-    .sort((a, b) => a.inputTokens - b.inputTokens);
-  if (image) state.compareWorkload = "";
-  else if (!workloads.some(workload => workload.key === state.compareWorkload)) state.compareWorkload = workloads[0]?.key || "";
+    .filter(workload => image ? ["image_text", "image_dataset"].includes(workload.kind)
+      : ["text", "text_dataset"].includes(workload.kind)).map(workload => [workload.key, workload])).values()]
+    .sort((a, b) => (a.inputTokens || Infinity) - (b.inputTokens || Infinity));
+  if (!workloads.some(workload => workload.key === state.compareWorkload)) state.compareWorkload = workloads[0]?.key || "";
   const plotted = columns.flatMap(column => {
     const workload = comparisonWorkload(column.performance);
     const decode = measuredText(workload?.measurements.decode_tps, "decode_tps");
@@ -155,8 +157,8 @@ function generativePlot(columns) {
   });
   return measurementChart(columns, plotted, {
     title: "Parameters & decode speed", xLabel: "Parameters (billions)", yLabel: "Decode (tokens/s)",
-    subtitle: image ? "One image at each model’s encoder resolution + text." : workloads.find(workload => workload.key === state.compareWorkload)?.label,
-    controls: !image && workloads.length ? selectControl("Input tokens", "workload", workloads.map(workload => [workload.key, String(workload.inputTokens)]), state.compareWorkload) : "",
+    subtitle: workloads.find(workload => workload.key === state.compareWorkload)?.label,
+    controls: workloads.length > 1 ? selectControl("Workload", "workload", workloads.map(workload => [workload.key, workload.label]), state.compareWorkload) : "",
     note: "Variants without matching measurements remain available in Add model.",
     empty: "No matching measurements yet. Use Add model to inspect a variant.",
   });

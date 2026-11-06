@@ -65,7 +65,9 @@ def from_generation(generation: dict[str, Any], runtime: dict[str, Any]) -> Repo
     """A native LLiMa performance report, with timings and telemetry per text/image workload."""
     return Report({
         "schema": SCHEMA, "schema_version": SCHEMA_VERSION, "stage": "performance",
-        "runtime": runtime, "metrics": {}, "workload": "Text buckets and an encoder-sized image when supported",
+        "runtime": runtime, "metrics": {},
+        "workload": "Full dataset comparisons" if generation["settings"].get("decoding") == "speculative"
+        else "Text buckets and an encoder-sized image when supported",
         "telemetry": {}, "components": {}, "generation": generation,
     }, {CORE_REPORT_FILE: generation})
 

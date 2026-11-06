@@ -109,8 +109,13 @@ fi
 mkdir -p "$OUTPUT_DIR"
 if [[ "$backend" == llima ]]; then
   deployment="$(dirname "${inputs[0]#*=}")/deployment"
+  export HF_HOME="${HF_HOME:-/media/nvme/huggingface}"
+  baseline=()
+  if [[ -f "$COMPILED_DIR/benchmark-baseline.json" ]]; then
+    baseline=(--baseline "$COMPILED_DIR/benchmark-baseline.json")
+  fi
   PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$LLIMA_MOLE_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-    --deployment "$deployment" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+    --deployment "$deployment" "${baseline[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
 else
   PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     "${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"

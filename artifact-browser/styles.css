@@ -884,12 +884,15 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 
 /* Native generation workloads share the whole-model Performance section. */
 [data-generative-benchmark] .benchmark-measurements { margin-top: 24px; }
-[data-generative-benchmark] h4 { margin: 0 0 9px; color: var(--ink-faint); font-size: 12px; }
+[data-generative-benchmark] .benchmark-measurements > h4 { margin: 0 0 9px; color: var(--ink-faint); font-size: 12px; }
 [data-generative-benchmark] .benchmark-measurements-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
-[data-generative-benchmark] table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-[data-generative-benchmark] th, [data-generative-benchmark] td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+[data-generative-benchmark] .benchmark-measurements table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+[data-generative-benchmark] .benchmark-measurements th, [data-generative-benchmark] .benchmark-measurements td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: left; }
 [data-generative-benchmark] .image-performance table { min-width: 0; }
 [data-generative-benchmark] .benchmark-input, [data-generative-benchmark] .benchmark-context { color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
 .workload-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
 .workload-picker select { max-width: 100%; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface-raised); font-size: 14px; }
 .workload-picker select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media (max-width: 700px) {
+  [data-generative-benchmark] .info-mark::after { max-width: 180px; }
+}

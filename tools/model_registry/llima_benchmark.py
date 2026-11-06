@@ -1,22 +1,17 @@
-"""Measure deployed LLiMa models with MoLE text timings and the existing image HTTP API."""
+"""MoLE timings, dataset comparisons and Sentinel telemetry for deployed LLiMa models."""
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import io
 import json
 import math
-import os
-import signal
 import socket
 import statistics
 import subprocess
-import time
-import urllib.request
 from contextlib import contextmanager
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from .board_telemetry import BoardTelemetry
@@ -25,6 +20,8 @@ from .fetch import sha256_file
 
 NEW_TOKENS = 256
 REPETITIONS = 5
+TEXT_DATASETS = ("gsm8k", "bfcl-v3", "alpacaeval")
+IMAGE_DATASETS = ("realworldqa", "docvqa_val", "chartqa")
 IMAGE_PROMPT = "Describe what you see in the image."
 TEXT = (
     "A city library is planning a community garden. Volunteers will grow vegetables, collect rainwater, "
@@ -32,9 +29,11 @@ TEXT = (
     "describe practical steps for keeping it healthy throughout the year. "
 )
 GENAI_METRICS = {
-    "ttft_ms": ("ms", "lower", "model.generation.ttft"),
-    "prefill_tps": ("tokens/s", "higher", "model.generation.prefill_rate"),
-    "decode_tps": ("tokens/s", "higher", "model.generation.decode_rate"),
+    "ttft_ms": ("ms", "lower"),
+    "prefill_tps": ("tokens/s", "higher"),
+    "decode_tps": ("tokens/s", "higher"),
+    "draft_contribution_pct": ("%", "higher"),
+    "decode_speedup": ("×", "higher"),
 }
 
 
@@ -57,46 +56,54 @@ def _positive(value: Any, label: str) -> float:
 
 
 def workload_metrics(workload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    if [row["phase"] for row in workload["requests"]] != ["warmup", *(["measure"] * REPETITIONS)]:
-        raise ValidationError("expected one warmup followed by five measured requests")
-    measured = [row for row in workload["requests"] if row["phase"] == "measure"]
-    if len(measured) != REPETITIONS:
-        raise ValidationError(f"{workload['id']}: expected {REPETITIONS} measured requests")
-    ttft = [_positive(row["ttft_s"], "TTFT") for row in measured]
+    requests = workload["requests"]
+    measured = [row for row in requests if row["phase"] == "measure"]
+    expected = workload["dataset"]["available_samples"] if "dataset" in workload else REPETITIONS
+    if [row["phase"] for row in requests] != ["warmup", *(["measure"] * expected)]:
+        raise ValidationError("expected one warmup followed by all measured requests")
+    for row in requests:
+        durations = row["token_durations_s"]
+        if (row.get("status", "ok") != "ok" or not durations
+            or len(durations) != row["generated_tokens"] or row["decode_tokens"] != len(durations) - 1
+            or row["ttft_s"] != durations[0] or row["decode_time_s"] != sum(durations[1:])):
+            raise ValidationError("generation counts and timings disagree")
+        if workload["kind"] == "text" and row["input_tokens"] != workload["input_tokens"]:
+            raise ValidationError("text input does not match its bucket")
+        for duration in durations:
+            _positive(duration, "token duration")
+        accepted = row.get("accepted_draft_tokens")
+        if accepted is not None and (type(accepted) is not int or not 0 <= accepted <= row["generated_tokens"]):
+            raise ValidationError("invalid accepted draft token count")
+    ttft = [row["ttft_s"] for row in measured]
     values = {"ttft_ms": statistics.mean(ttft) * 1000}
-    if workload["kind"] == "text":
-        for row in workload["requests"]:
-            durations = row["token_durations_s"]
-            if (
-                not durations
-                or len(durations) != row["generated_tokens"]
-                or row["decode_tokens"] != len(durations) - 1
-                or row["input_tokens"] != workload["input_tokens"]
-                or row["ttft_s"] != durations[0]
-                or row["decode_time_s"] != sum(durations[1:])
-            ):
-                raise ValidationError("text counts and timings disagree")
-            for duration in durations:
-                _positive(duration, "token duration")
+    if workload["kind"] in ("text", "text_dataset"):
         values["prefill_tps"] = sum(row["input_tokens"] for row in measured) / sum(ttft)
-        count = sum(row["decode_tokens"] for row in measured)
-        elapsed = sum(_positive(row["decode_time_s"], "decode time") for row in measured)
-        if count <= 0:
-            raise ValidationError("text benchmark generated no decode tokens")
-        values["decode_tps"] = count / elapsed
-    else:
-        # This is the agreed mean of streamed TPS observations, not a token-weighted runtime aggregate.
-        values["decode_tps"] = statistics.mean(_positive(row["streamed_tps_mean"], "streamed TPS") for row in measured)
+    count = sum(row["decode_tokens"] for row in measured)
+    elapsed = sum(row["decode_time_s"] for row in measured)
+    values["decode_tps"] = count / _positive(elapsed, "decode time")
+    accepted = [row.get("accepted_draft_tokens") for row in measured]
+    if all(value is not None for value in accepted):
+        values["draft_contribution_pct"] = 100 * sum(accepted) / sum(row["generated_tokens"] for row in measured)
+    baseline = workload.get("baseline")
+    if baseline:
+        baseline_metrics = workload_metrics(baseline)
+        if baseline["metrics"] != baseline_metrics:
+            raise ValidationError("baseline metrics disagree with recorded timings")
+        def identity(row):
+            return (row.get("sample_id"), row["input_tokens"], row.get("prompt_sha256"),
+                    row.get("output_budget"), row.get("images"))
+        if (workload.get("dataset") != baseline.get("dataset")
+            or [identity(row) for row in measured] != [identity(row) for row in baseline["requests"]
+                                                     if row["phase"] == "measure"]):
+            raise ValidationError("baseline must use the same dataset, prompts and output budgets")
+        if any(row.get("accepted_draft_tokens") is not None for row in baseline["requests"]):
+            raise ValidationError("benchmark baseline must use ordinary decoding")
+        values["decode_speedup"] = values["decode_tps"] / _positive(
+            baseline_metrics["decode_tps"]["value"], "baseline decode TPS"
+        )
     return {
-        name: {
-            "value": value,
-            "unit": GENAI_METRICS[name][0],
-            "direction": GENAI_METRICS[name][1],
-            "aggregation": "mean",
-            "sample_count": len(measured),
-            "minimum": None,
-            "maximum": None,
-        }
+        name: {"value": value, "unit": GENAI_METRICS[name][0], "direction": GENAI_METRICS[name][1],
+               "aggregation": "mean", "sample_count": len(measured), "minimum": None, "maximum": None}
         for name, value in values.items()
     }
 
@@ -104,18 +111,73 @@ def workload_metrics(workload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def validate_report(result: dict[str, Any]) -> None:
     report = result.get("benchmark_report", result)
     settings = report["settings"]
-    if "configuration" in result and result["configuration"] != settings:
-        raise ValidationError("GenAI configuration disagrees with its saved report")
-    expected = [f"text_n{length}" for length in input_buckets(settings["max_context"])]
-    if settings.get("image_size"):
-        expected.append("image")
+    speculative = settings.get("decoding") == "speculative"
+    if report["status"] != "passed":
+        raise ValidationError("generation benchmark did not complete")
+    if speculative:
+        names = (*TEXT_DATASETS, *(IMAGE_DATASETS if settings.get("image_size") else ()))
+        expected = [f"dataset_{name}" for name in names]
+        if not report.get("baseline"):
+            raise ValidationError("speculative benchmarks require an ordinary baseline")
+    else:
+        expected = [f"text_n{length}" for length in input_buckets(settings["max_context"])]
+        if settings.get("image_size"):
+            expected.append("image")
     if [row["id"] for row in report["workloads"]] != expected:
         raise ValidationError("GenAI workloads do not cover the declared text/image inputs")
     for workload in report["workloads"]:
+        if speculative and (not workload.get("baseline") or any(
+            row.get("accepted_draft_tokens") is None for row in workload["requests"]
+        )):
+            raise ValidationError("speculative workloads require draft counters and an ordinary baseline")
         if workload["metrics"] != workload_metrics(workload):
             raise ValidationError("GenAI metrics disagree with recorded request timings")
         if workload["kind"] == "image_text" and workload["image_size"] != settings["image_size"]:
             raise ValidationError("image does not match the compiled vision encoder size")
+
+
+def _config(deployment: Path) -> dict:
+    return json.loads((deployment / "devkit/vlm_config.json").read_text())
+
+
+def _speculative(config: dict) -> bool:
+    return bool(config["lm_cfg"].get("speculative_decoding_cfg"))
+
+
+@contextmanager
+def _server(deployment: Path, output: Path):
+    from sima_lmm.mole.modalixboard import ModalixBoard
+
+    output.mkdir(parents=True, exist_ok=True)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    board = ModalixBoard(address=None, port=port, model=str(deployment))
+    try:
+        board.start_server(output / "mole-server.log")
+        yield board
+    finally:
+        board.stop_server()
+
+
+@contextmanager
+def _client(board, deployment: Path, context: int, *, image: bool = False):
+    if image:
+        from sima_lmm.mole.multimodal import MultimodalClient
+
+        lm = MultimodalClient(board, context, enable_thinking=False)
+    else:
+        from sima_lmm.mole.modalixlm import ModalixLM
+
+        lm = ModalixLM(board=board, pretrained=str(deployment / "devkit"), device="cpu", max_length=context)
+    try:
+        yield lm
+    finally:
+        if image:
+            lm.close()
+        else:
+            lm.zmq_socket.close(linger=0)
+            lm.zmq_context.term()
 
 
 def _prompt(tokenizer, length: int) -> list[int]:
@@ -151,226 +213,166 @@ def _prompt(tokenizer, length: int) -> list[int]:
     return tokens[: length - suffix] + tokens[-suffix:] if suffix else tokens[:length]
 
 
-def _text(deployment: Path, output: Path, context: int) -> tuple[list[dict], dict]:
+def _text(lm, context: int) -> list[dict]:
     import torch
-    from sima_lmm.mole.modalixboard import ModalixBoard
-    from sima_lmm.mole.modalixlm import ModalixLM
 
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    board = ModalixBoard(address=None, port=port, model=str(deployment))
-    lm = None
-    threads = torch.get_num_threads()
+    path = Path(lm.pretrained) / "generation_config.json"
+    config = json.loads(path.read_text()) if path.is_file() else {}
+    stops = config.get("eos_token_id", lm.tokenizer.eos_token_id)
+    stops = [stops] if isinstance(stops, int) else list(stops or [])
     workloads = []
-    try:
-        torch.set_num_threads(1)
-        board.start_server(output / "mole-server.log")
-        lm = ModalixLM(board=board, pretrained=str(deployment / "devkit"), device="cpu", max_length=context)
-        config_path = deployment / "devkit/generation_config.json"
-        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
-        stops = config.get("eos_token_id", lm.tokenizer.eos_token_id)
-        stops = [stops] if isinstance(stops, int) else list(stops or [])
-        for length in input_buckets(context):
-            tokens = _prompt(lm.tokenizer, length)
-            workload = {"id": f"text_n{length}", "kind": "text", "input_tokens": length, "requests": []}
-            workloads.append(workload)
-            telemetry = BoardTelemetry(workload["id"])
-            for index in range(REPETITIONS + 1):
-                with telemetry.measure(enabled=index > 0):
-                    durations = (
-                        lm._zmq_infer(
-                            torch.tensor([tokens]),
-                            "generate_for_perf",
-                            max_num_tokens=length + NEW_TOKENS,
-                            stop_token_ids=stops,
-                        )
-                        .cpu()
-                        .tolist()[0]
-                    )
-                metadata = lm.last_profile_data
-                if len(durations) != metadata.get("generated_tokens") or not durations:
-                    raise ValidationError("MoLE did not return one timing per generated token")
-                for duration in durations:
-                    _positive(duration, "token duration")
-                workload["requests"].append(
-                    {
-                        "phase": "warmup" if index == 0 else "measure",
-                        "input_tokens": length,
-                        "generated_tokens": len(durations),
-                        "decode_tokens": len(durations) - 1,
-                        "ttft_s": durations[0],
-                        "decode_time_s": sum(durations[1:]),
-                        "token_durations_s": durations,
-                        "accepted_draft_tokens": metadata.get("accepted_draft_tokens"),
-                    }
-                )
-            workload["metrics"] = workload_metrics(workload)
-            workload.update(telemetry.report())
-            print(f"{workload['id']}: {json.dumps(workload['metrics'])}", flush=True)
-        return workloads, {"mole_version": version("sima-lmm"), "stop_token_ids": stops}
-    finally:
-        board.stop_server()
-        if lm is not None:
-            lm.zmq_socket.close(linger=0)
-            lm.zmq_context.term()
-        torch.set_num_threads(threads)
+    for length in input_buckets(context):
+        tokens = _prompt(lm.tokenizer, length)
+        workload = {"id": f"text_n{length}", "kind": "text", "input_tokens": length, "requests": []}
+        telemetry = BoardTelemetry(workload["id"])
+        for index in range(REPETITIONS + 1):
+            with telemetry.measure(enabled=index > 0):
+                durations = lm._zmq_infer(torch.tensor([tokens]), "generate_for_perf",
+                    max_num_tokens=length + NEW_TOKENS, stop_token_ids=stops).cpu().tolist()[0]
+            workload["requests"].append(_record(durations, lm.last_profile_data, length, index))
+        workload["metrics"] = workload_metrics(workload)
+        workload.update(telemetry.report())
+        workloads.append(workload)
+    return workloads
 
 
-@contextmanager
-def _web_server(deployment: Path, log_path: Path):
-    try:
-        with socket.create_connection(("127.0.0.1", 9998), timeout=1):
-            raise ValidationError("port 9998 is already in use")
-    except OSError:
-        pass
-    env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "PYTHONHOME")}
-    with log_path.open("w") as log:
-        process = subprocess.Popen(
-            ["/usr/bin/llima", "run", str(deployment), "--mode", "web"],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            env=env,
-        )
-        try:
-            deadline = time.monotonic() + 180
-            while True:
-                if process.poll() is not None:
-                    raise ValidationError(f"web server exited; see {log_path}")
-                try:
-                    with socket.create_connection(("127.0.0.1", 9998), timeout=1):
-                        break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise ValidationError(f"web server startup timed out; see {log_path}") from None
-                    time.sleep(0.2)
-            yield
-        finally:
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+def _record(durations: list, metadata: dict, inputs: int, index: int) -> dict:
+    if not durations or len(durations) != metadata.get("generated_tokens"):
+        raise ValidationError("MoLE did not return one timing per generated token")
+    return {"phase": "warmup" if index == 0 else "measure", "input_tokens": inputs,
+            "token_durations_s": durations, "generated_tokens": len(durations),
+            "decode_tokens": len(durations) - 1, "ttft_s": durations[0], "decode_time_s": sum(durations[1:]),
+            "accepted_draft_tokens": metadata.get("accepted_draft_tokens")}
 
 
-def _image(deployment: Path, output: Path, size: list[int]) -> dict:
+def _image(lm, size: list[int]) -> dict:
     from PIL import Image
+    from sima_lmm.mole.multimodal import ordered_content
 
     source = Path("/usr/share/sima_lmm/assets/sjc.jpg")
     height, width = size
-    encoded = io.BytesIO()
     with Image.open(source) as image:
-        image.convert("RGB").resize((width, height), Image.Resampling.BICUBIC).save(encoded, "JPEG", quality=90)
-    data = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode()
-    body = json.dumps(
-        {
-            "stream": True,
-            "enable_thinking": False,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data}},
-                        {"type": "text", "text": IMAGE_PROMPT},
-                    ],
-                }
-            ],
-        }
-    ).encode()
-    workload = {
-        "id": "image",
-        "kind": "image_text",
-        "image_size": size,
-        "prompt": IMAGE_PROMPT,
-        "source_image_sha256": sha256_file(source)[0],
-        "jpeg_sha256": hashlib.sha256(encoded.getvalue()).hexdigest(),
-        "jpeg_bytes": len(encoded.getvalue()),
-        "generated_tokens": None,
-        "requests": [],
-    }
+        resized = image.convert("RGB").resize((width, height), Image.Resampling.BICUBIC)
+        content, images = ordered_content(IMAGE_PROMPT, [resized])
+    workload = {"id": "image", "kind": "image_text", "image_size": size, "prompt": IMAGE_PROMPT,
+                "source_image_sha256": sha256_file(source)[0], "images": images, "requests": []}
     telemetry = BoardTelemetry("image")
+    lm.info()
     for index in range(REPETITIONS + 1):
-        # Restart to reset every model's KV/state cache. Loading is outside server-reported TTFT.
-        with _web_server(deployment, output / f"web-server-{index}.log"):
-            request = urllib.request.Request(
-                "http://127.0.0.1:9998/v1/chat/completions",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            ttft, rates, complete = None, [], False
-            with telemetry.measure(enabled=index > 0), urllib.request.urlopen(request, timeout=180) as response:
-                for line in response:
-                    text = line.decode().strip()
-                    if text == "data: [DONE]":
-                        complete = True
-                        break
-                    if text.startswith("data: "):
-                        chunk = json.loads(text[6:])
-                        if "ttft" in chunk:
-                            ttft = _positive(chunk["ttft"], "image TTFT")
-                        if "tps" in chunk:
-                            rates.append(_positive(chunk["tps"], "streamed TPS"))
-            if not complete or ttft is None or not rates:
-                raise ValidationError("image generation did not complete with TTFT and streamed TPS")
-            workload["requests"].append(
-                {
-                    "phase": "warmup" if index == 0 else "measure",
-                    "ttft_s": ttft,
-                    "streamed_tps_mean": statistics.mean(rates),
-                    "streamed_tps": rates,
-                    "generated_tokens": None,
-                }
-            )
+        with telemetry.measure(enabled=index > 0):
+            metadata = lm.profile([{"role": "user", "content": content}], {"max_new_tokens": NEW_TOKENS})
+        workload["requests"].append(_record(metadata["token_durations"], metadata, metadata["input_tokens"], index))
     workload["metrics"] = workload_metrics(workload)
     workload.update(telemetry.report())
     return workload
 
 
-def run_benchmark(deployment: Path, output: Path) -> dict[str, Any]:
-    """Run locally inside the installed MoLE environment; never download a checkpoint or dataset."""
-    deployment = deployment.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "benchmark-report.json").unlink(missing_ok=True)
-    config = json.loads((deployment / "devkit/vlm_config.json").read_text())
-    context = config["pipeline_cfg"]["max_num_tokens"]
-    workloads, runtime = _text(deployment, output, context)
-    vision = config.get("vm_cfg")
-    if vision:
-        size = vision["image_size"]
-        size = [size, size] if isinstance(size, int) else size
-        workloads.append(_image(deployment, output, size))
-    report = {
-        "status": "passed",
-        "runtime": runtime,
-        "workloads": workloads,
-        "settings": {
-            "max_context": context,
-            "max_new_tokens": NEW_TOKENS,
-            "image_size": size if vision else None,
-            "warmup": 1,
-            "repetitions": REPETITIONS,
-            "sampling": "greedy",
-            "thinking": False,
-            "text_cache": "reset by MoLE after every request",
-            "image_cache": "fresh server for every request",
-            "image_output_limit": "native EOS/context",
-        },
-        "timing": {
-            "text_ttft": "language prefill through first token; excludes tokenization and input-buffer preparation",
-            "prefill_tps": "input tokens / language TTFT",
-            "text_decode_tps": "decode tokens / decode duration; excludes first token",
-            "image_ttft": "server preprocessing, vision encoding and language prefill through first token",
-            "image_decode_tps": "mean of streamed TPS observations, averaged across measured requests",
-            "excluded": "model loading, client image resizing/encoding and HTTP upload",
-        },
-    }
-    validate_report(report)
-    (output / "benchmark-report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+class _MeasuredClient:
+    """Wrap only inference calls; MoLE's preparation and first warmup stay outside telemetry."""
+
+    def __init__(self, client, telemetry):
+        self.client, self.telemetry = client, telemetry
+        self.prompts = []
+
+    def __getattr__(self, name):
+        value = getattr(self.client, name)
+        if name not in ("_zmq_infer", "profile"):
+            return value
+
+        def measured(*args, **kwargs):
+            prompt = hashlib.sha256(args[0].cpu().numpy().tobytes()).hexdigest() if name == "_zmq_infer" else None
+            with self.telemetry.measure(enabled=bool(self.prompts)):
+                result = value(*args, **kwargs)
+            self.prompts.append(prompt)
+            return result
+
+        return measured
+
+
+def _datasets(board, deployment: Path, output: Path, context: int, names: tuple) -> list[dict]:
+    from sima_lmm.mole.perf_runner import PerformanceOptions, run_performance
+
+    workloads = []
+    for name in names:
+        directory = output / name
+        directory.mkdir(parents=True, exist_ok=True)
+        image = name in IMAGE_DATASETS
+        telemetry = BoardTelemetry(name)
+        with _client(board, deployment, context, image=image) as lm:
+            measured = _MeasuredClient(lm, telemetry)
+            config = SimpleNamespace(performance=PerformanceOptions(dataset=name), model_id=deployment.name,
+                output_path=directory, board=board, do_start_server=True, max_num_tokens=context,
+                max_new_tokens=NEW_TOKENS, limit=None, random_seed=42, input_lengths=None)
+            result = run_performance(measured, config)
+        requests = result["requests"]
+        if not image:
+            for row, prompt in zip(requests, measured.prompts, strict=True):
+                row["prompt_sha256"] = prompt
+        workload = {"id": f"dataset_{name}", "kind": "image_dataset" if image else "text_dataset",
+                    "dataset": result["dataset"], "requests": requests, "evaluator": result["evaluator"]}
+        workload["metrics"] = workload_metrics(workload)
+        workload.update(telemetry.report())
+        workloads.append(workload)
+    return workloads
+
+
+def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) -> dict[str, Any]:
+    """Measure ordinary buckets/images, or full speculative datasets against an ordinary deployment."""
+    import torch
     from model_report import from_generation
 
+    deployment = deployment.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    config = _config(deployment)
+    context = config["pipeline_cfg"]["max_num_tokens"]
+    speculative = _speculative(config)
+    vision = config.get("vm_cfg")
+    size = vision["image_size"] if vision else None
+    size = [size, size] if isinstance(size, int) else size
+    baseline_identity = json.loads(baseline.read_text()) if baseline else None
+    baseline_deployment = (baseline.parent / baseline_identity["deployment"]).resolve() if baseline else None
+    baseline_config = _config(baseline_deployment) if baseline else None
+    if speculative and (baseline_config is None or _speculative(baseline_config)):
+        raise ValidationError("speculative benchmarks need a compiled ordinary baseline")
+    if baseline_config and (baseline_config["pipeline_cfg"]["max_num_tokens"] != context
+                            or baseline_config.get("vm_cfg") != vision):
+        raise ValidationError("baseline must have the same context and vision encoder configuration")
+    names = (*TEXT_DATASETS, *(IMAGE_DATASETS if vision else ()))
+    threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        with _server(deployment, output / "target") as board:
+            if speculative:
+                workloads = _datasets(board, deployment, output / "target", context, names)
+            else:
+                with _client(board, deployment, context) as lm:
+                    workloads = _text(lm, context)
+                if vision:
+                    with _client(board, deployment, context, image=True) as lm:
+                        workloads.append(_image(lm, size))
+        if speculative:
+            with _server(baseline_deployment, output / "baseline") as board:
+                ordinary = _datasets(board, baseline_deployment, output / "baseline", context, names)
+            for workload, reference in zip(workloads, ordinary, strict=True):
+                workload["baseline"] = reference
+                workload["metrics"] = workload_metrics(workload)
+    finally:
+        torch.set_num_threads(threads)
+    report = {"status": "passed", "runtime": {"mole_version": version("sima-lmm")}, "workloads": workloads,
+        "settings": {"max_context": context, "max_new_tokens": NEW_TOKENS, "image_size": size,
+                     "decoding": "speculative" if speculative else "ordinary", "warmup": 1,
+                     "repetitions": 1 if speculative else REPETITIONS, "sampling": "greedy",
+                     "cache_policy": "empty target/draft KV cache before every request"},
+        "timing": {"text_ttft": "language prefill through first token; excludes tokenization and input preparation",
+                   "image_ttft": "native image preprocessing, vision encoding and language prefill through first token",
+                   "decode_tps": "tokens after the first / sum of their durations",
+                   "draft_contribution": "accepted draft tokens / all generated tokens",
+                   "decode_speedup": "aggregate speculative decode TPS / aggregate ordinary decode TPS",
+                   "excluded": "model loading, network transport and dataset preparation"}}
+    if speculative:
+        report["baseline"] = baseline_identity
+    validate_report(report)
+    (output / "benchmark-report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     installed = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "sima-lmm-core"], text=True).strip()
-    from_generation(report, {"llima": installed, "mole": runtime["mole_version"], "build": {}}).save(output)
+    from_generation(report, {"llima": installed, "mole": report["runtime"]["mole_version"], "build": {}}).save(output)
     return report

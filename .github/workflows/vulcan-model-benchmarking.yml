@@ -148,7 +148,7 @@ jobs:
         run: scripts/require_source_board_tooling.sh _source
 
       - name: Configure authenticated production registry reads
-        if: inputs.source_run_id == '' && (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
+        if: (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
         id: registry-reader-credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -159,7 +159,6 @@ jobs:
           output-env-credentials: false
 
       - name: Restore the current immutable compilation from the registry
-        if: inputs.source_run_id == ''
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.registry-reader-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.registry-reader-credentials.outputs.aws-secret-access-key }}
@@ -168,18 +167,13 @@ jobs:
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
-        run: |
-          set -euo pipefail
-          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
-          model-registry stage-registry-build \
-            --repository _source \
-            --output-dir _compiled \
-            --api-url "$REGISTRY_API_URL" \
-            --branch "$SOURCE_BRANCH" \
-            --catalog-revision "${{ inputs.source_sha }}" \
-            --model-id "${{ inputs.model_id }}" \
-            --build-profile-id "${{ inputs.build_profile_id }}" \
-            --compile-invocation-id "${{ inputs.compile_invocation_id }}"
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
+          STAGES: ${{ inputs.stages }}
+        run: scripts/stage_benchmark_inputs.sh _source _compiled
 
       # A benchmark runs under the profile's published package, so the build must be registered whole.
       - name: Verify the registered build and its package
@@ -227,7 +221,7 @@ jobs:
     runs-on:
       group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
       labels: ${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}
-    timeout-minutes: 45
+    timeout-minutes: 4320
     permissions:
       actions: read
       contents: read

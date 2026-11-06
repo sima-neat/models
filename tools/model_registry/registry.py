@@ -33,7 +33,7 @@ from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
+from .model import build_profile_for, compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
@@ -928,6 +928,7 @@ def stage_catalog_build(
     compile_invocation_id: str,
     read_request: ReadRequest | None = None,
     download_request: DownloadRequest | None = None,
+    expected_compile_fingerprint: str | None = None,
 ) -> JsonObject:
     """Restore a complete invocation from durable registry MPKs for later stages."""
     root = Path(repository).expanduser().resolve()
@@ -967,6 +968,10 @@ def stage_catalog_build(
     }
     if set(builds) != set(invocation["component_ids"]):
         raise ValidationError("current catalog does not link every component in the compile invocation")
+    if expected_compile_fingerprint and any(
+        build.get("compile_fingerprint") != expected_compile_fingerprint for build in builds.values()
+    ):
+        raise ValidationError("benchmark baseline needs a registered build matching its current model/compiler")
 
     staged_outputs = []
     for component_id in invocation["component_ids"]:
@@ -1076,6 +1081,37 @@ def stage_catalog_build(
                 encoding="utf-8",
             )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
+
+
+
+def stage_benchmark_baseline(
+    *, repository: str | Path, output_dir: str | Path, model_id: str, build_profile_id: str, **registry_options
+) -> JsonObject:
+    """Restore the declared ordinary deployment and retain its compile identities beside the benchmark input."""
+    root = Path(repository).resolve()
+    output = Path(output_dir).resolve()
+    receipt = output / "benchmark-baseline.json"
+    receipt.unlink(missing_ok=True)
+    model = load_and_validate_model(root / "models" / model_id)
+    baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline")
+    if not baseline:
+        return {"count": 0}
+    reference = load_and_validate_model(root / "models" / baseline["model_id"])
+    profile = baseline["build_profile"]
+    invocation = build_matrix({reference["id"]: reference}, [reference["id"]], [profile],
+        repository=root, compiler_version=resolve_model_compiler(root)["identity"])["include"][0]
+    if reference["components"][0]["interface"]["format"] != "huggingface":
+        raise ValidationError("a speculative benchmark baseline must be a native LLiMa deployment")
+    result = stage_catalog_build(repository=root, output_dir=output, model_id=reference["id"],
+        build_profile_id=profile, compile_invocation_id=invocation["compile_invocation_id"],
+        expected_compile_fingerprint=invocation["compile_fingerprint"], **registry_options)
+    component = result["outputs"][0]
+    identity = {"model_id": reference["id"], "display_name": reference["display_name"], "build_profile_id": profile,
+                "deployment": f"{reference['id']}/{profile}/{component['component_id']}/deployment",
+                "compile_run_id": component["run_id"], "artifact_sha256": component["artifact_sha256"]}
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(json.dumps(identity, indent=2) + "\n")
+    return result
 
 
 def _require_text(value: Any, field: str) -> str:

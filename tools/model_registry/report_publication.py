@@ -28,7 +28,7 @@ from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint
-from .model import load_and_validate_model
+from .model import build_profile_for, load_and_validate_model
 from .model_tests import require_test_outcome
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 
@@ -203,10 +203,20 @@ def check_report(
         for workload in report["generation"]["workloads"]:
             _check_metrics(str(report_path), stage,
                            {name: metric["value"] for name, metric in workload["metrics"].items()},
-                           ["ttft_ms", "prefill_tps", "decode_tps"] if workload["kind"] == "text"
+                           ["ttft_ms", "prefill_tps", "decode_tps"] if workload["kind"] in ("text", "text_dataset")
                            else ["ttft_ms", "decode_tps"])
             _check_metrics(str(report_path), stage, telemetry_metrics(workload.get("telemetry", {})),
                            ["avg_power_watts"])
+            if "baseline" in workload:
+                _check_metrics(str(report_path), stage, telemetry_metrics(workload["baseline"].get("telemetry", {})),
+                               ["avg_power_watts"])
+        if report["generation"]["settings"].get("decoding") == "speculative":
+            declared = build_profile_for(model, build_profile_id).get("benchmark_baseline")
+            baseline = report["generation"]["baseline"]
+            if not declared or (baseline["model_id"], baseline["build_profile_id"]) != (
+                declared["model_id"], declared["build_profile"]
+            ):
+                raise ValidationError("generation report does not use the declared benchmark baseline")
         return report
     if "generation" in report:
         raise ValidationError(f"{report_path}: generation workloads require a native LLiMa model")
@@ -314,6 +324,15 @@ def publish_report(
     report = check_report(output / REPORT_FILE, root, model_id, build_profile_id, stage)
     model = _model(root, model_id)
     builds, package_run_id = _registered_builds(Path(compiled_dir).expanduser().resolve(), model, build_profile_id)
+    baseline_builds = {}
+    baseline = report.get("generation", {}).get("baseline")
+    if baseline:
+        reference = _model(root, baseline["model_id"])
+        baseline_builds, _ = _registered_builds(Path(compiled_dir).resolve(), reference, baseline["build_profile_id"])
+        if len(baseline_builds) != 1 or next(iter(baseline_builds.values())) != {
+            "run_id": baseline["compile_run_id"], "artifact_sha256": baseline["artifact_sha256"]
+        }:
+            raise ValidationError("baseline report does not match its registered compilation")
     fingerprint = benchmark_fingerprint(root, model, build_profile_id, builds, stage)
     run_type = BENCHMARK_RUN_TYPES[stage]
     native = "generation" in report
@@ -368,8 +387,19 @@ def publish_report(
             },
             f"{stable_key}-{name}",
         )
+    for component_id, build in baseline_builds.items():
+        name = f"baseline-model-{component_id.replace('_', '-')}"
+        client.request("PUT", f"/v1/runs/{run_id}/inputs/{name}", {
+            "input_type": "model-pack",
+            "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/llima",
+            "sha256": build["artifact_sha256"], "media_type": "application/json",
+            "metadata": {"model_id": baseline["model_id"], "build_profile_id": baseline["build_profile_id"],
+                         "component_id": component_id, "compile_run_id": build["run_id"]},
+        }, f"{stable_key}-{name}")
     # Vulcan completes a run only once its canonical parameters are stored.
     parameters = {stage: model[stage], "builds": builds, "runtime": runtime}
+    if baseline:
+        parameters["benchmark_baseline"] = baseline
     client.request(
         "PUT",
         f"/v1/runs/{run_id}/parameters",
@@ -392,10 +422,19 @@ def publish_report(
         )
         for name, (filename, artifact_type, media_type) in files.items()
     }
+    summary = report
+    if native:
+        # Full-dataset token timings belong in the artifact, not an unbounded inline API response.
+        def compact(workload):
+            return {key: compact(value) if key == "baseline" else value
+                    for key, value in workload.items() if key != "requests"}
+
+        summary = {**report, "generation": {**report["generation"],
+            "workloads": [compact(workload) for workload in report["generation"]["workloads"]]}}
     test_body: JsonObject = {
         "status": test_status,
-        # The model browser reads the whole report from here.
-        "summary": report,
+        # The browser uses aggregates; Raw result retains every request in the registered artifact.
+        "summary": summary,
         "report_artifact_id": artifacts["model-report"]["artifact_id"],
     }
     if f"{stage}-log" in artifacts:
@@ -419,16 +458,27 @@ def publish_report(
 
         measurements = []
         for workload in report["generation"]["workloads"]:
-            dimensions = {**subject, "workload_id": workload["id"], "workload_kind": workload["kind"]}
-            if workload["kind"] == "text":
-                dimensions["input_tokens"] = str(workload["input_tokens"])
-            metrics = {name: metric["value"] for name, metric in workload["metrics"].items()}
-            metrics.update(telemetry_metrics(workload.get("telemetry", {})))
-            measurements.extend(
-                _measurement(f"{fingerprint}-{workload['id']}-{name}", name, value,
-                             report["generation"]["settings"]["repetitions"], dimensions)
-                for name, value in sorted(metrics.items())
-            )
+            scopes = [("target", workload)]
+            if "baseline" in workload:
+                scopes.append(("baseline", workload["baseline"]))
+            for role, reading in scopes:
+                dimensions = {**subject, "workload_id": workload["id"], "workload_kind": workload["kind"],
+                              "role": role, "decoding": "ordinary" if role == "baseline" else
+                              report["generation"]["settings"].get("decoding", "ordinary")}
+                if reading["kind"] == "text":
+                    dimensions["input_tokens"] = str(reading["input_tokens"])
+                if "dataset" in reading:
+                    dimensions["dataset"] = reading["dataset"]["name"]
+                if role == "baseline":
+                    dimensions.update(baseline_model_id=baseline["model_id"],
+                                      baseline_build_profile_id=baseline["build_profile_id"])
+                metrics = {name: metric["value"] for name, metric in reading["metrics"].items()}
+                metrics.update(telemetry_metrics(reading.get("telemetry", {})))
+                count = reading["metrics"]["decode_tps"]["sample_count"]
+                measurements.extend(
+                    _measurement(f"{fingerprint}-{workload['id']}-{role}-{name}", name, value, count, dimensions)
+                    for name, value in sorted(metrics.items())
+                )
     # check_report() requires the declared metrics, so a report always has at least one.
     client.request(
         "POST", f"/v1/runs/{run_id}/measurements/batch", {"measurements": measurements}, f"{stable_key}-measurements"

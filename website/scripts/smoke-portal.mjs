@@ -436,7 +436,7 @@ async function checkTaskComparison(browser, base) {
         if (await table.locator('thead th').count() !== 2) throw new Error('unmeasured model is missing from selected LLMs');
         const parameterRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Parameters', exact: true})});
         if (JSON.stringify(await parameterRow.locator('td').allTextContents()) !== JSON.stringify(['0.8 B', '5.1 B'])) throw new Error('parameter counts are missing or use deployment size');
-        const ttftRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'TTFT', exact: true})});
+        const ttftRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Time to first token', exact: true})});
         if (JSON.stringify(await ttftRow.locator('td').allTextContents()) !== JSON.stringify(['43.3 ms', '—'])) throw new Error('workload table fabricated or mixed measurements');
         await workload.selectOption('text_3072');
         if (await ttftRow.locator('td').first().innerText() !== '910.5 ms') throw new Error('table did not follow input length');

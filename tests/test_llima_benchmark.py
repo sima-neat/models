@@ -46,8 +46,11 @@ def report():
             {
                 "phase": "warmup" if i == 0 else "measure",
                 "ttft_s": 0.13,
-                "streamed_tps_mean": 75.0,
-                "generated_tokens": None,
+                "input_tokens": 512,
+                "token_durations_s": [0.13, 0.01, 0.02],
+                "generated_tokens": 3,
+                "decode_tokens": 2,
+                "decode_time_s": 0.03,
             }
             for i in range(6)
         ],
@@ -114,12 +117,6 @@ def test_exact_prompt_lengths_preserve_native_assistant_suffix():
         assert len(tokens) == length and tokens[0] == 1000 and tokens[-2:] == [1001, 1002]
 
 
-
-
-
-
-
-
 def generation_report():
     data = report()
     data["settings"].update(repetitions=5, warmup=1)
@@ -166,3 +163,180 @@ def test_generation_publication_uses_native_inputs_and_keeps_workload_dimensions
     assert {row["name"] for row in image} == {
         "model.generation.ttft", "model.generation.decode_rate", "board.power.avg", "board.power.peak",
     }
+
+
+def dataset_workload(name="gsm8k", *, image=False, ordinary=False):
+    requests = []
+    for index in (0, 0, 1, 2):
+        durations = [0.1, 0.04, 0.08] if ordinary else [0.1, 0.02, 0.04]
+        requests.append({
+            "phase": "warmup" if not requests else "measure", "status": "ok",
+            "sample_id": str(index), "input_tokens": (index + 1) * 32,
+            "prompt_sha256": f"prompt-{index}", "output_budget": 256,
+            "token_durations_s": durations, "ttft_s": durations[0],
+            "generated_tokens": 3, "decode_tokens": 2, "decode_time_s": sum(durations[1:]),
+            "accepted_draft_tokens": None if ordinary else 2,
+        })
+    workload = {
+        "id": f"dataset_{name}", "kind": "image_dataset" if image else "text_dataset",
+        "dataset": {"name": name, "available_samples": 3, "selection": "all",
+                    "sources": [{"repository": "example/dataset", "revision": "a" * 40}]},
+        "requests": requests,
+        "telemetry": generation_report()["generation"]["workloads"][0]["telemetry"],
+    }
+    workload["metrics"] = bench.workload_metrics(workload)
+    return workload
+
+
+def test_dataset_comparison_weights_actual_tokens_and_keeps_zero_draft_contribution():
+    workload = dataset_workload()
+    workload["baseline"] = dataset_workload(ordinary=True)
+    # Ordinary MoLE warmup includes the first token in addition to its decode budget.
+    workload["baseline"]["requests"][0]["output_budget"] = 257
+    metrics = bench.workload_metrics(workload)
+    assert metrics["decode_speedup"]["value"] == pytest.approx(2)
+    assert metrics["draft_contribution_pct"]["value"] == pytest.approx(200 / 3)
+    assert metrics["decode_tps"]["sample_count"] == 3
+    assert metrics["prefill_tps"]["value"] == pytest.approx((32 + 64 + 96) / 0.3)
+    for row in workload["requests"]:
+        row["accepted_draft_tokens"] = 0
+    assert bench.workload_metrics(workload)["draft_contribution_pct"]["value"] == 0
+
+
+@pytest.mark.parametrize("damage", ["prompt", "budget", "source", "counter", "missing_sample"])
+def test_comparison_rejects_unmatched_or_speculative_baselines(damage):
+    workload = dataset_workload()
+    baseline = workload["baseline"] = dataset_workload(ordinary=True)
+    if damage == "prompt":
+        baseline["requests"][1]["prompt_sha256"] = "different"
+    if damage == "budget":
+        baseline["requests"][1]["output_budget"] = 128
+    if damage == "source":
+        baseline["dataset"]["sources"][0]["revision"] = "b" * 40
+    if damage == "counter":
+        baseline["requests"][1]["accepted_draft_tokens"] = 0
+    if damage == "missing_sample":
+        baseline["requests"].pop()
+    baseline["metrics"] = bench.workload_metrics(baseline) if damage != "missing_sample" else baseline["metrics"]
+    with pytest.raises(ValidationError):
+        bench.workload_metrics(workload)
+
+
+def test_image_dataset_uses_native_decode_timings_without_a_text_prefill_rate():
+    workload = dataset_workload("chartqa", image=True)
+    metrics = bench.workload_metrics(workload)
+    assert metrics["decode_tps"]["value"] == pytest.approx(2 / 0.06)
+    assert "prefill_tps" not in metrics
+    assert "draft_contribution_pct" in metrics
+
+
+def test_dataset_runner_reuses_mole_with_no_sample_limit_and_excludes_warmup(monkeypatch, tmp_path):
+    import sys
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    phases, limits = [], []
+
+    class Tensor:
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return np.array([1, 2, 3], dtype=np.int64)
+
+    class Client:
+        def _zmq_infer(self, *args):
+            return None
+
+    class Telemetry:
+        def __init__(self, name):
+            pass
+
+        @contextmanager
+        def measure(self, enabled=True):
+            phases.append(enabled)
+            yield
+
+        def report(self):
+            return {}
+
+    @contextmanager
+    def client(*args, **kwargs):
+        yield Client()
+
+    def run(lm, config):
+        limits.append(config.limit)
+        workload = dataset_workload(config.performance.dataset)
+        for _ in workload["requests"]:
+            lm._zmq_infer(Tensor(), "generate_for_perf")
+        return {"requests": workload["requests"], "dataset": workload["dataset"], "evaluator": {}}
+
+    monkeypatch.setitem(sys.modules, "sima_lmm.mole.perf_runner", SimpleNamespace(
+        PerformanceOptions=lambda **kwargs: SimpleNamespace(**kwargs), run_performance=run))
+    monkeypatch.setattr(bench, "_client", client)
+    monkeypatch.setattr(bench, "BoardTelemetry", Telemetry)
+    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, bench.TEXT_DATASETS)
+    assert limits == [None, None, None]
+    assert phases == [False, True, True, True] * 3
+    assert all(len(row["prompt_sha256"]) == 64 for workload in workloads for row in workload["requests"])
+
+
+def test_declared_baseline_stages_its_deployment_and_records_the_compilation(monkeypatch, tmp_path):
+    from model_registry import registry
+
+    calls = []
+
+    def stage(**kwargs):
+        calls.append(kwargs)
+        return {"count": 1, "outputs": [{"component_id": "model", "run_id": "ordinary-run",
+                                         "artifact_sha256": "a" * 64}]}
+
+    monkeypatch.setattr(registry, "stage_catalog_build", stage)
+    registry.stage_benchmark_baseline(repository=ROOT, output_dir=tmp_path,
+        model_id="gemma_4_e2b_it_textonly_mtp", build_profile_id="w4a16", api_url="https://example.invalid")
+    assert calls[0]["model_id"] == "gemma_4_e2b_it_textonly"
+    assert calls[0]["compile_invocation_id"] == "w4a16"
+    receipt = json.loads((tmp_path / "benchmark-baseline.json").read_text())
+    assert receipt["compile_run_id"] == "ordinary-run"
+    assert receipt["deployment"] == "gemma_4_e2b_it_textonly/w4a16/model/deployment"
+
+
+def test_speculative_publication_registers_both_models_and_per_dataset_counts(tmp_path):
+    import hashlib
+
+    baseline_model = "gemma_4_e2b_it_textonly"
+    target_model = "gemma_4_e2b_it_textonly_mtp"
+    digest = hashlib.sha256(b"{}").hexdigest()
+    for name in (target_model, baseline_model):
+        registered_build(tmp_path / "_compiled", name, "w4a16", ["model"])
+        profile = tmp_path / "_compiled" / name / "w4a16"
+        (profile / "model/deployment-manifest.json").write_text("{}")
+        (profile / "compile-outputs.json").write_text(json.dumps({"outputs": [{
+            "component_id": "model", "artifact_path": "model/deployment-manifest.json", "artifact_sha256": digest,
+        }]}))
+    workloads = []
+    for name in bench.TEXT_DATASETS:
+        workload = dataset_workload(name)
+        workload["baseline"] = dataset_workload(name, ordinary=True)
+        workload["metrics"] = bench.workload_metrics(workload)
+        workloads.append(workload)
+    generation = {"status": "passed", "workloads": workloads, "runtime": {}, "timing": {},
+        "settings": {"max_context": 4096, "image_size": None, "decoding": "speculative", "repetitions": 1},
+        "baseline": {"model_id": baseline_model, "build_profile_id": "w4a16",
+                     "compile_run_id": "00000000-0000-4000-8000-000000000001", "artifact_sha256": digest}}
+    document = from_generation(generation, {"llima": "0.6.0", "mole": "0.6.0", "build": {}}).document
+    calls, _ = publish(tmp_path, target_model, "w4a16", "performance", document)
+    inputs = [path for _, path, _ in calls if "/inputs/" in path]
+    assert any(path.endswith("/baseline-model-model") for path in inputs)
+    measurements = next(body["measurements"] for _, path, body in calls if path.endswith("/measurements/batch"))
+    assert {row["dimensions"]["dataset"] for row in measurements} == set(bench.TEXT_DATASETS)
+    assert {row["dimensions"]["role"] for row in measurements} == {"target", "baseline"}
+    assert all(row["sample_count"] == 3 for row in measurements)
+    assert any(row["name"] == "model.generation.decode_speedup" for row in measurements)
+    summary = next(body["summary"] for _, path, body in calls if "/test-results/" in path)
+    assert "requests" not in summary["generation"]["workloads"][0]
+    assert "requests" not in summary["generation"]["workloads"][0]["baseline"]
+    assert summary["generation"]["workloads"][0]["metrics"] == workloads[0]["metrics"]
+    assert document["generation"]["workloads"][0]["requests"]  # The artifact remains complete.

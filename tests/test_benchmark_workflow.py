@@ -103,8 +103,11 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     install = step(stage["steps"], "Install registry publication tooling")
     assert install["run"] == "python -m pip install ."
     restore = step(stage["steps"], "Restore the current immutable compilation from the registry")
-    assert restore["if"] == "inputs.source_run_id == ''"
-    assert "model-registry stage-registry-build" in restore["run"]
+    assert "if" not in restore
+    assert restore["run"] == "scripts/stage_benchmark_inputs.sh _source _compiled"
+    script = (ROOT / "scripts/stage_benchmark_inputs.sh").read_text()
+    assert 'if [[ -z "$SOURCE_RUN_ID" ]]' in script
+    assert 'model-registry stage-registry-build "${args[@]}" --benchmark-baseline' in script
     # A benchmark runs under the profile's published package; the stage never registers a build itself.
     registered = step(stage["steps"], "Verify the registered build and its package")
     assert "if" not in registered
@@ -579,7 +582,7 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
     reader = step(jobs['stage-dispatched-benchmark']['steps'], 'Configure authenticated production registry reads')
     for source_run in ('', '123'):
         assert evaluate(reader['if'], {**values, 'inputs.source_run_id': source_run}) == (
-            expected == 'production' and not source_run
+            expected == 'production'
         )
     restore = step(jobs['stage-dispatched-benchmark']['steps'],
                    'Restore the current immutable compilation from the registry')

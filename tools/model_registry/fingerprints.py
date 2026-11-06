@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS
-from .dependencies import resolve_benchmark_runtime
+from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
 from .source import source_identity
@@ -44,6 +44,7 @@ LLIMA_PERFORMANCE_TOOLING = (
     "tools/model_registry/llima_benchmark.py",
     "tools/model_registry/board_telemetry.py",
     "scripts/install_llima_benchmark_runtime.sh",
+    "scripts/stage_benchmark_inputs.sh",
 )
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
@@ -245,6 +246,12 @@ def benchmark_fingerprint(
     runtime.pop("neat_core" if native else "llima", None)
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
+    if baseline:
+        reference = load_and_validate_model(root / "models" / baseline["model_id"])
+        invocation = compile_invocations_for(build_profile_for(reference, baseline["build_profile"]))[0]
+        baseline = {**baseline, "compile_fingerprint": compile_fingerprint(
+            root, reference["id"], baseline["build_profile"], invocation["id"],
+            resolve_model_compiler(root)["identity"])}
     return _fingerprint({
         "stage": stage,
         "model_id": model_id,

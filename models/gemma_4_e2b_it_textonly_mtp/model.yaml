@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Gemma 4 E2B Text MTP
+parameter_count_billion: 5.1
 description: Generates text using a draft assistant whose proposals are checked by the target model.
 model_type: llm
 tasks:
@@ -84,3 +85,5 @@ build_profiles:
           draft_model_path: gemma-4-E2B-it-assistant
           speculative_method: gemma4_mtp
           draft_precision: a16w8
+
+performance: {}
