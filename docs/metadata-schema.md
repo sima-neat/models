@@ -78,6 +78,11 @@ The workflow publishes a validated ONNX bundle to Vulcan. Set
 compile planning. The declaration remains environment independent; see
 [conversion artifacts](conversion-artifacts.md) for rollout and reproduction.
 
+`conversion.outputs` is optional and lists the files `convert.py` writes, such as
+several ONNX models or a `.pth` checkpoint. It defaults to `[model.onnx]`, and
+`compile.py` receives the first as `--model`. See
+[publish other files](conversion-artifacts.md#publish-other-files).
+
 ## Compilation and sources
 
 `compilation` names the one source the recipe compiles and its format:

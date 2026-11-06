@@ -159,9 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     images = prefetched(lambda record: preprocess((dataset / IMAGES / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
-        # The feature tensor goes to the decoder as is; only the proposals pass through NumPy.
+        # The decoder's EV74 input stage needs the features in EV74 memory; only the proposals pass through NumPy.
         proposals = select_top_proposals(view(scores), view(boxes))
-        dets, labels = (view(output) for output in decoder(features, proposals))
+        dets, labels = (view(output) for output in decoder(features.cvu(), proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")

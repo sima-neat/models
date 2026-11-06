@@ -75,6 +75,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     conversion.add_argument("--environment", required=True)
     conversion.add_argument("--validation", required=True, choices=["passed"])
 
+    entrypoint = subcommands.add_parser(
+        "conversion-entrypoint", help="print the conversion output compile.py receives as --model"
+    )
+    entrypoint.add_argument("model_dir", type=Path)
+
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
     fetch.add_argument("--schema", type=Path)
@@ -917,6 +922,11 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 compile_invocation_id=args.compile_invocation_id,
                 component_ids=_id_list(args.components, "--components"),
             ))
+            return 0
+        if args.command == "conversion-entrypoint":
+            from .conversion import conversion_outputs
+
+            print(conversion_outputs(args.model_dir)[0])
             return 0
         if args.command == "publish-conversion":
             from .conversion import publish_conversion
