@@ -41,7 +41,6 @@ while IFS=$'\x1f' read -r model_id profile_id invocation_id stages; do
     --ref "$GITHUB_REF_NAME" \
     -f environment="$VULCAN_ENV" \
     -f source_run_id="$SOURCE_RUN_ID" \
-    -f compile_run_id= \
     -f source_sha="$GITHUB_SHA" \
     -f source_branch="$GITHUB_REF_NAME" \
     -f model_id="$model_id" \
