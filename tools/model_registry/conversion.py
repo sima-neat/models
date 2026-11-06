@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import gzip
 import hashlib
 import json
@@ -16,61 +17,78 @@ from urllib.request import urlopen
 
 from .errors import ValidationError
 from .fetch import sha256_file
-from .model import load_and_validate_model
+from .model import _read_model, load_and_validate_model
 from .source import source_identity
 
 REPOSITORY_PATH = "/v1/repositories/sima-neat/models"
 ARTIFACT = "onnx"
 FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media_type")
 
-# Shared execution and validation dependencies. Keep this explicit so unrelated
-# registry/UI changes do not invalidate conversions; update it with new imports.
+# Shared files that can change the ONNX or its bundle. A missing conversion stops the plan for every model, so
+# files that only validate the output or read metadata stay out; a changed check applies on the next conversion.
 CONVERSION_TOOLING = (
     ".github/workflows/vulcan-model-convert.yml",
     "scripts/run_model_conversion.sh",
-    "scripts/run_model_tests.sh",
-    "conftest.py",
-    "pyproject.toml",
     "tools/model_registry/conversion.py",
     "tools/model_registry/fetch.py",
-    "tools/model_registry/registry_http.py",
     "tools/model_registry/source.py",
-    "tools/model_registry/model.py",
-    "tools/model_registry/model_tests.py",
-    "tools/model_registry/benchmark_declarations.py",
-    "tools/model_registry/taxonomy.py",
-    "tools/model_registry/errors.py",
-    "tools/model_report/__init__.py",
-    "tools/model_report/metrics.json",
-    "schemas/model.schema.json",
-    "schemas/model-tests.schema.json",
-    "schemas/dataset-requirements.schema.json",
-    "taxonomies/model-taxonomy.yaml",
 )
+# Other stages' dependencies, which never reach the conversion environment.
+OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt"}
+DEFAULT_OUTPUTS = ["model.onnx"]
 
 
 def digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def conversion_outputs(model_dir: str | Path) -> list[str]:
+    """Return the files a model's conversion publishes. The first is the one compile.py receives as --model."""
+    # Read from model.yaml: model.py is a compile input, so changing what it normalizes recompiles every ONNX model.
+    return _read_model(model_dir)["conversion"].get("outputs", DEFAULT_OUTPUTS)
+
+
+def _imported_modules(scripts: Path) -> set[Path]:
+    """Return convert.py and every module beside it that it imports, directly or through another such module."""
+    modules = set()
+    pending = [scripts / "convert.py"]
+    while pending:
+        path = pending.pop()
+        if path in modules:
+            continue
+        modules.add(path)
+        try:
+            nodes = ast.walk(ast.parse(path.read_bytes()))
+        except SyntaxError as exc:
+            raise ValidationError(f"{path}: cannot read its imports: {exc}") from exc
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module]
+            else:
+                continue
+            siblings = (scripts / f"{name.partition('.')[0]}.py" for name in names)
+            pending += [sibling for sibling in siblings if sibling.is_file()]
+    return modules
+
+
 def conversion_fingerprint(root: Path, model: dict) -> str:
-    directory = root / "models" / model["id"]
-    paths = [
-        directory / "scripts/convert.py",
-        directory / "scripts/requirements-convert.txt",
-        *(root / path for path in CONVERSION_TOOLING),
-    ]
-    # Include local helpers, exporter patches, and validation, but not compile/benchmark recipes.
+    scripts = root / "models" / model["id"] / "scripts"
+    imported = _imported_modules(scripts)
+    paths = [scripts / "requirements-convert.txt", *(root / path for path in CONVERSION_TOOLING)]
+    # A module beside convert.py counts only when imported: compile, benchmark, calibration and surgery code
+    # does not. Anything else under scripts/, such as an exporter patch or a helper package, always counts.
     paths += [
-        p
-        for p in (directory / "scripts").rglob("*")
-        if p.is_file() and p.name not in {"compile.py", "accuracy.py", "performance.py", "requirements-compile.txt"}
+        path
+        for path in scripts.rglob("*")
+        if path.is_file()
+        and path.name not in OTHER_STAGE_REQUIREMENTS
+        and (path.parent != scripts or path.suffix != ".py" or path in imported)
     ]
-    # Validation can consume images, arrays, or arbitrary binary fixtures.
-    paths += [p for p in (directory / "tests").rglob("*") if p.is_file()]
     files = {}
     for path in sorted(set(paths)):
-        if {"__pycache__", ".pytest_cache"}.intersection(path.relative_to(root).parts):
+        if "__pycache__" in path.relative_to(root).parts:
             continue
         if not path.is_file() or path.is_symlink():
             raise ValidationError(f"conversion input must be a regular file: {path}")
@@ -80,6 +98,7 @@ def conversion_fingerprint(root: Path, model: dict) -> str:
             "version": 1,
             "model_id": model["id"],
             "source": source_identity(model["conversion"]["default"]["source"]),
+            "outputs": conversion_outputs(scripts.parent),
             "files": files,
         }
     )
@@ -215,12 +234,10 @@ def _safe_path(name: str) -> str:
     return name
 
 
-def bundle_onnx(directory: Path, output: Path) -> Path:
+def _external_data_files(path: Path) -> set[str]:
     import onnx
 
-    entrypoint = directory / "model.onnx"
-    model = onnx.load(str(entrypoint), load_external_data=False)
-    names = {"model.onnx"}
+    names = set()
 
     def visit(message):
         if isinstance(message, onnx.TensorProto):
@@ -235,18 +252,31 @@ def bundle_onnx(directory: Path, output: Path) -> Path:
                 for child in value if descriptor.is_repeated else [value]:
                     visit(child)
 
-    visit(model)
+    visit(onnx.load(str(path), load_external_data=False))
+    return names
+
+
+def bundle_conversion(directory: Path, output: Path, outputs: list[str]) -> Path:
+    missing = [name for name in outputs if not (directory / name).is_file()]
+    if missing:
+        raise ValidationError(f"Conversion did not write the declared outputs: {', '.join(missing)}")
+    onnx_outputs = [directory / name for name in outputs if name.endswith(".onnx")]
+    names = set(outputs).union(*map(_external_data_files, onnx_outputs))
     files = []
     for name in sorted(names):
         path = directory / name
         if not path.is_file() or path.resolve() != directory.resolve() / name or path.is_symlink():
-            raise ValidationError(f"ONNX data must be regular files within output directory: {name}")
+            raise ValidationError(f"Conversion files must be regular files within output directory: {name}")
         if path.resolve() == output.resolve() or (output.exists() and path.samefile(output)):
-            raise ValidationError(f"ONNX bundle output would overwrite model data: {name}")
+            raise ValidationError(f"Conversion bundle would overwrite model data: {name}")
         sha, size = sha256_file(path)
         files.append({"path": name, "sha256": sha, "size_bytes": size})
-    onnx.checker.check_model(str(entrypoint))
-    manifest = json.dumps({"version": 1, "entrypoint": "model.onnx", "files": files}, sort_keys=True).encode()
+    if onnx_outputs:
+        import onnx
+
+        for path in onnx_outputs:
+            onnx.checker.check_model(str(path))
+    manifest = json.dumps({"version": 1, "entrypoint": outputs[0], "files": files}, sort_keys=True).encode()
     import io
 
     with output.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="") as zipped:
@@ -273,8 +303,7 @@ def _verify_bundle(directory: Path, source: dict | None = None) -> None:
     names = [item["path"] for item in manifest["files"]]
     if (
         manifest["version"] != 1
-        or manifest["entrypoint"] != "model.onnx"
-        or "model.onnx" not in names
+        or manifest["entrypoint"] not in names
         or len(names) != len(set(names))
     ):
         raise ValidationError("Invalid conversion bundle manifest")
@@ -285,6 +314,10 @@ def _verify_bundle(directory: Path, source: dict | None = None) -> None:
         path = directory / _safe_path(item["path"])
         if path.is_symlink() or sha256_file(path) != (item["sha256"], item["size_bytes"]):
             raise ValidationError("Conversion bundle file checksum or size mismatch")
+
+
+def _entrypoint(directory: Path) -> Path:
+    return directory / json.loads((directory / "manifest.json").read_text())["entrypoint"]
 
 
 def fetch_conversion(source: dict, cache_dir: Path | None = None):
@@ -299,7 +332,7 @@ def fetch_conversion(source: dict, cache_dir: Path | None = None):
     destination = cache / "conversions" / source["sha256"]
     if destination.exists():
         _verify_bundle(destination, source)
-        return destination / "model.onnx", True, source["sha256"], source["size_bytes"]
+        return _entrypoint(destination), True, source["sha256"], source["size_bytes"]
     with tempfile.TemporaryDirectory(dir=cache) as tmp:
         bundle = Path(tmp) / "onnx.tar.gz"
         with urlopen(artifact["download_url"], timeout=120) as response, bundle.open("wb") as stream:
@@ -326,7 +359,7 @@ def fetch_conversion(source: dict, cache_dir: Path | None = None):
             if not destination.is_dir():
                 raise
             _verify_bundle(destination, source)
-    return destination / "model.onnx", False, source["sha256"], source["size_bytes"]
+    return _entrypoint(destination), False, source["sha256"], source["size_bytes"]
 
 
 def publish_conversion(
@@ -347,7 +380,8 @@ def publish_conversion(
         raise ValidationError("Conversion publication requires passed conversion tests")
     model = load_and_validate_model(root / "models" / model_id)
     fingerprint = conversion_fingerprint(root, model)
-    bundle = bundle_onnx(directory, directory / "onnx.tar.gz")
+    outputs = conversion_outputs(root / "models" / model_id)
+    bundle = bundle_conversion(directory, directory / "onnx.tar.gz", outputs)
     sha, size = sha256_file(bundle)
     key = "conversion-" + digest([workflow, environment, model_id, fingerprint, sha])
     run = client.request(
@@ -384,6 +418,7 @@ def publish_conversion(
                 "model_id": model_id,
                 "conversion_fingerprint": fingerprint,
                 "conversion": model["conversion"],
+                "outputs": outputs,
             },
         },
         key + "-parameters",
@@ -401,7 +436,7 @@ def publish_conversion(
             "size_bytes": size,
             "media_type": "application/gzip",
             "retention_class": "branch",
-            "metadata": {"validation": "passed", "entrypoint": "model.onnx", "bundle_version": 1},
+            "metadata": {"validation": "passed", "entrypoint": outputs[0], "bundle_version": 1},
         },
         key + "-artifact",
     )
@@ -410,7 +445,10 @@ def publish_conversion(
         path + "/test-results/correctness/conversion",
         {
             "status": "passed",
-            "summary": {"onnx_checker": "passed", "model_tests": validation},
+            "summary": {
+                "onnx_checked": [name for name in outputs if name.endswith(".onnx")],
+                "model_tests": validation,
+            },
         },
         key + "-test",
     )

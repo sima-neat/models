@@ -78,8 +78,9 @@ jobs:
       - name: Test the converted model with the model's conversion tests
         run: |
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" '.[tests]'
+          entrypoint="$("$EXPORT_VENV/bin/python" -E -s -m model_registry conversion-entrypoint "models/$MODEL_ID")"
           outcome="$(REGISTRY_PYTHON="$EXPORT_VENV/bin/python" \
-            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/model.onnx")"
+            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/$entrypoint")"
           [[ "$outcome" == passed ]]
       - uses: aws-actions/configure-aws-credentials@v6
         with:
