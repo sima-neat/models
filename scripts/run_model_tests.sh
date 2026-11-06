@@ -4,7 +4,7 @@
 # Usage: run_model_tests.sh <stage> <model_dir> <stage_output> [build_profile]
 #
 # <stage> is conversion, compile, accuracy or performance, and <stage_output> is what that stage produced:
-# the converted ONNX model, one build's compile output directory, or the model-report.json of an accuracy or
+# the first conversion output, one build's compile output directory, or the model-report.json of an accuracy or
 # performance stage, which also names the <build_profile> it measured. The tests are
 # <model_dir>/tests/<build|benchmark>/test_<stage>.py, and only those that take the output run. The outcome is
 # skipped when tests/tests.yaml sets run_tests: false. A failed outcome exits 1 after printing it; any other
