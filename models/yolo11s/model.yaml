@@ -27,10 +27,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo11s/4dd61373b8beba71e4b3abac1178f8d858726908163e869b7bd8f38cb591a00c/40345544862-1/model.onnx
-    sha256: 4dd61373b8beba71e4b3abac1178f8d858726908163e869b7bd8f38cb591a00c
-    size_bytes: 38030937
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal
