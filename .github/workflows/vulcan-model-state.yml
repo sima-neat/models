@@ -1,0 +1,45 @@
+name: Vulcan Model Registry State
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - state.json
+      - .github/workflows/vulcan-model-state.yml
+      - scripts/publish_registry_state.sh
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: model-registry-state-production
+  cancel-in-progress: false
+
+jobs:
+  resolve-vulcan-config:
+    if: github.ref == 'refs/heads/main'
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: production
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: resolve-vulcan-config
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: models-state-${{ github.run_id }}
+
+      - name: Publish registry state
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+        run: scripts/publish_registry_state.sh

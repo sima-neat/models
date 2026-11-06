@@ -33,8 +33,7 @@ fi
 checkpoint="$("$PYTHON" -m model_registry fetch "$MODEL_DIR" --component "$component_id" \
   ${cache_args[@]+"${cache_args[@]}"} --json | "$PYTHON" -c '
 import json, sys
-from pathlib import Path
-print(Path(json.load(sys.stdin)["path"]).parent)
+print(json.load(sys.stdin)["path"])
 ')"
 
 rm -rf "$PROFILE_OUTPUT_DIR"
@@ -48,6 +47,7 @@ import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+from model_registry.artifact import save_llima_recipe
 from model_registry.model import load_and_validate_model
 
 model_dir, profile_id, component_id, checkpoint, output = sys.argv[1:]
@@ -55,22 +55,47 @@ model = load_and_validate_model(model_dir)
 # LLiMa derives artifact names from the checkpoint directory's basename.
 named_checkpoint = Path(output).parent / "source" / Path(urlsplit(model["upstream"]["repository"]).path).name
 named_checkpoint.parent.mkdir()
-named_checkpoint.symlink_to(Path(checkpoint).resolve(), target_is_directory=True)
+named_checkpoint.symlink_to(Path(checkpoint).parent.resolve(), target_is_directory=True)
 profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
+component = next(item for item in model["components"] if item["id"] == component_id)
+source = component["source"]
 parameters = next(item["parameters"] for item in profile["components"] if item["id"] == component_id)
 arguments = []
 for name, value in parameters.items():
-    if name == "precision" or (name == "language_group_size" and value == 128):
+    if name in {"precision", "speculative_method", "draft_precision", "draft_model_path"} or (
+        name == "language_group_size" and value == 128
+    ):
         continue
     if isinstance(value, bool):
         arguments.append(f"--{'' if value else 'no-'}{name}")
     else:
         arguments.extend([f"--{name}", str(value)])
+if "draft_model_path" in parameters:
+    source_root = Path(checkpoint).parents[len(Path(source["entrypoint"]).parts) - 1]
+    draft = Path(parameters["draft_model_path"])
+    named_draft = named_checkpoint.parent / draft.name
+    named_draft.symlink_to((source_root / draft).resolve(), target_is_directory=True)
+    arguments.extend(["--draft_model_path", str(named_draft)])
 subprocess.run(["bash", str(Path(model_dir) / "scripts/compile.sh"), str(named_checkpoint), output, *arguments], check=True)
+files = {item["path"]: item["uri"] for item in source["files"]}
+checkpoints = {named_checkpoint.name: files[source["entrypoint"]]}
+output_name = named_checkpoint.name.removesuffix("-Safetensors")
+if output_name == named_checkpoint.name:
+    output_name += "-" + parameters["precision"]
+saved_arguments = [named_checkpoint.name, output_name, *arguments]
+if "draft_model_path" in parameters:
+    saved_arguments[saved_arguments.index("--draft_model_path") + 1] = named_draft.name
+    saved_arguments[1] += "-MTP"
+    checkpoints[named_draft.name] = files[parameters["draft_model_path"] + "/config.json"]
+save_llima_recipe(Path(model_dir) / "scripts", Path(output), saved_arguments, checkpoints)
 PY
 mkdir -p "$PROFILE_OUTPUT_DIR/$component_id"
 llima-deploy "$work/compiled" "$PROFILE_OUTPUT_DIR/$component_id/deployment"
-install -m 0755 "$work/compiled/compile.sh" "$PROFILE_OUTPUT_DIR/$component_id/deployment/compile.sh"
+for file in compile.sh compile.py config.py; do
+  if [[ -f "$work/compiled/$file" ]]; then
+    install -m 0755 "$work/compiled/$file" "$PROFILE_OUTPUT_DIR/$component_id/deployment/$file"
+  fi
+done
 "$PYTHON" -m model_registry verify-artifact "$PROFILE_OUTPUT_DIR/$component_id" --write-manifest
 printf '{"scope": "compile_recipe", "started_at": "%s", "finished_at": "%s"}\n' \
   "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_OUTPUT_DIR/compile-timing.json"
