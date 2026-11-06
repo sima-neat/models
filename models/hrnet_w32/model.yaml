@@ -30,10 +30,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/hrnet_w32/6ebb3e1fe6c04a2ae59f9420783ac3311769d54c6cb99f1b1614d6a0e0764555/41688826065-1/model.onnx
-    sha256: 6ebb3e1fe6c04a2ae59f9420783ac3311769d54c6cb99f1b1614d6a0e0764555
-    size_bytes: 165060741
+  source: conversion
 
 calibrations:
 - id: imagenet-2012-cal
