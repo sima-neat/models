@@ -66,7 +66,8 @@ chart shows all measured precisions together. Hover over a point to see the mode
 variant, throughput and accuracy. Accuracy is the vertical axis and throughput
 in inferences/s is the horizontal axis. The dataset, variant and split appear below
 the chart title. Accuracy is grouped by dataset and metric; when more than one
-group is available, choose it with **Dataset & metric**.
+group is available, choose it with **Dataset & metric**. The axis title gives the
+metric's unit and says "lower is better" for an error metric such as EPE.
 A multi-component model shows its [whole-model result](benchmarking.md#multi-component-models), with all its components running as one pipeline. Select up to three points or use the compact
 **Add model** selector to show detailed measurements, including power and memory.
 Remove a selected variant using the × in its table heading or its chart label.
@@ -213,7 +214,8 @@ in this order:
    components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,
-   sampled otherwise), the first four metrics, the evaluated sample count, and
+   sampled otherwise), the first four metrics in their units (ratios as
+   percentages, EPE in pixels, D1-all in percent), the evaluated sample count, and
    the commit and GitHub workflow of the run that measured them. With more than
    one dataset, each result is titled by its dataset name. The catalog table
    and **Compare** use the first dataset.
