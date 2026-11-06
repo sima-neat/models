@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
@@ -63,6 +64,22 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     validate_models.add_argument("--repository", type=Path, default=Path.cwd())
     validate_models.add_argument("--json", action="store_true", dest="json_output")
 
+    conversion = subcommands.add_parser("publish-conversion", help="publish a validated conversion output")
+    conversion.add_argument("model_id")
+    conversion.add_argument("output_dir", type=Path)
+    conversion.add_argument("--repository", type=Path, default=Path.cwd())
+    conversion.add_argument("--api-url", required=True)
+    conversion.add_argument("--bucket", required=True)
+    conversion.add_argument("--kms-key-id")
+    conversion.add_argument("--aws-region", default="us-west-2")
+    conversion.add_argument("--environment", required=True)
+    conversion.add_argument("--validation", required=True, choices=["passed"])
+
+    entrypoint = subcommands.add_parser(
+        "conversion-entrypoint", help="print the conversion output compile.py receives as --model"
+    )
+    entrypoint.add_argument("model_dir", type=Path)
+
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
     fetch.add_argument("--schema", type=Path)
@@ -117,6 +134,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stages.add_argument("--branch", required=True)
     stages.add_argument("--base-branches", help="comma-separated branches whose catalogs builds may come from")
     stages.add_argument("--read-api-url", help="public artifact-registry API; omit with --offline")
+    stages.add_argument("--api-url", default=os.environ.get("VULCAN_ARTIFACT_REGISTRY_API_URL"))
+    stages.add_argument("--aws-region", default="us-west-2")
     stages.add_argument("--offline", action="store_true", help="read no registry state; select every invocation")
     stages.add_argument("--models", help="comma-separated model IDs; every model when omitted")
     stages.add_argument("--profiles", help="comma-separated build profile IDs within the selected models")
@@ -263,7 +282,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     candidate.add_argument("--aws-region", default="us-west-2")
     candidate.add_argument("--bucket", required=True)
     candidate.add_argument("--kms-key-id")
-    candidate.add_argument("--environment", choices=("staging",), required=True)
+    candidate.add_argument("--environment", choices=("staging", "production"), required=True)
     candidate.add_argument("--branch", required=True)
     candidate.add_argument("--git-sha", required=True)
     candidate.add_argument("--github-run-id", required=True)
@@ -428,7 +447,13 @@ def _selected_component(model: dict[str, object], component_id: str | None) -> d
 def _fetch(args: argparse.Namespace) -> int:
     model = load_and_validate_model(args.model_dir, args.schema)
     component = _selected_component(model, args.component)
-    path, cache_hit, source_sha256, size_bytes = Fetcher(args.cache_dir).fetch_source(component["source"])
+    from .conversion import apply_selection, fetch_conversion
+
+    apply_selection(model, root=args.model_dir.resolve().parents[1])
+    if component["source"]["type"] == "conversion":
+        path, cache_hit, source_sha256, size_bytes = fetch_conversion(component["source"], args.cache_dir)
+    else:
+        path, cache_hit, source_sha256, size_bytes = Fetcher(args.cache_dir).fetch_source(component["source"])
     source_root = path.parent
     if component["source"]["type"] == "file_set":
         source_root = path
@@ -557,7 +582,7 @@ def _reference_metrics(args: argparse.Namespace) -> int:
 
 
 def _plan_stages(args: argparse.Namespace) -> int:
-    from .registry import _public_registry_json
+    from .registry import SigV4RegistryClient, _public_registry_json
 
     if args.offline == bool(args.read_api_url):
         raise ModelRegistryError("pass exactly one of --read-api-url or --offline")
@@ -573,6 +598,7 @@ def _plan_stages(args: argparse.Namespace) -> int:
         component_ids=_id_list(args.components, "--components"),
         force_rebuild_all=args.force_rebuild_all,
         include_on_demand=args.include_on_demand,
+        conversion_client=SigV4RegistryClient(args.api_url, args.aws_region) if args.api_url else None,
     )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
@@ -893,6 +919,24 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 compile_invocation_id=args.compile_invocation_id,
                 component_ids=_id_list(args.components, "--components"),
             ))
+            return 0
+        if args.command == "conversion-entrypoint":
+            from .conversion import conversion_outputs
+
+            print(conversion_outputs(args.model_dir)[0])
+            return 0
+        if args.command == "publish-conversion":
+            from .conversion import publish_conversion
+            from .registry import S3ArtifactStore, SigV4RegistryClient
+
+            result = publish_conversion(
+                args.repository.resolve(), args.model_id, args.output_dir.resolve(),
+                client=SigV4RegistryClient(args.api_url, args.aws_region),
+                store=S3ArtifactStore(args.bucket, kms_key_id=args.kms_key_id), bucket=args.bucket,
+                environment=args.environment, branch=os.environ["GITHUB_REF_NAME"],
+                git_sha=os.environ["GITHUB_SHA"], workflow=os.environ["GITHUB_RUN_ID"], validation=args.validation,
+            )
+            print(json.dumps(result, sort_keys=True))
             return 0
         if args.command == "simulate-mla-stages":
             print(write_mla_stage_simulation(args.output_dir))

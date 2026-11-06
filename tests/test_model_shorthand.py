@@ -61,9 +61,7 @@ def test_multi_component_model_compiles_and_packages_its_components_together() -
     model = normalize_model(authored, MODELS / "rf_detr_nano")
 
     assert [component["id"] for component in model["components"]] == ["backbone", "decoder"]
-    assert {component["source"]["sha256"] for component in model["components"]} == {
-        authored["compilation"]["source"]["sha256"]
-    }
+    assert [component["source"] for component in model["components"]] == [{"type": "conversion"}] * 2
     for profile in model["build_profiles"]:
         assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
         # The recipe calibrates the backbone; the decoder calibrates on the backbone's outputs.
