@@ -1,0 +1,3 @@
+# What every model evaluating its accuracy on Pittsburgh 30k test must report, by the model's task.
+required_metrics:
+  loop_closure: [recall_at_1, recall_at_5, recall_at_10]

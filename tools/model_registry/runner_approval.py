@@ -8,10 +8,11 @@ from .errors import ValidationError
 
 RUNNER_CLASS_RANK = {
     "default": 0,
-    "expensive": 1,
-    "most-expensive": 2,
+    "moderate": 1,
+    "expensive": 2,
+    "most-expensive": 3,
 }
-ELEVATED_RUNNER_CLASSES = frozenset({"expensive", "most-expensive"})
+ELEVATED_RUNNER_CLASSES = frozenset(RUNNER_CLASS_RANK) - {"default"}
 # Vulcan publishes shared approvals: one grant per model, identical in every environment.
 APPROVALS_SCHEMA_VERSIONS = (2, 3)
 _SPEC_REVISION = re.compile(r"^[a-f0-9]{64}$")
