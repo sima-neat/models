@@ -83,6 +83,9 @@ def _quantization_config(parameters: dict[str, Any]) -> Any:
     if precision == "w8a8":
         activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
         weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+    elif precision == "w8a16":
+        activation = bfloat16_scheme()
+        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     elif precision == "w16a16":
         activation = weights = bfloat16_scheme()
     else:
@@ -95,8 +98,9 @@ def _quantization_config(parameters: dict[str, Any]) -> Any:
         .with_calibration(HistogramMSEMethod(int(parameters["calibration_bins"])))
         .with_channel_equalization(False)
         .with_smooth_quant(False)
-        # with_activation_quantization turns per-token quantization on for BF16; these builds do not use it.
-        .with_per_token_quant(False)
+        # with_activation_quantization turns per-token quantization on for BF16. w8a16 keeps it, scaling each token's
+        # activations on its own before an INT8-weight operation; w16a16 and w8a8 do not use it.
+        .with_per_token_quant(precision == "w8a16")
     )
 
 
@@ -182,8 +186,8 @@ def _compile_component(quantized: Any, build_dir: Path, component_id: str, preci
         retained_temporary_directory_name=None,
         use_power_limits=False,
         max_mla_power=None,
-        # The option applies to every layer norm, and INT8 ones reject it.
-        layer_norm_use_fp32_intermediates=precision == "w16a16",
+        # The option applies to every layer norm, and ones with INT8 activations (w8a8) reject it.
+        layer_norm_use_fp32_intermediates=precision != "w8a8",
         rms_norm_use_fp32_intermediates=False,
         enable_filter_sharing=False,
         layout_search_effort_level=0,

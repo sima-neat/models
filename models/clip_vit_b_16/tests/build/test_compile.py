@@ -134,7 +134,7 @@ def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable
         assert recipe._precision_label(parameters) == profile["id"].upper()
 
 
-@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+@pytest.mark.parametrize("precision", ["w8a8", "w8a16", "w16a16"])
 def test_the_quantization_recipe_follows_the_precision(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
@@ -149,10 +149,17 @@ def test_the_quantization_recipe_follows_the_precision(
             call(asymmetric=False, per_channel=True, bits=8),
         ]
         recipe.bfloat16_scheme.assert_not_called()
+    elif precision == "w8a16":
+        # BF16 activations, INT8 weights per channel.
+        assert recipe.quantization_scheme.call_args_list == [call(asymmetric=False, per_channel=True, bits=8)]
+        recipe.bfloat16_scheme.assert_called_once_with()
     else:
         recipe.quantization_scheme.assert_not_called()
         recipe.bfloat16_scheme.assert_called_once_with()
-    # Both precisions calibrate: AFE needs calibrated ranges even at BF16.
+    # Only w8a16 scales activations per token.
+    per_token = [c[1] for c in recipe.default_quantization.mock_calls if c[0].endswith("with_per_token_quant")]
+    assert per_token == [(precision == "w8a16",)]
+    # Every precision calibrates: AFE needs calibrated ranges even at BF16.
     recipe.HistogramMSEMethod.assert_called_once_with(2048)
     with pytest.raises(ValueError, match="unsupported precision"):
         recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})

@@ -53,6 +53,14 @@ build_profiles:
       text_encoder:
         parameters: {precision: w16a16, calibration_bins: 2048}
 
+  w8a16:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      image_encoder:
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 50}
+      text_encoder:
+        parameters: {precision: w8a16, calibration_bins: 2048}
+
   # w8a8 is held back: the build scores zero-shot ImageNet top-1 0.0012 (w16a16: 0.6838), far outside the 5% the
   # registry allows; INT8 activations are the likely cause, as for ViT-B/16. Uncomment it once an INT8 recipe
   # keeps CLIP's accuracy.
