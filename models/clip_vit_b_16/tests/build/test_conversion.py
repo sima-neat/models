@@ -1,6 +1,5 @@
 """Checks of the conversion's fixed interface, its source and prompt tables, and the converted ONNX."""
 
-import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -50,28 +49,24 @@ def test_the_text_probe_matches_the_converted_onnx(converted: Path, converter: M
         np.testing.assert_allclose(text_embeds[0, ids.argmax()], expected, rtol=1e-4, atol=1e-4)
 
 
-def test_the_text_probe_takes_only_the_pinned_onnx(tmp_path, monkeypatch, capsys, converter: ModuleType):
-    content = b"another ONNX"
+def test_the_text_probe_takes_any_onnx_and_fetches_only_the_checkpoint(tmp_path, monkeypatch, converter: ModuleType):
     onnx_path, checkpoint, output = tmp_path / "model.onnx", tmp_path / "pytorch_model.bin", tmp_path / "probe"
-    onnx_path.write_bytes(content)
-    written = []
+    # Any ONNX is taken: the conversion tests, not a compilation.source pin, check the probe against each conversion.
+    onnx_path.write_bytes(b"a converted ONNX")
+    fetched, written = [], []
+
+    def fetch_source(source):
+        fetched.append(source)
+        return (checkpoint,)
+
     # Nothing downloads, and the probe writer only records what it is given.
-    monkeypatch.setattr(converter, "Fetcher", lambda: SimpleNamespace(fetch_source=lambda source: (checkpoint,)))
+    monkeypatch.setattr(converter, "Fetcher", lambda: SimpleNamespace(fetch_source=fetch_source))
     monkeypatch.setattr(converter, "write_text_probe", lambda *arguments: written.append(arguments))
     monkeypatch.setattr("sys.argv", ["convert.py", "--output-dir", str(output), "--text-probe", str(onnx_path)])
 
-    with pytest.raises(SystemExit) as stopped:
-        converter.main()
-    assert stopped.value.code == 2 and written == []
-    assert "--text-probe takes the ONNX compilation.source pins: SHA-256 0ee2db88" in capsys.readouterr().err
-    # Pinned with its size but another SHA-256, the file is refused too; pinned with its own, it passes.
-    model = converter.load_and_validate_model(converter.MODEL_DIR)
-    monkeypatch.setattr(converter, "load_and_validate_model", lambda directory: model)
-    model["components"][0]["source"].update(sha256="0" * 64, size_bytes=len(content))
-    with pytest.raises(SystemExit):
-        converter.main()
-    model["components"][0]["source"].update(sha256=hashlib.sha256(content).hexdigest())
     converter.main()
+
+    assert fetched == [load_metadata(ROOT / "models/clip_vit_b_16")["conversion"]["default"]["source"]]
     assert written == [(checkpoint, onnx_path.resolve(), output.resolve())]
 
 

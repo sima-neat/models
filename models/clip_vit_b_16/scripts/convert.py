@@ -7,11 +7,12 @@ data-dependent gather the MLA cannot run; the CPU looks them up and takes the ro
 causal mask uses -1e4 instead of float32's minimum: softmax gives exactly 0 there either way, and -1e4 stays finite in
 BF16. The export also returns fixed token embeddings for 64 prompts, which calibrate and check the text encoder.
 
-With --text-probe <converted ONNX>, the script converts nothing, and it refuses any ONNX but the one compilation.source
-pins in model.yaml. It writes text_probe.npz, accuracy.py's check of the text encoder, into --output-dir:
-TEXT_PROBE_PROMPTS, their token IDs padded to 77 with the end-of-text token, only the rows of the checkpoint's token
-embedding table those IDs use, and that ONNX's FP32 end-of-text row for each prompt. Copy the file to scripts/ and its
-SHA-256 to TEXT_PROBE_SHA256 in accuracy.py.
+With --text-probe <converted ONNX>, the script converts nothing. It takes the model.onnx a conversion wrote and writes
+text_probe.npz, accuracy.py's check of the text encoder, into --output-dir: TEXT_PROBE_PROMPTS, their token IDs padded
+to 77 with the end-of-text token, only the rows of the checkpoint's token embedding table those IDs use, and that
+ONNX's FP32 end-of-text row for each prompt. The conversion tests check that the converted ONNX reproduces those rows,
+so a conversion that disagrees with the file is not published. To change the file, convert, run --text-probe on that
+model.onnx, then copy text_probe.npz to scripts/ and its SHA-256 to TEXT_PROBE_SHA256 in accuracy.py.
 """
 
 import argparse
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
-from model_registry.fetch import Fetcher, sha256_file
+from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -416,17 +417,11 @@ def main():
     parser.add_argument("--conversion", default="default", help="conversion entry in model.yaml")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--text-probe", type=Path, metavar="ONNX",
-                        help="write text_probe.npz for the pinned ONNX into --output-dir instead of converting")
+                        help="write text_probe.npz for a converted model.onnx into --output-dir instead of converting")
     args = parser.parse_args()
-    model = load_and_validate_model(MODEL_DIR)
-    conversions = model.get("conversion", {})
+    conversions = load_and_validate_model(MODEL_DIR).get("conversion", {})
     if args.conversion not in conversions:
         parser.error(f"unknown conversion {args.conversion!r}; model.yaml declares: {', '.join(sorted(conversions))}")
-    # Both components compile from the one pinned ONNX; the probe's FP32 rows must come from it.
-    pinned = model["components"][0]["source"]
-    if args.text_probe and sha256_file(args.text_probe) != (pinned["sha256"], pinned["size_bytes"]):
-        parser.error(f"--text-probe takes the ONNX compilation.source pins: SHA-256 {pinned['sha256']}, "
-                     f"{pinned['size_bytes']} bytes")
     source = conversions[args.conversion]["source"]
     validate_source(source)
     path, *_ = Fetcher().fetch_source(source)
