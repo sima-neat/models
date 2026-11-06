@@ -106,10 +106,10 @@ def test_read_pairs_returns_side_by_side_frames_and_true_disparities(tmp_path: P
 
 
 def test_end_point_error_scores_pixels_between_0_and_192(scene_flow: ModuleType) -> None:
-    truth = np.array([[10.0, 20.0, 0.0], [191.0, 250.0, -3.0]], np.float32)
+    truth = np.array([[10.0, 20.0, 0.0], [191.0, 192.0, -3.0]], np.float32)
     disparity = np.array([[[[11.0, 18.0, 5.0], [191.0, 0.0, 9.0]]]], np.float32)
 
-    # |11 - 10|, |18 - 20| and 0 over the three pixels between 0 and 192; the 0, 250 and -3 px pixels are not scored.
+    # |11 - 10|, |18 - 20| and 0 over the three pixels between 0 and 192; the 0, 192 and -3 px pixels are not scored.
     assert scene_flow.end_point_error(disparity, truth) == pytest.approx(1.0)
     # An image with no scored pixel counts as 0, not NaN.
     assert scene_flow.end_point_error(disparity, np.full_like(truth, 300.0)) == 0.0

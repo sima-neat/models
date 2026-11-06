@@ -61,3 +61,10 @@ numerical_fidelity:
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
   outputs: [disparity]
+
+accuracy:
+  # scene-flow-val holds the Scene Flow finalpass test list: 4,370 FlyingThings3D pairs and their left-view disparity.
+  datasets:
+  - {id: scene-flow, variant: val, sha256: f355b01ceab38e3ac1e3fd069bf3af61a140fff88d7cf21acaa610195799c500, size_bytes: 14868088916}
+
+performance: {}
