@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import re
@@ -69,51 +70,33 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     assert "push" in on and not on["push"]
 
 
-def test_manual_environment_can_override_the_repository_default() -> None:
+def test_build_environment_is_owned_by_vulcan_env() -> None:
     inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
-
-    assert set(inputs) == {"environment", "models", "profiles", "components", "base_branch", "force_rebuild_all"}
-    assert inputs["environment"]["options"] == ["default", "staging", "production"]
-    assert inputs["environment"]["default"] == "default"
+    assert set(inputs) == {"models", "profiles", "components", "base_branch", "force_rebuild_all"}
     assert inputs["force_rebuild_all"]["type"] == "boolean"
 
 
-@pytest.mark.parametrize(
-    ("override", "repository_env", "expected"),
-    [
-        ("", "staging", "staging"),
-        ("", "production", "production"),
-        ("", "", "staging"),
-        ("default", "production", "production"),
-        ("default", "staging", "staging"),
-        ("default", "", "staging"),
-        ("production", "staging", "production"),
-        ("staging", "production", "staging"),
-        ("", "invalid", "invalid"),
-    ],
-)
-def test_environment_selection_and_runner_mapping(tmp_path, override, repository_env, expected) -> None:
+@pytest.mark.parametrize("environment", ["staging", "production", "", "invalid"])
+def test_environment_selection_and_runner_mapping(tmp_path, environment) -> None:
     workflow = load(WORKFLOW)
     resolve = step(workflow["jobs"]["select"], "Resolve Vulcan environment")
-    expression = resolve["env"]["REQUESTED_ENVIRONMENT"][3:-3].strip()
-    selected = evaluate(expression, {"inputs.environment": override, "vars.VULCAN_ENV": repository_env})
-    assert selected == expected
-    assert expression in workflow["concurrency"]["group"]
-    assert expression in workflow["run-name"]
+    assert resolve["env"]["REQUESTED_ENVIRONMENT"] == "${{ vars.VULCAN_ENV }}"
+    assert "${{ vars.VULCAN_ENV }}" in workflow["run-name"]
+    assert "${{ vars.VULCAN_ENV }}" in workflow["concurrency"]["group"]
     output = tmp_path / "outputs"
     result = subprocess.run(
         ["bash", "-c", resolve["run"]],
-        env={**os.environ, "REQUESTED_ENVIRONMENT": selected, "GITHUB_OUTPUT": str(output)},
+        env={**os.environ, "REQUESTED_ENVIRONMENT": environment, "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True,
     )
-    if expected == "invalid":
+    if environment not in {"staging", "production"}:
         assert result.returncode != 0
         assert not output.exists()
     else:
         assert result.returncode == 0, result.stderr
-        runner = "vulcan-stg" if expected == "staging" else "vulcan-production"
+        runner = "vulcan-stg" if environment == "staging" else "vulcan-production"
         assert output.read_text().splitlines() == [
-            f"vulcan_environment={expected}", f"runner_environment={runner}",
+            f"vulcan_environment={environment}", f"runner_environment={runner}",
         ]
 
 
@@ -124,7 +107,7 @@ def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -
     # Only dispatches get a per-run group, so they never cancel or replace one another.
     assert "github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id)" in concurrency["group"]
     assert "github.ref" in concurrency["group"]
-    assert "inputs.environment" in concurrency["group"]
+    assert "vars.VULCAN_ENV" in concurrency["group"]
 
 
 # Job graph and pull-request isolation
@@ -322,9 +305,12 @@ def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     assert plan_job["needs"] == ["select", "portal", "resolve-vulcan-config"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert plan_job["permissions"] == {"contents": "read", "id-token": "write"}
-    credentials = step(plan_job, "Configure authenticated production registry reads")
-    assert credentials["if"] == "needs.select.outputs.vulcan_environment == 'production'"
-    assert plan["env"]["REGISTRY_READ_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    credentials = step(plan_job, "Configure registry planning credentials")
+    assert "if" not in credentials
+    assert plan["env"]["VULCAN_ARTIFACT_REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    assert plan["env"]["REGISTRY_READ_API_URL"] == (
+        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    )
     assert "model-registry plan-stages" in plan["run"]
     assert '--read-api-url "$REGISTRY_READ_API_URL"' in plan["run"]
     assert "--offline" not in plan["run"]
@@ -332,6 +318,7 @@ def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
         assert name in plan["env"]
     assert "--force-rebuild-all" in plan["run"]
     assert plan_job["outputs"] == {
+        "conversion_sources": "${{ steps.plan.outputs.conversion_sources }}",
         "compile_count": "${{ steps.plan.outputs.compile_count }}",
         "compile_matrix": "${{ steps.plan.outputs.compile_matrix }}",
         "benchmark_count": "${{ steps.plan.outputs.benchmark_count }}",
@@ -368,7 +355,9 @@ def test_runner_classes_are_authorized_before_builds_are_queued() -> None:
     assert authorization["env"]["SELECTED_MATRIX"] == "${{ needs.plan.outputs.compile_matrix }}"
     assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == "${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}"
 
-    assert build["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog"]
+    assert build["needs"] == [
+        "select", "plan", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog",
+    ]
     assert build["strategy"]["matrix"] == "${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}"
     assert build["strategy"]["fail-fast"] == "false"
     assert build["with"]["entry"] == "${{ toJSON(matrix) }}"
@@ -381,7 +370,7 @@ def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
     initialize = load(WORKFLOW)["jobs"]["initialize-catalog"]
     publish = step(initialize, "Publish the pending invocation plan")
 
-    assert initialize["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
+    assert initialize["needs"] == ["select", "plan", "resolve-vulcan-config", "authorize-runner-classes"]
     assert "needs.select.outputs.publishable == 'true'" in initialize["if"]
     assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
     assert publish["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
@@ -625,15 +614,67 @@ def test_self_hosted_compile_holds_no_publication_credentials() -> None:
     compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
     text = yaml.safe_dump(compile_job)
 
-    assert compile_job["permissions"] == {"contents": "read"}
-    assert all("aws-actions/configure-aws-credentials" not in item.get("uses", "") for item in compile_job["steps"])
+    assert compile_job["permissions"] == {"contents": "read", "id-token": "write"}
+    credentials = step(compile_job, "Configure read-only conversion registry credentials")
+    assert credentials["if"] == "${{ inputs.vulcan_environment == 'production' && inputs.conversion_sources != '{}' }}"
+    assert credentials["with"]["output-env-credentials"] == "false"
+    assert credentials["with"]["output-credentials"] == "true"
+    compile_env = step(compile_job, "Compile the invocation with its model's compile script")["env"]
+    assert set(compile_env) == {
+        "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID", "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY",
+        "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN",
+    }
+    policy = json.loads(credentials["with"]["inline-session-policy"])
+    assert policy["Statement"] == [{
+        "Effect": "Allow", "Action": "execute-api:Invoke",
+        "Resource": "arn:aws:execute-api:${{ inputs.aws_region }}:*:*/*/GET/v1/runs/*/artifacts/onnx",
+    }]
+    assert compile_job["env"]["MODEL_REGISTRY_IAM_READ_API_URL"] == (
+        "${{ inputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}"
+    )
     assert "${{ secrets." not in text
-    assert "${{ vars." not in text
     for item in compile_job["steps"]:
         run = item.get("run", "")
         assert "model-registry publish" not in run
         assert "model_registry publish" not in run
         assert "gh workflow run" not in run
+
+
+def test_conversion_fetch_steps_receive_isolated_reader_credentials() -> None:
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    for name, reader in (
+        ("Compile the invocation with its model's compile script", "conversion-reader"),
+        ("Verify every MPK and record its provenance", "conversion-verification-reader"),
+    ):
+        expected = {
+            "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID": "${{ steps." + reader + ".outputs.aws-access-key-id }}",
+            "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY": "${{ steps." + reader + ".outputs.aws-secret-access-key }}",
+            "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN": "${{ steps." + reader + ".outputs.aws-session-token }}",
+        }
+        assert step(compile_job, name).get("env", {}) == expected
+    # Dataset downloads must keep the runner's default AWS credential chain.
+    for env in [compile_job["env"], *(item.get("env", {}) for item in compile_job["steps"])]:
+        assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & env.keys()
+
+
+def test_verification_refreshes_the_restricted_reader_after_compilation() -> None:
+    job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    initial = step(job, "Configure read-only conversion registry credentials")
+    refresh_name = "Refresh read-only conversion registry credentials for verification"
+    refresh = step(job, refresh_name)
+
+    # A six-hour compilation must not leave verification using the original one-hour session.
+    assert job["timeout-minutes"] == "360"
+    assert refresh["id"] == "conversion-verification-reader"
+    assert refresh["if"] == initial["if"]
+    assert refresh["uses"] == initial["uses"]
+    assert {key: value for key, value in refresh["with"].items() if key != "role-session-name"} == {
+        key: value for key, value in initial["with"].items() if key != "role-session-name"
+    }
+    assert refresh["with"]["role-session-name"] == "models-conversion-verifier-${{ github.run_id }}"
+    compilation_index = step_index(job, "Compile the invocation with its model's compile script")
+    assert step_index(job, refresh_name) == compilation_index + 1
+    assert step_index(job, "Verify every MPK and record its provenance") == step_index(job, refresh_name) + 1
 
 
 def test_compile_script_runs_in_activated_model_compiler_shell() -> None:
@@ -1100,3 +1141,69 @@ def test_benchmark_dispatch_pins_parent_registry_environment(tmp_path, environme
     else:
         assert result.returncode == 2
         assert not calls.exists()
+
+
+def test_on_demand_planner_does_not_restrict_the_selected_environment() -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")["run"]
+    assert '"$VULCAN_ENVIRONMENT" != "staging"' not in plan
+    assert 'enabled only in staging' not in plan
+    assert '--include-on-demand' in plan
+
+
+@pytest.mark.parametrize("environment,public_url", [
+    ("production", ""), ("production", "https://public.example.test"),
+    ("staging", "https://public.example.test"),
+])
+def test_mpk_candidate_selects_its_branch_with_private_or_public_registry_reads(
+    tmp_path, monkeypatch, environment, public_url,
+):
+    from model_registry import fetch, registry
+    from model_registry.candidates import publish_branch_deployment
+
+    private_url = "https://private.example.test"
+    values = {
+        "vars.VULCAN_ARTIFACT_REGISTRY_API_URL": private_url,
+        "vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL": public_url,
+        "needs.select.outputs.vulcan_environment": environment,
+    }
+    job_env = load(WORKFLOW)["jobs"]["publish-candidates"]["env"]
+    read_url = evaluate(job_env["REGISTRY_READ_API_URL"][3:-3], values)
+    iam_url = evaluate(job_env["MODEL_REGISTRY_IAM_READ_API_URL"][3:-3], values)
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", iam_url)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    reads, writes = [], []
+    catalog = {"catalog": {"canonical_sha256": "b" * 64, "document": {"models": []}}}
+
+    def signed(client, method, path, body, key):
+        assert method == "GET" and body is None
+        reads.append(("signed", client.api_url + path))
+        return catalog
+
+    def unsigned(request, timeout):
+        reads.append(("public", request.full_url))
+        return io.BytesIO(json.dumps(catalog).encode())
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "_curl_request", signed)
+    monkeypatch.setattr(fetch, "urlopen", unsigned)
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({
+        "deployment_id": "11111111-1111-4111-8111-111111111111", "manifest_digest": "a" * 64,
+        "git_ref": "refs/heads/feature/mpk-model", "state": "finalized",
+    }))
+
+    def write(method, path, body, key):
+        assert method == "POST" and path.endswith("/branch-deployments")
+        assert body["expected_snapshot"] == "b" * 64
+        assert body["git_ref"] == "refs/heads/feature/mpk-model"
+        writes.append(body)
+        return {"selection": {"deployment_id": body["deployment_id"]}, "result_snapshot": "c" * 64}
+
+    result = publish_branch_deployment(
+        candidate, api_url=private_url, read_api_url=read_url,
+        aws_region="us-west-2", request=write,
+    )
+    assert len(reads) == len(writes) == 1
+    assert reads[0][0] == ("signed" if environment == "production" and not public_url else "public")
+    assert reads[0][1].startswith((public_url or private_url) + "/v1/")
+    assert result["selection"]["deployment_id"] == json.loads(candidate.read_text())["deployment_id"]
+    assert json.loads((tmp_path / "branch-publication.json").read_text()) == result

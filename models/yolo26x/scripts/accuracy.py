@@ -60,16 +60,6 @@ ANCHORS = np.concatenate(
 ANCHOR_STRIDES = np.repeat(STRIDES, [size * size for size in GRIDS])[:, None]
 
 
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already letterboxed and scaled the image; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
 def prefetched(load: Callable, items: Sequence) -> Iterator:
     """Yield load(item) in order, keeping at most PREFETCH items in flight."""
     with ThreadPoolExecutor(WORKERS) as pool:
@@ -168,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
+    model = pyneat.Model(str(parse_mpks(args.mpk)))
     with contextlib.redirect_stdout(io.StringIO()):
         ground_truth = COCO(str(dataset / ANNOTATIONS))
     available = sorted(ground_truth.getImgIds())
