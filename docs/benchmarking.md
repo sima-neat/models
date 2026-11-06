@@ -44,10 +44,6 @@ core. When `/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq` is not
 
 The runner user therefore needs passwordless `sudo` for both writes.
 
-CI benchmarks run only on 16 GiB DevKits, selected by the `modalix-som-16gig`
-runner label. 8 GiB boards measured the same packages 14% to 22% slower, so
-results from different board types are not comparable.
-
 ## The performance script
 
 Every model that declares `performance` includes `scripts/performance.py` in
