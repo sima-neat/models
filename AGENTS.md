@@ -40,7 +40,9 @@ when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
 A tooling change reruns a stage only when the changed file is in that stage's
-tooling list in `fingerprints.py`.
+tooling list in `fingerprints.py`. A file in `CONVERSION_TOOLING` in
+`conversion.py` also invalidates every conversion, and planning then fails
+until Vulcan Model Convert reruns.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
