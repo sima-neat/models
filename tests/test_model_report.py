@@ -254,7 +254,7 @@ PYNEAT_ENUMS = {
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
     "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
-    "SuperPointProfile": ("MagicLeapDemoV1",),
+    "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
@@ -386,12 +386,15 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "SuperPoint":
-        # SuperPoint takes the frame stretched to its input, in grayscale, scaled to [0, 1] without a preset.
+        # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
+        # and decodes it as transformers does, keeping the keypoints the accuracy stage keeps.
+        assert_letterboxed_frame(frame)
         color = options.preprocess.color_convert
         assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
             "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
         )
         assert not hasattr(options.preprocess, "preset")
+        assert (options.superpoint.profile, options.score_threshold, options.top_k) == ("LightGlueV1", 0.005, 1000)
         assert ".jpg" in report["workload"]
     else:
         assert_letterboxed_frame(frame)

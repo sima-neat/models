@@ -14,7 +14,9 @@ a descriptor map, which your application or Neat turns into keypoints.
 ## Inputs and outputs
 
 **Input.** `image`: one 640 × 480 grayscale image scaled to [0, 1]. Resize the
-image, then mix red, green, and blue as 0.2989, 0.5870, and 0.1140.
+image, then mix red, green, and blue as 0.2989, 0.5870, and 0.1140. Neat's
+RGB-to-grayscale preprocessing keeps only the red channel instead, so for the
+trained colour mix, convert to grayscale before passing the image to Neat.
 
 **Outputs.** Both are on an 80 × 60 grid, one cell per 8 × 8 pixels:
 
@@ -24,12 +26,13 @@ image, then mix red, green, and blue as 0.2989, 0.5870, and 0.1140.
 To get keypoints:
 
 1. Apply softmax over the 65 values of each cell, drop the last, and place the other 64 on the cell's pixels, row by row.
-2. Keep a pixel only if it has the highest score within 4 pixels after suppression, as Magic Leap's code does.
+2. Keep a pixel only if it has the highest score within 4 pixels after suppression, as the transformers SuperPoint does.
 3. Keep pixels scoring above 0.005, at least 4 pixels from every edge, and the best ones if you need fewer.
 4. Scale each cell's descriptor to unit length, interpolate it at each keypoint, and scale the result to unit length.
 
-Neat's SuperPoint decoder runs these steps: set the decode type to SuperPoint
-and choose a profile, such as `MagicLeapDemoV1` (score threshold 0.015).
+Neat's SuperPoint decoder runs these steps: set the decode type to SuperPoint,
+choose the `LightGlueV1` profile, and set the score threshold to 0.005 and the
+keypoint limit to the number you need, such as 1000.
 
 ## Building applications
 

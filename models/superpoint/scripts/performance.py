@@ -48,8 +48,9 @@ dataset_id, dataset_dir = args.dataset.split("=", 1)
 image = sample_image(Path(dataset_dir))
 
 options = pyneat.ModelOptions()
-# Neat stretches the frame to the 640x480 input, makes it grayscale and scales it to [0, 1], as SuperPoint takes it,
-# then quantizes and tessellates it, inside the measured pipeline.
+# Neat stretches the frame to the 640x480 input, takes its red channel as the grayscale image and scales it to
+# [0, 1], then quantizes and tessellates it, inside the measured pipeline. Neat's RGB to GRAY8 conversion keeps the
+# red channel rather than mixing the three as SuperPoint's training did, so the keypoints differ from accuracy.py's.
 options.preprocess.kind = pyneat.InputKind.Image
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
@@ -59,8 +60,11 @@ options.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
 options.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.GRAY8
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.SuperPoint
-# Magic Leap's demo settings: keypoint threshold 0.015, NMS radius 4, a 4-pixel border.
-options.superpoint.profile = pyneat.SuperPointProfile.MagicLeapDemoV1
+# transformers' decode, as keypoints.py runs it: NMS radius 4, a 4-pixel border, the 0.005 threshold of the
+# pinned SuperPointConfig, and the best 1000 keypoints that the accuracy stage keeps.
+options.superpoint.profile = pyneat.SuperPointProfile.LightGlueV1
+options.score_threshold = 0.005
+options.top_k = 1000
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -76,7 +80,8 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-        f"640x480 grayscale, SuperPoint decoder (MagicLeapDemoV1), {postprocess} post-processing"
+        f"640x480 and kept the red channel as grayscale, SuperPoint decoder (LightGlueV1, score threshold "
+        f"{options.score_threshold}, top {options.top_k}), {postprocess} post-processing"
     ),
 )
 report.save(args.output)
