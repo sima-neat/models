@@ -15,7 +15,7 @@ as one component.
 **Input.** Resize the image with bilinear resampling so its shorter side is 232,
 then crop the center 224×224. Scale the RGB values to 0–1, subtract the ImageNet
 mean (0.485, 0.456, 0.406), and divide by the standard deviation (0.229, 0.224,
-0.225). The reference scripts pass this image as a 224×224×3 (height, width,
+0.225). The accuracy script passes this image as a 224×224×3 (height, width,
 channel) float tensor, with Neat's resize, color conversion, and normalization
 turned off.
 
