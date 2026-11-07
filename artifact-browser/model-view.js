@@ -661,7 +661,7 @@ function renderMlaUtilization(components, simulation, precisions, throughputFps,
 // execution graph.
 function modelPerformance(variant, modelId) {
   const benchmarkRun = variant.performance;
-  const result = readPerformance(benchmarkRun);
+  const result = readPerformance(benchmarkRun, pipelineOrder(variant) || []);
   if (result.kind === "missing") return `<p class="muted-message">Not measured at this revision.</p>`;
   if (result.kind === "unsupported") return `<p class="muted-message">This result format is not supported by this browser.</p>`;
   const { run } = benchmarkRun;

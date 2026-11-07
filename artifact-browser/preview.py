@@ -433,6 +433,8 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
             "mla_layer_stats": {"status": "ok", "layers": layers},
             "mla_stage_stats": {"status": "ok", "stages": stages},
         }
+    # The registry stores the report as PostgreSQL jsonb, which orders keys shorter first, then bytewise.
+    report["components"] = dict(sorted(report["components"].items(), key=lambda item: (len(item[0]), item[0])))
     # The rest of the board telemetry keeps the template's DevKit readings.
     return report
 
