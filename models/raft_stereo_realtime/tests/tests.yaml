@@ -3,8 +3,12 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      scene-flow-val:
+        epe: 0.8471
+        d1_all: 3.3465
 performance:
   run_tests: true
   expected:
