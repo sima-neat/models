@@ -163,23 +163,14 @@ def _profiles(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]
     return profiles
 
 
-def _building(document: dict[str, Any]) -> set[tuple[str, str, str, str]]:
-    """(model, build profile, component, compile fingerprint) of every invocation the catalog is compiling."""
+def _pending_fingerprints(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
+    """Each build profile the catalog is compiling, by (model, build profile): its compile fingerprint per component."""
     return {
-        (item["model_id"], item["build_profile_id"], component_id, item["compile_fingerprint"])
+        (item["model_id"], item["build_profile_id"]): {
+            component_id: item["compile_fingerprint"] for component_id in item["component_ids"]
+        }
         for item in document.get("pending_builds", [])
-        for component_id in item["component_ids"]
     }
-
-
-def _compiles(
-    building: set[tuple[str, str, str, str]], model_id: str, profile_id: str, fingerprints: dict[str, str]
-) -> bool:
-    """Whether a catalog's pending invocations compile every component of the profile at these fingerprints."""
-    return all(
-        (model_id, profile_id, component_id, fingerprint) in building
-        for component_id, fingerprint in fingerprints.items()
-    )
 
 
 def _carries_fingerprints(builds: list[dict[str, Any]], fingerprints: dict[str, str]) -> bool:
@@ -204,18 +195,16 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
         for component_id in entry["component_ids"]:
             profile_fingerprints[component_id] = entry["compile_fingerprint"]
 
-    sources = [(_profiles(document), _building(document)) for document in documents]
+    sources = [(_profiles(document), _pending_fingerprints(document)) for document in documents]
     models: dict[str, dict[str, Any]] = {}
     for (model_id, profile_id), fingerprints in sorted(head_fingerprints.items()):
         present = [
-            (profiles[(model_id, profile_id)], building)
-            for profiles, building in sources
+            (profiles[(model_id, profile_id)], pending)
+            for profiles, pending in sources
             if (model_id, profile_id) in profiles
         ]
         matching = [profile for profile, _ in present if _carries_fingerprints(profile["builds"], fingerprints)]
-        compiling = [
-            profile for profile, building in present if _compiles(building, model_id, profile_id, fingerprints)
-        ]
+        compiling = [profile for profile, pending in present if pending.get((model_id, profile_id)) == fingerprints]
         chosen = matching or compiling or [profile for profile, _ in present]
         if chosen:
             model = models.setdefault(model_id, {"builds": [], "packages": []})
@@ -315,7 +304,7 @@ def plan_stages(
         if base_sources and not is_long_lived(branch) and not force_rebuild_all:
             base = base_sources[0]
     builds = catalog_builds(document)
-    base_building = _building(base)
+    base_pending = _pending_fingerprints(base)
     base_benchmarks = {
         (model["id"], profile_id): fingerprints
         for model in base.get("models", [])
@@ -327,8 +316,9 @@ def plan_stages(
     for entry in head:
         if entry.get("build_on_demand", False) and not include_on_demand:
             continue
+        key = (entry["model_id"], entry["build_profile_id"])
         fingerprints = {component_id: entry["compile_fingerprint"] for component_id in entry["component_ids"]}
-        if _compiles(base_building, entry["model_id"], entry["build_profile_id"], fingerprints):
+        if base_pending.get(key) == fingerprints:
             continue
         prior = {
             component_id: builds.get((entry["model_id"], entry["build_profile_id"], component_id))
@@ -341,11 +331,11 @@ def plan_stages(
             compile_entries.append(entry)
             continue
         model = models[entry["model_id"]]
-        base_fingerprints = base_benchmarks.get((entry["model_id"], entry["build_profile_id"]), {})
+        base_benchmark_fingerprints = base_benchmarks.get(key, {})
         stages = []
         for stage in entry["stages"]:
             fingerprint = benchmark_fingerprint(root, model, entry["build_profile_id"], prior, stage)
-            if base_fingerprints.get(stage) != fingerprint and not stage_run_exists(
+            if base_benchmark_fingerprints.get(stage) != fingerprint and not stage_run_exists(
                 read, read_api_url, BENCHMARK_RUN_TYPES[stage], fingerprint
             ):
                 stages.append(stage)
