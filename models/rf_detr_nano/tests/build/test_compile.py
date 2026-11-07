@@ -425,6 +425,26 @@ def test_bf16_activation_layer_norms_keep_fp32_intermediates(
     assert quantized.compile.call_args.kwargs["layer_norm_use_fp32_intermediates"] is fp32_intermediates
 
 
+@pytest.mark.parametrize("decoder_calibrates", [True, False])
+def test_backbone_outputs_survive_the_file_between_phases(
+    decoder_calibrates: bool, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    arrays = [np.full((1, 2), index, dtype=np.float32) for index in range(5)]
+    outputs = compile_module._BackboneOutputs(*arrays[:3])
+    if decoder_calibrates:
+        outputs.calibration_features, outputs.calibration_proposals = arrays[3:]
+
+    outputs.save(tmp_path / "backbone_outputs.npz")
+    loaded = compile_module._BackboneOutputs.load(tmp_path / "backbone_outputs.npz")
+
+    for name, value in vars(outputs).items():
+        if value is None:
+            assert getattr(loaded, name) is None, name
+        else:
+            np.testing.assert_array_equal(getattr(loaded, name), value)
+
+
 def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
     rng = np.random.RandomState(0)
@@ -625,10 +645,11 @@ def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Call
         ],
     )
 
-    marks = surgery._annotate(model, {"norm", "relu"})
+    marks = surgery._precision_marks(model, {"norm", "relu"})
+    surgery._insert_precision_hints(model, marks)
 
     onnx.checker.check_model(model)
-    assert marks == {"bfloat16": 2, "int8": 1}
+    assert marks == {"norm": "bfloat16", "relu": "bfloat16", "projection": "int8"}
     assert [
         (node.name, *(onnx.helper.get_attribute_value(a).decode() for a in node.attribute if a.name == "precision"))
         for node in model.graph.node
