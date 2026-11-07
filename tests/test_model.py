@@ -584,13 +584,13 @@ def test_catalog_model_is_valid() -> None:
     assert set(profiles) == {"w16a16", "w8a8", "w8a16"}
     assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
     assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
-    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 1000
     assert profiles["w8a16"]["components"][0]["parameters"]["precision"] == "w8a16"
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
-        "variant": "mini",
-        "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
-        "size_bytes": 356052889,
+        "variant": "cal",
+        "sha256": "e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f",
+        "size_bytes": 112710756,
     }
 
 

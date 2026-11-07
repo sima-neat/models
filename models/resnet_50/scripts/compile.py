@@ -109,7 +109,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
 def measure_fidelity(
     source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
 ) -> dict[str, Any]:
-    """Compare the quantized graph's logits with the ONNX source on the declared validation images."""
+    """Compare the quantized graph's logits with the ONNX source on the declared calibration images."""
     input_name = str(_variant(_metadata(), variant_id)["parameters"]["input_name"])
     selection = config["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))

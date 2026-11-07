@@ -23,7 +23,7 @@ model with the source model on a fixed sample of a registered dataset:
 ```yaml
 numerical_fidelity:
   status: diagnostic
-  dataset: {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b28…, size_bytes: 112710756}
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
   outputs: [logits]
 ```
@@ -58,11 +58,11 @@ on a DevKit with PyNeat, on each dataset `accuracy` names:
 ```yaml
 accuracy:
   datasets:
-  - {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  - {id: imagenet-2012, variant: val, sha256: 018bf95e…, size_bytes: 6666407650}
 ```
 
 Each `datasets` entry pins a Dataset Registry archive, which goes by its
-source ID, here `imagenet-2012-mini`. The metrics the report must hold come from
+source ID, here `imagenet-2012-val`. The metrics the report must hold come from
 `datasets/<registry id>.yaml` for the model's `tasks`; see
 [Required accuracy metrics](datasets.md#required-accuracy-metrics).
 Without `build_profiles`, every build profile is measured; see
@@ -88,7 +88,7 @@ It scores the whole model on each dataset and hands the scores to
 `model-report.json` into the output directory:
 
 ```python
-dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-mini, <directory>
+dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-val, <directory>
 ...
 report = model_report.from_accuracy({
     dataset_id: {
@@ -153,7 +153,7 @@ run the script directly:
 
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
-  --mpk model=<path to MPK> --dataset imagenet-2012-mini=<extracted dataset> \
+  --mpk model=<path to MPK> --dataset imagenet-2012-val=<extracted dataset> \
   --output /tmp/resnet50-accuracy --limit 500
 ```
 

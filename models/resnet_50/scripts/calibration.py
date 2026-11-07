@@ -1,8 +1,9 @@
-"""ResNet-50 preprocessing and ImageNet mini sample selection, shared by compile.py and accuracy.py."""
+"""ResNet-50 preprocessing and ImageNet sample selection, shared by compile.py and accuracy.py."""
 
 from __future__ import annotations
 
 import io
+import json
 import random
 import tarfile
 from collections.abc import Iterable
@@ -17,10 +18,11 @@ CROP = 224
 RESCALE = np.float32(1 / 255)
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
-# imagenet-2012/mini holds cal/<image> and val/<synset>/<image>; one listed image ends in .webp.bak.
-IMAGE_SUFFIXES = (".webp", ".webp.bak")
-CALIBRATION_SPLIT = "cal"
-VALIDATION_SPLIT = "val"
+# imagenet-2012/cal holds cal2012/<image> and imagenet-2012/val holds val2012/<image>, each with
+# annotations/labels_<split>.json, whose category IDs are the ImageNet class indices.
+IMAGE_SUFFIXES = (".jpeg",)
+CALIBRATION_SPLIT = "cal2012"
+VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 
 
@@ -50,19 +52,20 @@ def _image_names(dataset: Path) -> list[str]:
 
 
 def split_names(dataset: Path, split: str) -> list[str]:
-    names = [name for name in _image_names(dataset) if PurePosixPath(name).parts[0] == split]
+    """The split's images; an archive holds them under its top-level directory."""
+    names = [name for name in _image_names(dataset) if PurePosixPath(name).parent.name == split]
     if not names:
         raise ValueError(f"{dataset} has no images under {split}/")
     return names
 
 
-def validation_labels(names: Iterable[str]) -> dict[str, int]:
-    """Label each validation image by its synset directory; ImageNet class indices follow sorted synsets."""
-    synsets = {name: PurePosixPath(name).parts[-2] for name in names}
-    indices = {synset: index for index, synset in enumerate(sorted(set(synsets.values())))}
-    if len(indices) != CLASSES:
-        raise ValueError(f"expected {CLASSES} validation classes, found {len(indices)}")
-    return {name: indices[synset] for name, synset in synsets.items()}
+def validation_labels(dataset: Path) -> dict[str, int]:
+    """Each validation image's class index, from the extracted dataset's labels file."""
+    labels = json.loads((dataset / "annotations" / f"labels_{VALIDATION_SPLIT}.json").read_text(encoding="utf-8"))
+    if len(labels["categories"]) != CLASSES:
+        raise ValueError(f"expected {CLASSES} validation classes, found {len(labels['categories'])}")
+    names = {image["id"]: f"{VALIDATION_SPLIT}/{image['file_name']}" for image in labels["images"]}
+    return {names[annotation["image_id"]]: annotation["category_id"] for annotation in labels["annotations"]}
 
 
 def read_images(dataset: Path, names: Iterable[str]) -> dict[str, bytes]:
@@ -94,8 +97,8 @@ def calibration_samples(dataset: Path, count: int) -> np.ndarray:
 
 
 def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
-    """Validation images for the fidelity comparison, selected as declared in model.yaml."""
-    names = split_names(dataset, VALIDATION_SPLIT)
+    """Calibration images for the fidelity comparison, selected as declared in model.yaml."""
+    names = split_names(dataset, CALIBRATION_SPLIT)
     if offset + samples > len(names):
         raise ValueError(f"fidelity selection needs {offset + samples} images, but {dataset} has {len(names)}")
     random.Random(seed).shuffle(names)
