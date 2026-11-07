@@ -206,7 +206,7 @@ jobs:
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
       # DevKit placement is independent of registry and dataset selection.
-      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "model-registry", "vulcan-staging"]'
+      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging"]'
 
   resolve-dispatched-benchmark-config:
     name: Resolve dispatched benchmark Vulcan config
