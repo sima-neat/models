@@ -18,10 +18,15 @@ from the disparity. To fit the MLA, it rewrites the network exactly:
 - the correlation pyramid pools the right features along the width before the matmul, which pooling's linearity
   makes exact, with the right image's columns on channels;
 - each level's bilinear lookup at 9 offsets is a tent-weighted sum over the columns, relu(1 - |p - j|): what
-  grid_sample with align_corners=True and zero padding computes on a one-row image;
+  grid_sample with align_corners=True and zero padding computes on a one-row image. The tent weights are computed
+  once per level and iteration over the columns widened by the radius, and each offset reads its own shifted,
+  zero-padded copy of the level's correlations, made once before the iterations; |x| is written as
+  leaky_relu(x, -1), which the MLA runs without a layout change on each side;
 - the refinement state is the x flow, kept small, instead of absolute coordinates, and the y flow, always 0 in
   stereo, is a constant;
-- the convex upsampling is a 9-neighbour convolution, a channel softmax, a weighted sum and a pixel shuffle;
+- the convex upsampling is a channel softmax, a convolution taking each neighbour's difference from the centre, the
+  centre plus the weighted differences, which equals the weighted sum because the weights sum to 1 but rounds smaller
+  products, and a pixel shuffle;
 - the 7 iterations are unrolled.
 """
 
@@ -47,9 +52,11 @@ HIDDEN = 128
 INTERFACE = {"stereo": [1, 3, HEIGHT, 2 * WIDTH], "disparity": [1, 1, HEIGHT, WIDTH]}
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
-# Edge Pad does not compile for the MLA, and InstanceNormalization is written out; the others are index arithmetic
-# or ops the MLA cannot run.
+# Edge Pad does not compile for the MLA, InstanceNormalization is written out, and Abs, which the compiler has no
+# layout rule for, costs a transpose on each side of every use; the others are index arithmetic or ops the MLA cannot
+# run.
 FORBIDDEN_OPS = {
+    "Abs",
     "Shape",
     "Size",
     "If",
@@ -272,26 +279,30 @@ def static_graph(model):
         def __init__(self):
             super().__init__()
             self.model = model
-            # Each level's offset from every pixel's column to each target column j at that level's scale.
+            # Each level's offset from every pixel's column to each target column at that level's scale, for the
+            # columns widened by the radius on both sides: one tent per column covers all 9 offsets of the lookup.
             for level in range(LEVELS):
                 columns = width // 2**level
                 offsets = (
                     torch.arange(width, dtype=torch.float32)[None, None, None, :] / 2**level
-                    - torch.arange(columns, dtype=torch.float32)[None, :, None, None]
+                    - torch.arange(-RADIUS, columns + RADIUS, dtype=torch.float32)[None, :, None, None]
                 )
-                self.register_buffer(f"offsets{level}", offsets, persistent=False)  # [1, columns, 1, width]
-            self.register_buffer("neighbours", torch.eye(9).reshape(9, 1, 3, 3), persistent=False)
+                self.register_buffer(f"offsets{level}", offsets, persistent=False)  # [1, columns + 8, 1, width]
+            # Each 3x3 neighbour less the centre; the centre's own channel is zero.
+            centre = torch.zeros(9, 1, 3, 3)
+            centre[:, 0, 1, 1] = 1
+            self.register_buffer("neighbours", torch.eye(9).reshape(9, 1, 3, 3) - centre, persistent=False)
             # ImageNet-normalized RGB back to upstream's 2 * x - 1, for x in [0, 1].
             self.register_buffer("scale", torch.from_numpy(2 * STD).reshape(1, 3, 1, 1), persistent=False)
             self.register_buffer("shift", torch.from_numpy(2 * MEAN - 1).reshape(1, 3, 1, 1), persistent=False)
 
-        def lookup(self, pyramid, flow):
+        def lookup(self, shifted, flow):
             samples = []
-            for level, corr in enumerate(pyramid):
-                position = getattr(self, f"offsets{level}") + flow / 2**level  # [1, columns, H, W]
-                for offset in range(-RADIUS, RADIUS + 1):
-                    weight = torch.relu(1 - torch.abs(position + offset))
-                    samples.append((corr * weight).sum(1, keepdim=True))
+            for level, volumes in enumerate(shifted):
+                position = getattr(self, f"offsets{level}") + flow / 2**level  # [1, columns + 8, H, W]
+                weight = torch.relu(1 - F.leaky_relu(position, negative_slope=-1.0))
+                # The tent around column p, read at column i + offset, is the tent around p - offset at column i.
+                samples.extend((volume * weight).sum(1, keepdim=True) for volume in volumes)
             return torch.cat(samples, 1)
 
         def forward(self, stereo):
@@ -304,24 +315,31 @@ def static_graph(model):
             fmap1, fmap2 = self.model.conv2(left), self.model.conv2(right)
             depth = fmap1.shape[1]
             rows = fmap1.reshape(depth, height, width).permute(1, 2, 0)  # [H, W, D]
-            pyramid = []
+            shifted = []
             for level in range(LEVELS):
                 pooled = F.avg_pool2d(fmap2, [1, 2**level], stride=[1, 2**level]) if level else fmap2
                 columns = width // 2**level
                 corr = rows @ pooled.reshape(depth, height, columns).permute(1, 0, 2) / depth**0.5  # [H, W, columns]
-                pyramid.append(corr.permute(2, 0, 1).reshape(1, columns, height, width))
+                corr = corr.permute(2, 0, 1).reshape(1, columns, height, width)
+                # Zero columns, computed from the input like the first flow below, pad the volume by twice the radius.
+                zeros = corr[:, : 2 * RADIUS] * 0
+                padded = torch.cat([zeros, corr, zeros], 1)
+                # Offset k's copy holds column i + k at row i of the widened range, zero outside the volume.
+                shifted.append(
+                    [padded[:, k + RADIUS : k + RADIUS + columns + 2 * RADIUS] for k in range(-RADIUS, RADIUS + 1)]
+                )
             # Zero, but computed from the input, so that the first iteration's lookup is not folded into constants.
             flow = net[0][:, :1] * 0
             zero = flow
             for _ in range(ITERATIONS):
-                corr_features = self.lookup(pyramid, flow)
+                corr_features = self.lookup(shifted, flow)
                 # Slow-fast: the 1/16 GRU updates once more before each full update.
                 net = self.model.update_block.slow(net, inp)
                 net, mask, delta = self.model.update_block(net, inp, corr_features, torch.cat([flow, zero], 1))
                 flow = flow + delta[:, :1]
             mask = torch.softmax(mask.reshape(1, 9, 64 * height, width), 1).reshape(1, 9 * 64, height, width)
-            neighbours = F.conv2d(8 * flow, self.neighbours, padding=1)
-            up = sum(mask[:, k * 64 : (k + 1) * 64] * neighbours[:, k : k + 1] for k in range(9))
+            differences = F.conv2d(8 * flow, self.neighbours, padding=1)
+            up = 8 * flow + sum(mask[:, k * 64 : (k + 1) * 64] * differences[:, k : k + 1] for k in range(9) if k != 4)
             return -F.pixel_shuffle(up, 8)[:, :, PAD : PAD + HEIGHT]
 
     return Static().eval()
