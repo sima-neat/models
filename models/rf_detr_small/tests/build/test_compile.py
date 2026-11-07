@@ -329,7 +329,17 @@ def test_quantization_config_states_calibration_and_per_token_per_precision(
         assert arguments["calibration_method"] is compile_module.HistogramMSEMethod.return_value
     else:
         assert arguments["calibration_method"] is compile_module.SkipCalibration.return_value
-    assert arguments["per_token_quant"] is per_token
+    assert arguments.get("per_token_quant", False) is per_token
+
+
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+def test_quantization_config_rejects_per_token_outside_w8a16(
+    load_script: Callable[[str], ModuleType], precision: str
+) -> None:
+    parameters = {"precision": precision, "per_token": True, "calibration_bins": 2048, "calibration_samples": 50}
+
+    with pytest.raises(ValueError, match="only a W8A16 component can declare per_token"):
+        load_script("compile")._quantization_config(parameters)
 
 
 def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(

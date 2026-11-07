@@ -129,9 +129,8 @@ def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
     calibration = (
         HistogramMSEMethod(int(parameters["calibration_bins"])) if _calibrates(parameters) else SkipCalibration()
     )
-    # Each token's activations get their own INT8 scale before an INT8-weight operation. Only components
-    # that declare per_token use it.
-    per_token = bool(parameters.get("per_token", False))
+    if parameters.get("per_token") and precision != "w8a16":
+        raise ValueError("only a W8A16 component can declare per_token")
     if precision == "w8a8":
         if not _calibrates(parameters):
             raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
@@ -141,21 +140,20 @@ def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
             weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
             # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
             biascorr_type=BiasCorrectionType.REGULAR,
-            per_token_quant=per_token,
         )
     if precision == "w8a16":
         return QuantizationParams(
             calibration_method=calibration,
             activation_quantization_scheme=bfloat16_scheme(),
             weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
-            per_token_quant=per_token,
+            # Each token's activations get their own INT8 scale before an INT8-weight operation.
+            per_token_quant=bool(parameters.get("per_token", False)),
         )
     if precision == "w16a16":
         return QuantizationParams(
             calibration_method=calibration,
             activation_quantization_scheme=bfloat16_scheme(),
             weight_quantization_scheme=bfloat16_scheme(),
-            per_token_quant=per_token,
         )
     raise ValueError(f"unsupported precision: {precision}")
 
