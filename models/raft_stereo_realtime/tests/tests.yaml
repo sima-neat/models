@@ -6,5 +6,7 @@ accuracy:
   run_tests: false
   skip_reason: No build has a published report to expect values from yet.
 performance:
-  run_tests: false
-  skip_reason: No build has a published report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 11.0
