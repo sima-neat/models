@@ -24,10 +24,9 @@ from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
     InputName,
-    RequantizationMode,
+    QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
@@ -121,39 +120,44 @@ def _calibrates(parameters: dict[str, Any]) -> bool:
     return "calibration_samples" in parameters
 
 
-def _quantization_config(parameters: dict[str, Any]) -> Any:
+def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
+    """The compiler's activation and weight formats for a component's precision."""
     precision = parameters["precision"]
-    int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    if precision == "w8a8":
-        if not _calibrates(parameters):
-            raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
-        activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weights = int8_weights
-        # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
-        bias_correction = BiasCorrectionType.REGULAR
-    elif precision in A16_PRECISIONS:
-        activation = bfloat16_scheme()
-        weights = int8_weights if precision == "w8a16" else bfloat16_scheme()
-        bias_correction = BiasCorrectionType.NONE
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
     # BF16 activations need no calibrated ranges, except where AFE keeps an operator in INT8: it has no
     # BF16 Sin or Cos and runs them as INT8 lookup tables. The decoder's query sine embedding is such a
     # Sin, so the decoder calibrates even at W16A16, while a W8A16 backbone skips calibration.
     calibration = (
         HistogramMSEMethod(int(parameters["calibration_bins"])) if _calibrates(parameters) else SkipCalibration()
     )
-    return (
-        default_quantization.with_activation_quantization(activation)
-        .with_weight_quantization(weights)
-        .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(calibration)
-        .with_bias_correction(bias_correction)
-        .with_channel_equalization(False)
-        .with_smooth_quant(False)
-        # with_activation_quantization turns per-token quantization on for BF16; only declared components keep it.
-        .with_per_token_quant(bool(parameters.get("per_token", False)))
-    )
+    # Each token's activations get their own INT8 scale before an INT8-weight operation. Only components
+    # that declare per_token use it.
+    per_token = bool(parameters.get("per_token", False))
+    if precision == "w8a8":
+        if not _calibrates(parameters):
+            raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
+            biascorr_type=BiasCorrectionType.REGULAR,
+            per_token_quant=per_token,
+        )
+    if precision == "w8a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            per_token_quant=per_token,
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+            per_token_quant=per_token,
+        )
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _quantize_component(

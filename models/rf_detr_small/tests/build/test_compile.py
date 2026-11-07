@@ -306,6 +306,32 @@ def test_compile_describes_the_pipeline_and_rejects_undeclared_settings(
         compile_module._quantization_config({"precision": "w8a8"})
 
 
+@pytest.mark.parametrize(
+    ("parameters", "calibrates", "per_token"),
+    [
+        ({"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}, True, False),
+        ({"precision": "w8a16", "per_token": True}, False, True),
+        # AFE runs the decoder's query sine embedding as an INT8 lookup table even at W16A16.
+        ({"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50}, True, False),
+        ({"precision": "w16a16"}, False, False),
+    ],
+)
+def test_quantization_config_states_calibration_and_per_token_per_precision(
+    load_script: Callable[[str], ModuleType], parameters: dict, calibrates: bool, per_token: bool
+) -> None:
+    compile_module = load_script("compile")
+
+    compile_module._quantization_config(parameters)
+
+    arguments = compile_module.QuantizationParams.call_args.kwargs
+    if calibrates:
+        compile_module.HistogramMSEMethod.assert_called_once_with(parameters["calibration_bins"])
+        assert arguments["calibration_method"] is compile_module.HistogramMSEMethod.return_value
+    else:
+        assert arguments["calibration_method"] is compile_module.SkipCalibration.return_value
+    assert arguments["per_token_quant"] is per_token
+
+
 def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
