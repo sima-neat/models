@@ -44,7 +44,7 @@ def test_contributor_docs_distinguish_pr_checks_from_trusted_automation() -> Non
 
     assert "Pull requests do **not** run recipe or surgery code" in overview
     assert "## After merge: trusted staging automation" in contributing
-    assert "A successful compile does not by itself mean the dispatched benchmark succeeded" in contributing_words
+    assert "A successful compile does not by itself mean the benchmark succeeded" in contributing_words
     assert "pull_request" not in workflow
 
 
