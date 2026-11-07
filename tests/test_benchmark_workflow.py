@@ -148,7 +148,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
     )
     assert json.loads(resolver["with"]["runner-labels"]) == [
-        "self-hosted", "Linux", "ARM64", "modalix", "model-registry", "vulcan-staging",
+        "self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging",
     ]
     assert benchmark["runs-on"]["labels"] == (
         "${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}"

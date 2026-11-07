@@ -56,7 +56,7 @@ needed:
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz \
-  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
   --output /workspace/performance
 ```
 
