@@ -30,10 +30,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/raft_stereo_realtime/169a13944e8368f8ed52df212c4ddc6a9e0003435bac26ce402ee35c9bef6a9e/41195990005-1/model.onnx
-    sha256: 169a13944e8368f8ed52df212c4ddc6a9e0003435bac26ce402ee35c9bef6a9e
-    size_bytes: 32683610
+  source: conversion
 
 calibrations:
 - id: scene-flow-cal
