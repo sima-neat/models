@@ -17,7 +17,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "vulcan-model-orchestrator.yml"
 BUILD_WORKFLOW = WORKFLOWS / "vulcan-model-compile.yml"
 BENCHMARK_WORKFLOW = WORKFLOWS / "vulcan-model-benchmarking.yml"
-DISPATCH_WORKFLOW = WORKFLOWS / "vulcan-model-benchmark-dispatch.yml"
 
 
 def load(path: Path) -> dict:
@@ -57,7 +56,6 @@ BENCHMARK_CALLERS = {
     "compile.benchmark": (BUILD_WORKFLOW, "benchmark"),
     "orchestrator.benchmark": (WORKFLOW, "benchmark"),
     "orchestrator.benchmark-without-compiles": (WORKFLOW, "benchmark-without-compiles"),
-    "dispatch.benchmark": (DISPATCH_WORKFLOW, "benchmark"),
 }
 
 
@@ -643,7 +641,7 @@ def test_reused_builds_are_benchmarked_one_call_per_build(job_id) -> None:
 
 
 def test_the_run_resolves_one_devkit_runner_for_every_benchmark() -> None:
-    jobs, dispatch = load(WORKFLOW)["jobs"], load(DISPATCH_WORKFLOW)["jobs"]
+    jobs, dispatch = load(WORKFLOW)["jobs"], load(BENCHMARK_WORKFLOW)["jobs"]
     resolver, manual = jobs["resolve-benchmark-runner"], dispatch["resolve-benchmark-runner"]
 
     assert resolver["uses"] == manual["uses"]
@@ -708,7 +706,7 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     assert [job["name"] for job in load(BUILD_WORKFLOW)["jobs"].values()] == ["Compile", "Publish", "Benchmark"]
     benchmark_names = [job["name"] for job in load(BENCHMARK_WORKFLOW)["jobs"].values()]
     assert benchmark_names == [
-        "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
+        "Resolve Vulcan config", "Resolve the benchmark DevKit runner", "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
         "Check model tests and clean up",
     ]
 

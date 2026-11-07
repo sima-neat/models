@@ -14,9 +14,8 @@ from tests.test_stage_plan import repository_without_w16a16_accuracy
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
-DISPATCH_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmark-dispatch.yml"
 # A manual dispatch's "default" environment resolves to the repository's VULCAN_ENV.
-DISPATCH_ENVIRONMENT = "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
+ENVIRONMENT = "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
 PUBLISH_PERFORMANCE = "${{ !cancelled() && needs.benchmark.outputs.performance == 'success' }}"
 PUBLISH_ACCURACY = "${{ !cancelled() && needs.benchmark.outputs.accuracy == 'success' }}"
 # Model code from the source revision runs only through these steps' scripts.
@@ -32,22 +31,18 @@ def load_workflow() -> dict:
     return yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def load_dispatch() -> dict:
-    return yaml.load(DISPATCH_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-
-
 def step(steps: list[dict], name: str) -> dict:
     return next(item for item in steps if item.get("name") == name)
 
 
 def test_manual_benchmarks_keep_their_actions_identity() -> None:
-    workflow = load_dispatch()
+    workflow = load_workflow()
 
     assert workflow["name"] == "Vulcan Model Benchmarking"
     assert workflow["run-name"] == (
         "Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})"
     )
-    assert list(workflow["on"]) == ["workflow_dispatch"]
+    assert list(workflow["on"]) == ["workflow_dispatch", "workflow_call"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
         "environment",
@@ -71,50 +66,47 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
         "model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-"
     )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
-    assert list(workflow["jobs"]) == ["resolve-vulcan-config", "resolve-benchmark-runner", "benchmark"]
-
-
-def test_benchmark_workflow_is_one_called_build_of_four_jobs() -> None:
-    workflow = load_workflow()
-
-    # Only a caller starts it, so the caller's run name and concurrency group apply.
-    assert workflow["name"] == "Benchmark one build"
-    assert list(workflow["on"]) == ["workflow_call"]
-    assert "run-name" not in workflow
-    assert "concurrency" not in workflow
-    # Each caller resolves the Vulcan config and the DevKit runner, so the build has no resolver jobs.
-    assert list(workflow["jobs"]) == ["stage", "benchmark", "publish", "check"]
-    assert [job["name"] for job in workflow["jobs"].values()] == [
-        "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
-        "Check model tests and clean up",
+    assert list(workflow["jobs"]) == [
+        "resolve-vulcan-config", "resolve-benchmark-runner", "stage", "benchmark", "publish", "check",
     ]
 
 
-def test_manual_dispatch_takes_the_called_inputs_and_passes_every_one() -> None:
-    dispatch = load_dispatch()
-    inputs = dispatch["on"]["workflow_dispatch"]["inputs"]
-    call = load_workflow()["on"]["workflow_call"]["inputs"]
-    benchmark = dispatch["jobs"]["benchmark"]
+def test_manual_dispatch_takes_the_called_inputs() -> None:
+    triggers = load_workflow()["on"]
+    inputs, call = triggers["workflow_dispatch"]["inputs"], triggers["workflow_call"]["inputs"]
 
     # The resolvers' outputs are the only inputs a person does not type.
     assert set(inputs) == set(call) - {"vulcan_config", "devkit_runner"}
-    assert benchmark["uses"] == "./.github/workflows/vulcan-model-benchmarking.yml"
-    assert set(benchmark["with"]) == set(call)
-    assert benchmark["with"]["environment"] == DISPATCH_ENVIRONMENT
-    assert benchmark["with"]["stages"] == "${{ inputs.stages }}"
     assert all(value["type"] == "string" for value in call.values())
-    # A caller names every value; only an empty source run restores the build from the registry.
-    assert {name for name, value in call.items() if value["required"] == "false"} == {"source_run_id"}
-    assert call["source_run_id"]["default"] == ""
-    assert all("default" not in value for name, value in call.items() if name != "source_run_id")
+    optional = {"source_run_id", "vulcan_config", "devkit_runner"}
+    assert {name for name, value in call.items() if value["required"] == "false"} == optional
+    assert all(call[name]["default"] == "" for name in optional)
+    assert all("default" not in value for name, value in call.items() if name not in optional)
+
+
+def test_only_a_manual_dispatch_resolves_the_config_and_runner() -> None:
+    jobs = load_workflow()["jobs"]
+    stage = jobs["stage"]
+
+    # The orchestrator passes the config and the DevKit runner it resolved once for the run.
+    assert jobs["resolve-vulcan-config"]["if"] == "inputs.vulcan_config == ''"
+    assert jobs["resolve-benchmark-runner"]["if"] == "inputs.devkit_runner == ''"
+    assert stage["needs"] == ["resolve-vulcan-config", "resolve-benchmark-runner"]
+    # Without a status function a skipped resolver would skip the stage too.
+    assert stage["if"].startswith("!cancelled() && !contains(needs.*.result, 'failure') &&")
+    assert stage["outputs"]["vulcan_config"] == (
+        "${{ inputs.vulcan_config || toJSON(needs.resolve-vulcan-config.outputs) }}"
+    )
+    assert stage["outputs"]["devkit_runner"] == (
+        "${{ inputs.devkit_runner || toJSON(needs.resolve-benchmark-runner.outputs) }}"
+    )
 
 
 def test_benchmark_stages_only_its_compiled_artifact() -> None:
     workflow = load_workflow()
     stage = workflow["jobs"]["stage"]
 
-    assert "needs" not in stage
-    assert stage["environment"] == "${{ inputs.environment }}"
+    assert stage["environment"] == ENVIRONMENT
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
     assert "inputs.source_branch == github.ref_name" in stage["if"]
@@ -178,7 +170,7 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
 
 
 def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
-    resolver = load_dispatch()["jobs"]["resolve-benchmark-runner"]
+    resolver = load_workflow()["jobs"]["resolve-benchmark-runner"]
     benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]
 
@@ -187,11 +179,11 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
         "self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging",
     ]
     assert benchmark["needs"] == "stage"
-    assert benchmark["environment"] == "${{ inputs.environment }}"
-    # The caller passes the resolver's outputs as JSON; its runner_labels output is itself a JSON array.
+    assert benchmark["environment"] == ENVIRONMENT
+    # The stage passes the resolver's outputs as JSON; its runner_labels output is itself a JSON array.
     assert benchmark["runs-on"] == {
-        "group": "${{ fromJSON(inputs.devkit_runner).modalix_runner_group }}",
-        "labels": "${{ fromJSON(fromJSON(inputs.devkit_runner).runner_labels) }}",
+        "group": "${{ fromJSON(needs.stage.outputs.devkit_runner).modalix_runner_group }}",
+        "labels": "${{ fromJSON(fromJSON(needs.stage.outputs.devkit_runner).runner_labels) }}",
     }
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
     # One orchestrator run benchmarks many builds on the same board under one run ID.
@@ -233,10 +225,12 @@ def test_devkit_job_runs_only_on_a_staged_build(branch, expected) -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
     condition = benchmark["if"]
 
-    # Without a status function GitHub adds success(), so the board waits for a staged build.
+    # A skipped resolver would skip the board under the implicit success(), so the board names the stage's result.
     assert benchmark["needs"] == "stage"
-    assert not any(function in condition for function in ("always()", "cancelled()", "failure()", "success()"))
-    assert evaluate(condition, {"inputs.source_branch": branch, "github.ref_name": "develop"}) is expected
+    values = {"inputs.source_branch": branch, "github.ref_name": "develop", "needs.stage.result": "success",
+              "cancelled()": False}
+    assert evaluate(condition[3:-3], values) is expected
+    assert evaluate(condition[3:-3], {**values, "needs.stage.result": "skipped"}) is False
 
 
 def test_performance_runs_only_at_the_full_mla_clock() -> None:
@@ -387,7 +381,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
     assert credentials["with"]["output-credentials"] == "true"
     assert credentials["with"]["output-env-credentials"] == "false"
     assert credentials["with"]["role-to-assume"] == (
-        "${{ fromJSON(inputs.vulcan_config).dataset_reader_role_arn }}"
+        "${{ fromJSON(needs.stage.outputs.vulcan_config).dataset_reader_role_arn }}"
     )
     credentialed = [item["name"] for item in steps if "steps.dataset-credentials." in yaml.safe_dump(item)]
     assert credentialed == ["Cache the accuracy dataset on NVMe"]
@@ -473,7 +467,7 @@ def test_completed_stages_are_published_from_a_hosted_runner() -> None:
     steps = publish["steps"]
 
     assert publish["runs-on"] == "ubuntu-latest"
-    assert publish["needs"] == "benchmark"
+    assert publish["needs"] == ["stage", "benchmark"]
     checkouts = [item for item in steps if item.get("uses") == "actions/checkout@v6"]
     assert checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
     assert checkouts[1]["with"] == {
@@ -674,22 +668,19 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
      ('production', 'staging', 'production')],
 )
 def test_registry_selection_is_independent_of_devkit_placement(override, default, expected):
-    dispatch = load_dispatch()['jobs']
-    values = {'inputs.environment': override, 'vars.VULCAN_ENV': default}
-    # A manual dispatch resolves its environment once, for the config and for the benchmark it calls.
-    for selected in (dispatch['resolve-vulcan-config']['with']['vulcan_env'],
-                     dispatch['benchmark']['with']['environment']):
-        assert evaluate(selected[3:-3], values) == expected
-    assert 'vulcan-staging' in json.loads(dispatch['resolve-benchmark-runner']['with']['runner-labels'])
-    # The called workflow receives the resolved environment and selects nothing itself.
     jobs = load_workflow()['jobs']
-    resolved = {'inputs.environment': expected}
+    values = {'inputs.environment': override, 'vars.VULCAN_ENV': default}
+    # A manual dispatch may pass "default"; the orchestrator passes staging or production.
+    assert evaluate(ENVIRONMENT[3:-3], values) == expected
+    assert jobs['resolve-vulcan-config']['with']['vulcan_env'] == ENVIRONMENT
+    assert 'vulcan-staging' in json.loads(jobs['resolve-benchmark-runner']['with']['runner-labels'])
+    resolved = {'inputs.environment': expected, 'vars.VULCAN_ENV': default}
     for name in ('stage', 'benchmark', 'publish'):
-        assert jobs[name]['environment'] == '${{ inputs.environment }}'
+        assert jobs[name]['environment'] == ENVIRONMENT
         assert "inputs.environment == 'staging'" not in jobs[name]['if']
     board = jobs['benchmark']
     dataset = step(board['steps'], 'Install trusted dataset tooling')['env']['DATASET_REGISTRY_ENVIRONMENT']
-    assert dataset == '${{ inputs.environment }}'
+    assert dataset == ENVIRONMENT
     reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
     for source_run in ('', '123'):
         assert evaluate(reader['if'], {**resolved, 'inputs.source_run_id': source_run}) == (
@@ -709,9 +700,8 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
 def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, environment):
     publication = step(load_workflow()['jobs']['publish']['steps'],
                        "Publish each measured stage's run")
-    assert publication['env']['VULCAN_ENV'] == '${{ inputs.environment }}'
-    selected = evaluate(load_dispatch()['jobs']['benchmark']['with']['environment'][3:-3],
-                        {'inputs.environment': 'default', 'vars.VULCAN_ENV': environment})
+    assert publication['env']['VULCAN_ENV'] == ENVIRONMENT
+    selected = evaluate(ENVIRONMENT[3:-3], {'inputs.environment': 'default', 'vars.VULCAN_ENV': environment})
     executable = tmp_path / 'model-registry'
     executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')
     executable.chmod(0o755)

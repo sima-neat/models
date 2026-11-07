@@ -193,7 +193,7 @@ push (Vulcan Model Orchestrator, every push)
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
   -> publish the catalog snapshot, once every compile call ends, including each new build's benchmarks
-benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the orchestrator run, or by Vulcan Model Benchmarking for a manual run)
+benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the orchestrator run, or dispatched by hand)
   -> stage the build, on a GitHub-hosted runner
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
   -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job

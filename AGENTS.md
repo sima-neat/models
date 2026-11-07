@@ -266,9 +266,7 @@ in the same commit.
   publish-report`, each under the profile's `model_package` run with its test
   outcome. A failed test fails its check job after publication; the completed
   run is not benchmarked again. On-demand builds are not benchmarked.
-  `vulcan-model-benchmark-dispatch.yml` (**Vulcan Model Benchmarking**) is
-  the manual entry: it resolves the config and runner for one build and calls
-  the same workflow.
+  A manual dispatch of the same workflow resolves its own config and runner.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
