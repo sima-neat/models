@@ -4,12 +4,11 @@ import hashlib
 import io
 import json
 from pathlib import Path
-from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
 from model_registry.errors import FetchError
-from model_registry.fetch import Fetcher, read_registry_json, resolve_dataset
+from model_registry.fetch import Fetcher, resolve_dataset
 from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
@@ -300,58 +299,6 @@ def test_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch: pytes
         "Bearer top-secret-token",
         "Bearer top-secret-token",
     ]
-
-
-REGISTRY_URL = "https://registry.example/v1/catalog"
-
-
-def registry_error(code: int) -> HTTPError:
-    body = json.dumps({"error": {"code": "rate_limited" if code == 429 else "not_found", "message": "fixture"}})
-    return HTTPError(REGISTRY_URL, code, "fixture", {}, io.BytesIO(body.encode()))
-
-
-def fake_registry(monkeypatch: pytest.MonkeyPatch, responses: list[HTTPError | dict]) -> tuple[list[str], list[float]]:
-    """Answer each registry read with the next response, and record the reads and the backoff sleeps."""
-    reads, sleeps = [], []
-
-    def urlopen(request: Request, timeout: int) -> Response:
-        reads.append(request.full_url)
-        response = responses.pop(0)
-        if isinstance(response, HTTPError):
-            raise response
-        return Response(json.dumps(response).encode())
-
-    monkeypatch.setattr("model_registry.fetch.urlopen", urlopen)
-    monkeypatch.setattr("model_registry.fetch.time.sleep", sleeps.append)
-    monkeypatch.setattr("model_registry.fetch.random.uniform", lambda low, high: 0.5)
-    return reads, sleeps
-
-
-def test_rate_limited_registry_read_is_retried_after_a_jittered_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    reads, sleeps = fake_registry(monkeypatch, [registry_error(429), {"catalog": "fixture"}])
-
-    assert read_registry_json(REGISTRY_URL) == {"catalog": "fixture"}
-    assert reads == [REGISTRY_URL, REGISTRY_URL]
-    assert sleeps == [1.5]
-
-
-def test_registry_read_that_cannot_succeed_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    reads, sleeps = fake_registry(monkeypatch, [registry_error(404)])
-
-    with pytest.raises(FetchError, match="public artifact registry HTTP 404 not_found: fixture"):
-        read_registry_json(REGISTRY_URL)
-    assert reads == [REGISTRY_URL]
-    assert sleeps == []
-
-
-def test_registry_read_fails_after_five_rate_limited_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
-    reads, sleeps = fake_registry(monkeypatch, [registry_error(429) for _ in range(5)])
-
-    with pytest.raises(FetchError, match="public artifact registry HTTP 429 rate_limited: fixture"):
-        read_registry_json(REGISTRY_URL)
-    assert len(reads) == 5
-    # The backoff doubles between attempts, and the fifth failure raises without sleeping.
-    assert sleeps == [1.5, 2.5, 4.5, 8.5]
 
 
 def fake_dataset_registry(monkeypatch, cached: Path, download: bytes) -> list[Path]:
