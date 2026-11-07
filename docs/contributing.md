@@ -221,7 +221,9 @@ configuration remain staging:
    branch's catalog and, on a feature branch, its base branches' catalogs. A
    build compiles when no published run carries its fingerprint. A build that
    is reused but lacks a completed performance or accuracy run for its current
-   benchmark fingerprint is queued for that benchmark only.
+   benchmark fingerprint is queued for that benchmark only. A feature branch
+   leaves to its closest base branch the build profiles that base branch is
+   compiling and the benchmarks whose fingerprints its catalog records.
 3. **Authorize.** Each requested runner class and market is checked against the protected
    environment specification before a self-hosted compile is queued.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
