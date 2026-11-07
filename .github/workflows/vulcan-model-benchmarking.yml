@@ -40,6 +40,51 @@ on:
         required: false
         default: performance,accuracy
         type: string
+  # The orchestrator calls the workflow inside its run and passes the DevKit runner it resolved once.
+  workflow_call:
+    inputs:
+      environment:
+        description: Registry and dataset environment the caller resolved, staging or production (DevKits remain on staging)
+        required: true
+        type: string
+      source_run_id:
+        description: Source workflow run containing the compiled-model artifact
+        required: false
+        default: ""
+        type: string
+      source_sha:
+        description: Source revision used to compile the model
+        required: true
+        type: string
+      source_branch:
+        description: Source branch used to compile the model
+        required: true
+        type: string
+      model_id:
+        description: Model ID to benchmark
+        required: true
+        type: string
+      build_profile_id:
+        description: Build profile ID to benchmark
+        required: true
+        type: string
+      compile_invocation_id:
+        description: Compile invocation that produced the components
+        required: true
+        type: string
+      stages:
+        description: Comma-separated benchmarks to run (performance, accuracy)
+        required: false
+        default: performance,accuracy
+        type: string
+      modalix_runner_group:
+        description: DevKit runner group the caller resolved
+        required: true
+        type: string
+      runner_labels:
+        description: JSON array of DevKit runner labels the caller resolved
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -106,9 +151,8 @@ jobs:
           echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
           artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"
           artifact_count="$(
-            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" |
-              jq --arg artifact "$artifact_name" \
-                '[.artifacts[] | select(.name == $artifact and (.expired | not))] | length'
+            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?name=$artifact_name" \
+              --jq '[.artifacts[] | select(.expired | not)] | length'
           )"
           test "$artifact_count" = "1"
 
@@ -202,7 +246,7 @@ jobs:
 
   resolve-dispatched-benchmark-runner:
     name: Resolve dispatched benchmark DevKit runner
-    if: inputs.source_branch == github.ref_name
+    if: inputs.source_branch == github.ref_name && inputs.runner_labels == ''
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
       # DevKit placement is independent of registry and dataset selection.
@@ -222,11 +266,16 @@ jobs:
   benchmark-dispatched-model:
     name: Benchmark ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) on DevKit
     needs: [stage-dispatched-benchmark, resolve-dispatched-benchmark-runner, resolve-dispatched-benchmark-config]
-    if: inputs.source_branch == github.ref_name
+    if: >-
+      !cancelled() &&
+      inputs.source_branch == github.ref_name &&
+      needs.stage-dispatched-benchmark.result == 'success' &&
+      needs.resolve-dispatched-benchmark-config.result == 'success' &&
+      (inputs.runner_labels != '' || needs.resolve-dispatched-benchmark-runner.result == 'success')
     environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     runs-on:
-      group: ${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
-      labels: ${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}
+      group: ${{ inputs.modalix_runner_group || needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}
+      labels: ${{ fromJSON(inputs.runner_labels || needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}
     timeout-minutes: 45
     permissions:
       actions: read
@@ -243,6 +292,8 @@ jobs:
       SOURCE_BRANCH: ${{ needs.stage-dispatched-benchmark.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
+      # One orchestrator run benchmarks many builds under the same run ID, so each build gets its own scratch.
+      WORK_DIR: /media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}
     steps:
       - name: Check out trusted tooling from the protected workflow revision
         uses: actions/checkout@v6
@@ -425,6 +476,8 @@ jobs:
       actions: read
       contents: read
       id-token: write
+    outputs:
+      failed_tests: ${{ steps.tests.outputs.failed }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -507,30 +560,45 @@ jobs:
               --test-status "$(<"_$stage/test-status.txt")" || failed=1
           done
           exit "$failed"
-      # The results are published either way; a failed test still fails the run, which keeps its evidence.
-      - name: Fail the run on a failed model test
-        if: ${{ !cancelled() }}
+      - name: Record the stages whose model tests failed
+        id: tests
         run: |
           set -euo pipefail
           failed=()
-          for status in _performance/test-status.txt _accuracy/test-status.txt; do
+          for stage in performance accuracy; do
+            status="_$stage/test-status.txt"
             if [[ -f "$status" && "$(<"$status")" == failed ]]; then
-              failed+=("$status")
+              failed+=("$stage")
             fi
           done
-          if (( ${#failed[@]} )); then
-            echo "The model's tests failed on the published results: ${failed[*]}" >&2
+          echo "failed=${failed[*]}" >> "$GITHUB_OUTPUT"
+
+  # The results are published either way; a failed test still fails the run, which keeps its evidence. The check
+  # is its own job, so re-running failed jobs repeats the check and never publishes the same results again.
+  check-dispatched-benchmark-tests:
+    name: Check ${{ inputs.model_id }}/${{ inputs.compile_invocation_id }} (${{ inputs.build_profile_id }}) model tests
+    needs: publish-dispatched-benchmark
+    if: ${{ !cancelled() && needs.publish-dispatched-benchmark.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fail the run on a failed model test
+        env:
+          FAILED_STAGES: ${{ needs.publish-dispatched-benchmark.outputs.failed_tests }}
+        run: |
+          if [[ -n "$FAILED_STAGES" ]]; then
+            echo "The model's tests failed on the published results of: $FAILED_STAGES" >&2
             exit 1
           fi
 
   cleanup-dispatched-benchmark-artifacts:
     name: Clean up dispatched benchmark artifacts
-    needs: [benchmark-dispatched-model, publish-dispatched-benchmark]
+    needs: [benchmark-dispatched-model, check-dispatched-benchmark-tests]
     # A failed stage keeps its evidence for diagnosis.
     if: >-
       !cancelled() &&
       needs.benchmark-dispatched-model.result == 'success' &&
-      needs.publish-dispatched-benchmark.result == 'success'
+      needs.check-dispatched-benchmark-tests.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -544,8 +612,11 @@ jobs:
           COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
         run: |
           set -euo pipefail
-          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.name == \"benchmark-input-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"performance-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\" or .name == \"accuracy-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID\") | .id" |
+          # An orchestrator run holds every build's artifacts, so look each one up by name.
+          for prefix in benchmark-input performance accuracy; do
+            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$prefix-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" \
+              --jq '.artifacts[].id'
+          done |
           while read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"

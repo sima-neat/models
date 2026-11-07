@@ -37,7 +37,7 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     workflow = load_workflow()
 
     assert workflow["name"] == "Vulcan Model Benchmarking"
-    assert list(workflow["on"]) == ["workflow_dispatch"]
+    assert list(workflow["on"]) == ["workflow_dispatch", "workflow_call"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
         "environment",
@@ -58,6 +58,25 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert "operation" not in inputs
     assert "model-benchmark-" in workflow["concurrency"]["group"]
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
+
+
+def test_workflow_call_takes_the_dispatch_inputs_and_the_resolved_runner() -> None:
+    on = load_workflow()["on"]
+    dispatch, call = on["workflow_dispatch"]["inputs"], on["workflow_call"]["inputs"]
+
+    # A manual dispatch resolves its own DevKit runner; only a caller passes one in.
+    assert set(call) == set(dispatch) | {"modalix_runner_group", "runner_labels"}
+    assert all(value["type"] == "string" for value in call.values())
+    for name, value in dispatch.items():
+        assert call[name]["required"] == value["required"], name
+        if name != "environment":
+            assert call[name].get("default") == value.get("default"), name
+    # A caller always names the registry environment; only a dispatch offers "default".
+    assert call["environment"]["required"] == "true"
+    assert "default" not in call["environment"]
+    for name in ("modalix_runner_group", "runner_labels"):
+        assert call[name]["required"] == "true"
+        assert "default" not in call[name]
 
 
 def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
@@ -83,6 +102,8 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in verify["run"]
     assert 'git check-ref-format --branch "$SOURCE_BRANCH"' in verify["run"]
     assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify["run"]
+    # An orchestrator run holds every build's artifacts, more than one listing page shows.
+    assert "/artifacts?name=$artifact_name" in verify["run"]
     assert "compiler-output-" not in verify["run"]
     download = next(item for item in stage["steps"] if item.get("uses") == "actions/download-artifact@v7")
     assert download["with"]["name"] == (
@@ -135,7 +156,7 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     steps = benchmark["steps"]
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
-    assert "inputs.source_branch == github.ref_name" in resolver["if"]
+    assert resolver["if"] == "inputs.source_branch == github.ref_name && inputs.runner_labels == ''"
     assert benchmark["needs"] == [
         "stage-dispatched-benchmark",
         "resolve-dispatched-benchmark-runner",
@@ -145,15 +166,20 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
         "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
     )
     assert benchmark["runs-on"]["group"] == (
-        "${{ needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
+        "${{ inputs.modalix_runner_group || needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
     )
     assert json.loads(resolver["with"]["runner-labels"]) == [
         "self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging",
     ]
     assert benchmark["runs-on"]["labels"] == (
-        "${{ fromJSON(needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}"
+        "${{ fromJSON(inputs.runner_labels || needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}"
     )
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
+    # One orchestrator run benchmarks many builds on the same board under one run ID.
+    assert benchmark["env"]["WORK_DIR"] == (
+        "/media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}"
+        "-${{ inputs.model_id }}-${{ inputs.build_profile_id }}"
+    )
     assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage-dispatched-benchmark.outputs.source_branch }}"
     assert step(steps, "Check out trusted tooling from the protected workflow revision")["with"] == {
         "ref": "${{ github.sha }}",
@@ -181,6 +207,43 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert 'sima-cli neat install --env production --type minimal "$target"' in install
     assert '["neat_core"]["install_target"]' in install
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
+
+
+CALLER_LABELS = '["self-hosted", "caller"]'
+
+
+@pytest.mark.parametrize(
+    ("cancelled", "branch", "stage", "config", "runner", "labels", "expected"),
+    [
+        (False, "develop", "success", "success", "success", "", True),
+        # A caller's runner skips the resolver; a skipped resolver must not skip the board.
+        (False, "develop", "success", "success", "skipped", CALLER_LABELS, True),
+        (False, "develop", "success", "success", "skipped", "", False),
+        (False, "develop", "success", "success", "failure", "", False),
+        (False, "develop", "failure", "success", "skipped", CALLER_LABELS, False),
+        (False, "develop", "skipped", "success", "skipped", CALLER_LABELS, False),
+        (False, "develop", "success", "failure", "skipped", CALLER_LABELS, False),
+        (False, "feature/other", "success", "success", "skipped", CALLER_LABELS, False),
+        (True, "develop", "success", "success", "skipped", CALLER_LABELS, False),
+    ],
+)
+def test_devkit_job_runs_only_on_a_staged_build_with_a_runner(
+    cancelled, branch, stage, config, runner, labels, expected,
+) -> None:
+    condition = load_workflow()["jobs"]["benchmark-dispatched-model"]["if"]
+    values = {
+        "!cancelled()": not cancelled,
+        "inputs.source_branch": branch,
+        "github.ref_name": "develop",
+        "needs.stage-dispatched-benchmark.result": stage,
+        "needs.resolve-dispatched-benchmark-config.result": config,
+        "needs.resolve-dispatched-benchmark-runner.result": runner,
+        "inputs.runner_labels": labels,
+    }
+
+    # Without a status function GitHub adds success(), which a skipped resolver fails.
+    assert condition.startswith("!cancelled() &&")
+    assert evaluate(condition, values) is expected
 
 
 def test_performance_runs_only_at_the_full_mla_clock() -> None:
@@ -486,41 +549,103 @@ def test_each_measured_stage_is_published_under_the_registered_build() -> None:
 
 
 @pytest.mark.parametrize(
-    ("statuses", "fails"),
+    ("statuses", "failed"),
     [
-        ({"_performance/test-status.txt": "passed", "_accuracy/test-status.txt": "skipped"}, False),
-        ({"_performance/test-status.txt": "failed", "_accuracy/test-status.txt": "passed"}, True),
-        ({"_accuracy/test-status.txt": "failed"}, True),
-        ({}, False),
+        ({"_performance/test-status.txt": "passed", "_accuracy/test-status.txt": "skipped"}, ""),
+        ({"_performance/test-status.txt": "failed", "_accuracy/test-status.txt": "passed"}, "performance"),
+        ({"_accuracy/test-status.txt": "failed"}, "accuracy"),
+        ({"_performance/test-status.txt": "failed", "_accuracy/test-status.txt": "failed"}, "performance accuracy"),
+        ({}, ""),
     ],
 )
 def test_run_fails_after_publication_on_a_failed_model_test(
-    tmp_path: Path, statuses: dict[str, str], fails: bool
+    tmp_path: Path, statuses: dict[str, str], failed: str
 ) -> None:
-    steps = load_workflow()["jobs"]["publish-dispatched-benchmark"]["steps"]
-    check = steps[-1]
+    jobs = load_workflow()["jobs"]
+    publish, check_job = jobs["publish-dispatched-benchmark"], jobs["check-dispatched-benchmark-tests"]
+    record = publish["steps"][-1]
+    check = check_job["steps"][-1]
     for relative, status in statuses.items():
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / relative).write_text(f"{status}\n", encoding="utf-8")
+    output = tmp_path / "github-output"
 
-    result = subprocess.run(["bash", "-c", check["run"]], cwd=tmp_path, capture_output=True, text=True, check=False)
+    subprocess.run(["bash", "-c", record["run"]], cwd=tmp_path, env={**os.environ, "GITHUB_OUTPUT": str(output)},
+                   check=True)
+    recorded = output.read_text(encoding="utf-8").splitlines()
+    result = subprocess.run(["bash", "-c", check["run"]], env={**os.environ, "FAILED_STAGES": failed},
+                            capture_output=True, text=True, check=False)
 
+    assert record["name"] == "Record the stages whose model tests failed"
+    assert record["id"] == "tests"
+    assert publish["outputs"]["failed_tests"] == "${{ steps.tests.outputs.failed }}"
+    assert recorded == [f"failed={failed}"]
+    # A separate job fails the run, so re-running failed jobs never publishes the same results again.
+    assert check_job["needs"] == "publish-dispatched-benchmark"
+    assert check_job["runs-on"] == "ubuntu-latest"
+    assert check_job["permissions"] == {}
     assert check["name"] == "Fail the run on a failed model test"
-    assert check["if"] == "${{ !cancelled() }}"
-    assert (result.returncode != 0) == fails, result.stderr
+    assert check["env"]["FAILED_STAGES"] == "${{ needs.publish-dispatched-benchmark.outputs.failed_tests }}"
+    assert (result.returncode != 0) == bool(failed), result.stderr
 
 
-def test_cleanup_removes_input_and_both_evidence_artifacts() -> None:
+@pytest.mark.parametrize(
+    ("cancelled", "publish", "expected"),
+    [(False, "success", True), (False, "failure", False), (False, "skipped", False), (True, "success", False)],
+)
+def test_model_tests_are_checked_only_after_publication(cancelled, publish, expected) -> None:
+    condition = load_workflow()["jobs"]["check-dispatched-benchmark-tests"]["if"]
+
+    assert evaluate(condition[3:-3], {
+        "!cancelled()": not cancelled, "needs.publish-dispatched-benchmark.result": publish,
+    }) is expected
+
+
+@pytest.mark.parametrize(
+    ("benchmark", "check", "expected"),
+    [
+        ("success", "success", True),
+        # A failed model test keeps the evidence it failed on.
+        ("success", "failure", False),
+        ("success", "skipped", False),
+        ("failure", "skipped", False),
+    ],
+)
+def test_cleanup_waits_for_the_model_test_check(benchmark, check, expected) -> None:
     cleanup = load_workflow()["jobs"]["cleanup-dispatched-benchmark-artifacts"]
-    script = cleanup["steps"][0]["run"]
 
-    assert cleanup["needs"] == ["benchmark-dispatched-model", "publish-dispatched-benchmark"]
-    assert cleanup["if"] == (
-        "!cancelled() && needs.benchmark-dispatched-model.result == 'success' && "
-        "needs.publish-dispatched-benchmark.result == 'success'"
+    assert cleanup["needs"] == ["benchmark-dispatched-model", "check-dispatched-benchmark-tests"]
+    assert evaluate(cleanup["if"], {
+        "!cancelled()": True,
+        "needs.benchmark-dispatched-model.result": benchmark,
+        "needs.check-dispatched-benchmark-tests.result": check,
+    }) is expected
+
+
+def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> None:
+    script = load_workflow()["jobs"]["cleanup-dispatched-benchmark-artifacts"]["steps"][0]["run"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    # The run lists only one artifact per name; each lookup answers with that artifact's ID.
+    (bin_dir / "gh").write_text(
+        f'#!/bin/sh\necho "$*" >> {calls}\n'
+        'case "$*" in *"--method DELETE"*) ;; *name=benchmark-input-*) echo 1;; *name=performance-*) echo 2;; '
+        '*name=accuracy-*) echo 3;; esac\n',
+        encoding="utf-8",
     )
-    for prefix in ("benchmark-input-", "performance-", "accuracy-"):
-        assert f"{prefix}$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID" in script
+    (bin_dir / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r",
+           "GITHUB_RUN_ID": "9", "MODEL_ID": "m", "BUILD_PROFILE_ID": "p", "COMPILE_INVOCATION_ID": "c"}
+
+    subprocess.run(["bash", "-c", script], env=env, check=True)
+
+    # The lookups and deletions run as one pipeline, so their calls interleave.
+    assert sorted(calls.read_text(encoding="utf-8").splitlines()) == sorted([
+        *(f"api /repos/o/r/actions/runs/9/artifacts?name={prefix}-m-p-c --jq .artifacts[].id"
+          for prefix in ("benchmark-input", "performance", "accuracy")),
+        *(f"api --method DELETE /repos/o/r/actions/artifacts/{artifact_id}" for artifact_id in (1, 2, 3)),
+    ])
 
 
 @pytest.mark.parametrize("relative", [

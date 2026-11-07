@@ -184,16 +184,18 @@ push (Vulcan Model Orchestrator, every push)
   -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
-  -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
+  -> resolve-benchmark-runner: resolve the DevKit runner once for every benchmark of the run
+  -> benchmark: benchmark each reused build that still lacks a benchmark (after the snapshot when nothing compiles)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
-       publish: compile runs, the package with its fidelity report, start the benchmarks, catalog entry
+       publish: compile runs, the package with its fidelity report, catalog entry
+       benchmark: Vulcan Model Benchmarking for the new Modalix build, as soon as it publishes
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
-  -> publish the catalog snapshot
-benchmarks (Vulcan Model Benchmarking, per build profile)
+  -> publish the catalog snapshot, once every compile call ends, including each new build's benchmarks
+benchmarks (Vulcan Model Benchmarking, called per build profile inside the orchestrator run, or dispatched by hand)
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
-  -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
+  -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job
 ```
 
 Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
@@ -233,8 +235,8 @@ run on staging DevKits for either registry environment, only for Modalix targets
 package publishes. On-demand models compile only on the explicit manual
 selection described below, and their builds are not benchmarked.
 
-Benchmark dispatch passes the parent build's resolved `VULCAN_ENV` explicitly.
-Standalone benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
+The orchestrator passes its resolved `VULCAN_ENV` to every benchmark it calls.
+A manual benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
 staging fallback and per-run override. Registry reads, datasets, and report
 publication use that selection; DevKit discovery independently requests
 `vulcan-staging`, and execution consumes the resolver's labels. Production
@@ -277,10 +279,10 @@ benchmark fingerprints.
   catalog. Automatic builds changed by the merge compile again on `develop`,
   and their benchmarks run again; builds the branch compiled are not reused.
 - **Newer push.** It cancels the running orchestrator of the same ref
-  (manual dispatches run to completion). Builds that already published stay;
-  builds left pending are planned again. Dispatched DevKit runs continue. A
-  benchmark still running when the next plan runs has no completed run yet,
-  so it is dispatched again.
+  (manual dispatches run to completion), including its compiles and the
+  benchmarks running inside it. Builds and benchmark runs that already
+  published stay; builds left pending and benchmarks without a completed run
+  are planned again.
 - **Model browser.** A branch's view lists its catalog's builds: what the
   branch delivers (#181). A completed build compiled on the branch that is
   newer than the catalog entry for its model and build profile replaces that

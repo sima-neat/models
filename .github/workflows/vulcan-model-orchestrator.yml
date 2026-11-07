@@ -156,6 +156,14 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  # The run's benchmarks share one resolution: every resolver call uploads the same artifact name.
+  resolve-benchmark-runner:
+    name: Resolve the benchmark DevKit runner
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      # DevKit placement is independent of registry and dataset selection.
+      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging"]'
+
   # Frontend staging publication is independent of the model build/registry environment.
   resolve-staging-browser-config:
     name: Resolve staging model browser publication config
@@ -390,10 +398,11 @@ jobs:
 
   compile:
     name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, plan, resolve-vulcan-config, authorize-runner-classes, initialize-catalog]
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, authorize-runner-classes, initialize-catalog]
     if: >-
       !cancelled() &&
       needs.resolve-vulcan-config.result == 'success' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.authorize-runner-classes.result == 'success' &&
       (needs.initialize-catalog.result == 'success' ||
        (needs.select.outputs.publishable != 'true' && needs.initialize-catalog.result == 'skipped'))
@@ -419,6 +428,8 @@ jobs:
       dataset_bucket: ${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
+      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
     secrets: inherit
 
   publish-candidates:
@@ -571,54 +582,70 @@ jobs:
             --base-branches "$BASE_BRANCHES" \
             --git-sha "$GITHUB_SHA"
 
-  # One job starts every reused build's benchmarks; each build's line links its benchmarking workflow run.
-  # The pending catalog already links every reused build, so its benchmarks need not wait for compiles.
+  # Benchmarks the reused builds still lack, one call per build. The pending catalog already links every reused
+  # build, so its benchmarks need not wait for compiles.
   benchmark:
-    name: Dispatch benchmarks for reused builds
-    needs: [select, plan, initialize-catalog]
+    name: Benchmark ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-benchmark-runner, initialize-catalog]
     if: >-
       !cancelled() &&
       needs.initialize-catalog.result == 'success' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.select.outputs.publishable == 'true' &&
       needs.plan.outputs.benchmark_count != '0'
-    runs-on: ubuntu-latest
     permissions:
       actions: write
       contents: read
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Start the benchmarks reused builds still lack
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VULCAN_ENV: ${{ needs.select.outputs.vulcan_environment }}
-          BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
-        run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.benchmark_matrix) }}
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ needs.select.outputs.vulcan_environment }}
+      # A reused build is restored from the registry.
+      source_run_id: ""
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ matrix.model_id }}
+      build_profile_id: ${{ matrix.build_profile_id }}
+      compile_invocation_id: ${{ matrix.compile_invocation_id }}
+      stages: ${{ join(matrix.stages, ',') }}
+      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
+      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
+    secrets: inherit
 
   # Without compiles the pending catalog is skipped, so the snapshot is the catalog the benchmarks read.
   benchmark-without-compiles:
-    name: Dispatch benchmarks for reused builds
-    needs: [select, plan, publish-catalog]
+    name: Benchmark ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-benchmark-runner, publish-catalog]
     if: >-
       !cancelled() &&
       needs.plan.outputs.compile_count == '0' &&
       needs.publish-catalog.result == 'success' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.plan.outputs.benchmark_count != '0'
-    runs-on: ubuntu-latest
     permissions:
       actions: write
       contents: read
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Start the benchmarks reused builds still lack
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VULCAN_ENV: ${{ needs.select.outputs.vulcan_environment }}
-          BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
-        run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.benchmark_matrix) }}
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ needs.select.outputs.vulcan_environment }}
+      # A reused build is restored from the registry.
+      source_run_id: ""
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ matrix.model_id }}
+      build_profile_id: ${{ matrix.build_profile_id }}
+      compile_invocation_id: ${{ matrix.compile_invocation_id }}
+      stages: ${{ join(matrix.stages, ',') }}
+      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
+      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
+    secrets: inherit
 
   report-partial-publication:
     name: Report failed model builds
@@ -651,8 +678,9 @@ jobs:
             fi
             sleep $(( attempt * 15 ))
           done
+          # A build's own jobs end in / Compile or / Publish; its nested benchmark jobs report their own failures.
           jq '[.[].jobs[] | select(
-                (.name | startswith("Compile ")) and
+                (.name | test("^Compile .* / (Compile|Publish)$")) and
                 .conclusion != "success" and .conclusion != "skipped"
               ) | {name, conclusion, html_url}]' "$jobs" > "$failed"
           count="$(jq 'length' "$failed")"

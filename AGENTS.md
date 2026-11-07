@@ -250,25 +250,30 @@ in the same commit.
   branch; see `design-doc/model-registry-architecture.md`) and resolves each
   fingerprint against the registry. `compile` calls
   `.github/workflows/vulcan-model-compile.yml` once per build to compile,
-  run the model's compile tests, publish, and start the build's
-  benchmarks. `benchmark` starts the benchmarks a reused build still lacks
+  run the model's compile tests, publish, and benchmark the build.
+  `benchmark` benchmarks each reused build that still lacks a benchmark
   once `initialize-catalog` marks the selected builds pending, or after
   `publish-catalog` writes the final catalog snapshot when nothing compiles.
+  Every benchmark is a job of the orchestrator run: both paths call
+  `vulcan-model-benchmarking.yml` with the DevKit runner that
+  `resolve-benchmark-runner` resolves once per run.
 - **Benchmarks.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` of one build profile on a DevKit, runs the model's benchmark tests on
   each `model-report.json`, and publishes performance (`model_performance` runs)
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
-  outcome. A failed test fails the run after publication; the completed run is
-  not benchmarked again. On-demand builds are not benchmarked.
+  outcome. A failed test fails its check job after publication; the completed
+  run is not benchmarked again. On-demand builds are not benchmarked. A manual
+  dispatch of the workflow benchmarks one build and resolves the runner itself.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
   it serves, as `packaging/model-registry/build.sh` does. Registry logic
   belongs in a `model-registry` command. A new script under `scripts/` is not
   a fingerprint input unless `fingerprints.py` lists it.
-- A newer push cancels the branch's running orchestrator; builds that
-  already published stay and are reused. How branch catalogs, merges, and the
+- A newer push cancels the branch's running orchestrator, its compiles and its
+  benchmarks; builds and benchmark runs that already published stay and are
+  reused. How branch catalogs, merges, and the
   model browser interact is in
   [branches and merges](design-doc/model-registry-architecture.md#branches-merges-and-concurrent-pushes).
 

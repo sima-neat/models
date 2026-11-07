@@ -1,6 +1,6 @@
 name: Vulcan Model Compile
 
-# Compile and publish one authorized invocation, update approved builds, and start its benchmarks.
+# Compile and publish one authorized invocation, update approved builds, and benchmark it.
 # vulcan-model-orchestrator.yml calls this once per selected invocation, so one build never waits on another.
 
 on:
@@ -45,6 +45,14 @@ on:
         required: true
         type: string
       artifact_kms_key_id:
+        required: true
+        type: string
+      modalix_runner_group:
+        description: DevKit runner group the orchestrator resolved for the benchmarks
+        required: true
+        type: string
+      runner_labels:
+        description: JSON array of DevKit runner labels the orchestrator resolved for the benchmarks
         required: true
         type: string
 
@@ -305,6 +313,8 @@ jobs:
       actions: write
       contents: read
       id-token: write
+    outputs:
+      package_count: ${{ steps.packages.outputs.count }}
     env:
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
       BUILD_PROFILE_ID: ${{ fromJSON(inputs.entry).build_profile_id }}
@@ -461,19 +471,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Start the benchmarks
-        if: >-
-          inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
-          steps.packages.outputs.count != '0' &&
-          fromJSON(inputs.entry).target == 'modalix' &&
-          join(fromJSON(inputs.entry).stages, '') != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VULCAN_ENV: ${{ inputs.vulcan_environment }}
-          ENTRY: ${{ inputs.entry }}
-        run: scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"
-
       - name: Publish this build in the catalog
         if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
         run: |
@@ -502,3 +499,30 @@ jobs:
             delay=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))
             sleep "$(( delay + RANDOM % 5 ))"
           done
+
+  # The benchmarks start as soon as this build publishes, while other builds may still compile.
+  benchmark:
+    name: Benchmark
+    needs: publish
+    if: >-
+      inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
+      needs.publish.outputs.package_count != '0' &&
+      fromJSON(inputs.entry).target == 'modalix' &&
+      join(fromJSON(inputs.entry).stages, '') != ''
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ inputs.vulcan_environment }}
+      source_run_id: ${{ github.run_id }}
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ fromJSON(inputs.entry).model_id }}
+      build_profile_id: ${{ fromJSON(inputs.entry).build_profile_id }}
+      compile_invocation_id: ${{ fromJSON(inputs.entry).compile_invocation_id }}
+      stages: ${{ join(fromJSON(inputs.entry).stages, ',') }}
+      modalix_runner_group: ${{ inputs.modalix_runner_group }}
+      runner_labels: ${{ inputs.runner_labels }}
+    secrets: inherit
