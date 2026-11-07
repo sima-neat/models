@@ -184,16 +184,17 @@ push (Vulcan Model Orchestrator, every push)
   -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
-  -> resolve-benchmark-runner: resolve the DevKit runner once for every benchmark of the run
+  -> resolve-benchmark-runner: resolve the DevKit runner once; every benchmark of the run gets it and the Vulcan config
   -> benchmark: benchmark each reused build that still lacks a benchmark (after the snapshot when nothing compiles)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
        publish: compile runs, the package with its fidelity report, catalog entry
-       benchmark: Vulcan Model Benchmarking for the new Modalix build, as soon as it publishes
+       benchmark: the benchmark workflow for the new Modalix build, as soon as it publishes
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
   -> publish the catalog snapshot, once every compile call ends, including each new build's benchmarks
-benchmarks (Vulcan Model Benchmarking, called per build profile inside the orchestrator run, or dispatched by hand)
+benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the orchestrator run, or by Vulcan Model Benchmarking for a manual run)
+  -> stage the build, on a GitHub-hosted runner
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
   -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job
 ```

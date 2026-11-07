@@ -14,8 +14,11 @@ from tests.test_stage_plan import repository_without_w16a16_accuracy
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmarking.yml"
-PUBLISH_PERFORMANCE = "${{ !cancelled() && needs.benchmark-dispatched-model.outputs.performance == 'success' }}"
-PUBLISH_ACCURACY = "${{ !cancelled() && needs.benchmark-dispatched-model.outputs.accuracy == 'success' }}"
+DISPATCH_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-model-benchmark-dispatch.yml"
+# A manual dispatch's "default" environment resolves to the repository's VULCAN_ENV.
+DISPATCH_ENVIRONMENT = "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
+PUBLISH_PERFORMANCE = "${{ !cancelled() && needs.benchmark.outputs.performance == 'success' }}"
+PUBLISH_ACCURACY = "${{ !cancelled() && needs.benchmark.outputs.accuracy == 'success' }}"
 # Model code from the source revision runs only through these steps' scripts.
 MODEL_CODE_MARKERS = (
     "scripts/run_model_performance.sh",
@@ -29,15 +32,22 @@ def load_workflow() -> dict:
     return yaml.load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
+def load_dispatch() -> dict:
+    return yaml.load(DISPATCH_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
 def step(steps: list[dict], name: str) -> dict:
     return next(item for item in steps if item.get("name") == name)
 
 
-def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
-    workflow = load_workflow()
+def test_manual_benchmarks_keep_their_actions_identity() -> None:
+    workflow = load_dispatch()
 
     assert workflow["name"] == "Vulcan Model Benchmarking"
-    assert list(workflow["on"]) == ["workflow_dispatch", "workflow_call"]
+    assert workflow["run-name"] == (
+        "Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})"
+    )
+    assert list(workflow["on"]) == ["workflow_dispatch"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
         "environment",
@@ -53,40 +63,58 @@ def test_benchmark_workflow_has_a_distinct_actions_identity() -> None:
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["stages"]["default"] == "performance,accuracy"
+    assert inputs["environment"]["type"] == "choice"
     assert inputs["environment"]["options"] == ["default", "staging", "production"]
     assert inputs["environment"]["default"] == "default"
     assert "operation" not in inputs
-    assert "model-benchmark-" in workflow["concurrency"]["group"]
-    assert workflow["concurrency"]["cancel-in-progress"] == "false"
-
-
-def test_workflow_call_takes_the_dispatch_inputs_and_the_resolved_runner() -> None:
-    on = load_workflow()["on"]
-    dispatch, call = on["workflow_dispatch"]["inputs"], on["workflow_call"]["inputs"]
-
-    # A manual dispatch resolves its own DevKit runner; only a caller passes one in.
-    assert set(call) == set(dispatch) | {"modalix_runner_group", "runner_labels"}
-    assert all(value["type"] == "string" for value in call.values())
-    for name, value in dispatch.items():
-        assert call[name]["required"] == value["required"], name
-        if name != "environment":
-            assert call[name].get("default") == value.get("default"), name
-    # A caller always names the registry environment; only a dispatch offers "default".
-    assert call["environment"]["required"] == "true"
-    assert "default" not in call["environment"]
-    for name in ("modalix_runner_group", "runner_labels"):
-        assert call[name]["required"] == "true"
-        assert "default" not in call[name]
-
-
-def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
-    workflow = load_workflow()
-    stage = workflow["jobs"]["stage-dispatched-benchmark"]
-
-    assert stage["needs"] == "resolve-dispatched-benchmark-config"
-    assert stage["environment"] == (
-        "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
+    assert workflow["concurrency"]["group"].startswith(
+        "model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-"
     )
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert list(workflow["jobs"]) == ["resolve-vulcan-config", "resolve-benchmark-runner", "benchmark"]
+
+
+def test_benchmark_workflow_is_one_called_build_of_four_jobs() -> None:
+    workflow = load_workflow()
+
+    # Only a caller starts it, so the caller's run name and concurrency group apply.
+    assert workflow["name"] == "Benchmark one build"
+    assert list(workflow["on"]) == ["workflow_call"]
+    assert "run-name" not in workflow
+    assert "concurrency" not in workflow
+    # Each caller resolves the Vulcan config and the DevKit runner, so the build has no resolver jobs.
+    assert list(workflow["jobs"]) == ["stage", "benchmark", "publish", "check"]
+    assert [job["name"] for job in workflow["jobs"].values()] == [
+        "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
+        "Check model tests and clean up",
+    ]
+
+
+def test_manual_dispatch_takes_the_called_inputs_and_passes_every_one() -> None:
+    dispatch = load_dispatch()
+    inputs = dispatch["on"]["workflow_dispatch"]["inputs"]
+    call = load_workflow()["on"]["workflow_call"]["inputs"]
+    benchmark = dispatch["jobs"]["benchmark"]
+
+    # The resolvers' outputs are the only inputs a person does not type.
+    assert set(inputs) == set(call) - {"vulcan_config", "devkit_runner"}
+    assert benchmark["uses"] == "./.github/workflows/vulcan-model-benchmarking.yml"
+    assert set(benchmark["with"]) == set(call)
+    assert benchmark["with"]["environment"] == DISPATCH_ENVIRONMENT
+    assert benchmark["with"]["stages"] == "${{ inputs.stages }}"
+    assert all(value["type"] == "string" for value in call.values())
+    # A caller names every value; only an empty source run restores the build from the registry.
+    assert {name for name, value in call.items() if value["required"] == "false"} == {"source_run_id"}
+    assert call["source_run_id"]["default"] == ""
+    assert all("default" not in value for name, value in call.items() if name != "source_run_id")
+
+
+def test_benchmark_stages_only_its_compiled_artifact() -> None:
+    workflow = load_workflow()
+    stage = workflow["jobs"]["stage"]
+
+    assert "needs" not in stage
+    assert stage["environment"] == "${{ inputs.environment }}"
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
     assert "inputs.source_branch == github.ref_name" in stage["if"]
@@ -149,38 +177,29 @@ def test_dispatched_benchmark_stages_only_its_compiled_artifact() -> None:
     assert steps.index(restore) < steps.index(registered) < steps.index(upload)
 
 
-def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
-    workflow = load_workflow()
-    resolver = workflow["jobs"]["resolve-dispatched-benchmark-runner"]
-    benchmark = workflow["jobs"]["benchmark-dispatched-model"]
+def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
+    resolver = load_dispatch()["jobs"]["resolve-benchmark-runner"]
+    benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
-    assert resolver["if"] == "inputs.source_branch == github.ref_name && inputs.runner_labels == ''"
-    assert benchmark["needs"] == [
-        "stage-dispatched-benchmark",
-        "resolve-dispatched-benchmark-runner",
-        "resolve-dispatched-benchmark-config",
-    ]
-    assert benchmark["environment"] == (
-        "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}"
-    )
-    assert benchmark["runs-on"]["group"] == (
-        "${{ inputs.modalix_runner_group || needs.resolve-dispatched-benchmark-runner.outputs.modalix_runner_group }}"
-    )
     assert json.loads(resolver["with"]["runner-labels"]) == [
         "self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging",
     ]
-    assert benchmark["runs-on"]["labels"] == (
-        "${{ fromJSON(inputs.runner_labels || needs.resolve-dispatched-benchmark-runner.outputs.runner_labels) }}"
-    )
+    assert benchmark["needs"] == "stage"
+    assert benchmark["environment"] == "${{ inputs.environment }}"
+    # The caller passes the resolver's outputs as JSON; its runner_labels output is itself a JSON array.
+    assert benchmark["runs-on"] == {
+        "group": "${{ fromJSON(inputs.devkit_runner).modalix_runner_group }}",
+        "labels": "${{ fromJSON(fromJSON(inputs.devkit_runner).runner_labels) }}",
+    }
     assert benchmark["env"]["SIMA_CLI_AUTO_ACCEPT_UPDATE"] == "1"
     # One orchestrator run benchmarks many builds on the same board under one run ID.
     assert benchmark["env"]["WORK_DIR"] == (
         "/media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}"
         "-${{ inputs.model_id }}-${{ inputs.build_profile_id }}"
     )
-    assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage-dispatched-benchmark.outputs.source_branch }}"
+    assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage.outputs.source_branch }}"
     assert step(steps, "Check out trusted tooling from the protected workflow revision")["with"] == {
         "ref": "${{ github.sha }}",
         "persist-credentials": "false",
@@ -209,41 +228,15 @@ def test_dispatched_benchmark_runs_on_the_resolved_devkit() -> None:
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
 
-CALLER_LABELS = '["self-hosted", "caller"]'
+@pytest.mark.parametrize(("branch", "expected"), [("develop", True), ("feature/other", False)])
+def test_devkit_job_runs_only_on_a_staged_build(branch, expected) -> None:
+    benchmark = load_workflow()["jobs"]["benchmark"]
+    condition = benchmark["if"]
 
-
-@pytest.mark.parametrize(
-    ("cancelled", "branch", "stage", "config", "runner", "labels", "expected"),
-    [
-        (False, "develop", "success", "success", "success", "", True),
-        # A caller's runner skips the resolver; a skipped resolver must not skip the board.
-        (False, "develop", "success", "success", "skipped", CALLER_LABELS, True),
-        (False, "develop", "success", "success", "skipped", "", False),
-        (False, "develop", "success", "success", "failure", "", False),
-        (False, "develop", "failure", "success", "skipped", CALLER_LABELS, False),
-        (False, "develop", "skipped", "success", "skipped", CALLER_LABELS, False),
-        (False, "develop", "success", "failure", "skipped", CALLER_LABELS, False),
-        (False, "feature/other", "success", "success", "skipped", CALLER_LABELS, False),
-        (True, "develop", "success", "success", "skipped", CALLER_LABELS, False),
-    ],
-)
-def test_devkit_job_runs_only_on_a_staged_build_with_a_runner(
-    cancelled, branch, stage, config, runner, labels, expected,
-) -> None:
-    condition = load_workflow()["jobs"]["benchmark-dispatched-model"]["if"]
-    values = {
-        "!cancelled()": not cancelled,
-        "inputs.source_branch": branch,
-        "github.ref_name": "develop",
-        "needs.stage-dispatched-benchmark.result": stage,
-        "needs.resolve-dispatched-benchmark-config.result": config,
-        "needs.resolve-dispatched-benchmark-runner.result": runner,
-        "inputs.runner_labels": labels,
-    }
-
-    # Without a status function GitHub adds success(), which a skipped resolver fails.
-    assert condition.startswith("!cancelled() &&")
-    assert evaluate(condition, values) is expected
+    # Without a status function GitHub adds success(), so the board waits for a staged build.
+    assert benchmark["needs"] == "stage"
+    assert not any(function in condition for function in ("always()", "cancelled()", "failure()", "success()"))
+    assert evaluate(condition, {"inputs.source_branch": branch, "github.ref_name": "develop"}) is expected
 
 
 def test_performance_runs_only_at_the_full_mla_clock() -> None:
@@ -278,7 +271,7 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
 def test_benchmarks_run_only_when_requested() -> None:
-    benchmark = load_workflow()["jobs"]["benchmark-dispatched-model"]
+    benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]
     artifact_suffix = "${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
 
@@ -327,7 +320,7 @@ def test_benchmarks_run_only_when_requested() -> None:
 def test_benchmarks_run_only_the_requested_stages_the_profile_declares(
     tmp_path: Path, profile: str, stages: str, selected: str
 ) -> None:
-    run = step(load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"],
+    run = step(load_workflow()["jobs"]["benchmark"]["steps"],
                "Select the requested stages the profile declares")["run"]
     (tmp_path / "_source").symlink_to(repository_without_w16a16_accuracy(tmp_path))
     output = tmp_path / "github-output"
@@ -339,8 +332,8 @@ def test_benchmarks_run_only_the_requested_stages_the_profile_declares(
 
 def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
     workflow = load_workflow()
-    benchmark = workflow["jobs"]["benchmark-dispatched-model"]
-    publish = workflow["jobs"]["publish-dispatched-benchmark"]
+    benchmark = workflow["jobs"]["benchmark"]
+    publish = workflow["jobs"]["publish"]
 
     assert benchmark["outputs"] == {
         "performance": "${{ steps.performance-tests.outcome }}",
@@ -350,13 +343,13 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
     assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
         "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
     )
-    assert "needs.benchmark-dispatched-model.result" not in publish["if"]
-    assert "needs.benchmark-dispatched-model.outputs.performance == 'success' ||" in publish["if"]
-    assert "needs.benchmark-dispatched-model.outputs.accuracy == 'success'" in publish["if"]
+    assert "needs.benchmark.result" not in publish["if"]
+    assert "needs.benchmark.outputs.performance == 'success' ||" in publish["if"]
+    assert "needs.benchmark.outputs.accuracy == 'success'" in publish["if"]
 
 
 def test_each_benchmark_result_records_its_model_test_outcome() -> None:
-    steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
     names = [item.get("name") for item in steps]
     performance_tests = step(steps, "Test the performance report with the model's performance tests")
     accuracy_tests = step(steps, "Test the accuracy report with the model's accuracy tests")
@@ -383,7 +376,7 @@ def test_each_benchmark_result_records_its_model_test_outcome() -> None:
 
 
 def test_credentialed_devkit_steps_never_run_model_code() -> None:
-    benchmark = load_workflow()["jobs"]["benchmark-dispatched-model"]
+    benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]
     names = [item.get("name") for item in steps]
     credentials = step(steps, "Configure dataset reader credentials")
@@ -394,7 +387,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
     assert credentials["with"]["output-credentials"] == "true"
     assert credentials["with"]["output-env-credentials"] == "false"
     assert credentials["with"]["role-to-assume"] == (
-        "${{ needs.resolve-dispatched-benchmark-config.outputs.dataset_reader_role_arn }}"
+        "${{ fromJSON(inputs.vulcan_config).dataset_reader_role_arn }}"
     )
     credentialed = [item["name"] for item in steps if "steps.dataset-credentials." in yaml.safe_dump(item)]
     assert credentialed == ["Cache the accuracy dataset on NVMe"]
@@ -418,7 +411,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
 
 
 def test_devkit_steps_use_only_tools_the_board_provides() -> None:
-    steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
     runs = "\n".join(item.get("run", "") for item in steps)
     scripts = sorted({word.strip('"') for word in runs.split() if word.startswith("scripts/") and word.endswith(".sh")})
 
@@ -429,7 +422,7 @@ def test_devkit_steps_use_only_tools_the_board_provides() -> None:
 
 
 def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
-    steps = load_workflow()["jobs"]["benchmark-dispatched-model"]["steps"]
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
     names = [item.get("name") for item in steps]
     order = [
         names.index(name)
@@ -466,28 +459,21 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
     assert "$NVME_MOUNT/datasets/artifacts" in cache_script
 
 
-def test_dispatched_benchmark_runs_only_on_its_source_branch() -> None:
+def test_benchmark_runs_only_on_its_source_branch() -> None:
     workflow = load_workflow()
-    gated = [
-        "stage-dispatched-benchmark",
-        "resolve-dispatched-benchmark-runner",
-        "resolve-dispatched-benchmark-config",
-        "benchmark-dispatched-model",
-        "publish-dispatched-benchmark",
-    ]
 
-    for name in gated:
+    for name in ("stage", "benchmark", "publish"):
         condition = workflow["jobs"][name]["if"]
         assert "inputs.source_branch == github.ref_name" in condition, name
         assert "refs/heads/develop" not in condition, name
 
 
 def test_completed_stages_are_published_from_a_hosted_runner() -> None:
-    publish = load_workflow()["jobs"]["publish-dispatched-benchmark"]
+    publish = load_workflow()["jobs"]["publish"]
     steps = publish["steps"]
 
     assert publish["runs-on"] == "ubuntu-latest"
-    assert publish["needs"] == ["benchmark-dispatched-model", "resolve-dispatched-benchmark-config"]
+    assert publish["needs"] == "benchmark"
     checkouts = [item for item in steps if item.get("uses") == "actions/checkout@v6"]
     assert checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
     assert checkouts[1]["with"] == {
@@ -512,13 +498,13 @@ def test_completed_stages_are_published_from_a_hosted_runner() -> None:
     ],
 )
 def test_publication_steps_follow_the_requested_stages(name, condition) -> None:
-    steps = load_workflow()["jobs"]["publish-dispatched-benchmark"]["steps"]
+    steps = load_workflow()["jobs"]["publish"]["steps"]
 
     assert step(steps, name)["if"] == condition
 
 
 def test_each_measured_stage_is_published_under_the_registered_build() -> None:
-    steps = load_workflow()["jobs"]["publish-dispatched-benchmark"]["steps"]
+    steps = load_workflow()["jobs"]["publish"]["steps"]
     suffix = "${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     publication = step(steps, "Publish each measured stage's run")
     run = publication["run"]
@@ -562,9 +548,9 @@ def test_run_fails_after_publication_on_a_failed_model_test(
     tmp_path: Path, statuses: dict[str, str], failed: str
 ) -> None:
     jobs = load_workflow()["jobs"]
-    publish, check_job = jobs["publish-dispatched-benchmark"], jobs["check-dispatched-benchmark-tests"]
+    publish, check_job = jobs["publish"], jobs["check"]
     record = publish["steps"][-1]
-    check = check_job["steps"][-1]
+    check = check_job["steps"][0]
     for relative, status in statuses.items():
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / relative).write_text(f"{status}\n", encoding="utf-8")
@@ -581,11 +567,12 @@ def test_run_fails_after_publication_on_a_failed_model_test(
     assert publish["outputs"]["failed_tests"] == "${{ steps.tests.outputs.failed }}"
     assert recorded == [f"failed={failed}"]
     # A separate job fails the run, so re-running failed jobs never publishes the same results again.
-    assert check_job["needs"] == "publish-dispatched-benchmark"
+    assert check_job["needs"] == ["benchmark", "publish"]
     assert check_job["runs-on"] == "ubuntu-latest"
-    assert check_job["permissions"] == {}
+    # Deleting the build's artifacts is the only write the check job makes.
+    assert check_job["permissions"] == {"actions": "write", "contents": "read"}
     assert check["name"] == "Fail the run on a failed model test"
-    assert check["env"]["FAILED_STAGES"] == "${{ needs.publish-dispatched-benchmark.outputs.failed_tests }}"
+    assert check["env"]["FAILED_STAGES"] == "${{ needs.publish.outputs.failed_tests }}"
     assert (result.returncode != 0) == bool(failed), result.stderr
 
 
@@ -594,36 +581,34 @@ def test_run_fails_after_publication_on_a_failed_model_test(
     [(False, "success", True), (False, "failure", False), (False, "skipped", False), (True, "success", False)],
 )
 def test_model_tests_are_checked_only_after_publication(cancelled, publish, expected) -> None:
-    condition = load_workflow()["jobs"]["check-dispatched-benchmark-tests"]["if"]
+    condition = load_workflow()["jobs"]["check"]["if"]
 
     assert evaluate(condition[3:-3], {
-        "!cancelled()": not cancelled, "needs.publish-dispatched-benchmark.result": publish,
+        "!cancelled()": not cancelled, "needs.publish.result": publish,
     }) is expected
 
 
 @pytest.mark.parametrize(
-    ("benchmark", "check", "expected"),
+    ("benchmark", "expected"),
     [
-        ("success", "success", True),
-        # A failed model test keeps the evidence it failed on.
-        ("success", "failure", False),
-        ("success", "skipped", False),
-        ("failure", "skipped", False),
+        ("success", True),
+        # A failed stage keeps the evidence it failed on, though the other stage published.
+        ("failure", False),
     ],
 )
-def test_cleanup_waits_for_the_model_test_check(benchmark, check, expected) -> None:
-    cleanup = load_workflow()["jobs"]["cleanup-dispatched-benchmark-artifacts"]
+def test_cleanup_waits_for_the_model_test_check(benchmark, expected) -> None:
+    check = load_workflow()["jobs"]["check"]
+    names = [item["name"] for item in check["steps"]]
+    cleanup = step(check["steps"], "Delete benchmark input and evidence from GitHub")
 
-    assert cleanup["needs"] == ["benchmark-dispatched-model", "check-dispatched-benchmark-tests"]
-    assert evaluate(cleanup["if"], {
-        "!cancelled()": True,
-        "needs.benchmark-dispatched-model.result": benchmark,
-        "needs.check-dispatched-benchmark-tests.result": check,
-    }) is expected
+    # A failed model test fails the step before it, and without a status function a failed step skips the cleanup.
+    assert names == ["Fail the run on a failed model test", "Delete benchmark input and evidence from GitHub"]
+    assert not any(function in cleanup["if"] for function in ("always()", "cancelled()", "failure()"))
+    assert evaluate(cleanup["if"], {"needs.benchmark.result": benchmark}) is expected
 
 
 def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> None:
-    script = load_workflow()["jobs"]["cleanup-dispatched-benchmark-artifacts"]["steps"][0]["run"]
+    script = step(load_workflow()["jobs"]["check"]["steps"], "Delete benchmark input and evidence from GitHub")["run"]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
@@ -653,7 +638,7 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py",
 ])
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:
-    stage = load_workflow()["jobs"]["stage-dispatched-benchmark"]
+    stage = load_workflow()["jobs"]["stage"]
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
     assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
     source = tmp_path / "_source"
@@ -689,25 +674,30 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
      ('production', 'staging', 'production')],
 )
 def test_registry_selection_is_independent_of_devkit_placement(override, default, expected):
-    jobs = load_workflow()['jobs']
+    dispatch = load_dispatch()['jobs']
     values = {'inputs.environment': override, 'vars.VULCAN_ENV': default}
-    for name in ('stage-dispatched-benchmark', 'benchmark-dispatched-model', 'publish-dispatched-benchmark'):
-        assert evaluate(jobs[name]['environment'][3:-3], values) == expected
+    # A manual dispatch resolves its environment once, for the config and for the benchmark it calls.
+    for selected in (dispatch['resolve-vulcan-config']['with']['vulcan_env'],
+                     dispatch['benchmark']['with']['environment']):
+        assert evaluate(selected[3:-3], values) == expected
+    assert 'vulcan-staging' in json.loads(dispatch['resolve-benchmark-runner']['with']['runner-labels'])
+    # The called workflow receives the resolved environment and selects nothing itself.
+    jobs = load_workflow()['jobs']
+    resolved = {'inputs.environment': expected}
+    for name in ('stage', 'benchmark', 'publish'):
+        assert jobs[name]['environment'] == '${{ inputs.environment }}'
         assert "inputs.environment == 'staging'" not in jobs[name]['if']
-    config = jobs['resolve-dispatched-benchmark-config']['with']['vulcan_env']
-    assert evaluate(config[3:-3], values) == expected
-    board = jobs['benchmark-dispatched-model']
+    board = jobs['benchmark']
     dataset = step(board['steps'], 'Install trusted dataset tooling')['env']['DATASET_REGISTRY_ENVIRONMENT']
-    assert evaluate(dataset[3:-3], values) == expected
-    assert 'vulcan-staging' in json.loads(jobs['resolve-dispatched-benchmark-runner']['with']['runner-labels'])
-    reader = step(jobs['stage-dispatched-benchmark']['steps'], 'Configure authenticated production registry reads')
+    assert dataset == '${{ inputs.environment }}'
+    reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
     for source_run in ('', '123'):
-        assert evaluate(reader['if'], {**values, 'inputs.source_run_id': source_run}) == (
+        assert evaluate(reader['if'], {**resolved, 'inputs.source_run_id': source_run}) == (
             expected == 'production' and not source_run
         )
-    restore = step(jobs['stage-dispatched-benchmark']['steps'],
+    restore = step(jobs['stage']['steps'],
                    'Restore the current immutable compilation from the registry')
-    urls = {**values, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
+    urls = {**resolved, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
             'vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://public.example'}
     assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == 'https://public.example'
     assert evaluate(restore['env']['MODEL_REGISTRY_IAM_READ_API_URL'][3:-3], urls) == (
@@ -717,9 +707,10 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
 
 @pytest.mark.parametrize('environment', ['staging', 'production'])
 def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, environment):
-    publication = step(load_workflow()['jobs']['publish-dispatched-benchmark']['steps'],
+    publication = step(load_workflow()['jobs']['publish']['steps'],
                        "Publish each measured stage's run")
-    selected = evaluate(publication['env']['VULCAN_ENV'][3:-3],
+    assert publication['env']['VULCAN_ENV'] == '${{ inputs.environment }}'
+    selected = evaluate(load_dispatch()['jobs']['benchmark']['with']['environment'][3:-3],
                         {'inputs.environment': 'default', 'vars.VULCAN_ENV': environment})
     executable = tmp_path / 'model-registry'
     executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')

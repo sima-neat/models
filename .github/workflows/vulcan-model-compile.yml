@@ -47,12 +47,12 @@ on:
       artifact_kms_key_id:
         required: true
         type: string
-      modalix_runner_group:
-        description: DevKit runner group the orchestrator resolved for the benchmarks
+      vulcan_config:
+        description: JSON outputs of vulcan-resolve-config.yml, for the benchmarks
         required: true
         type: string
-      runner_labels:
-        description: JSON array of DevKit runner labels the orchestrator resolved for the benchmarks
+      devkit_runner:
+        description: JSON outputs of vulcan-resolve-modalix-runner.yml, for the benchmarks
         required: true
         type: string
 
@@ -523,6 +523,6 @@ jobs:
       build_profile_id: ${{ fromJSON(inputs.entry).build_profile_id }}
       compile_invocation_id: ${{ fromJSON(inputs.entry).compile_invocation_id }}
       stages: ${{ join(fromJSON(inputs.entry).stages, ',') }}
-      modalix_runner_group: ${{ inputs.modalix_runner_group }}
-      runner_labels: ${{ inputs.runner_labels }}
+      vulcan_config: ${{ inputs.vulcan_config }}
+      devkit_runner: ${{ inputs.devkit_runner }}
     secrets: inherit

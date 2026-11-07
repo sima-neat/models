@@ -17,6 +17,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "vulcan-model-orchestrator.yml"
 BUILD_WORKFLOW = WORKFLOWS / "vulcan-model-compile.yml"
 BENCHMARK_WORKFLOW = WORKFLOWS / "vulcan-model-benchmarking.yml"
+DISPATCH_WORKFLOW = WORKFLOWS / "vulcan-model-benchmark-dispatch.yml"
 
 
 def load(path: Path) -> dict:
@@ -43,6 +44,12 @@ def evaluate(condition: str, values: dict[str, object]) -> bool:
 
 LOCAL_BENCHMARK_WORKFLOW = "./.github/workflows/vulcan-model-benchmarking.yml"
 PERMISSION_LEVELS = {"none": 0, "read": 1, "write": 2}
+BUILD_NAME = "${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})"
+# What a job that needs both resolvers passes the benchmark workflow.
+RESOLVED_JSON = {
+    "vulcan_config": "${{ toJSON(needs.resolve-vulcan-config.outputs) }}",
+    "devkit_runner": "${{ toJSON(needs.resolve-benchmark-runner.outputs) }}",
+}
 
 
 # Every job that calls the benchmark workflow, keyed by workflow and job ID.
@@ -50,6 +57,7 @@ BENCHMARK_CALLERS = {
     "compile.benchmark": (BUILD_WORKFLOW, "benchmark"),
     "orchestrator.benchmark": (WORKFLOW, "benchmark"),
     "orchestrator.benchmark-without-compiles": (WORKFLOW, "benchmark-without-compiles"),
+    "dispatch.benchmark": (DISPATCH_WORKFLOW, "benchmark"),
 }
 
 
@@ -416,8 +424,7 @@ def test_runner_classes_are_authorized_before_builds_are_queued() -> None:
     assert build["with"]["publishable"] == "${{ needs.select.outputs.publishable == 'true' }}"
     assert build["secrets"] == "inherit"
     assert set(build["with"]) == set(load(BUILD_WORKFLOW)["on"]["workflow_call"]["inputs"])
-    assert build["with"]["modalix_runner_group"] == "${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}"
-    assert build["with"]["runner_labels"] == "${{ needs.resolve-benchmark-runner.outputs.runner_labels }}"
+    assert {name: build["with"][name] for name in RESOLVED_JSON} == RESOLVED_JSON
 
 
 def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
@@ -571,7 +578,7 @@ def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
     }
 
     # The pending catalog already links reused builds, so their benchmarks do not wait for compiles.
-    assert job["needs"] == ["select", "plan", "resolve-benchmark-runner", "initialize-catalog"]
+    assert job["needs"] == ["select", "plan", "resolve-vulcan-config", "resolve-benchmark-runner", "initialize-catalog"]
     # Without a status function GitHub adds success(), which also requires the
     # indirectly needed jobs and skips reused builds when one of them is skipped.
     assert job["if"].startswith("!cancelled() &&")
@@ -604,7 +611,7 @@ def test_reused_builds_start_benchmarks_after_the_snapshot_when_nothing_compiles
         "needs.plan.outputs.benchmark_count": benchmark_count,
     }
 
-    assert job["needs"] == ["select", "plan", "resolve-benchmark-runner", "publish-catalog"]
+    assert job["needs"] == ["select", "plan", "resolve-vulcan-config", "resolve-benchmark-runner", "publish-catalog"]
     assert job["if"].startswith("!cancelled() &&")
     assert evaluate(job["if"], values) is expected
 
@@ -613,9 +620,8 @@ def test_reused_builds_start_benchmarks_after_the_snapshot_when_nothing_compiles
 def test_reused_builds_are_benchmarked_one_call_per_build(job_id) -> None:
     job = load(WORKFLOW)["jobs"][job_id]
 
-    assert job["name"] == (
-        "Benchmark ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})"
-    )
+    # GitHub prefixes each benchmark job with this name, so the build's name alone tells the builds apart.
+    assert job["name"] == BUILD_NAME
     assert job["uses"] == LOCAL_BENCHMARK_WORKFLOW
     assert "runs-on" not in job
     assert job["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
@@ -632,19 +638,35 @@ def test_reused_builds_are_benchmarked_one_call_per_build(job_id) -> None:
         "build_profile_id": "${{ matrix.build_profile_id }}",
         "compile_invocation_id": "${{ matrix.compile_invocation_id }}",
         "stages": "${{ join(matrix.stages, ',') }}",
-        "modalix_runner_group": "${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}",
-        "runner_labels": "${{ needs.resolve-benchmark-runner.outputs.runner_labels }}",
+        **RESOLVED_JSON,
     }
 
 
 def test_the_run_resolves_one_devkit_runner_for_every_benchmark() -> None:
-    resolver = load(WORKFLOW)["jobs"]["resolve-benchmark-runner"]
-    own_resolver = load(BENCHMARK_WORKFLOW)["jobs"]["resolve-dispatched-benchmark-runner"]
+    jobs, dispatch = load(WORKFLOW)["jobs"], load(DISPATCH_WORKFLOW)["jobs"]
+    resolver, manual = jobs["resolve-benchmark-runner"], dispatch["resolve-benchmark-runner"]
 
-    assert resolver["uses"] == own_resolver["uses"]
+    assert resolver["uses"] == manual["uses"]
+    assert jobs["resolve-vulcan-config"]["uses"] == dispatch["resolve-vulcan-config"]["uses"]
     assert "if" not in resolver
-    # A caller's runner replaces the benchmark's own resolution, so both must request the same DevKits.
-    assert json.loads(resolver["with"]["runner-labels"]) == json.loads(own_resolver["with"]["runner-labels"])
+    # An orchestrator run and a manual dispatch benchmark a build on the same DevKits.
+    assert json.loads(resolver["with"]["runner-labels"]) == json.loads(manual["with"]["runner-labels"])
+
+
+@pytest.mark.parametrize("caller", BENCHMARK_CALLERS)
+def test_every_benchmark_caller_passes_the_json_of_its_resolvers_outputs(caller) -> None:
+    workflow, _ = BENCHMARK_CALLERS[caller]
+    job = benchmark_caller(caller)
+    if workflow == BUILD_WORKFLOW:
+        # The build workflow forwards what the orchestrator's compile job passed it.
+        assert {name: job["with"][name] for name in RESOLVED_JSON} == {
+            name: f"${{{{ inputs.{name} }}}}" for name in RESOLVED_JSON
+        }
+        workflow, job = WORKFLOW, load(WORKFLOW)["jobs"]["compile"]
+
+    assert {"resolve-vulcan-config", "resolve-benchmark-runner"} <= set(job["needs"])
+    assert {"resolve-vulcan-config", "resolve-benchmark-runner"} <= set(load(workflow)["jobs"])
+    assert {name: job["with"][name] for name in RESOLVED_JSON} == RESOLVED_JSON
 
 
 @pytest.mark.parametrize("caller", BENCHMARK_CALLERS)
@@ -680,37 +702,35 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     assert "for attempt in 1 2 3" in script
     assert report["if"].startswith("always() &&")
     assert report["permissions"] == {"actions": "read", "contents": "read"}
-    # The filter matches the compile job's name, and no other job shares its prefix.
-    assert jobs["compile"]["name"].startswith("Compile ")
-    assert [name for name, job in jobs.items() if job["name"].startswith("Compile ")] == ["compile"]
+    # GitHub names a called job "<caller job name> / <called job name>", and the build calls are named by build.
+    assert jobs["compile"]["name"] == BUILD_NAME
     # A build's own jobs are the build workflow's Compile and Publish; its benchmark is a nested call.
     assert [job["name"] for job in load(BUILD_WORKFLOW)["jobs"].values()] == ["Compile", "Publish", "Benchmark"]
+    benchmark_names = [job["name"] for job in load(BENCHMARK_WORKFLOW)["jobs"].values()]
+    assert benchmark_names == [
+        "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
+        "Check model tests and clean up",
+    ]
 
     def job(name: str, conclusion: str) -> dict:
         return {"name": name, "conclusion": conclusion, "html_url": f"https://example.test/{name}"}
 
-    # Every job of a nested benchmark call, named as GitHub names a nested job.
-    build_ids = {"model_id": "a", "compile_invocation_id": "b", "build_profile_id": "p"}
-    benchmark_names = [
-        re.sub(r"\$\{\{ inputs\.(\w+) \}\}", lambda match: build_ids[match.group(1)], job["name"])
-        for job in load(BENCHMARK_WORKFLOW)["jobs"].values()
-    ]
-    assert "Benchmark a/b (p) on DevKit" in benchmark_names
-    assert "Check a/b (p) model tests" in benchmark_names
     pages = [{"jobs": [
-        job("Compile a/b (p) / Compile", "failure"),
-        job("Compile a/b (p) / Publish", "skipped"),
-        job("Compile c/d (p) / Publish", "cancelled"),
-        job("Compile e/f (p) / Publish", "success"),
-        job("Compile g/h (p) / Publish", "failure"),
+        job("a/b (p) / Compile", "failure"),
+        job("a/b (p) / Publish", "skipped"),
+        job("e/f (p) / Publish", "cancelled"),
+        job("g/h (p) / Publish", "success"),
+        job("i/j (p) / Publish", "failure"),
         job("Publish the catalog at this revision", "failure"),
     ]}, {"jobs": [
         # A published build's failed benchmark reports itself; the build's catalog entry is not pending.
-        *(job(f"Compile a/b (p) / Benchmark / {name}", "failure") for name in benchmark_names),
+        *(job(f"a/b (p) / Benchmark / {name}", "failure") for name in benchmark_names),
+        # A reused build's benchmark is called by the orchestrator itself, under the same build name.
+        *(job(f"c/d (p) / {name}", "failure") for name in benchmark_names),
     ]}]
     failed = run_jq(program, pages)
     assert [item["name"] for item in failed] == [
-        "Compile a/b (p) / Compile", "Compile c/d (p) / Publish", "Compile g/h (p) / Publish",
+        "a/b (p) / Compile", "e/f (p) / Publish", "i/j (p) / Publish",
     ]
 
 
@@ -951,7 +971,7 @@ def test_build_is_published_from_a_hosted_runner() -> None:
 def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
     publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
     retained = step(publish, "Retain the published model output for the benchmarks")
-    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage-dispatched-benchmark"]
+    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage"]
     verify = step(stage, "Verify the source run and compiled artifact")["run"]
 
     assert retained["with"]["name"] == (
@@ -1022,11 +1042,11 @@ def test_new_build_benchmarks_its_own_compile_output() -> None:
         "build_profile_id": "${{ fromJSON(inputs.entry).build_profile_id }}",
         "compile_invocation_id": "${{ fromJSON(inputs.entry).compile_invocation_id }}",
         "stages": "${{ join(fromJSON(inputs.entry).stages, ',') }}",
-        "modalix_runner_group": "${{ inputs.modalix_runner_group }}",
-        "runner_labels": "${{ inputs.runner_labels }}",
+        "vulcan_config": "${{ inputs.vulcan_config }}",
+        "devkit_runner": "${{ inputs.devkit_runner }}",
     }
     inputs = workflow["on"]["workflow_call"]["inputs"]
-    for name in ("modalix_runner_group", "runner_labels"):
+    for name in ("vulcan_config", "devkit_runner"):
         assert (inputs[name]["required"], inputs[name]["type"]) == ("true", "string")
 
 

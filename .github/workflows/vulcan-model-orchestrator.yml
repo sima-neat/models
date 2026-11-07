@@ -397,7 +397,7 @@ jobs:
             --base-branches "$BASE_BRANCHES" --git-sha "$GITHUB_SHA"
 
   compile:
-    name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
     needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, authorize-runner-classes, initialize-catalog]
     if: >-
       !cancelled() &&
@@ -428,8 +428,8 @@ jobs:
       dataset_bucket: ${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
-      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
-      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
     secrets: inherit
 
   publish-candidates:
@@ -585,8 +585,8 @@ jobs:
   # Benchmarks the reused builds still lack, one call per build. The pending catalog already links every reused
   # build, so its benchmarks need not wait for compiles.
   benchmark:
-    name: Benchmark ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, plan, resolve-benchmark-runner, initialize-catalog]
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, initialize-catalog]
     if: >-
       !cancelled() &&
       needs.initialize-catalog.result == 'success' &&
@@ -611,14 +611,14 @@ jobs:
       build_profile_id: ${{ matrix.build_profile_id }}
       compile_invocation_id: ${{ matrix.compile_invocation_id }}
       stages: ${{ join(matrix.stages, ',') }}
-      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
-      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
     secrets: inherit
 
   # Without compiles the pending catalog is skipped, so the snapshot is the catalog the benchmarks read.
   benchmark-without-compiles:
-    name: Benchmark ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, plan, resolve-benchmark-runner, publish-catalog]
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, publish-catalog]
     if: >-
       !cancelled() &&
       needs.plan.outputs.compile_count == '0' &&
@@ -643,8 +643,8 @@ jobs:
       build_profile_id: ${{ matrix.build_profile_id }}
       compile_invocation_id: ${{ matrix.compile_invocation_id }}
       stages: ${{ join(matrix.stages, ',') }}
-      modalix_runner_group: ${{ needs.resolve-benchmark-runner.outputs.modalix_runner_group }}
-      runner_labels: ${{ needs.resolve-benchmark-runner.outputs.runner_labels }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
     secrets: inherit
 
   report-partial-publication:
@@ -680,7 +680,7 @@ jobs:
           done
           # A build's own jobs end in / Compile or / Publish; its nested benchmark jobs report their own failures.
           jq '[.[].jobs[] | select(
-                (.name | test("^Compile .* / (Compile|Publish)$")) and
+                (.name | test(" / (Compile|Publish)$")) and
                 .conclusion != "success" and .conclusion != "skipped"
               ) | {name, conclusion, html_url}]' "$jobs" > "$failed"
           count="$(jq 'length' "$failed")"

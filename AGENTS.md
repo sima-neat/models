@@ -254,17 +254,19 @@ in the same commit.
   `benchmark` benchmarks each reused build that still lacks a benchmark
   once `initialize-catalog` marks the selected builds pending, or after
   `publish-catalog` writes the final catalog snapshot when nothing compiles.
-  Every benchmark is a job of the orchestrator run: both paths call
-  `vulcan-model-benchmarking.yml` with the DevKit runner that
-  `resolve-benchmark-runner` resolves once per run.
+  Every benchmark is a job of the orchestrator run, grouped under its build's
+  name: both paths call `vulcan-model-benchmarking.yml` with the Vulcan config
+  and the DevKit runner the orchestrator resolves once per run.
 - **Benchmarks.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` of one build profile on a DevKit, runs the model's benchmark tests on
   each `model-report.json`, and publishes performance (`model_performance` runs)
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
   outcome. A failed test fails its check job after publication; the completed
-  run is not benchmarked again. On-demand builds are not benchmarked. A manual
-  dispatch of the workflow benchmarks one build and resolves the runner itself.
+  run is not benchmarked again. On-demand builds are not benchmarked.
+  `vulcan-model-benchmark-dispatch.yml` (**Vulcan Model Benchmarking**) is
+  the manual entry: it resolves the config and runner for one build and calls
+  the same workflow.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code

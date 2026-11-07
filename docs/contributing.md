@@ -242,14 +242,16 @@ configuration remain staging:
 7. **Publish the catalog.** Once every compile and each new build's benchmarks
    end, the catalog snapshot for the revision is published and promoted.
 
-**Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
-stages of one build on a DevKit, runs the model's benchmark tests on each result,
-then publishes each result as its own registry run under the build profile's
-package run, with the test outcome. A failed test fails the run after
-publication. The orchestrator runs it as part of its own run, for every new and
-reused build. You can also start it by hand to benchmark one build.
+The benchmark workflow (`vulcan-model-benchmarking.yml`) runs the requested
+`performance` and `accuracy` stages of one build on a DevKit, runs the model's
+benchmark tests on each result, then publishes each result as its own registry
+run under the build profile's package run, with the test outcome. A failed test
+fails the run after publication. The orchestrator runs it as part of its own
+run, for every new and reused build, with each build's jobs grouped under the
+build's name. To benchmark one build by hand, run **Vulcan Model
+Benchmarking**.
 
-The benchmark workflow's `environment=default` resolves repository `VULCAN_ENV`
+Its `environment=default` resolves repository `VULCAN_ENV`
 (with staging as the fallback); explicit staging/production overrides are supported.
 The orchestrator passes its resolved environment so artifacts, datasets,
 credentials, and report publication stay in the same registry as the build. DevKit discovery and

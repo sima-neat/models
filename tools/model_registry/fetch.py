@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import shutil
 import ssl
 import subprocess
@@ -280,25 +281,41 @@ def _resolve_with_dataset_registry(dataset: dict[str, Any], cache_dir: Path | No
 
 
 def read_registry_json(url: str) -> dict[str, Any]:
+    # An orchestrator run starts every build's benchmark at once, so the public endpoint rate-limits a burst of
+    # reads; retry those with jittered backoff so the requests spread out.
+    for attempt in range(1, 6):
+        try:
+            return _read_registry_json_once(url)
+        except HTTPError as exc:
+            if exc.code not in {429, 502, 503, 504} or attempt == 5:
+                raise _registry_http_error(exc) from exc
+            time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+    raise AssertionError("unreachable")
+
+
+def _read_registry_json_once(url: str) -> dict[str, Any]:
     try:
         with urlopen(Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
             value = json.load(response)
-    except HTTPError as exc:
-        code = "unknown_error"
-        message = str(exc)
-        try:
-            payload = json.loads(exc.read())
-            error = payload.get("error", {}) if isinstance(payload, dict) else {}
-            if isinstance(error, dict):
-                code = str(error.get("code", code))
-                message = str(error.get("message", message))
-        except (OSError, json.JSONDecodeError):
-            pass
-        raise FetchError(
-            f"public artifact registry HTTP {exc.code} {code}: {message}"
-        ) from exc
+    except HTTPError:
+        # An HTTPError is also an OSError; read_registry_json decides whether its status is worth a retry.
+        raise
     except (OSError, json.JSONDecodeError) as exc:
         raise FetchError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
     if not isinstance(value, dict):
         raise FetchError(f"artifact registry endpoint did not return an object: {url}")
     return value
+
+
+def _registry_http_error(exc: HTTPError) -> FetchError:
+    code = "unknown_error"
+    message = str(exc)
+    try:
+        payload = json.loads(exc.read())
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        if isinstance(error, dict):
+            code = str(error.get("code", code))
+            message = str(error.get("message", message))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return FetchError(f"public artifact registry HTTP {exc.code} {code}: {message}")
