@@ -138,7 +138,7 @@ def test_accuracy_names_each_dataset_by_its_registry_source_and_keeps_measured_b
     model = normalize_model(authored, MODELS / "resnet_50")
     [pin] = authored["accuracy"]["datasets"]
 
-    assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-mini": pin}}
+    assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-val": pin}}
     assert benchmarked_profiles(model, "accuracy") == ["w16a16", "w8a8", "w8a16"]
     assert benchmarked_profiles(model, "performance") == ["w16a16", "w8a8", "w8a16"]
     authored["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
