@@ -140,6 +140,54 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
         compile_module._parameters("w4a8")
 
 
+@pytest.mark.parametrize(
+    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
+)
+def test_quantization_calibrates_only_int8_activations(
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+) -> None:
+    compile_module = load_script("compile")
+
+    compile_module._quantization(precision, 2048 if calibrates else None)
+
+    arguments = compile_module.QuantizationParams.call_args.kwargs
+    calibration = (
+        compile_module.HistogramMSEMethod.return_value if calibrates else compile_module.SkipCalibration.return_value
+    )
+    assert arguments["calibration_method"] is calibration
+    assert arguments.get("per_token_quant", False) is per_token
+    if calibrates:
+        compile_module.HistogramMSEMethod.assert_called_once_with(2048)
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a16", "w8a8"])
+def test_only_the_int8_build_quantizes_with_calibration_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+    precision: str,
+) -> None:
+    compile_module = load_script("compile")
+    parameters = {"precision": precision}
+    if precision == "w8a8":
+        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
+    monkeypatch.setattr(compile_module, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(compile_module, "validate_source", lambda source: None)
+    monkeypatch.setattr(compile_module, "check_quantized_keypoints", lambda source, quantized: (1.0, 1.0))
+    monkeypatch.setattr(
+        compile_module, "calibration_images", lambda dataset, count: np.zeros((count, 480, 640, 1), np.float32)
+    )
+
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        compile_module.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "coco.tgz")
+
+    data = compile_module.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
+    if precision == "w8a8":
+        assert data is compile_module.convert_data_generator_to_iterable.return_value
+    else:
+        assert data is None
+
+
 @pytest.mark.parametrize("case", ["valid", "shape"])
 def test_compile_requires_the_converted_interface(
     tmp_path: Path, case: str, load_script: Callable[[str], ModuleType]
