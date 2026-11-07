@@ -24,7 +24,7 @@ STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 # annotations/labels_<split>.json, whose category IDs are the ImageNet class indices.
 IMAGE_SUFFIXES = (".jpeg",)
 CALIBRATION_SPLIT = "cal2012"
-CALIBRATION_SEED = 20260930
+CALIBRATION_SEED = 42
 VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 
