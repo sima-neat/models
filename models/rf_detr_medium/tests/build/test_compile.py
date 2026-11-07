@@ -306,6 +306,42 @@ def test_compile_describes_the_pipeline_and_rejects_undeclared_settings(
         compile_module._quantization_config({"precision": "w8a8"})
 
 
+@pytest.mark.parametrize(
+    ("parameters", "calibrates", "per_token"),
+    [
+        ({"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}, True, False),
+        ({"precision": "w8a16", "per_token": True}, False, True),
+        # AFE runs the decoder's query sine embedding as an INT8 lookup table even at W16A16.
+        ({"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50}, True, False),
+        ({"precision": "w16a16"}, False, False),
+    ],
+)
+def test_quantization_config_states_calibration_and_per_token_per_precision(
+    load_script: Callable[[str], ModuleType], parameters: dict, calibrates: bool, per_token: bool
+) -> None:
+    compile_module = load_script("compile")
+
+    compile_module._quantization_config(parameters)
+
+    arguments = compile_module.QuantizationParams.call_args.kwargs
+    if calibrates:
+        compile_module.HistogramMSEMethod.assert_called_once_with(parameters["calibration_bins"])
+        assert arguments["calibration_method"] is compile_module.HistogramMSEMethod.return_value
+    else:
+        assert arguments["calibration_method"] is compile_module.SkipCalibration.return_value
+    assert arguments.get("per_token_quant", False) is per_token
+
+
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+def test_quantization_config_rejects_per_token_outside_w8a16(
+    load_script: Callable[[str], ModuleType], precision: str
+) -> None:
+    parameters = {"precision": precision, "per_token": True, "calibration_bins": 2048, "calibration_samples": 50}
+
+    with pytest.raises(ValueError, match="only a W8A16 component can declare per_token"):
+        load_script("compile")._quantization_config(parameters)
+
+
 def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -387,6 +423,26 @@ def test_bf16_activation_layer_norms_keep_fp32_intermediates(
         compile_module._compile_component(quantized, tmp_path / "backbone", "backbone", precision)
 
     assert quantized.compile.call_args.kwargs["layer_norm_use_fp32_intermediates"] is fp32_intermediates
+
+
+@pytest.mark.parametrize("decoder_calibrates", [True, False])
+def test_backbone_outputs_survive_the_file_between_phases(
+    decoder_calibrates: bool, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    arrays = [np.full((1, 2), index, dtype=np.float32) for index in range(5)]
+    outputs = compile_module._BackboneOutputs(*arrays[:3])
+    if decoder_calibrates:
+        outputs.calibration_features, outputs.calibration_proposals = arrays[3:]
+
+    outputs.save(tmp_path / "backbone_outputs.npz")
+    loaded = compile_module._BackboneOutputs.load(tmp_path / "backbone_outputs.npz")
+
+    for name, value in vars(outputs).items():
+        if value is None:
+            assert getattr(loaded, name) is None, name
+        else:
+            np.testing.assert_array_equal(getattr(loaded, name), value)
 
 
 def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
@@ -589,10 +645,11 @@ def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Call
         ],
     )
 
-    marks = surgery._annotate(model, {"norm", "relu"})
+    marks = surgery._precision_marks(model, {"norm", "relu"})
+    surgery._insert_precision_hints(model, marks)
 
     onnx.checker.check_model(model)
-    assert marks == {"bfloat16": 2, "int8": 1}
+    assert marks == {"norm": "bfloat16", "relu": "bfloat16", "projection": "int8"}
     assert [
         (node.name, *(onnx.helper.get_attribute_value(a).decode() for a in node.attribute if a.name == "precision"))
         for node in model.graph.node

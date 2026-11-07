@@ -253,7 +253,12 @@ benchmark fingerprints.
   fingerprints with the branch's prior catalog. The benchmark decision looks
   for a completed run with the benchmark fingerprint from any branch; that
   fingerprint names every component's compile run and MPK digest, so it
-  matches only a benchmark of the same build.
+  matches only a benchmark of the same build. A feature branch leaves to its
+  closest base branch every build profile that base branch's catalog lists as
+  pending at the head fingerprints, with its benchmarks, and every benchmark
+  whose fingerprint that catalog records, so the
+  work a merge started on `develop` is not repeated on branches that merge
+  `develop`. A forced rebuild still compiles.
 - **Base branches.** `develop`, `main`, `release-*` and `integration/*` are
   long-lived. `select` lists the long-lived branches that share history with
   the head, closest first, or only the dispatch base when one is given; Git does not record which branch another was cut from.
@@ -262,8 +267,12 @@ benchmark fingerprints.
   takes each model build profile from the first catalog whose builds carry
   every current compile fingerprint of that profile: its own, then its base branches
   in order. A feature branch that merged `develop` therefore reuses both its
-  own builds and the builds `develop` recompiled. A profile no catalog matches
-  compiles. A sibling feature branch is never a source.
+  own builds and the builds `develop` recompiled. A profile whose current
+  fingerprints a base branch is still compiling takes that base branch's entry,
+  so the branch shows the base branch's previous build until its next push. A
+  profile that no catalog holds and the closest base branch is not compiling
+  compiles on the branch. A sibling
+  feature branch is never a source.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Automatic builds changed by the merge compile again on `develop`,
   and their benchmarks run again; builds the branch compiled are not reused.
