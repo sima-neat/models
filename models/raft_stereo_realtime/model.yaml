@@ -1,5 +1,3 @@
-build-on-demand: true
-
 display_name: RAFT-Stereo (realtime)
 description: RAFT-Stereo's realtime model, estimating disparity from a rectified stereo image pair.
 model_type: vision
