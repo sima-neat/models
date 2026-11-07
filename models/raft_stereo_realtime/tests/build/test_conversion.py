@@ -50,6 +50,8 @@ def _export(converter: ModuleType, case: str) -> onnx.ModelProto:
     if case == "grid_sample":
         nodes.append(helper.make_node("GridSample", ["sum", "grid"], ["sampled"]))
         initializers.append(onnx.numpy_helper.from_array(np.zeros((1, 1, 1, 2), np.float32), "grid"))
+    if case == "abs":
+        nodes.append(helper.make_node("Abs", ["sum"], ["magnitude"]))
     graph = helper.make_graph(nodes, "fixture", inputs, [output], initializers)
     opset = 13 if case == "opset" else converter.OPSET
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
@@ -64,6 +66,7 @@ def _export(converter: ModuleType, case: str) -> onnx.ModelProto:
         ("shape", "Unexpected dtype or shape"),
         ("edge_pad", r"still holds \['Pad'\]"),
         ("grid_sample", r"still holds \['GridSample'\]"),
+        ("abs", r"still holds \['Abs'\]"),
         ("constants", "constant values"),
     ],
 )
