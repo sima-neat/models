@@ -24,10 +24,9 @@ from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
     InputName,
-    RequantizationMode,
+    QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
@@ -121,39 +120,42 @@ def _calibrates(parameters: dict[str, Any]) -> bool:
     return "calibration_samples" in parameters
 
 
-def _quantization_config(parameters: dict[str, Any]) -> Any:
+def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
+    """The compiler's activation and weight formats for a component's precision."""
     precision = parameters["precision"]
-    int8_weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    if precision == "w8a8":
-        if not _calibrates(parameters):
-            raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
-        activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weights = int8_weights
-        # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
-        bias_correction = BiasCorrectionType.REGULAR
-    elif precision in A16_PRECISIONS:
-        activation = bfloat16_scheme()
-        weights = int8_weights if precision == "w8a16" else bfloat16_scheme()
-        bias_correction = BiasCorrectionType.NONE
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
     # BF16 activations need no calibrated ranges, except where AFE keeps an operator in INT8: it has no
     # BF16 Sin or Cos and runs them as INT8 lookup tables. The decoder's query sine embedding is such a
     # Sin, so the decoder calibrates even at W16A16, while a W8A16 backbone skips calibration.
     calibration = (
         HistogramMSEMethod(int(parameters["calibration_bins"])) if _calibrates(parameters) else SkipCalibration()
     )
-    return (
-        default_quantization.with_activation_quantization(activation)
-        .with_weight_quantization(weights)
-        .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(calibration)
-        .with_bias_correction(bias_correction)
-        .with_channel_equalization(False)
-        .with_smooth_quant(False)
-        # with_activation_quantization turns per-token quantization on for BF16; only declared components keep it.
-        .with_per_token_quant(bool(parameters.get("per_token", False)))
-    )
+    if parameters.get("per_token") and precision != "w8a16":
+        raise ValueError("only a W8A16 component can declare per_token")
+    if precision == "w8a8":
+        if not _calibrates(parameters):
+            raise ValueError("a W8A8 component must declare calibration_bins and calibration_samples")
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Bias correction measured +0.1 COCO mAP on the RF-DETR Small INT8 backbone.
+            biascorr_type=BiasCorrectionType.REGULAR,
+        )
+    if precision == "w8a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Each token's activations get their own INT8 scale before an INT8-weight operation.
+            per_token_quant=bool(parameters.get("per_token", False)),
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+        )
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _quantize_component(
@@ -306,6 +308,26 @@ def _decoder_calibration_inputs(backbone: Any, images: np.ndarray) -> tuple[np.n
 
 
 @dataclass
+class _BackboneOutputs:
+    """What the backbone phase hands the decoder phase, saved to BACKBONE_OUTPUTS between their processes."""
+
+    evaluation_features: np.ndarray
+    evaluation_scores: np.ndarray
+    evaluation_boxes: np.ndarray
+    # Only when the decoder calibrates: the features and top proposals of each calibration image.
+    calibration_features: np.ndarray | None = None
+    calibration_proposals: np.ndarray | None = None
+
+    def save(self, path: Path) -> None:
+        np.savez(path, **{name: value for name, value in vars(self).items() if value is not None})
+
+    @classmethod
+    def load(cls, path: Path) -> _BackboneOutputs:
+        with np.load(path) as saved:
+            return cls(**saved)
+
+
+@dataclass
 class _OutputError:
     """Running sums of one output's error against the original ONNX, over every fidelity image."""
 
@@ -426,16 +448,16 @@ def _reference_outputs(source: Path, images: np.ndarray) -> dict[str, np.ndarray
 
 def _measure_fidelity(
     decoder: Any,
-    backbone_outputs: dict[str, np.ndarray],
+    backbone_outputs: _BackboneOutputs,
     reference: dict[str, np.ndarray],
 ) -> list[dict[str, Any]]:
     """Compare the compiled pipeline's outputs on each fidelity image with the original ONNX's."""
     errors = [_OutputError(name) for name in OUTPUTS]
     for index, (features, scores, boxes) in enumerate(
         zip(
-            backbone_outputs["evaluation_features"],
-            backbone_outputs["evaluation_scores"],
-            backbone_outputs["evaluation_boxes"],
+            backbone_outputs.evaluation_features,
+            backbone_outputs.evaluation_scores,
+            backbone_outputs.evaluation_boxes,
             strict=True,
         )
     ):
@@ -464,6 +486,7 @@ def _prepare_phase(
     images = load_images(fidelity_dataset, evaluation_names)
     validate_float_split(source, backbone_graph, decoder_graph, images[0])
     np.savez(temporary_dir / REFERENCE_OUTPUTS, **_reference_outputs(source, images))
+
     if bf16_regions:
         marks = annotate_bf16_regions(backbone_graph, bf16_regions)
         logging.info(
@@ -492,6 +515,7 @@ def _backbone_phase(
         {INPUT: calibration_images} if _calibrates(parameters) else None,
         {INPUT: tuple(INPUT_SHAPE)},
     )
+
     if parameters.get("bf16_regions"):
         _require_bf16_regions(backbone, parameters["bf16_regions"])
     _compile_component(backbone, temporary_dir / name, "backbone", parameters["precision"])
@@ -500,17 +524,13 @@ def _backbone_phase(
         *(_execute_backbone(backbone, image) for image in load_images(fidelity_dataset, evaluation_names)),
         strict=True,
     )
-    outputs = {
-        "evaluation_features": np.concatenate(features),
-        "evaluation_scores": np.concatenate(scores),
-        "evaluation_boxes": np.concatenate(boxes),
-    }
+    outputs = _BackboneOutputs(np.concatenate(features), np.concatenate(scores), np.concatenate(boxes))
     if _calibrates(component_parameters["decoder"]):
         # The decoder calibrates on the proposals this quantized backbone selects.
-        outputs["calibration_features"], outputs["calibration_proposals"] = _decoder_calibration_inputs(
+        outputs.calibration_features, outputs.calibration_proposals = _decoder_calibration_inputs(
             backbone, calibration_images
         )
-    np.savez(temporary_dir / BACKBONE_OUTPUTS, **outputs)
+    outputs.save(temporary_dir / BACKBONE_OUTPUTS)
 
 
 def _decoder_phase(
@@ -522,15 +542,15 @@ def _decoder_phase(
     candidate: str,
 ) -> None:
     """Compile the decoder, then measure the whole pipeline's fidelity and write its report."""
-    with np.load(temporary_dir / BACKBONE_OUTPUTS) as saved:
-        backbone_outputs = dict(saved)
+    backbone_outputs = _BackboneOutputs.load(temporary_dir / BACKBONE_OUTPUTS)
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = dict(saved)
+
     calibration_inputs = None
     if _calibrates(parameters):
         calibration_inputs = {
-            FEATURES: backbone_outputs["calibration_features"],
-            PROPOSALS: backbone_outputs["calibration_proposals"],
+            FEATURES: backbone_outputs.calibration_features,
+            PROPOSALS: backbone_outputs.calibration_proposals,
         }
     name = _component_name(profile_id, "decoder")
     decoder = _quantize_component(
@@ -541,6 +561,7 @@ def _decoder_phase(
         {tensor: tuple(BOUNDARY_SHAPES[tensor]) for tensor in (FEATURES, PROPOSALS)},
     )
     _compile_component(decoder, temporary_dir / name, "decoder", parameters["precision"])
+
     metrics = _measure_fidelity(decoder, backbone_outputs, reference)
     _write_fidelity(temporary_dir, profile_id, fidelity_config, candidate, metrics)
 
@@ -621,6 +642,7 @@ def compile_model(
         int(selection["offset"]),
         int(selection["samples"]),
     )
+
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     temporary_root = os.environ.get("RUNNER_TEMP")
@@ -640,6 +662,7 @@ def compile_model(
             "backbone": sha256_file(backbone_graph)[0],
             "decoder": sha256_file(decoder_graph)[0],
         }
+
         _run_phase(
             "RF-DETR backbone compilation",
             _backbone_phase,
@@ -652,6 +675,7 @@ def compile_model(
             fidelity_dataset=fidelity_dataset,
             evaluation_names=evaluation_names,
         )
+
         _run_phase(
             "RF-DETR decoder compilation and fidelity",
             _decoder_phase,
@@ -662,6 +686,7 @@ def compile_model(
             fidelity_config=fidelity_config,
             candidate=_pipeline_description(component_parameters),
         )
+
         output_dir.mkdir(parents=True)
         archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
         shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / FIDELITY_REPORT)

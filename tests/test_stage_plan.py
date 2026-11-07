@@ -340,6 +340,22 @@ def _stale(document: dict, profile_id: str) -> dict:
     return stale
 
 
+def _compiling(document: dict, profile_id: str) -> dict:
+    """The catalog while it compiles the profile at its head compile fingerprint, keeping the prior build."""
+    compiling = _stale(document, profile_id)
+    build = next(build for build in document["models"][0]["builds"] if build["build_profile_id"] == profile_id)
+    compiling["pending_builds"] = [
+        {
+            "model_id": PLAN_MODEL,
+            "build_profile_id": profile_id,
+            "compile_invocation_id": profile_id,
+            "component_ids": [build["component_id"]],
+            "compile_fingerprint": build["compile_fingerprint"],
+        }
+    ]
+    return compiling
+
+
 def _selected(plan: dict, stage: str) -> list[tuple[str, list[str]]]:
     return [(entry["build_profile_id"], entry["stages"]) for entry in plan[stage]["include"]]
 
@@ -611,6 +627,83 @@ def test_feature_branch_reuses_its_own_and_base_builds(stage_repository: Path) -
     assert plan["compile"]["include"] == []
     assert plan["benchmark"]["include"] == []
     assert _catalog_reads(registry) == [BRANCH, "develop", "release-1.0"]
+
+
+def test_feature_branch_leaves_a_compile_its_base_branch_runs_to_it(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    develop = _compiling(document, "w8a8")
+    # The branch compiled w8a8 before merging a develop that recompiles it.
+    branch = _stale(document, "w8a8")
+    for build in branch["models"][0]["builds"]:
+        if build["build_profile_id"] == "w8a8":
+            build["run_id"] = build["run_id"].replace("-4000-", "-4111-")
+    registry = FakeRegistry({BRANCH: branch, "develop": develop}, _published_runs(document))
+
+    plan = _plan(stage_repository, registry, base_branches=["develop"])
+
+    assert plan["compile"]["include"] == []
+    assert plan["benchmark"]["include"] == []
+    models = load_models(stage_repository)
+    head = build_matrix(models, [PLAN_MODEL], repository=stage_repository, compiler_version=COMPILER_VERSION)["include"]
+    prior = merge_catalog_sources([branch, develop], head)
+    prior_int8 = [build for build in prior["models"][0]["builds"] if build["build_profile_id"] == "w8a8"]
+    develop_int8 = [build for build in develop["models"][0]["builds"] if build["build_profile_id"] == "w8a8"]
+    assert prior_int8 == develop_int8
+
+
+def test_feature_branch_leaves_a_profile_its_base_branch_is_compiling_to_it(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    # The branch already compiled w8a8 at the fingerprint develop is compiling, and never measured it.
+    int8 = set(document["models"][0]["benchmark_fingerprints"]["w8a8"].values())
+    runs = {run for run in _published_runs(document) if run[1] not in int8}
+    registry = FakeRegistry({BRANCH: document, "develop": _compiling(document, "w8a8")}, runs)
+
+    plan = _plan(stage_repository, registry, base_branches=["develop"])
+
+    assert plan["compile"]["include"] == []
+    assert plan["benchmark"]["include"] == []
+
+
+def test_feature_branch_leaves_benchmarks_its_base_branch_runs_to_it(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    # develop published its builds and is still measuring them.
+    registry = FakeRegistry({"develop": document}, set())
+
+    plan = _plan(stage_repository, registry, base_branches=["develop"])
+
+    assert plan["compile"]["include"] == []
+    assert plan["benchmark"]["include"] == []
+
+
+def test_feature_branch_measures_its_own_benchmark_change(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({"develop": document}, set())
+    _edit(stage_repository, "scripts/accuracy.py")
+
+    plan = _plan(stage_repository, registry, base_branches=["develop"])
+
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_only_the_closest_base_branch_takes_over_a_compile(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry(
+        {"develop": _stale(document, "w8a8"), "release-1.0": _compiling(document, "w8a8")},
+        _published_runs(document),
+    )
+
+    plan = _plan(stage_repository, registry, base_branches=["develop", "release-1.0"])
+
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
+
+
+def test_force_rebuild_compiles_what_the_base_branch_is_compiling(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({"develop": _compiling(document, "w8a8")}, _published_runs(document))
+
+    plan = _plan(stage_repository, registry, base_branches=["develop"], force_rebuild_all=True)
+
+    assert [entry["build_profile_id"] for entry in plan["compile"]["include"]] == ["w16a16", "w8a16", "w8a8"]
 
 
 def test_long_lived_branch_reuses_only_its_own_catalog(stage_repository: Path) -> None:

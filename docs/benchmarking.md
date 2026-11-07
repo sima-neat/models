@@ -55,7 +55,7 @@ needed:
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz \
-  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
   --output /workspace/performance
 ```
 
@@ -360,7 +360,7 @@ failed test still publishes the report and completes its run, then fails the
 workflow run. A failed measurement keeps its workflow evidence and is not
 published. Performance and accuracy publish on their own outcomes: when one
 stage fails, the other's report is still published, and the next push reruns
-only the stage that has no run. A dispatched run stops before measuring when
+only the stage that has no run. A manual dispatch stops before measuring when
 its branch has since changed the tooling the benchmark fingerprints hash; the
 newer push benchmarks that build instead.
 

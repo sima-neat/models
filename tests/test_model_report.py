@@ -259,6 +259,8 @@ SCRIPT_PYNEAT = {
 }
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+# The ImageNet image a classifier benchmarks, by the variant of its accuracy dataset, as its workload names it.
+IMAGENET_SAMPLES = {"mini": "n01440764/ILSVRC2012_val_00000001.webp", "val": "val2012/ILSVRC2012_val_00000001.JPEG"}
 # A Scene Flow view is 960x540; a stereo script joins the pair side by side, left then right, unletterboxed.
 STEREO_VIEW, STEREO_LEFT, STEREO_RIGHT = (540, 960), 60, 90
 STEREO_PAIR = "FlyingThings3D/frames_finalpass/TEST/A/0000/{view}/0006.png"
@@ -273,8 +275,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split, and the Scene Flow
-    test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
+    split, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -282,6 +284,7 @@ def benchmark_dataset(root):
     (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
+    write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
@@ -386,8 +389,17 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert expected in report["workload"]
     else:
         assert_letterboxed_frame(frame)
-        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
-        assert "ILSVRC2012_val_00000001.webp" in report["workload"]
+        assert options.preprocess.resize.mode == "Stretch"
+        # A classifier normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+        normalize = options.preprocess.normalize
+        if getattr(normalize, "has_explicit_stats", False):
+            calibration = runpy.run_path(str(script.parent / "calibration.py"))
+            assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+            assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+        else:
+            assert options.preprocess.preset == "ImageNet"
+        metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+        assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
