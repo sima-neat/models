@@ -481,6 +481,128 @@ def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
     assert model["performance"] == {}
 
 
+def _gelu_mlp() -> onnx.ModelProto:
+    rng = np.random.RandomState(0)
+    prefix = "/model/model/backbone/backbone/encoder/layer.0/mlp"
+    constant = onnx.numpy_helper.from_array
+    return _model(
+        [
+            onnx.helper.make_node("MatMul", ["x", "w1"], ["fc1"], name=f"{prefix}/fc1/MatMul"),
+            onnx.helper.make_node("Add", ["b1", "fc1"], ["hidden"], name=f"{prefix}/fc1/Add"),
+            onnx.helper.make_node("Div", ["hidden", "root_two"], ["scaled"], name=f"{prefix}/activation/Div"),
+            onnx.helper.make_node("Erf", ["scaled"], ["erf"], name=f"{prefix}/activation/Erf"),
+            onnx.helper.make_node("Add", ["erf", "one"], ["shift"], name=f"{prefix}/activation/Add"),
+            onnx.helper.make_node("Mul", ["hidden", "shift"], ["gate"], name=f"{prefix}/activation/Mul"),
+            onnx.helper.make_node("Mul", ["gate", "half"], ["gelu"], name=f"{prefix}/activation/Mul_1"),
+            onnx.helper.make_node("MatMul", ["gelu", "w2"], ["y"], name=f"{prefix}/fc2/MatMul"),
+        ],
+        [_value("x", [1, 4, 8])],
+        [_value("y", [1, 4, 8])],
+        [
+            constant(rng.standard_normal((8, 16)).astype(np.float32), "w1"),
+            constant(rng.standard_normal(16).astype(np.float32), "b1"),
+            constant(rng.standard_normal((16, 8)).astype(np.float32), "w2"),
+            constant(np.array(np.sqrt(2), dtype=np.float32), "root_two"),
+            constant(np.array(1, dtype=np.float32), "one"),
+            constant(np.array(0.5, dtype=np.float32), "half"),
+        ],
+    )
+
+
+def test_surgery_folds_gelu_constants_into_the_mlp_weights(load_script: Callable[[str], ModuleType]) -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    model = _gelu_mlp()
+    x = np.random.RandomState(1).standard_normal((1, 4, 8)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"x": x})[0]
+
+    result = surgery._fold_gelu_constants(model, 1)
+
+    assert [node.op_type for node in result.graph.node] == ["MatMul", "Add", "Erf", "Add", "Mul", "MatMul"]
+    np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"x": x})[0], expected, rtol=1e-5, atol=1e-5)
+    with pytest.raises(ValueError, match="expected 2"):
+        surgery._fold_gelu_constants(_gelu_mlp(), 2)
+
+
+def _query_sine_embedding(width: int = 8) -> onnx.ModelProto:
+    prefix = "/model/model/decoder"
+    constant = onnx.numpy_helper.from_array
+    temperatures = 10000 ** (2 * (np.arange(width) // 2) / width)
+    nodes = [
+        onnx.helper.make_node("Split", ["coords", "ones"], [f"c{k}" for k in range(4)], name=f"{prefix}/Split", axis=-1)
+    ]
+    blocks = []
+    # The exporter embeds (y, x, w, h); the merge must keep that column order.
+    for block, k in enumerate((1, 0, 2, 3)):
+        names = {
+            part: f"{part}{block}"
+            for part in ("scaled", "angles", "even", "odd", "sin", "cos", "us", "uc", "pair", "flat")
+        }
+        nodes += [
+            onnx.helper.make_node("Mul", [f"c{k}", "scale"], [names["scaled"]], name=f"{prefix}/Mul_{block}"),
+            onnx.helper.make_node(
+                "Div", [names["scaled"], "temperatures"], [names["angles"]], name=f"{prefix}/Div_{block}"
+            ),
+            onnx.helper.make_node(
+                "Slice",
+                [names["angles"], "zero", "end", "last", "two"],
+                [names["even"]],
+                name=f"{prefix}/Slice_{block}a",
+            ),
+            onnx.helper.make_node(
+                "Slice", [names["angles"], "one", "end", "last", "two"], [names["odd"]], name=f"{prefix}/Slice_{block}b"
+            ),
+            onnx.helper.make_node("Sin", [names["even"]], [names["sin"]], name=f"{prefix}/Sin_{block}"),
+            onnx.helper.make_node("Cos", [names["odd"]], [names["cos"]], name=f"{prefix}/Cos_{block}"),
+            onnx.helper.make_node(
+                "Unsqueeze", [names["sin"], "axis"], [names["us"]], name=f"{prefix}/Unsqueeze_{block}a"
+            ),
+            onnx.helper.make_node(
+                "Unsqueeze", [names["cos"], "axis"], [names["uc"]], name=f"{prefix}/Unsqueeze_{block}b"
+            ),
+            onnx.helper.make_node(
+                "Concat", [names["us"], names["uc"]], [names["pair"]], name=f"{prefix}/Concat_{block}", axis=-1
+            ),
+            onnx.helper.make_node(
+                "Reshape", [names["pair"], "flat_shape"], [names["flat"]], name=f"{prefix}/Reshape_{block}"
+            ),
+        ]
+        blocks.append(names["flat"])
+    nodes.append(onnx.helper.make_node("Concat", blocks, ["embedding"], name=f"{prefix}/Concat_9", axis=-1))
+    return _model(
+        nodes,
+        [_value("coords", [1, 3, 4])],
+        [_value("embedding", [1, 3, 4 * width])],
+        [
+            constant(np.ones(4, dtype=np.int64), "ones"),
+            constant(np.array(2 * np.pi, dtype=np.float32), "scale"),
+            constant(temperatures.astype(np.float32), "temperatures"),
+            constant(np.array([0], dtype=np.int64), "zero"),
+            constant(np.array([1], dtype=np.int64), "one"),
+            constant(np.array([np.iinfo(np.int64).max], dtype=np.int64), "end"),
+            constant(np.array([-1], dtype=np.int64), "last"),
+            constant(np.array([2], dtype=np.int64), "two"),
+            constant(np.array([-1], dtype=np.int64), "axis"),
+            constant(np.array([1, 3, width], dtype=np.int64), "flat_shape"),
+        ],
+    )
+
+
+def test_surgery_merges_the_query_sine_embedding_into_one_sin(load_script: Callable[[str], ModuleType]) -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    model = _query_sine_embedding()
+    coords = np.random.RandomState(2).uniform(0, 1, (1, 3, 4)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"coords": coords})[0]
+
+    result = surgery._merge_query_sine_embedding(model)
+
+    assert [node.op_type for node in result.graph.node] == ["MatMul", "Add", "Sin"]
+    np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"coords": coords})[0], expected, atol=1e-5)
+
+
 def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
     constant = onnx.numpy_helper.from_array

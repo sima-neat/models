@@ -343,6 +343,67 @@ def _fold_backbone_score_scale(model: onnx.ModelProto, blocks: int) -> onnx.Mode
     return _finish(model)
 
 
+def _fold_gelu_constants(model: onnx.ModelProto, blocks: int) -> onnx.ModelProto:
+    """Compute fc2(z (1 + erf(z))) / sqrt(2) with z = fc1(x) / sqrt(2), the same exact GELU.
+
+    The exporter's 0.5 h (1 + erf(h / sqrt(2))) spends a Div and a Mul on every [tokens, 1536]
+    hidden activation; folding both constants into the fc1 and fc2 weights leaves Erf, Add, Mul.
+    """
+    _, constants, producers, users = _index(model)
+    initializers = {value.name: value for value in model.graph.initializer}
+
+    scale = np.float32(1 / math.sqrt(2))
+
+    def rescale(name):
+        _require(name in initializers and len(users[name]) == 1, f"private MLP parameter {name}")
+        array = numpy_helper.to_array(initializers[name])
+        _require(array.dtype == np.float32, f"float32 MLP parameter {name}")
+        initializers[name].CopyFrom(numpy_helper.from_array(array * scale, name))
+
+    folded = 0
+    for erf in model.graph.node:
+        if erf.op_type != "Erf" or "/backbone/" not in erf.name:
+            continue
+        divide = _producer(producers, erf.input[0], "Div")
+        _require(_next(users, divide, "Erf") is erf, f"private GELU scale at {divide.name}")
+        hidden, divisor = divide.input
+        divisor_value = _scalar(constants, divisor)
+        _require(
+            divisor_value is not None and np.isclose(divisor_value, math.sqrt(2)),
+            f"GELU divides by sqrt(2) at {divide.name}",
+        )
+        shift = _next(users, erf, "Add")
+        _require(
+            _scalar(constants, next(name for name in shift.input if name != erf.output[0])) == 1.0,
+            f"GELU adds one at {shift.name}",
+        )
+        gate = _next(users, shift, "Mul")
+        _require(sorted(gate.input) == sorted([hidden, shift.output[0]]), f"GELU gate at {gate.name}")
+        half = _next(users, gate, "Mul")
+        _require(
+            _scalar(constants, next(name for name in half.input if name != gate.output[0])) == 0.5,
+            f"GELU halves at {half.name}",
+        )
+        fc2 = _next(users, half, "MatMul")
+        _require(fc2.input[0] == half.output[0], f"GELU feeds the fc2 left operand at {fc2.name}")
+        # hidden = Add(bias, MatMul(x, weight)), used only by the GELU.
+        _require(
+            sorted(n.name for n in users[hidden]) == sorted([divide.name, gate.name]), f"private fc1 output {hidden}"
+        )
+        add = _producer(producers, hidden, "Add")
+        bias = next((name for name in add.input if name in initializers), None)
+        fc1 = _producer(producers, next(name for name in add.input if name != bias), "MatMul")
+        _require(_next(users, fc1, "Add") is add, f"private fc1 product at {fc1.name}")
+        rescale(fc1.input[1])
+        rescale(bias)
+        rescale(fc2.input[1])
+        erf.input[0] = hidden
+        fc2.input[0] = gate.output[0]
+        folded += 1
+    _require(folded == blocks, f"expected {blocks} backbone GELUs, found {folded}")
+    return _finish(model)
+
+
 def _optimize_decoder_attention(model: onnx.ModelProto, layers: int) -> onnx.ModelProto:
     """Keep self-attention/head merge/projection in NCHW; leave deformable attention alone."""
     model = onnx.shape_inference.infer_shapes(model)
@@ -463,6 +524,92 @@ def _optimize_decoder_attention(model: onnx.ModelProto, layers: int) -> onnx.Mod
             nodes.append(original)
     del model.graph.node[:]
     model.graph.node.extend(nodes)
+    return _finish(model)
+
+
+def _merge_query_sine_embedding(model: onnx.ModelProto) -> onnx.ModelProto:
+    """Compute the interleaved sine/cosine query embedding as one Sin over all 512 angles.
+
+    Each coordinate's 128 columns alternate sin(c s / t_2i) and cos(c s / t_2i+1). With
+    cos(a) = sin(a + pi / 2), every column is sin(c_k f + phase), so one MatMul from the four
+    coordinates, a phase Add and a Sin produce the same columns without the slice/interleave chain.
+    """
+    model = onnx.shape_inference.infer_shapes(model)
+    shapes, constants, producers, users = _index(model)
+    concats = [
+        node
+        for node in model.graph.node
+        if node.op_type == "Concat"
+        and len(node.input) == 4
+        and all(producers.get(name) is not None and producers[name].op_type == "Reshape" for name in node.input)
+        and all(
+            producers.get(producers[name].input[0]) is not None
+            and producers[producers[name].input[0]].op_type == "Concat"
+            for name in node.input
+        )
+    ]
+    _require(len(concats) == 1, f"one query sine embedding, found {len(concats)}")
+    embedding = concats[0]
+    width = shapes[embedding.input[0]][-1]
+    coordinates, split = None, None
+    frequency = np.zeros((4, 4 * width), dtype=np.float64)
+    phase = np.zeros(4 * width, dtype=np.float32)
+    for block, name in enumerate(embedding.input):
+        interleave = _producer(producers, producers[name].input[0], "Concat")
+        _require(
+            len(interleave.input) == 2 and shapes[interleave.output[0]][-1] == 2, f"sin/cos pair at {interleave.name}"
+        )
+        angles = None
+        for offset, (wrap, kind) in enumerate(zip(interleave.input, ("Sin", "Cos"))):
+            trig = _producer(producers, _producer(producers, wrap, "Unsqueeze").input[0], kind)
+            take = _producer(producers, trig.input[0], "Slice")
+            start, _, axis, step = (int(constants[value].reshape(-1)[0]) for value in take.input[1:5])
+            _require(start == offset and step == 2 and axis in (-1, 2), f"interleaved slice at {take.name}")
+            _require(angles in (None, take.input[0]), f"shared angles for {interleave.name}")
+            angles = take.input[0]
+        divide = _producer(producers, angles, "Div")
+        scale = _producer(producers, divide.input[0], "Mul")
+        factor = _scalar(constants, scale.input[1])
+        temperatures = constants.get(divide.input[1])
+        _require(
+            factor is not None and temperatures is not None and temperatures.shape == (width,),
+            f"angle scale at {scale.name}",
+        )
+        coordinate = scale.input[0]
+        restore = producers.get(coordinate)
+        if restore is not None and restore.op_type == "Unsqueeze":
+            # Older onnxsim keeps Squeeze -> Unsqueeze around each coordinate; equal shapes make it a no-op.
+            squeeze = _producer(producers, restore.input[0], "Squeeze")
+            _require(shapes[squeeze.input[0]] == shapes[coordinate], f"identity squeeze pair at {restore.name}")
+            coordinate = squeeze.input[0]
+        source = _producer(producers, coordinate, "Split")
+        _require(split in (None, source), "one coordinate split")
+        split, coordinates = source, source.input[0]
+        _require(shapes[coordinates] == [1, shapes[coordinates][1], 4], f"four coordinates at {source.name}")
+        columns = slice(block * width, (block + 1) * width)
+        frequency[list(source.output).index(coordinate), columns] = factor / temperatures.astype(np.float64)
+        phase[columns][1::2] = np.float32(math.pi / 2)
+    prefix = embedding.name + "/sine/"
+    _require(not any(name.startswith(prefix) for name in (*producers, *constants)), "rewrite name collision")
+    model.graph.initializer.extend(
+        [
+            numpy_helper.from_array(frequency.astype(np.float32), prefix + "frequency"),
+            numpy_helper.from_array(phase, prefix + "phase"),
+        ]
+    )
+    nodes = [
+        helper.make_node("MatMul", [coordinates, prefix + "frequency"], [prefix + "angles"], name=prefix + "angles"),
+        helper.make_node("Add", [prefix + "angles", prefix + "phase"], [prefix + "shifted"], name=prefix + "shifted"),
+        helper.make_node("Sin", [prefix + "shifted"], list(embedding.output), name=prefix + "embedding"),
+    ]
+    rewritten = []
+    for node in model.graph.node:
+        if node is embedding:
+            rewritten.extend(nodes)
+        else:
+            rewritten.append(node)
+    del model.graph.node[:]
+    model.graph.node.extend(rewritten)
     return _finish(model)
 
 
@@ -656,12 +803,14 @@ def prepare_model(source: Path, output_dir: Path) -> tuple[Path, Path]:
     # onnxsim turns the singleton feature-level axis of the reference points into a Gather.
     decoder = _remove_identities(decoder, {"Gather": 1})
     decoder = _optimize_decoder_attention(decoder, DECODER_LAYERS)
+    decoder = _merge_query_sine_embedding(decoder)
     decoder.ir_version = 8
     onnx.checker.check_model(decoder)
     onnx.save(decoder, decoder_path)
 
     backbone = _optimize_window_attention(onnx.load(backbone_path), WINDOW_BLOCKS)
     backbone = _fold_backbone_score_scale(backbone, BACKBONE_BLOCKS)
+    backbone = _fold_gelu_constants(backbone, BACKBONE_BLOCKS)
     backbone.ir_version = 8
     onnx.checker.check_model(backbone)
     onnx.save(backbone, backbone_path)
@@ -675,19 +824,27 @@ def validate_float_split(
     image: np.ndarray,
 ) -> None:
     import onnxruntime as ort
-    from calibration import select_top_proposals
 
-    reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
+    reference_model = onnx.load(source)
+    (topk,) = [node for node in reference_model.graph.node if node.op_type == "TopK"]
+    reference_model.graph.output.append(helper.make_empty_tensor_value_info(topk.output[1]))
+    reference = ort.InferenceSession(reference_model.SerializeToString(), providers=["CPUExecutionProvider"])
     backbone_session = ort.InferenceSession(str(backbone), providers=["CPUExecutionProvider"])
     decoder_session = ort.InferenceSession(str(decoder), providers=["CPUExecutionProvider"])
     sample = image[None]
     features, scores, boxes = backbone_session.run(None, {INPUT: sample})
-    proposals = select_top_proposals(scores, boxes)
-    expected = reference.run(None, {INPUT: sample})
+    *expected, selected = reference.run(None, {INPUT: sample})
+    # Rounding may swap proposals whose scores tie; the CPU bridge must otherwise pick TopK's order.
+    bridge = np.argsort(-scores, axis=1, kind="stable")[:, : selected.shape[1]]
+    gaps = np.abs(np.take_along_axis(scores, bridge, 1) - np.take_along_axis(scores, selected, 1))
+    if gaps.max() > 1e-5:
+        raise RuntimeError(f"RF-DETR split selects different proposals; largest score gap {gaps.max():.2e}")
+    # Compare the decoder on TopK's own order so a tie swap cannot pair queries with other boxes.
+    proposals = np.take_along_axis(boxes, selected[..., None], 1).astype(np.float32)
     actual = decoder_session.run(None, {FEATURES: features, PROPOSALS: proposals})
     for name, expected_value, actual_value in zip(OUTPUTS, expected, actual, strict=True):
-        # Gemm -> NCHW Conv preserves the projection but can change float32
-        # accumulation order. This tolerance covers the validated ONNX rewrite.
-        if not np.allclose(actual_value, expected_value, rtol=2e-4, atol=2e-4):
+        # The rewrites change float32 rounding (accumulation order, folded GELU scales). The decoder
+        # amplifies one-ulp backbone weight noise to about 1e-3, so the tolerance sits above that.
+        if not np.allclose(actual_value, expected_value, rtol=2e-3, atol=2e-3):
             maximum_error = float(np.max(np.abs(actual_value - expected_value)))
             raise RuntimeError(f"RF-DETR split output {name} does not match the original graph: {maximum_error}")
