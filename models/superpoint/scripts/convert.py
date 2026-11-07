@@ -10,7 +10,18 @@ from pathlib import Path, PurePosixPath
 
 import numpy as np
 import onnx
-from keypoints import BORDER, CELL, DESCRIPTOR_SIZE, HEIGHT, KEYPOINT_CHANNELS, WIDTH, decode, synthetic_image
+from keypoints import (
+    BORDER,
+    CELL,
+    DESCRIPTOR_SIZE,
+    HEIGHT,
+    KEYPOINT_CHANNELS,
+    KEYPOINT_THRESHOLD,
+    NMS_RADIUS,
+    WIDTH,
+    decode,
+    synthetic_image,
+)
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
 
@@ -25,10 +36,10 @@ CONFIG = {
     "decoder_hidden_size": 256,
     "keypoint_decoder_dim": KEYPOINT_CHANNELS,
     "descriptor_decoder_dim": DESCRIPTOR_SIZE,
-    "keypoint_threshold": 0.005,
+    "keypoint_threshold": KEYPOINT_THRESHOLD,
     "max_keypoints": -1,
-    "nms_radius": 4,
-    "border_removal_distance": 4,
+    "nms_radius": NMS_RADIUS,
+    "border_removal_distance": BORDER,
 }
 INPUT = {"image": [1, 1, HEIGHT, WIDTH]}
 OUTPUTS = {

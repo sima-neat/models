@@ -38,19 +38,6 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     return resized @ np.array([0.2989, 0.5870, 0.1140], dtype=np.float32)
 
 
-def homography(seed: int, width: int, height: int) -> np.ndarray:
-    """A seeded, drone-like viewpoint change about the image centre: rotation, scale, shift and a little perspective."""
-    rng = np.random.RandomState(seed)
-    angle = np.radians(rng.uniform(-15, 15))
-    scale = rng.uniform(0.85, 1.1)
-    centre = np.array([[1, 0, -width / 2], [0, 1, -height / 2], [0, 0, 1]])
-    rotate = np.array([[scale * np.cos(angle), -scale * np.sin(angle), 0],
-                       [scale * np.sin(angle), scale * np.cos(angle), 0], [0, 0, 1]])
-    perspective = np.array([[1, 0, 0], [0, 1, 0], [rng.uniform(-1e-4, 1e-4), rng.uniform(-1e-4, 1e-4), 1]])
-    back = np.array([[1, 0, width / 2 + rng.uniform(-30, 30)], [0, 1, height / 2 + rng.uniform(-30, 30)], [0, 0, 1]])
-    return back @ perspective @ rotate @ centre
-
-
 def _max_pool(values: np.ndarray, radius: int) -> np.ndarray:
     """max_pool2d with a (2r+1) window, stride 1 and -inf padding, separably."""
     height, width = values.shape

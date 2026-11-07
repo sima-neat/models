@@ -125,10 +125,10 @@ def test_evaluate_averages_the_pairs(load_script: Callable[[str], ModuleType]) -
     outputs = iter([features0, features1, features0, empty])
     pairs = [(None, None, SHIFT), (None, None, SHIFT)]
 
-    metrics, totals = accuracy.evaluate(iter(pairs), 2, lambda image: next(outputs))
+    metrics, averages = accuracy.evaluate(iter(pairs), 2, lambda image: next(outputs))
 
     assert metrics == {"keypoint_repeatability": 0.5, "matching_accuracy": 0.5, "homography_accuracy": 0.5}
-    assert totals == {"keypoints": 225.0, "matches": 150.0}
+    assert averages == {"keypoints": 225.0, "matches": 150.0}
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:

@@ -30,13 +30,12 @@ from keypoints import (
     WIDTH,
     decode,
     decode_image,
-    homography,
     preprocess,
 )
 
 IMAGES = "val2017"
 AVAILABLE_IMAGES = 5000
-# A seeded sample keeps the stage near 7 minutes on a DevKit; the full set takes 35.
+# A seeded sample keeps the stage near 13 minutes on a DevKit, inside the 45-minute job limit.
 SAMPLED_IMAGES = 1000
 SAMPLE_SEED = 0
 # The SuperPoint paper's HPatches evaluation keeps 1000 keypoints at 480x640.
@@ -69,6 +68,19 @@ def prefetched(load: Callable, items: Sequence) -> Iterator:
             pending.append(pool.submit(load, item))
         while pending:
             yield pending.popleft().result()
+
+
+def homography(seed: int, width: int, height: int) -> np.ndarray:
+    """A seeded, drone-like viewpoint change about the image centre: rotation, scale, shift and a little perspective."""
+    rng = np.random.RandomState(seed)
+    angle = np.radians(rng.uniform(-15, 15))
+    scale = rng.uniform(0.85, 1.1)
+    centre = np.array([[1, 0, -width / 2], [0, 1, -height / 2], [0, 0, 1]])
+    rotate = np.array([[scale * np.cos(angle), -scale * np.sin(angle), 0],
+                       [scale * np.sin(angle), scale * np.cos(angle), 0], [0, 0, 1]])
+    perspective = np.array([[1, 0, 0], [0, 1, 0], [rng.uniform(-1e-4, 1e-4), rng.uniform(-1e-4, 1e-4), 1]])
+    back = np.array([[1, 0, width / 2 + rng.uniform(-30, 30)], [0, 1, height / 2 + rng.uniform(-30, 30)], [0, 0, 1]])
+    return back @ perspective @ rotate @ centre
 
 
 def image_pair(content: bytes, image_id: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -164,7 +176,10 @@ def score_pair(features0: tuple, features1: tuple, matrix: np.ndarray) -> dict[s
 
 
 def evaluate(pairs: Iterator, count: int, features_of: Callable[[np.ndarray], tuple]) -> tuple[dict, dict]:
-    """Score `count` (image0, image1, homography) pairs with features_of(image) -> decoded features."""
+    """Score `count` (image0, image1, homography) pairs with features_of(image) -> decoded features.
+
+    Returns the mean metrics and the mean keypoint and match counts per pair.
+    """
     rows = []
     started = time.monotonic()
     for index, (image0, image1, matrix) in enumerate(pairs, start=1):
@@ -172,8 +187,8 @@ def evaluate(pairs: Iterator, count: int, features_of: Callable[[np.ndarray], tu
         if index == 1 or index % 250 == 0 or index == count:
             log(f"{index}/{count} pairs, {(time.monotonic() - started) / index * 1000:.0f} ms/pair")
     metrics = {name: float(np.mean([row[name] for row in rows])) for name in METRICS}
-    totals = {name: round(float(np.mean([row[name] for row in rows])), 1) for name in ("keypoints", "matches")}
-    return metrics, totals
+    averages = {name: round(float(np.mean([row[name] for row in rows])), 1) for name in ("keypoints", "matches")}
+    return metrics, averages
 
 
 def parse_mpks(values: list[str]) -> Path:
@@ -215,14 +230,14 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.monotonic()
     pairs = prefetched(lambda path: image_pair(path.read_bytes(), int(path.stem)), selected)
-    metrics, totals = evaluate(pairs, len(selected), features_of)
+    metrics, averages = evaluate(pairs, len(selected), features_of)
     report = model_report.from_accuracy({
         dataset_id: {
             "metrics": metrics,
             "split": IMAGES, "evaluated_samples": len(selected), "available_samples": AVAILABLE_IMAGES,
             "details": {
-                "keypoints_per_image": totals["keypoints"],
-                "mutual_matches_per_pair": totals["matches"],
+                "keypoints_per_image": averages["keypoints"],
+                "mutual_matches_per_pair": averages["matches"],
                 "seconds": round(time.monotonic() - started, 1),
             },
         },
