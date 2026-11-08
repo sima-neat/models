@@ -7,25 +7,25 @@ accuracy:
   expected:
     w16a16:
       coco-2017-val:
-        keypoint_repeatability: 0.7995
-        matching_accuracy: 0.9539
-        homography_accuracy: 0.9920
+        keypoint_repeatability: 0.8139
+        matching_accuracy: 0.9613
+        homography_accuracy: 0.9960
     w8a8:
       coco-2017-val:
-        keypoint_repeatability: 0.8007
-        matching_accuracy: 0.9562
-        homography_accuracy: 0.9930
+        keypoint_repeatability: 0.8115
+        matching_accuracy: 0.9605
+        homography_accuracy: 0.9920
     w8a16:
       coco-2017-val:
-        keypoint_repeatability: 0.7836
-        matching_accuracy: 0.9442
-        homography_accuracy: 0.9940
+        keypoint_repeatability: 0.8014
+        matching_accuracy: 0.9548
+        homography_accuracy: 0.9930
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 97.2
+      throughput_fps: 110.1
     w8a8:
-      throughput_fps: 135.6
+      throughput_fps: 232.2
     w8a16:
-      throughput_fps: 95.1
+      throughput_fps: 108.5
