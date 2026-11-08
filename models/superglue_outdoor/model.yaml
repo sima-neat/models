@@ -60,7 +60,7 @@ reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: yfcc100m-keypoints, split: val}
-  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image (threshold 0.0005, NMS radius 4) from a 640x480 image; 20 Sinkhorn iterations, 0.2 match threshold; 3978 of 4000 pairs
+  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image from the image stretched to 640x480 without keeping its aspect ratio, threshold 0.0005 and NMS radius 4 (match_pairs.py uses 0.005 and 3); 20 Sinkhorn iterations, 0.2 match threshold; 3978 of 4000 pairs
   metrics: {pose_auc_5: 0.2865, pose_auc_10: 0.4927, pose_auc_20: 0.6806, match_precision: 0.9738, matching_score: 0.2783}
 
 # The published table, kept for reference and not shown:

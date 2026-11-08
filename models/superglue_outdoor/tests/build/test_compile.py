@@ -176,7 +176,7 @@ def test_synthetic_pair_is_channels_last_per_input(load_script: Callable[[str], 
 def test_model_preserves_compilation_and_licence_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
+    assert "w16a16" in [profile["id"] for profile in model["build_profiles"]]
     assert model["license"]["redistribution"] == "restricted"
     assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
 

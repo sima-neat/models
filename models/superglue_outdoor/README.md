@@ -14,11 +14,11 @@ keypoints; run SuperPoint first.
 
 ## Inputs and outputs
 
-**Inputs.** Run SuperPoint with a keypoint score threshold of 0.0005 and keep
-the 512 keypoints with the highest scores. The model takes exactly 512 per
-image: if one yields fewer, such as a low-texture frame, skip that pair
-rather than padding it, because padded keypoints take part in the matching.
-Pass three float tensors per image (0 and 1):
+**Inputs.** Run SuperPoint on each grayscale image resized to 640 × 480,
+with score threshold 0.0005, NMS radius 4 and a 4-pixel border, and keep the
+512 highest-scoring keypoints. The model takes exactly 512 per image: if one
+yields fewer, skip that pair rather than padding it, because padded keypoints
+take part in the matching. Pass three float tensors per image (0 and 1):
 
 - `keypoints0`, `keypoints1`: 512 × 2 (x, y) pixel positions, minus half the image width and height, divided by 0.7 times the longer image side.
 - `scores0`, `scores1`: 512 × 1 keypoint scores.
