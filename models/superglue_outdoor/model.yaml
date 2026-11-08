@@ -37,14 +37,12 @@ build_profiles:
         parameters: {precision: w16a16}
 
   # No w8a8: INT8 activations in the attention layers fail the compile gate (91.4% of FP32's best matches) and
-  # lose 7.5-13.4% of each YFCC metric on 200 test pairs. W8A16 keeps BF16 activations, as RF-DETR's BF16
-  # decoder does, and passes the gate (96.1%), but Model Compiler 3.0.0's simulator check fails on it ("Check
-  # FAILED", no MPK), as it failed YOLO26 m/l/x W8A16. Uncomment it to build it again once the compiler is
-  # fixed; compile.py keeps its recipe.
-  # w8a16:
-  #   components:
-  #     model:
-  #       parameters: {precision: w8a16}
+  # lose 7.5-13.4% of each YFCC metric on 200 test pairs. W8A16 keeps BF16 activations, quantized per token
+  # before each INT8-weight operation, as RF-DETR's BF16 decoder and YOLO26's W8A16 builds do.
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
 
 accuracy:
   datasets:
