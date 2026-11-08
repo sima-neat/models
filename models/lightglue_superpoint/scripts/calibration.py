@@ -4,10 +4,11 @@ The dataset holds each image's SuperPoint keypoints, best first, in pixels of Su
 image stretched to that size, and their unit-length 256-d descriptors. The matcher takes exactly 512 real keypoints per
 image and has no padding mask, so the scripts use only the pairs whose images both have 512: each archive holds one
 image with fewer, which leaves out 22 of the 4,000 val pairs. The matcher takes each keypoint's rotary position
-encoding, which the CPU computes in float64: the keypoint normalized as LightGlue normalizes it,
-((x, y) - (320, 240)) / 320, times LightGlue's learned 2-to-32 projection, each phase repeated twice, then the cosines
-and the sines. Computed in the graph at BF16 instead, the encoding kept 91% of the ONNX's matches at w16a16, against
-97% from the CPU.
+encoding, which the CPU computes in float32: the keypoint normalized as LightGlue normalizes it,
+((x, y) - (320, 240)) / 320, times LightGlue's learned 2-to-32 projection, then the cosines and the sines, each repeated
+twice. Float32 differs from float64 by at most 5e-7, far below the rounding of the BF16 and INT8 inputs. Computed in the
+graph at BF16 instead, where the phases themselves round, the encoding kept 91% of the ONNX's matches at w16a16,
+against 97% from the CPU.
 """
 
 from __future__ import annotations
@@ -180,9 +181,10 @@ def normalized(keypoints: np.ndarray) -> np.ndarray:
 
 def encoding(normalized_keypoints: np.ndarray) -> np.ndarray:
     """Normalized keypoints [..., 2] to their rotary encoding [..., 128]: the cosines, then the sines, of the projected
-    phases, each phase repeated twice, as LightGlue's positional encoder computes them."""
-    phases = np.repeat(np.asarray(normalized_keypoints, np.float64) @ KEYPOINT_PROJECTION.astype(np.float64).T, 2, -1)
-    return np.concatenate([np.cos(phases), np.sin(phases)], -1).astype(np.float32)
+    phases, each repeated twice, as LightGlue's positional encoder computes them. The cosines and sines of the 32 phases
+    are taken before the repeat, which halves the CPU's work."""
+    phases = np.asarray(normalized_keypoints, np.float32) @ KEYPOINT_PROJECTION.T
+    return np.repeat(np.concatenate([np.cos(phases), np.sin(phases)], -1), 2, -1)
 
 
 def image_inputs(keypoints: np.ndarray, descriptors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

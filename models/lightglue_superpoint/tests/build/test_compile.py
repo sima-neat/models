@@ -62,6 +62,7 @@ def test_the_encoding_is_lightglues_rotary_encoding_of_the_keypoint(load_script:
 
     phases = calibration.KEYPOINT_PROJECTION.astype(np.float64) @ keypoint
     assert encoded.shape == (calibration.ENCODING_DIM,) == (128,)
+    assert encoded.dtype == np.float32
     # Each of the 32 phases appears twice in a row, as repeat_interleave(2) gives the 64-wide attention heads.
     np.testing.assert_allclose(encoded[:64:2], np.cos(phases), atol=1e-6)
     np.testing.assert_allclose(encoded[1:64:2], np.cos(phases), atol=1e-6)

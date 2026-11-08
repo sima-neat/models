@@ -21,7 +21,7 @@ uses these settings with its `LightGlueV1` profile. The model has no padding
 mask, so skip an image with fewer than 512 keypoints: placeholder rows would
 change the real keypoints' matches. Pass four inputs, in this order:
 
-1. `encoding0`, 1×512×128: each keypoint's position encoding, computed on the CPU in double precision. Normalize its pixel coordinates as (x − 320) / 320 and (y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection, the checkpoint's `positional_encoder.projector.weight`, to get 32 phases, repeat each phase twice, and pass the 64 cosines followed by the 64 sines.
+1. `encoding0`, 1×512×128: each keypoint's position encoding, computed on the CPU. Normalize its pixel coordinates as (x − 320) / 320 and (y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection, the checkpoint's `positional_encoder.projector.weight`, to get 32 phases, repeat each phase twice, and pass the 64 cosines followed by the 64 sines.
 2. `descriptors0`, 1×512×256: SuperPoint's unit-length descriptors, in the same order.
 3. `encoding1` and `descriptors1`: the same for the second image.
 

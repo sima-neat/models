@@ -1,7 +1,7 @@
 """Export LightGlue's matcher for SuperPoint keypoints from its Hugging Face checkpoint and check ONNX against PyTorch.
 
 The ONNX matches two images' 512 keypoints. Inputs: encoding0 and encoding1 [1, 512, 128], each keypoint's rotary
-position encoding, which the CPU computes in float64 (calibration.encoding), and descriptors0 and descriptors1
+position encoding, which the CPU computes in float32 (calibration.encoding), and descriptors0 and descriptors1
 [1, 512, 256], SuperPoint's descriptors. Output: assignment [1, 512, 512], LightGlue's soft assignment: the probability
 that keypoint i of image 0 matches keypoint j of image 1, the exponential of the log assignment LightGlue extracts its
 matches from. Every layer runs, since early stopping and keypoint pruning are off, so the graph is static. The
