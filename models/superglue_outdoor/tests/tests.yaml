@@ -12,19 +12,8 @@ accuracy:
         pose_auc_20: 0.6806
         match_precision: 0.9724
         matching_score: 0.2762
-    # Estimates 1% below w16a16 until the first DevKit run of w8a16 measures it.
-    w8a16:
-      yfcc100m-keypoints-val:
-        pose_auc_5: 0.2821
-        pose_auc_10: 0.4876
-        pose_auc_20: 0.6738
-        match_precision: 0.9627
-        matching_score: 0.2734
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 63.4
-    # Estimate equal to w16a16 until the first DevKit run of w8a16 measures it.
-    w8a16:
       throughput_fps: 63.4

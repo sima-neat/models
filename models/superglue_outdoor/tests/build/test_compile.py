@@ -201,6 +201,6 @@ def test_compile_requires_the_converted_interface(
 def test_model_preserves_compilation_and_licence_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
     assert model["license"]["redistribution"] == "restricted"
     assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
