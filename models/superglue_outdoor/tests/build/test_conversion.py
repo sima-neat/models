@@ -27,4 +27,6 @@ def test_converted_weights_are_superglue_tensors(converted: Path) -> None:
     torch = pytest.importorskip("torch")
     weights = torch.load(converted, weights_only=True)
     assert {"bin_score", "final_projection.final_proj.weight"} <= set(weights)
+    # BatchNorm's num_batches_tracked counters are int64; every weight is float32.
+    weights = {name: value for name, value in weights.items() if not name.endswith("num_batches_tracked")}
     assert all(value.dtype == torch.float32 for value in weights.values())
