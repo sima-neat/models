@@ -55,7 +55,15 @@ performance: {}
 # No published score is comparable to this package. SuperGlue's YFCC100M table scored up to 2048 SuperPoint keypoints
 # per image at a 1600-pixel longer side; this package matches 512 keypoints from a 640x480 image, and no source
 # publishes a score at that setting. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this
-# package's own inputs instead. The published table, kept for reference and not shown:
+# package's own inputs instead, on the ONNX surgery.py exports from the converted weights.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: yfcc100m-keypoints, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image (threshold 0.0005, NMS radius 4) from a 640x480 image; 20 Sinkhorn iterations, 0.2 match threshold; 3978 of 4000 pairs
+  metrics: {pose_auc_5: 0.2865, pose_auc_10: 0.4927, pose_auc_20: 0.6806, match_precision: 0.9738, matching_score: 0.2783}
+
+# The published table, kept for reference and not shown:
 # reference_metrics:
 # - source: https://github.com/magicleap/SuperGluePretrainedNetwork/blob/39fb030dab0d976fe25fd2feed55e3ad0d3908dc/README.md
 #   dataset: {id: yfcc100m, split: test}
