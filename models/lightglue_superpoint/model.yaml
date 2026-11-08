@@ -67,6 +67,11 @@ accuracy:
 performance: {}
 
 reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: yfcc100m-keypoints, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image from the image stretched to 640x480, threshold 0.0005 and NMS radius 4; mutual matches above 0.1; RANSAC at 1 px of the 640x480 input; 3978 of 4000 pairs
+  metrics: {pose_auc_5: 0.2697, pose_auc_10: 0.469, pose_auc_20: 0.6583}
 - source: https://github.com/cvg/glue-factory/blob/2d17e3b3bd7d30f0c828d4c4d3eac4ecefbf283d/README.md
   dataset: {id: megadepth-1500, split: test}
   conditions: 1600 px long side, 2048 SuperPoint keypoints, match threshold 0.1, OpenCV RANSAC at 0.5 px

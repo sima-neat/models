@@ -6,6 +6,7 @@ threshold, then the decomposition that keeps the most matches in front of both c
 larger of the rotation and translation angle errors, infinite without a pose, and pose_auc_N is the area under the
 recall of the pose error up to N degrees, as SuperGlue's paper evaluates YFCC100M. The matcher takes 512 real keypoints
 per image, so pairs with an image of fewer are left out: one val image has 511, in 22 of the 4,000 pairs.
+fp32_baseline_accuracy.py scores the FP32 ONNX with this script's evaluate().
 """
 
 from __future__ import annotations
@@ -14,12 +15,12 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import cv2
 import model_report
 import numpy as np
-import pyneat
 from calibration import (
     IMAGE_HEIGHT,
     IMAGE_WIDTH,
@@ -42,24 +43,8 @@ RANSAC_CONFIDENCE = 0.99999
 # The fewest matches an essential matrix is estimated from.
 MIN_MATCHES = 5
 
-
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script normalizes the keypoints; Neat only quantizes and tessellates the inputs.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
-def input_tensors(inputs: dict[str, np.ndarray]) -> list[pyneat.Tensor]:
-    """The matcher's inputs as Neat tensors in EV74 memory. Neat reads a [1, 512, C] input as height 1, width 512 and
-    C channels, so each array goes in as [1, 1, 512, C]."""
-    return [
-        pyneat.Tensor.from_numpy(inputs[name].reshape(1, 1, *shape[1:]), copy=True, memory=pyneat.TensorMemory.EV74)
-        for name, shape in INPUT_SHAPES.items()
-    ]
+# The matcher's [1, 512, 512] assignment for a pair's inputs, from the MPK or the FP32 ONNX.
+AssignmentOf = Callable[[dict[str, np.ndarray]], np.ndarray]
 
 
 def original_pixels(keypoints: np.ndarray, image: Image) -> np.ndarray:
@@ -137,20 +122,30 @@ def pose_auc(errors: list[float], thresholds: tuple[int, ...] = THRESHOLDS) -> l
     return areas
 
 
-def pair_error(root: Path, images: dict[str, Image], pair: Pair, runner: pyneat.ModelRunner | None,
-               model: pyneat.Model) -> tuple[float, int, pyneat.ModelRunner]:
-    """One pair's pose error and match count, building the runner on the first pair."""
+def pair_error(root: Path, images: dict[str, Image], pair: Pair, assignment_of: AssignmentOf) -> tuple[float, int]:
+    """One pair's pose error and match count."""
     image0, image1 = features(root, pair.name0), features(root, pair.name1)
-    tensors = input_tensors(matcher_inputs(image0, image1))
-    if runner is None:
-        runner = model.build(tensors)
-    (assignment,) = runner.run(tensors, timeout_ms=120000)
-    matched = matches(assignment.to_numpy(copy=False))
+    matched = matches(assignment_of(matcher_inputs(image0, image1)))
     first, second = images[pair.name0], images[pair.name1]
     points0 = original_pixels(image0[0][matched[:, 0]], first)
     points1 = original_pixels(image1[0][matched[:, 1]], second)
     pose = estimate_pose(points0, points1, pair.intrinsics0, pair.intrinsics1, ransac_threshold(pair, first, second))
-    return (np.inf if pose is None else pose_error(pair.pose, *pose)), len(matched), runner
+    return (np.inf if pose is None else pose_error(pair.pose, *pose)), len(matched)
+
+
+def evaluate(root: Path, pairs: Sequence[Pair], assignment_of: AssignmentOf) -> tuple[dict[str, float], float]:
+    """The pairs' pose AUC metrics and mean match count, with the assignments assignment_of returns."""
+    images = read_images(root)
+    errors, match_counts = [], []
+    started = time.monotonic()
+    for count, pair in enumerate(pairs, start=1):
+        error, matched = pair_error(root, images, pair, assignment_of)
+        errors.append(error)
+        match_counts.append(matched)
+        if count == 1 or count % 500 == 0 or count == len(pairs):
+            log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
+    metrics = {f"pose_auc_{threshold}": auc for threshold, auc in zip(THRESHOLDS, pose_auc(errors))}
+    return metrics, float(np.mean(match_counts))
 
 
 def parse_mpks(values: list[str]) -> Path:
@@ -173,27 +168,43 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     root = dataset_root(Path(dataset_dir))
-    images, available, usable = read_images(root), read_pairs(root), usable_pairs(root)
+    available, usable = read_pairs(root), usable_pairs(root)
     pairs = usable[: args.limit] if args.limit else usable
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
-    runner = None
-    errors, match_counts = [], []
-    started = time.monotonic()
-    for count, pair in enumerate(pairs, start=1):
-        error, matched, runner = pair_error(root, images, pair, runner, model)
-        errors.append(error)
-        match_counts.append(matched)
-        if count == 1 or count % 500 == 0 or count == len(pairs):
-            log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
+    # PyNeat runs on the board only; fp32_baseline_accuracy.py imports this script on a host.
+    import pyneat
 
-    aucs = pose_auc(errors)
+    options = pyneat.ModelOptions()
+    options.preprocess.kind = pyneat.InputKind.Tensor
+    # The script encodes the keypoints; Neat only quantizes and tessellates the inputs.
+    options.preprocess.resize.enable = pyneat.AutoFlag.Off
+    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
+    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
+    model = pyneat.Model(str(parse_mpks(args.mpk)), options)
+    runner = None
+
+    def assignment_of(inputs: dict[str, np.ndarray]) -> np.ndarray:
+        """The MPK's assignment, building the runner on the first pair. Neat reads a [1, 512, C] input as height 1,
+        width 512 and C channels, so each array goes in as [1, 1, 512, C], in EV74 memory."""
+        nonlocal runner
+        tensors = [
+            pyneat.Tensor.from_numpy(inputs[name].reshape(1, 1, *shape[1:]), copy=True,
+                                     memory=pyneat.TensorMemory.EV74)
+            for name, shape in INPUT_SHAPES.items()
+        ]
+        if runner is None:
+            runner = model.build(tensors)
+        (assignment,) = runner.run(tensors, timeout_ms=120000)
+        return assignment.to_numpy(copy=False)
+
+    started = time.monotonic()
+    metrics, mean_matches = evaluate(root, pairs, assignment_of)
     report = model_report.from_accuracy({
         dataset_id: {
-            "metrics": {f"pose_auc_{threshold}": auc for threshold, auc in zip(THRESHOLDS, aucs)},
+            "metrics": metrics,
             "split": split_of(root), "evaluated_samples": len(pairs), "available_samples": len(available),
             "details": {"inference_seconds": round(time.monotonic() - started, 1),
-                        "mean_matches": round(float(np.mean(match_counts)), 1)},
+                        "mean_matches": round(mean_matches, 1)},
         },
     })
     report.save(args.output)
