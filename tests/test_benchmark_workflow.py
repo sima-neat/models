@@ -628,7 +628,7 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("relative", [
-    "tools/model_registry/report_publication.py", "tools/model_report/metrics.json",
+    "tools/model_registry/report_publication.py", "tools/model_report/__init__.py",
     "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py",
 ])
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:

@@ -32,10 +32,10 @@ NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), *CONVERSION_FILES}
 # Each benchmark stage's registry run type.
 BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_accuracy"}
 # The workflow runs the benchmark, model_report writes its report, and report_publication checks and publishes it.
+# metrics.json is left out: it names and labels metrics, so adding or editing one must not rerun every benchmark.
 BOARD_STAGE_TOOLING = (
     ".github/workflows/vulcan-model-benchmarking.yml",
     "tools/model_report/__init__.py",
-    "tools/model_report/metrics.json",
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
 )
