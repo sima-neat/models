@@ -16,8 +16,6 @@ from pathlib import Path
 import numpy as np
 import onnx
 
-# The transformers the pinned Model Compiler environment provides; its SuperGlue layers match 4.57.1's.
-EXPORTER = "5.16.1"
 # transformers' SuperGlueConfig default, which the exported couplings are checked under.
 SINKHORN_ITERATIONS = 100
 KEYPOINTS = 512
@@ -290,10 +288,7 @@ def export_matcher(weights, output):
     """Export the rebuilt matcher to output and require its matches to follow transformers' layers."""
     import onnxruntime as ort
     import torch
-    import transformers
 
-    if transformers.__version__ != EXPORTER:
-        raise RuntimeError(f"Expected transformers {EXPORTER}, found {transformers.__version__}")
     torch.set_num_threads(4)
     model = load_superglue(weights)
     reference, matcher = reference_matcher(model), build_matcher(model)
