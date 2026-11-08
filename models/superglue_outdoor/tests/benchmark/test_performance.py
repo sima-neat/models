@@ -43,16 +43,6 @@ def test_the_benchmark_pair_is_a_listed_pair_of_full_images(
     assert all((tensor == 0).all() for tensor in tensors[0::3])
 
 
-def test_the_fixed_pair_fills_the_input(load_script: Callable[[str], ModuleType]) -> None:
-    performance = load_script("performance")
-
-    _, images = performance.fixed_pair()
-
-    for image in images:
-        assert image.keypoints.shape == (512, 2) and (image.keypoints < [640, 480]).all()
-        np.testing.assert_allclose(np.linalg.norm(image.descriptors, axis=1), 1)
-
-
 def test_the_model_takes_tensors_without_image_preprocessing(load_script: Callable[[str], ModuleType]) -> None:
     performance = load_script("performance")
 

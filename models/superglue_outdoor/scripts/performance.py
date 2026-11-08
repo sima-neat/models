@@ -1,8 +1,8 @@
 """Benchmark SuperGlue with Neat Core on one keypoint pair, including its CPU matching, and save its report.
 
-SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
+SuperGlue takes keypoints, not images. Given --dataset yfcc100m-keypoints-val=<extracted directory>, the benchmark
 repeats one random.Random(0) pair of annotations/pairs_val.txt whose images both hold 512 keypoints, the SuperPoint
-FP32 keypoints accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK
+FP32 keypoints accuracy.py matches. Each measured pair runs the MPK
 and then the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction, as accuracy.py
 does: SuperGlue's own model ends with them, so a pair's matches are its result. Latency runs one pair at a time and
 reports the MPK's and the CPU's share. The CPU steps take longer than the MPK, so the throughput pass matches pairs in
@@ -94,18 +94,6 @@ def dataset_pair(dataset: Path) -> tuple[str, list[ImageKeypoints]]:
         arrays = [np.load(stem / f"{key}.npy", allow_pickle=False) for key in ("keypoints", "scores", "descriptors")]
         images.append(ImageKeypoints(*arrays))
     return f"the {DATASET} pair {names[0]} and {names[1]}", images
-
-
-def fixed_pair() -> tuple[str, list[ImageKeypoints]]:
-    """Two seeded sets of 512 keypoints in a 640 x 480 image, with scores and unit descriptors."""
-    rng = np.random.RandomState(0)
-    images = []
-    for _ in range(2):
-        keypoints = rng.uniform((0, 0), (INPUT_WIDTH, INPUT_HEIGHT), (KEYPOINTS, 2))
-        descriptors = rng.normal(0, 1, (KEYPOINTS, DESCRIPTOR_SIZE))
-        descriptors /= np.linalg.norm(descriptors, axis=1, keepdims=True)
-        images.append(ImageKeypoints(keypoints, rng.uniform(0.005, 1, KEYPOINTS), descriptors))
-    return f"a seeded pair of {INPUT_WIDTH}x{INPUT_HEIGHT} images", images
 
 
 def normalize_keypoints(keypoints: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -308,16 +296,13 @@ def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> ThroughputResult:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", required=True, help="compiled model archive")
-    parser.add_argument("--dataset", help=f"{DATASET}=<extracted directory>")
+    parser.add_argument("--dataset", required=True, help=f"{DATASET}=<extracted directory>")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
-    if args.dataset:
-        dataset_id, dataset_dir = args.dataset.split("=", 1)
-        if dataset_id != DATASET:
-            raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
-        workload, images = dataset_pair(Path(dataset_dir))
-    else:
-        workload, images = fixed_pair()
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    if dataset_id != DATASET:
+        raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
+    workload, images = dataset_pair(Path(dataset_dir))
 
     layer_stats, stage_stats = mla_stats(args.mpk)
     arrays = pair_tensors(images)
