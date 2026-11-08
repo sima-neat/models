@@ -1,12 +1,13 @@
 """Benchmark SuperGlue with Neat Core on one keypoint pair, including its CPU matching, and save its report.
 
 SuperGlue takes keypoints, not images. With --dataset yfcc100m-keypoints-val=<extracted directory> the benchmark
-repeats two random.Random(0) images of that dataset with 512 keypoints each, the SuperPoint FP32 keypoints
-accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK and then
-the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction (accuracy.py's
-sinkhorn_matches), as accuracy.py does. Latency runs one pair at a time. The CPU steps take longer than the MPK,
-so the throughput pass matches pairs in NEAT_WORKERS processes, each with its own runner, as an application with
-the DevKit's 16 cores would. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
+repeats one random.Random(0) pair of annotations/pairs_val.txt whose images both hold 512 keypoints, the SuperPoint
+FP32 keypoints accuracy.py matches; without it, a fixed seeded pair of 512 keypoints. Each measured pair runs the MPK
+and then the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction, as accuracy.py
+does: SuperGlue's own model ends with them, so a pair's matches are its result. Latency runs one pair at a time and
+reports the MPK's and the CPU's share. The CPU steps take longer than the MPK, so the throughput pass matches pairs in
+NEAT_WORKERS processes, each with its own runner and an equal share of the CPU cores, as an application with the
+DevKit's cores would. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
 """
 
 from __future__ import annotations
@@ -18,22 +19,25 @@ import multiprocessing
 import os
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import model_report
 import numpy as np
 import pyneat
-from accuracy import MATCH_THRESHOLD, normalize_keypoints, sinkhorn_matches
 
 DATASET = "yfcc100m-keypoints-val"
 IMAGES_FILE = "annotations/images.txt"
+PAIRS_FILE = "annotations/pairs_val.txt"
 KEYPOINTS, DESCRIPTOR_SIZE = 512, 256
 # The MPK's channels-last inputs, in its order.
 INPUTS = ("keypoints0", "scores0", "descriptors0", "keypoints1", "scores1", "descriptors1")
 # SuperPoint's input size, which the keypoints' pixel coordinates refer to.
-FIXED_WIDTH, FIXED_HEIGHT = 640, 480
+INPUT_WIDTH, INPUT_HEIGHT = 640, 480
 # As accuracy.py and SuperGlue's match_pairs.py evaluation.
 SINKHORN_ITERATIONS = 20
+MATCH_THRESHOLD = 0.2
 WARMUP_PAIRS = 10
 MEASURED_PAIRS = 1000
 MIN_DURATION_S = 60
@@ -45,40 +49,143 @@ NEAT_WORKERS = 4
 NEAT_START_STAGGER_S = 2.0
 
 
-def dataset_images(dataset: Path) -> tuple[str, list]:
-    """Two random.Random(0) images with 512 stored keypoints each: their names and each one's
-    (keypoints, scores, descriptors, size)."""
-    rows = [row.split() for row in (dataset / IMAGES_FILE).read_text(encoding="utf-8").splitlines()]
-    full = [row[0] for row in rows if int(row[4]) == KEYPOINTS]
-    names = random.Random(0).sample(full, 2)
+@dataclass(frozen=True)
+class ImageKeypoints:
+    """One image's SuperPoint output, in pixels of the 640 x 480 input."""
+
+    keypoints: np.ndarray  # [KEYPOINTS, 2]
+    scores: np.ndarray  # [KEYPOINTS]
+    descriptors: np.ndarray  # [KEYPOINTS, DESCRIPTOR_SIZE]
+
+
+@dataclass(frozen=True)
+class LatencyResult:
+    """Seconds per pair, one pair at a time, and the MPK's part of each."""
+
+    pair_s: list[float]
+    model_s: list[float]
+
+
+@dataclass(frozen=True)
+class ThroughputResult:
+    pairs: int
+    seconds: float
+    telemetry: pyneat.Telemetry
+
+    @property
+    def fps(self) -> float:
+        return self.pairs / self.seconds
+
+
+def dataset_pair(dataset: Path) -> tuple[str, list[ImageKeypoints]]:
+    """One random.Random(0) pair of pairs_val.txt whose images both hold 512 stored keypoints, with its name."""
+    counts = {
+        row.split()[0]: int(row.split()[4]) for row in (dataset / IMAGES_FILE).read_text(encoding="utf-8").splitlines()
+    }
+    lines = (dataset / PAIRS_FILE).read_text(encoding="utf-8").splitlines()
+    pairs = [line.split()[:2] for line in lines if line.strip()]
+    full = [names for names in pairs if all(counts.get(name) == KEYPOINTS for name in names)]
+    if not full:
+        raise SystemExit(f"{PAIRS_FILE} lists no pair whose images both hold {KEYPOINTS} keypoints")
+    names = random.Random(0).choice(full)
     images = []
     for name in names:
         stem = dataset / "val" / str(Path(name).with_suffix(""))
         arrays = [np.load(stem / f"{key}.npy", allow_pickle=False) for key in ("keypoints", "scores", "descriptors")]
-        images.append((*arrays, (FIXED_WIDTH, FIXED_HEIGHT)))
-    return f"{DATASET} {names[0]} and {names[1]}", images
+        images.append(ImageKeypoints(*arrays))
+    return f"the {DATASET} pair {names[0]} and {names[1]}", images
 
 
-def fixed_images() -> tuple[str, list]:
-    """Two seeded sets of 512 keypoints in a 1600x1200 image, with scores and unit descriptors."""
+def fixed_pair() -> tuple[str, list[ImageKeypoints]]:
+    """Two seeded sets of 512 keypoints in a 640 x 480 image, with scores and unit descriptors."""
     rng = np.random.RandomState(0)
     images = []
     for _ in range(2):
-        keypoints = rng.uniform((0, 0), (FIXED_WIDTH, FIXED_HEIGHT), (KEYPOINTS, 2))
+        keypoints = rng.uniform((0, 0), (INPUT_WIDTH, INPUT_HEIGHT), (KEYPOINTS, 2))
         descriptors = rng.normal(0, 1, (KEYPOINTS, DESCRIPTOR_SIZE))
         descriptors /= np.linalg.norm(descriptors, axis=1, keepdims=True)
-        images.append((keypoints, rng.uniform(0.005, 1, KEYPOINTS), descriptors, (FIXED_WIDTH, FIXED_HEIGHT)))
-    return f"a seeded pair of {FIXED_WIDTH}x{FIXED_HEIGHT} images", images
+        images.append(ImageKeypoints(keypoints, rng.uniform(0.005, 1, KEYPOINTS), descriptors))
+    return f"a seeded pair of {INPUT_WIDTH}x{INPUT_HEIGHT} images", images
 
 
-def pair_tensors(images: list) -> list[np.ndarray]:
-    """The pair as the MPK's channels-last inputs, each image's keypoints normalized by its size."""
+def normalize_keypoints(keypoints: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Map pixel (x, y) keypoints to SuperGlue's frame: centred on the image, divided by 0.7 times its longer side."""
+    size = np.array([width, height], dtype=np.float64)
+    return ((np.asarray(keypoints, dtype=np.float64) - size / 2) / (size.max() * 0.7)).astype(np.float32)
+
+
+def pair_tensors(images: list[ImageKeypoints]) -> list[np.ndarray]:
+    """The pair as the MPK's channels-last inputs, each image's keypoints normalized by the input size."""
     values = {}
-    for side, (keypoints, scores, descriptors, (width, height)) in enumerate(images):
-        values[f"keypoints{side}"] = normalize_keypoints(keypoints, width, height).reshape(1, 1, KEYPOINTS, 2)
-        values[f"scores{side}"] = np.asarray(scores, np.float32).reshape(1, 1, KEYPOINTS, 1)
-        values[f"descriptors{side}"] = np.asarray(descriptors, np.float32).reshape(1, 1, KEYPOINTS, DESCRIPTOR_SIZE)
+    for side, image in enumerate(images):
+        keypoints = normalize_keypoints(image.keypoints, INPUT_WIDTH, INPUT_HEIGHT)
+        values[f"keypoints{side}"] = keypoints.reshape(1, 1, KEYPOINTS, 2)
+        values[f"scores{side}"] = np.asarray(image.scores, np.float32).reshape(1, 1, KEYPOINTS, 1)
+        descriptors = np.asarray(image.descriptors, np.float32)
+        values[f"descriptors{side}"] = descriptors.reshape(1, 1, KEYPOINTS, DESCRIPTOR_SIZE)
     return [np.ascontiguousarray(values[name]) for name in INPUTS]
+
+
+def log_sinkhorn(couplings: np.ndarray, iterations: int) -> np.ndarray:
+    """Return the log optimal-transport matrix of [M+1, N+1] couplings, as SuperGlue's log_optimal_transport."""
+    rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
+    normalization = -np.log(rows + columns)
+    log_mu = np.concatenate([np.full(rows, normalization), [np.log(columns) + normalization]])
+    log_nu = np.concatenate([np.full(columns, normalization), [np.log(rows) + normalization]])
+    cost = np.asarray(couplings, dtype=np.float64).reshape(rows + 1, columns + 1)
+    u, v = np.zeros_like(log_mu), np.zeros_like(log_nu)
+    for _ in range(iterations):
+        u = log_mu - _logsumexp(cost + v[None, :], axis=1)
+        v = log_nu - _logsumexp(cost + u[:, None], axis=0)
+    return cost + u[:, None] + v[None, :] - normalization
+
+
+def _logsumexp(values: np.ndarray, axis: int) -> np.ndarray:
+    top = values.max(axis=axis, keepdims=True)
+    return (top + np.log(np.exp(values - top).sum(axis=axis, keepdims=True))).squeeze(axis)
+
+
+def extract_matches(log_transport: np.ndarray, threshold: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """Return, for each image-0 keypoint, its mutual nearest image-1 keypoint (-1 when unmatched) and match score."""
+    inner = log_transport[:-1, :-1]
+    best0, best1 = inner.argmax(1), inner.argmax(0)
+    mutual = best1[best0] == np.arange(len(best0))
+    scores = np.where(mutual, np.exp(inner.max(1)), 0.0)
+    valid = mutual & (scores > threshold)
+    return np.where(valid, best0, -1), np.where(valid, scores, 0.0)
+
+
+def sinkhorn_matches(couplings: np.ndarray, iterations: int, threshold: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """extract_matches(log_sinkhorn(couplings, iterations), threshold), computed in float32 without the log matrix.
+
+    The same iterations in the linear domain: one exponential, shifted by the maximum to stay finite, then
+    matrix-vector products, at the float32 precision SuperGlue's PyTorch model runs them in. log is increasing, so
+    each row's best column is the argmax of kernel * v and each column's best row the argmax of kernel * u; the score
+    is exp(log transport) = kernel * u * v * (M + N). A row or column that underflows falls back to log space.
+    """
+    rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
+    scale = rows + columns
+    mu = np.full(rows + 1, 1.0 / scale, dtype=np.float32)
+    mu[-1] = columns / scale
+    nu = np.full(columns + 1, 1.0 / scale, dtype=np.float32)
+    nu[-1] = rows / scale
+    cost = np.asarray(couplings, dtype=np.float32).reshape(rows + 1, columns + 1)
+    kernel = cv2.exp(cost - cost.max())
+    kernel_t = np.ascontiguousarray(kernel.T)
+    u, v = np.ones(rows + 1, dtype=np.float32), np.ones(columns + 1, dtype=np.float32)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        for _ in range(iterations):
+            u = mu / (kernel @ v)
+            v = nu / (kernel_t @ u)
+    if not (np.all(np.isfinite(u)) and np.all(np.isfinite(v)) and np.all(u > 0) and np.all(v > 0)):
+        return extract_matches(log_sinkhorn(couplings, iterations), threshold)
+    by_row = kernel[:-1, :-1] * v[None, :-1]
+    best0 = by_row.argmax(1)
+    best1 = (kernel_t[:-1, :-1] * u[None, :-1]).argmax(1)
+    mutual = best1[best0] == np.arange(rows)
+    scores = np.where(mutual, by_row[np.arange(rows), best0] * u[:-1] * scale, 0.0)
+    valid = mutual & (scores > threshold)
+    return np.where(valid, best0, -1), np.where(valid, scores, 0.0)
 
 
 def tensor_options() -> pyneat.ModelOptions:
@@ -107,36 +214,44 @@ def mla_stats(mpk: str) -> tuple[dict[str, object], dict[str, object]]:
     return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
+def run_mpk(runner, tensors: list) -> np.ndarray:
+    """The MPK's [N+1, N+1] couplings for the pair."""
+    (output,) = runner.run(tensors, timeout_ms=TIMEOUT_MS)
+    return output.to_numpy(copy=False).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
+
+
 def match_pair(runner, tensors: list) -> np.ndarray:
     """The MPK's couplings, then the CPU's Sinkhorn iterations and mutual-match extraction: the pair's matches."""
-    (output,) = runner.run(tensors, timeout_ms=TIMEOUT_MS)
-    couplings = output.to_numpy(copy=False).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
-    matches, _ = sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
+    matches, _ = sinkhorn_matches(run_mpk(runner, tensors), SINKHORN_ITERATIONS, MATCH_THRESHOLD)
     return matches
 
 
-def measure_latency(model: pyneat.Model, tensors: list) -> list[float]:
-    """Seconds per pair, one pair at a time, after the warm-up."""
+def measure_latency(model: pyneat.Model, tensors: list) -> LatencyResult:
+    """Each pair one at a time after the warm-up, timing the whole pair and its MPK run."""
     runner = model.build(tensors)
     try:
         for _ in range(WARMUP_PAIRS):
             match_pair(runner, tensors)
-        seconds: list[float] = []
+        pair_s: list[float] = []
+        model_s: list[float] = []
         started = time.perf_counter()
-        while len(seconds) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
+        while len(pair_s) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
             begun = time.perf_counter()
-            match_pair(runner, tensors)
-            seconds.append(time.perf_counter() - begun)
+            couplings = run_mpk(runner, tensors)
+            model_s.append(time.perf_counter() - begun)
+            sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
+            pair_s.append(time.perf_counter() - begun)
     finally:
         runner.close()
-    return seconds
+    return LatencyResult(pair_s, model_s)
 
 
-def _start_worker(mpk: str, arrays: list[np.ndarray], started, ready) -> None:
+def _start_worker(mpk: str, arrays: list[np.ndarray], threads: int, started, ready) -> None:
     """Pool initializer of a throughput worker: its own model and runner, built one worker at a time."""
     global _worker_runner, _worker_tensors
     # The parent's runner set this for Neat's GStreamer runtime; Neat refuses to start with it inherited.
     os.environ.pop("GST_PLUGIN_SYSTEM_PATH_1_0", None)
+    cv2.setNumThreads(threads)
     with started.get_lock():
         order = started.value
         started.value += 1
@@ -152,15 +267,19 @@ def _match_once(_: int) -> int:
     return int((match_pair(_worker_runner, _worker_tensors) >= 0).sum())
 
 
-def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> tuple[int, float, pyneat.Telemetry]:
-    """Pairs, seconds and board telemetry with pairs matched in NEAT_WORKERS processes, each keeping at most two
-    pairs queued. The measured span starts after WARMUP_PAIRS pairs and lasts at least MEASURED_PAIRS pairs and
-    MIN_DURATION_S seconds."""
+def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> ThroughputResult:
+    """Pairs matched in NEAT_WORKERS processes, each keeping at most two pairs queued. The measured span starts after
+    WARMUP_PAIRS pairs and lasts at least MEASURED_PAIRS pairs and MIN_DURATION_S seconds."""
+    # OpenBLAS, OpenMP and OpenCV start one thread per core in every process by default; each worker takes its share
+    # instead. The spawned workers import numpy after this, so their thread pools read it.
+    threads = max(1, (os.cpu_count() or 1) // NEAT_WORKERS)
+    os.environ["OPENBLAS_NUM_THREADS"] = os.environ["OMP_NUM_THREADS"] = str(threads)
     monitor = pyneat.TelemetryMonitor()
     context = multiprocessing.get_context("spawn")
     ready = context.Value("i", 0)
     pairs, started = 0, 0.0
-    with context.Pool(NEAT_WORKERS, _start_worker, (mpk, arrays, context.Value("i", 0), ready)) as pool:
+    initargs = (mpk, arrays, threads, context.Value("i", 0), ready)
+    with context.Pool(NEAT_WORKERS, _start_worker, initargs) as pool:
         # Stream pairs only once every worker has built its runner.
         deadline = time.monotonic() + 120 + NEAT_WORKERS * NEAT_START_STAGGER_S
         while ready.value < NEAT_WORKERS:
@@ -183,7 +302,7 @@ def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> tuple[int, float, 
                 measured, seconds = pairs - WARMUP_PAIRS, time.perf_counter() - started
                 if measured >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
                     pool.terminate()
-                    return measured, seconds, monitor.stop()
+                    return ThroughputResult(measured, seconds, monitor.stop())
 
 
 def main() -> None:
@@ -196,27 +315,27 @@ def main() -> None:
         dataset_id, dataset_dir = args.dataset.split("=", 1)
         if dataset_id != DATASET:
             raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
-        workload, images = dataset_images(Path(dataset_dir))
+        workload, images = dataset_pair(Path(dataset_dir))
     else:
-        workload, images = fixed_images()
+        workload, images = fixed_pair()
 
     layer_stats, stage_stats = mla_stats(args.mpk)
     arrays = pair_tensors(images)
     model = pyneat.Model(args.mpk, tensor_options())
-    seconds = measure_latency(model, [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays])
+    latency = measure_latency(model, [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays])
     # The throughput workers need every accelerator client Neat allows; reload the model for the report after.
     del model
     gc.collect()
-    pairs, span, telemetry = measure_throughput(args.mpk, arrays)
+    throughput = measure_throughput(args.mpk, arrays)
     model = pyneat.Model(args.mpk, tensor_options())
     benchmark = pyneat.BenchmarkReport()
-    benchmark.latency_ms = float(np.mean(seconds) * 1000)
-    benchmark.latency_p50_ms = float(np.percentile(seconds, 50) * 1000)
-    benchmark.latency_p95_ms = float(np.percentile(seconds, 95) * 1000)
-    benchmark.latency_p99_ms = float(np.percentile(seconds, 99) * 1000)
-    benchmark.fps = pairs / span
-    benchmark.throughput_duration_ms = span * 1000
-    benchmark.throughput_samples = pairs
+    benchmark.latency_ms = float(np.mean(latency.pair_s) * 1000)
+    benchmark.latency_p50_ms = float(np.percentile(latency.pair_s, 50) * 1000)
+    benchmark.latency_p95_ms = float(np.percentile(latency.pair_s, 95) * 1000)
+    benchmark.latency_p99_ms = float(np.percentile(latency.pair_s, 99) * 1000)
+    benchmark.fps = throughput.fps
+    benchmark.throughput_duration_ms = throughput.seconds * 1000
+    benchmark.throughput_samples = throughput.pairs
     report = model_report.from_performance(
         benchmark,
         {"model": model},
@@ -225,12 +344,16 @@ def main() -> None:
             f"iterations and mutual-match extraction on the CPU; latency one pair at a time, throughput with "
             f"{NEAT_WORKERS} processes each running the MPK and the CPU matching"
         ),
-        telemetry=telemetry,
+        telemetry=throughput.telemetry,
         mla_layer_stats={"model": layer_stats},
         mla_stage_stats={"model": stage_stats},
     )
     report.save(args.output)
-    print(f"{benchmark.fps:.1f} pairs/s over {pairs} pairs; latency {benchmark.latency_ms:.2f} ms")
+    model_ms = float(np.mean(latency.model_s) * 1000)
+    print(
+        f"{throughput.fps:.1f} pairs/s over {throughput.pairs} pairs; latency {benchmark.latency_ms:.2f} ms per pair: "
+        f"MPK {model_ms:.2f} ms, CPU matching {benchmark.latency_ms - model_ms:.2f} ms"
+    )
 
 
 if __name__ == "__main__":

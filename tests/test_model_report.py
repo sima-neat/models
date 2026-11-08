@@ -228,9 +228,7 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
-        self.preprocess = types.SimpleNamespace(
-            resize=types.SimpleNamespace(), color_convert=types.SimpleNamespace(), normalize=types.SimpleNamespace()
-        )
+        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
 
 
 class Tensor:
@@ -317,10 +315,6 @@ def first_accuracy_dataset(script: Path) -> str | None:
     return datasets[0]["id"] if datasets else None
 
 
-# Models whose inputs are not images benchmark a fixed tensor input on the tensor route.
-TENSOR_INPUT_MODELS = {"superglue_outdoor"}
-
-
 def performance_scripts(*, components: bool) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark."""
@@ -333,9 +327,16 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
+def takes_images(script: Path) -> bool:
+    """Whether the model a performance script measures declares an image input."""
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    return "image" in model["modalities"]["inputs"]
+
+
+# A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
 @pytest.mark.parametrize(
     "script",
-    [path for path in performance_scripts(components=False) if path.parents[1].name not in TENSOR_INPUT_MODELS],
+    [path for path in performance_scripts(components=False) if takes_images(path)],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
@@ -403,86 +404,6 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
-
-
-def superpoint_dataset(root):
-    """A yfcc100m-keypoints val directory of three images, two with 512 keypoints at the 640 x 480 input's centre."""
-    import numpy as np
-
-    rows = []
-    for index, count in enumerate((512, 100, 512)):
-        stem = root / "val" / "a" / str(index)
-        stem.mkdir(parents=True)
-        np.save(stem / "keypoints.npy", np.tile(np.array([320, 240], np.float32), (count, 1)))
-        np.save(stem / "scores.npy", np.full(count, 0.5, np.float32))
-        np.save(stem / "descriptors.npy", np.full((count, 256), 1 / 16, np.float32))
-        rows.append(f"a/{index}.jpg 1280 960 0 {count}")
-    (root / "annotations").mkdir()
-    (root / "annotations" / "images.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
-    return root
-
-
-@pytest.mark.parametrize("with_dataset", [True, False], ids=["dataset", "fixed"])
-@pytest.mark.parametrize("model_name", sorted(TENSOR_INPUT_MODELS))
-def test_every_tensor_input_script_times_its_cpu_matching(model_name, with_dataset, monkeypatch, tmp_path):
-    import numpy as np
-
-    requests = []
-
-    def rows(stats, field):
-        return types.SimpleNamespace(status=stats["status"], **{field: [
-            types.SimpleNamespace(**row) for row in stats[field]
-        ]})
-
-    class ScriptModel:
-        def __init__(self, mpk, options=None):
-            self.mpk, self.options = mpk, options
-
-        def benchmark(self, options):
-            requests.append(options)
-            return types.SimpleNamespace(
-                mla_layer_stats=rows(CORE_REPORT["mla_layer_stats"], "layers"),
-                mla_stage_stats=rows(CORE_REPORT["mla_stage_stats"], "stages"),
-            )
-
-    class Runner:
-        """Returns couplings in Neat's channels-last [1, 1, i, j] shape, each keypoint scoring itself highest."""
-
-        def run(self, tensors, timeout_ms):
-            couplings = np.full((513, 513), -5.0, np.float32)
-            np.fill_diagonal(couplings, 5.0)
-            return [types.SimpleNamespace(to_numpy=lambda copy: couplings.reshape(1, 1, 513, 513))]
-
-    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
-        Model=ScriptModel, ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor,
-        **SCRIPT_PYNEAT,
-    ))
-    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
-    monkeypatch.syspath_prepend(str(script.parent))
-    functions = runpy.run_path(str(script))
-
-    options = functions["tensor_options"]()
-    assert options.preprocess.kind == "Tensor"
-    assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == ("Off", "Off")
-    if with_dataset:
-        workload, images = functions["dataset_images"](superpoint_dataset(tmp_path / "dataset"))
-        # The image with 100 keypoints is never picked.
-        assert workload == "yfcc100m-keypoints-val a/0.jpg and a/2.jpg" or workload == (
-            "yfcc100m-keypoints-val a/2.jpg and a/0.jpg"
-        )
-    else:
-        workload, images = functions["fixed_images"]()
-    tensors = functions["pair_tensors"](images)
-    assert [tensor.shape for tensor in tensors] == [(1, 1, 512, 2), (1, 1, 512, 1), (1, 1, 512, 256)] * 2
-    if with_dataset:
-        # The dataset's keypoints sit at the image centre, which SuperGlue's frame maps to the origin.
-        assert all((tensor == 0).all() for tensor in tensors[0::3])
-    # Every timed pair runs the CPU Sinkhorn iterations and mutual-match extraction after the MPK.
-    matches = functions["match_pair"](Runner(), tensors)
-    assert matches.tolist() == list(range(512))
-    layer_stats, stage_stats = functions["mla_stats"]("model.tar.gz")
-    assert [(r.include_mla_layer_stats, r.include_mla_stage_stats) for r in requests] == [(True, True)]
-    assert (layer_stats, stage_stats) == (CORE_REPORT["mla_layer_stats"], CORE_REPORT["mla_stage_stats"])
 
 
 @pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
