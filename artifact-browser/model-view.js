@@ -1,5 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
-import { accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
+import {
+  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceOrigin, referenceScores,
+} from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
 import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
 import { readAccuracy, readPerformance } from "./model-report.js";
@@ -736,12 +738,10 @@ export function accuracyHeadline(variant) {
   };
 }
 
-// The build profile's accuracy run, with the scores the model's authors published on the same dataset.
+// The build profile's accuracy run, with the published and FP32 baseline scores on the same dataset.
 function accuracyPanel(variant, modelId) {
   const reference = variant.reference || [];
-  const referenceMarkup = !customerView && reference.length
-    ? disclosure("published-scores", "Published scores", referenceTables(reference), `${reference.length} ${reference.length === 1 ? "source" : "sources"}`)
-    : "";
+  const referenceMarkup = customerView ? "" : referenceDisclosures(reference);
   const result = readAccuracy(variant.accuracy);
   if (result.kind === "missing") return referenceAccuracySection(reference);
   if (result.kind === "unsupported") {
@@ -756,7 +756,7 @@ function accuracyPanel(variant, modelId) {
   // One dataset keeps its coverage beside the section title; several each title their own result.
   const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : "";
   const results = datasets.map((entry) => accuracyResult(
-    entry, tool, referenceScores(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
+    entry, tool, scoresByOrigin(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
   )).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3>${badge}</div>
@@ -765,19 +765,30 @@ function accuracyPanel(variant, modelId) {
   </section>`;
 }
 
+// Each origin's reference scores on a dataset, keyed by origin.
+function scoresByOrigin(reference, datasetId) {
+  return Object.fromEntries(Object.keys(REFERENCE_ORIGINS).map((origin) => [origin, referenceScores(reference, datasetId, origin)]));
+}
+
 function accuracyMetricTiles(metrics, scores) {
   return orderedAccuracyMetrics(metrics).slice(0, ACCURACY_SUMMARY_TILES).map(([name, value], index) => {
-    const published = formatAccuracy(name, scores[name], { blank: true });
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
+    const notes = Object.entries(REFERENCE_ORIGINS).map(([origin, { label }]) => {
+      const score = formatAccuracy(name, scores[origin][name], { blank: true });
+      return score ? `<small>${escapeHtml(`${label} ${score}`)}</small>` : "";
+    }).join("");
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong>${notes || "<small></small>"}</div>`;
   }).join("");
 }
 
+// The Published column always shows; the FP32 baseline column only when the model has a baseline here.
 function accuracyMetricTable(metrics, scores) {
+  const origins = Object.keys(REFERENCE_ORIGINS).filter((origin) => origin === "published" || Object.keys(scores[origin]).length);
   const rows = orderedAccuracyMetrics(metrics).slice(ACCURACY_SUMMARY_TILES).map(([name, value]) => (
-    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, value))}</td><td>${escapeHtml(formatAccuracy(name, scores[name]))}</td></tr>`
+    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, value))}</td>${origins.map((origin) => `<td>${escapeHtml(formatAccuracy(name, scores[origin][name]))}</td>`).join("")}</tr>`
   )).join("");
   if (!rows) return "";
-  return `<div class="metric-table"><h4>Additional metrics</h4><div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  const headers = origins.map((origin) => `<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>`).join("");
+  return `<div class="metric-table"><h4>Additional metrics</h4><div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th>${headers}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 // Conditions are written as a phrase, such as "640x640, FP32"; notes may already end a sentence.
@@ -785,28 +796,49 @@ function sentence(text = "") {
   return !text || /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-// Each source the model's authors published scores in, with the dataset and conditions they measured on.
+// One row per origin the model has, listing that origin's entries.
+function referenceDisclosures(reference) {
+  return Object.entries(REFERENCE_ORIGINS).map(([origin, { title, id }]) => {
+    const entries = reference.filter((entry) => referenceOrigin(entry) === origin);
+    if (!entries.length) return "";
+    return disclosure(id, title, referenceTables(entries), `${entries.length} ${entries.length === 1 ? "source" : "sources"}`);
+  }).join("");
+}
+
+// Each reference entry with the dataset and conditions it was measured on, and where it came from.
 function referenceTables(reference) {
   return reference.map((entry) => {
+    const { label } = REFERENCE_ORIGINS[referenceOrigin(entry)] || REFERENCE_ORIGINS.published;
     const metrics = entry.metrics || {};
     const rows = orderedMetricNames(Object.keys(metrics)).map((name) => (
       `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, metrics[name]))}</td></tr>`
     )).join("");
     const source = trustedHttpsUrl(entry.source);
-    const link = source ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>` : "";
+    const link = source
+      ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>`
+      : entry.script ? ` Measured by ${escapeHtml(entry.script)}.` : "";
     return `<div class="metric-table published-scores"><h4>${escapeHtml(`${entry.dataset?.id || ""} ${entry.dataset?.split || ""}`.trim())}</h4>
       <p class="disclosure-text">${escapeHtml(sentence(entry.conditions))}${entry.note ? ` ${escapeHtml(sentence(entry.note))}` : ""}${link}</p>
-      <div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+      <div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">${escapeHtml(label)}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }).join("");
 }
 
-// A build without an accuracy result still shows what the model's authors published.
+// A build without an accuracy result still shows its reference scores, each origin under its own explanation.
+const REFERENCE_SCOPES = {
+  published: "The model's authors published these scores for the source model.",
+  fp32_baseline: "The FP32 source model scores these on the package's own inputs.",
+};
+
 function referenceAccuracySection(reference) {
   if (!reference.length) return "";
+  const groups = Object.keys(REFERENCE_ORIGINS).map((origin) => {
+    const entries = reference.filter((entry) => referenceOrigin(entry) === origin);
+    return entries.length ? `<p class="accuracy-scope">${escapeHtml(REFERENCE_SCOPES[origin])}</p>${referenceTables(entries)}` : "";
+  }).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3></div>
-    <p class="accuracy-scope">No accuracy result for this build yet. The model's authors published these scores for the source model.</p>
-    ${referenceTables(reference)}
+    <p class="accuracy-scope">No accuracy result for this build yet.</p>
+    ${groups}
   </section>`;
 }
 

@@ -81,12 +81,23 @@ export function orderedMetricNames(names) {
   return [...names].sort((left, right) => rank(left) - rank(right));
 }
 
-// The score each source model's authors published for a metric on a dataset. A result measured on a
-// different dataset has no comparable reference score, even when the metric names match.
-export function referenceScores(reference, datasetId) {
+// Who measured a reference score: the source model's authors, or the model's FP32 baseline script on the
+// package's own inputs. Each is labelled apart, so a baseline never reads as the authors' claim.
+export const REFERENCE_ORIGINS = {
+  published: { label: "Published", title: "Published scores", id: "published-scores" },
+  fp32_baseline: { label: "FP32 baseline", title: "FP32 baseline", id: "fp32-baseline-scores" },
+};
+
+export function referenceOrigin(entry) {
+  return entry.origin || "published";
+}
+
+// The reference score of one origin for each metric on a dataset. A result measured on a different dataset has
+// no comparable reference score, even when the metric names match.
+export function referenceScores(reference, datasetId, origin = "published") {
   const scores = {};
   for (const entry of reference || []) {
-    if (entry.dataset?.id !== datasetId) continue;
+    if (entry.dataset?.id !== datasetId || referenceOrigin(entry) !== origin) continue;
     for (const [name, value] of Object.entries(entry.metrics || {})) {
       if (Number.isFinite(value)) scores[name] = value;
     }

@@ -47,6 +47,13 @@ test('reference scores sit beside measurements of the same dataset only', () => 
   assert.deepEqual(referenceScores(undefined, 'coco-2017'), {});
 });
 
+test('published and FP32 baseline scores stay apart', () => {
+  const baseline = {origin: 'fp32_baseline', dataset: {id: 'coco-2017', split: 'val'}, metrics: {coco_map: 0.51}};
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017', 'fp32_baseline'), {coco_map: 0.51});
+  assert.deepEqual(referenceScores(reference, 'coco-2017', 'fp32_baseline'), {});
+});
+
 test('ratios show as percentages and other units as reported, each with its direction', () => {
   assert.equal(formatAccuracy('coco_map', 0.401), '40.10%');
   assert.equal(formatAccuracy('epe', 0.7763), '0.776 px');

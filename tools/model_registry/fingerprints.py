@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, SCRIPTS
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
@@ -26,8 +26,9 @@ COMPILE_TOOLING = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-# Conversion produces the pinned source, and the benchmarks consume the MPK; none changes compilation.
-NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), *CONVERSION_FILES}
+# Conversion produces the pinned source, the benchmarks consume the MPK, and the FP32 baseline script runs the
+# source on a host; none changes compilation.
+NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), FP32_BASELINE_SCRIPT, *CONVERSION_FILES}
 
 # Each benchmark stage's registry run type.
 BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_accuracy"}

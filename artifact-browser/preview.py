@@ -454,12 +454,11 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
     expected = tests.get("accuracy", {}).get("expected", {}).get(profile_id, {})
     datasets = {}
     for name, dataset in model["accuracy"]["datasets"].items():
-        reference = {
-            metric: value
-            for entry in model.get("reference_metrics", [])
-            if entry["dataset"]["id"] == dataset["id"]
-            for metric, value in entry["metrics"].items()
-        }
+        # The FP32 baseline, measured on the package's own inputs, is the closer reference: it wins over a
+        # published score of the same metric.
+        entries = [entry for entry in model.get("reference_metrics", []) if entry["dataset"]["id"] == dataset["id"]]
+        entries.sort(key=lambda entry: entry.get("origin") == "fp32_baseline")
+        reference = {metric: value for entry in entries for metric, value in entry["metrics"].items()}
         available = 500 + int(_fraction("samples", *key, name) * 4500)
         datasets[name] = {
             **copy.deepcopy(sample),
