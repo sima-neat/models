@@ -179,7 +179,7 @@ def test_only_the_int8_build_quantizes_with_calibration_data(
     )
 
     with pytest.raises(RuntimeError, match="expected one MPK"):
-        compile_module.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "coco.tgz")
+        compile_module.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "hpatches.tgz")
 
     data = compile_module.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
     if precision == "w8a8":
@@ -210,19 +210,31 @@ def test_compile_requires_the_converted_interface(
             compile_module.validate_source(path)
 
 
-def test_calibration_draws_seeded_cal2017_images(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_calibration_draws_seeded_images_of_the_cal_sequences(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    cv2 = pytest.importorskip("cv2")
     calibration = load_script("calibration")
-    for split in ("cal2017", "val2017"):
-        (tmp_path / split).mkdir()
-        for index in range(6):
-            (tmp_path / split / f"{index:012d}.jpg").write_bytes(b"jpeg")
+    archive = tmp_path / "datasets__hpatches_cal.tgz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for split, value in (("cal", 200), ("val", 0)):
+            for sequence in ("i_a", "v_b"):
+                for index in range(1, 4):
+                    path = tmp_path / split / sequence / f"{index}.ppm"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    assert cv2.imwrite(str(path), np.full((300, 400, 3), value, np.uint8))
+                    tar.add(path, f"hpatches/{split}/{sequence}/{index}.ppm")
+                (tmp_path / split / sequence / "H_1_2").write_text("1 0 0\n0 1 0\n0 0 1\n")
+                tar.add(tmp_path / split / sequence / "H_1_2", f"hpatches/{split}/{sequence}/H_1_2")
 
-    names = calibration.calibration_names(tmp_path, 4)
+    images = calibration.calibration_images(archive, 4)
 
-    assert names == calibration.calibration_names(tmp_path, 4)
-    assert len(set(names)) == 4 and all(name.startswith("cal2017/") for name in names)
+    assert images.shape == (4, 480, 640, 1) and images.dtype == np.float32
+    # Every selected image comes from a cal sequence: the val images are black.
+    np.testing.assert_allclose(images, 200 / 255, rtol=1e-3)
+    np.testing.assert_array_equal(images, calibration.calibration_images(archive, 4))
     with pytest.raises(ValueError, match="cannot select 7"):
-        calibration.calibration_names(tmp_path, 7)
+        calibration.calibration_images(archive, 7)
 
 
 def test_model_preserves_compilation_and_licence_settings() -> None:

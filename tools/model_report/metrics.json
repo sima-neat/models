@@ -64,7 +64,6 @@
   "coco_box_map": {"stage": "accuracy", "label": "Box mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_map", "aggregation": "raw", "digits": 3},
   "coco_box_ap50": {"stage": "accuracy", "label": "Box AP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_ap50", "aggregation": "raw", "digits": 3},
   "keypoint_repeatability": {"stage": "accuracy", "label": "Repeatability", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.keypoint_repeatability", "aggregation": "raw", "digits": 3},
-  "matching_accuracy": {"stage": "accuracy", "label": "Matching accuracy", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.matching_accuracy", "aggregation": "raw", "digits": 3},
   "homography_accuracy": {"stage": "accuracy", "label": "Homography accuracy", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.homography_accuracy", "aggregation": "raw", "digits": 3},
   "recall_at_1": {"stage": "accuracy", "label": "Recall@1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_1", "aggregation": "raw", "digits": 3},
   "recall_at_5": {"stage": "accuracy", "label": "Recall@5", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_5", "aggregation": "raw", "digits": 3},

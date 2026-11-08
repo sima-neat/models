@@ -1,4 +1,4 @@
-"""Benchmark one compiled SuperPoint MPK with Neat's SuperPoint decoder on a COCO image and save its report."""
+"""Benchmark one compiled SuperPoint MPK with Neat's SuperPoint decoder on an HPatches image and save its report."""
 
 import argparse
 import random
@@ -9,16 +9,17 @@ import model_report
 import numpy as np
 import pyneat
 
-IMAGES = "val2017"
+SPLIT = "val"
+TOP_K = 1000
 # The benchmark input is a 720p camera frame, letterboxed with grey padding.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
 def sample_image(dataset: Path) -> Path:
-    """One val2017 image, chosen with a fixed seed so every run measures the same input."""
-    images = sorted((dataset / IMAGES).glob("*.jpg"))
+    """One hpatches-val image, chosen with a fixed seed so every run measures the same input."""
+    images = sorted((dataset / SPLIT).glob("*/*.ppm"))
     if not images:
-        raise SystemExit(f"{dataset} has no images under {IMAGES}/")
+        raise SystemExit(f"{dataset} has no images under {SPLIT}/")
     return random.Random(0).choice(images)
 
 
@@ -41,7 +42,7 @@ def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
+parser.add_argument("--dataset", required=True, help="hpatches-val=<extracted directory>")
 parser.add_argument("--output", required=True, help="directory for model-report.json")
 args = parser.parse_args()
 dataset_id, dataset_dir = args.dataset.split("=", 1)
@@ -61,8 +62,9 @@ options.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.GR
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.SuperPoint
 # Magic Leap's demo decode, as accuracy.py measures it: threshold 0.015, NMS radius 4, a 4-pixel border and the best
-# 600 keypoints.
+# 1000 keypoints.
 options.superpoint.profile = pyneat.SuperPointProfile.MagicLeapDemoV1
+options.top_k = TOP_K
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -77,9 +79,9 @@ report = model_report.from_performance(
     model.benchmark(benchmark_options),
     {"model": model},
     workload=(
-        f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-        f"640x480 and kept the red channel as grayscale, SuperPoint decoder (MagicLeapDemoV1), "
-        f"{postprocess} post-processing"
+        f"{dataset_id} {image.parent.name}/{image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, "
+        f"Neat preprocessing stretched to 640x480 and kept the red channel as grayscale, "
+        f"SuperPoint decoder (MagicLeapDemoV1, top {TOP_K}), {postprocess} post-processing"
     ),
 )
 report.save(args.output)

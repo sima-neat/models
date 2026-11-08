@@ -31,8 +31,8 @@ compilation:
   source: conversion
 
 calibrations:
-- id: coco-2017-cal
-  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+- id: hpatches-cal
+  dataset: {id: hpatches, variant: cal, sha256: 279c200aecec67f979d3f5655e13b319b73cd364be604f5f4457897d38c82a0f, size_bytes: 112197937}
 
 build_profiles:
   w16a16:
@@ -41,7 +41,7 @@ build_profiles:
         parameters: {precision: w16a16}
 
   w8a8:
-    calibration_dataset: coco-2017-cal
+    calibration_dataset: hpatches-cal
     components:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
@@ -52,12 +52,19 @@ build_profiles:
         parameters: {precision: w8a16}
 
 accuracy:
-  # Each val2017 image is paired with its own warp by a seeded homography; see scripts/accuracy.py.
+  # The SuperPoint paper's HPatches protocol on the 106 sequences the cal variant leaves out; see scripts/accuracy.py.
   datasets:
-  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  - {id: hpatches, variant: val, sha256: 65861f9fcc9e5cf93b4aae23eeb8ea63b18ec4bad773ed26ebf53f2a2453e46d, size_bytes: 1166451792}
 
 performance: {}
 
-# No reference_metrics: neither the pinned Hugging Face model card nor SuperPointPretrainedNetwork's README
-# (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these weights. The paper's HPatches tables measure
-# its own training-time models.
+# No published score is comparable to this package. The paper's HPatches table (Table 4) scores its own training-time
+# models, and neither the pinned Hugging Face model card nor SuperPointPretrainedNetwork's README
+# (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these weights. scripts/fp32_baseline_accuracy.py
+# measures the FP32 baseline on this package's own inputs instead.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: hpatches, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU, Magic Leap's demo decode in NumPy, at most 1000 keypoints from a 640x480 image
+  metrics: {keypoint_repeatability: 0.6119, homography_accuracy: 0.8189}

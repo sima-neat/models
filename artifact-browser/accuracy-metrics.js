@@ -41,7 +41,6 @@ export const ACCURACY_METRIC_LABELS = {
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
   keypoint_repeatability: "Repeatability",
-  matching_accuracy: "Matching accuracy",
   homography_accuracy: "Homography accuracy",
   recall_at_1: "Recall@1",
   recall_at_5: "Recall@5",

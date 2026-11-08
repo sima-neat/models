@@ -282,7 +282,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    split, an HPatches val sequence, and the Scene Flow test list. Only the second COCO image labels a person, so a
+    pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -292,6 +293,7 @@ def benchmark_dataset(root):
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/v_scene/1.ppm", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -394,8 +396,8 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
             "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
         )
         assert not hasattr(options.preprocess, "preset")
-        assert options.superpoint.profile == "MagicLeapDemoV1"
-        assert ".jpg" in report["workload"]
+        assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
+        assert "v_scene/1.ppm" in report["workload"]
     else:
         assert_letterboxed_frame(frame)
         assert options.preprocess.resize.mode == "Stretch"

@@ -1,17 +1,17 @@
-"""Measure SuperPoint's keypoint repeatability, matching accuracy and homography accuracy with its MPK on a Modalix
-board.
+"""Measure SuperPoint's keypoint repeatability and homography accuracy with its MPK on a Modalix board.
 
-Each image of a seeded sample of 1000 COCO val2017 images is paired with its own warp by a homography seeded with the
-image id. The MPK runs on both images, Neat's SuperPoint decoder decodes each with Magic Leap's demo settings, as
-performance.py does, and the pair is scored against the known homography as in the SuperPoint paper's HPatches
-evaluation, at 3 pixels.
+The protocol is the SuperPoint paper's HPatches evaluation (Table 4). In each of the 106 hpatches-val sequences,
+image 1 is paired with images 2 to 6 and their dataset homographies H_1_k. Every image is resized to the 640x480 input
+and each homography rescaled with it. Neat's SuperPoint decoder keeps at most 1000 keypoints per image with Magic
+Leap's demo settings, as performance.py does. A keypoint is repeated when the other image has one within 3 pixels of
+its projection. The homography is estimated with OpenCV's RANSAC from each image-1 keypoint's nearest neighbour by
+descriptor, and is correct when the image corners land within 3 pixels on average.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import random
 import sys
 import time
 from collections import deque
@@ -21,23 +21,24 @@ from pathlib import Path
 
 import model_report
 import numpy as np
-import pyneat
 from keypoints import HEIGHT, WIDTH, decode_image, preprocess
 
-IMAGES = "val2017"
-AVAILABLE_IMAGES = 5000
-# A seeded sample keeps the stage near 13 minutes on a DevKit, inside the 45-minute job limit.
-SAMPLED_IMAGES = 1000
-SAMPLE_SEED = 0
+SPLIT = "val"
+SEQUENCES = 106
+TARGETS = range(2, 7)
+TOP_K = 1000
 PIXEL_TOLERANCE = 3.0
 MIN_HOMOGRAPHY_MATCHES = 4
-METRICS = ("keypoint_repeatability", "matching_accuracy", "homography_accuracy")
-# Image pairs decode and warp on worker threads while the MPK runs.
+METRICS = ("keypoint_repeatability", "homography_accuracy")
+# Sequences decode and resize on worker threads while the MPK runs.
 WORKERS = 4
 PREFETCH = 8
 
 
-def tensor_options() -> pyneat.ModelOptions:
+def tensor_options():
+    """PyNeat options for the 640x480 grayscale input this script prepares, decoded with Magic Leap's demo settings."""
+    import pyneat
+
     options = pyneat.ModelOptions()
     options.preprocess.kind = pyneat.InputKind.Tensor
     # The script already resized the image and made it grayscale in [0, 1]; Neat still quantizes and tessellates.
@@ -45,9 +46,9 @@ def tensor_options() -> pyneat.ModelOptions:
     options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
     options.preprocess.normalize.enable = pyneat.AutoFlag.Off
     options.decode_type = pyneat.BoxDecodeType.SuperPoint
-    # Magic Leap's demo decode, as performance.py measures it: threshold 0.015, NMS radius 4, a 4-pixel border and
-    # the best 600 keypoints.
+    # Magic Leap's demo decode: threshold 0.015, NMS radius 4 and a 4-pixel border, keeping the paper's 1000 keypoints.
     options.superpoint.profile = pyneat.SuperPointProfile.MagicLeapDemoV1
+    options.top_k = TOP_K
     return options
 
 
@@ -62,29 +63,28 @@ def prefetched(load: Callable, items: Sequence) -> Iterator:
             yield pending.popleft().result()
 
 
-def homography(seed: int, width: int, height: int) -> np.ndarray:
-    """A seeded, drone-like viewpoint change about the image centre: rotation, scale, shift and a little perspective."""
-    rng = np.random.RandomState(seed)
-    angle = np.radians(rng.uniform(-15, 15))
-    scale = rng.uniform(0.85, 1.1)
-    centre = np.array([[1, 0, -width / 2], [0, 1, -height / 2], [0, 0, 1]])
-    rotate = np.array([[scale * np.cos(angle), -scale * np.sin(angle), 0],
-                       [scale * np.sin(angle), scale * np.cos(angle), 0], [0, 0, 1]])
-    perspective = np.array([[1, 0, 0], [0, 1, 0], [rng.uniform(-1e-4, 1e-4), rng.uniform(-1e-4, 1e-4), 1]])
-    back = np.array([[1, 0, width / 2 + rng.uniform(-30, 30)], [0, 1, height / 2 + rng.uniform(-30, 30)], [0, 0, 1]])
-    return back @ perspective @ rotate @ centre
+def sequence_dirs(dataset: Path) -> list[Path]:
+    sequences = sorted(path for path in (dataset / SPLIT).iterdir() if path.is_dir())
+    if len(sequences) != SEQUENCES:
+        raise SystemExit(f"expected {SEQUENCES} {SPLIT} sequences in {dataset}, found {len(sequences)}")
+    return sequences
 
 
-def image_pair(content: bytes, image_id: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return the two model inputs of one pair and the homography from the first to the second, in input pixels."""
-    import cv2
+def load_sequence(directory: Path) -> tuple[np.ndarray, list[tuple[np.ndarray, np.ndarray]]]:
+    """Image 1's model input, and each target's model input with the homography from image 1, in input pixels."""
 
-    image = decode_image(content)
-    height, width = image.shape[:2]
-    warp = homography(image_id, width, height)
-    warped = cv2.warpPerspective(image, warp, (width, height))
-    resize = np.diag([WIDTH / width, HEIGHT / height, 1.0])
-    return preprocess(image), preprocess(warped), resize @ warp @ np.linalg.inv(resize)
+    def model_input(index: int) -> tuple[np.ndarray, np.ndarray]:
+        image = decode_image((directory / f"{index}.ppm").read_bytes())
+        height, width = image.shape[:2]
+        return preprocess(image), np.diag([WIDTH / width, HEIGHT / height, 1.0])
+
+    reference, reference_scale = model_input(1)
+    targets = []
+    for index in TARGETS:
+        target, scale = model_input(index)
+        matrix = np.loadtxt(directory / f"H_1_{index}")
+        targets.append((target, scale @ matrix @ np.linalg.inv(reference_scale)))
+    return reference, targets
 
 
 def project(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -108,16 +108,6 @@ def repeatability(keypoints0: np.ndarray, keypoints1: np.ndarray, matrix: np.nda
     return float(repeated / (len(seen0) + len(seen1)))
 
 
-def mutual_matches(descriptors0: np.ndarray, descriptors1: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Index pairs of mutual nearest neighbours between two sets of unit descriptors."""
-    if not len(descriptors0) or not len(descriptors1):
-        return np.zeros(0, int), np.zeros(0, int)
-    similarity = descriptors0 @ descriptors1.T
-    best0, best1 = similarity.argmax(1), similarity.argmax(0)
-    rows = np.flatnonzero(best1[best0] == np.arange(len(best0)))
-    return rows, best0[rows]
-
-
 def homography_correct(points0: np.ndarray, points1: np.ndarray, matrix: np.ndarray) -> bool:
     """Estimate the homography from matched points with OpenCV's RANSAC and check where it puts the image corners."""
     import cv2
@@ -126,45 +116,44 @@ def homography_correct(points0: np.ndarray, points1: np.ndarray, matrix: np.ndar
         return False
     # RANSAC samples at random; a fixed seed makes every run score the same.
     cv2.setRNGSeed(0)
-    estimate, _ = cv2.findHomography(
-        points0.astype(np.float64), points1.astype(np.float64), cv2.RANSAC, PIXEL_TOLERANCE
-    )
+    estimate, _ = cv2.findHomography(points0.astype(np.float64), points1.astype(np.float64), cv2.RANSAC)
     if estimate is None:
         return False
     corners = np.array([[0, 0], [WIDTH - 1, 0], [WIDTH - 1, HEIGHT - 1], [0, HEIGHT - 1]], dtype=np.float64)
-    return bool(np.linalg.norm(project(corners, estimate) - project(corners, matrix), axis=1).mean() < PIXEL_TOLERANCE)
+    error = np.linalg.norm(project(corners, estimate) - project(corners, matrix), axis=1).mean()
+    return bool(error <= PIXEL_TOLERANCE)
 
 
 def score_pair(features0: tuple, features1: tuple, matrix: np.ndarray) -> dict[str, float]:
     """Score the decoded features of one pair against its homography."""
     keypoints0, _, descriptors0 = features0
     keypoints1, _, descriptors1 = features1
-    rows, columns = mutual_matches(descriptors0, descriptors1)
-    points0, points1 = keypoints0[rows], keypoints1[columns]
-    errors = np.linalg.norm(project(points0, matrix) - points1, axis=1)
+    if len(keypoints1):
+        nearest = (descriptors0 @ descriptors1.T).argmax(1)
+        correct = homography_correct(keypoints0, keypoints1[nearest], matrix)
+    else:
+        correct = False
     return {
         "keypoint_repeatability": repeatability(keypoints0, keypoints1, matrix),
-        "matching_accuracy": float((errors <= PIXEL_TOLERANCE).mean()) if len(errors) else 0.0,
-        "homography_accuracy": float(homography_correct(points0, points1, matrix)),
+        "homography_accuracy": float(correct),
         "keypoints": (len(keypoints0) + len(keypoints1)) / 2,
-        "matches": float(len(rows)),
     }
 
 
-def evaluate(pairs: Iterator, count: int, features_of: Callable[[np.ndarray], tuple]) -> tuple[dict, dict]:
-    """Score `count` (image0, image1, homography) pairs with features_of(image) -> decoded features.
+def evaluate(sequences: Iterator, count: int, features_of: Callable[[np.ndarray], tuple]) -> tuple[dict, float]:
+    """Score `count` sequences from load_sequence() with features_of(image) -> decoded features.
 
-    Returns the mean metrics and the mean keypoint and match counts per pair.
+    Returns the mean metrics over every pair and the mean keypoint count per image.
     """
     rows = []
     started = time.monotonic()
-    for index, (image0, image1, matrix) in enumerate(pairs, start=1):
-        rows.append(score_pair(features_of(image0), features_of(image1), matrix))
-        if index == 1 or index % 250 == 0 or index == count:
-            log(f"{index}/{count} pairs, {(time.monotonic() - started) / index * 1000:.0f} ms/pair")
+    for index, (reference, targets) in enumerate(sequences, start=1):
+        features0 = features_of(reference)
+        rows.extend(score_pair(features0, features_of(target), matrix) for target, matrix in targets)
+        if index == 1 or index % 25 == 0 or index == count:
+            log(f"{index}/{count} sequences, {(time.monotonic() - started) / index:.1f} s/sequence")
     metrics = {name: float(np.mean([row[name] for row in rows])) for name in METRICS}
-    averages = {name: round(float(np.mean([row[name] for row in rows])), 1) for name in ("keypoints", "matches")}
-    return metrics, averages
+    return metrics, round(float(np.mean([row["keypoints"] for row in rows])), 1)
 
 
 def parse_mpks(values: list[str]) -> Path:
@@ -178,19 +167,30 @@ def log(*values: object) -> None:
     print(*values, file=sys.stderr, flush=True)
 
 
+def report(dataset_id: str, metrics: dict, sequences: int, keypoints: float, seconds: float) -> model_report.Report:
+    return model_report.from_accuracy({
+        dataset_id: {
+            "metrics": metrics,
+            "split": SPLIT,
+            "evaluated_samples": sequences * len(TARGETS),
+            "available_samples": SEQUENCES * len(TARGETS),
+            "details": {"keypoints_per_image": keypoints, "seconds": round(seconds, 1)},
+        },
+    })
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
+    parser.add_argument("--dataset", required=True, help="hpatches-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first sampled images only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first sequences only (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
-    images = sorted((Path(dataset_dir) / IMAGES).glob("*.jpg"))
-    if len(images) != AVAILABLE_IMAGES:
-        raise SystemExit(f"expected {AVAILABLE_IMAGES} {IMAGES} images, found {len(images)}")
-    sampled = sorted(random.Random(SAMPLE_SEED).sample(images, SAMPLED_IMAGES))
-    selected = sampled[: args.limit] if args.limit else sampled
+    sequences = sequence_dirs(Path(dataset_dir))[: args.limit]
+
+    # PyNeat runs only on the board; fp32_baseline_accuracy.py imports this script on a host.
+    import pyneat
 
     model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
     runner = None
@@ -205,21 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         return tuple(part.to_numpy(copy=True) for part in (features.keypoints, features.scores, features.descriptors))
 
     started = time.monotonic()
-    pairs = prefetched(lambda path: image_pair(path.read_bytes(), int(path.stem)), selected)
-    metrics, averages = evaluate(pairs, len(selected), features_of)
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": metrics,
-            "split": IMAGES, "evaluated_samples": len(selected), "available_samples": AVAILABLE_IMAGES,
-            "details": {
-                "keypoints_per_image": averages["keypoints"],
-                "mutual_matches_per_pair": averages["matches"],
-                "seconds": round(time.monotonic() - started, 1),
-            },
-        },
-    })
-    report.save(args.output)
-    measured = report.document["datasets"][dataset_id]["metrics"]
+    metrics, keypoints = evaluate(prefetched(load_sequence, sequences), len(sequences), features_of)
+    result = report(dataset_id, metrics, len(sequences), keypoints, time.monotonic() - started)
+    result.save(args.output)
+    measured = result.document["datasets"][dataset_id]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
     return 0
 

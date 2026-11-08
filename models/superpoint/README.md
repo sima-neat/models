@@ -32,8 +32,8 @@ To get keypoints:
 
 Neat's SuperPoint decoder runs these steps with the `LightGlueV1` profile and a
 score threshold of 0.005. Its `MagicLeapDemoV1` profile runs Magic Leap's demo
-decode instead, which the model page's results use: it keeps pixels scoring at
-least 0.015 before suppression and returns the best 600.
+decode instead, which keeps pixels scoring at least 0.015 before suppression.
+The model page's results use it and keep the best 1000.
 
 ## Building applications
 
