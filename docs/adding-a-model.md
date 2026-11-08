@@ -271,7 +271,8 @@ builds](#on-demand-builds).
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
-`performance.py`, `accuracy.py`, `convert.py` and `requirements-convert.txt`.
+`performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
+`requirements-convert.txt`.
 The shared model loader is an input to every ONNX compile fingerprint;
 descriptive preprocessing and surgery declarations are not. The shared
 benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow, `tools/model_report`
@@ -287,6 +288,7 @@ is always benchmarked again.
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, or the shared export code | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
+| a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
