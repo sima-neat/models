@@ -341,7 +341,7 @@ reference_metrics:
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: yfcc100m-keypoints, split: val}
   conditions: FP32 ONNX on ONNX Runtime CPU, 512 keypoints from a 640x480 image
-  metrics: {pose_auc_5: 0.2866}
+  metrics: {pose_auc_5: 0.2865}
 ```
 
 Metric names are accuracy metrics from `tools/model_report/metrics.json`, the

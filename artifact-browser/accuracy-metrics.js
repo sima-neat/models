@@ -42,6 +42,11 @@ export const ACCURACY_METRIC_LABELS = {
   coco_box_ap50: "Box AP50",
   keypoint_repeatability: "Repeatability",
   homography_accuracy: "Homography accuracy",
+  pose_auc_5: "Pose AUC@5°",
+  pose_auc_10: "Pose AUC@10°",
+  pose_auc_20: "Pose AUC@20°",
+  match_precision: "Match precision",
+  matching_score: "Matching score",
   recall_at_1: "Recall@1",
   recall_at_5: "Recall@5",
   recall_at_10: "Recall@10",
@@ -102,4 +107,13 @@ export function referenceScores(reference, datasetId, origin = "published") {
     }
   }
   return scores;
+}
+
+// The reference notes under one accuracy tile, in REFERENCE_ORIGINS order, such as "FP32 baseline 28.65%". Both
+// views show them, so a customer can compare a build with its baseline.
+export function referenceNotes(name, scoresByOrigin) {
+  return Object.entries(REFERENCE_ORIGINS).flatMap(([origin, { label }]) => {
+    const score = formatAccuracy(name, scoresByOrigin[origin]?.[name], { blank: true });
+    return score ? [`${label} ${score}`] : [];
+  });
 }

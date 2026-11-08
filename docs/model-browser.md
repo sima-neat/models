@@ -218,7 +218,9 @@ in this order:
    percentages, EPE in pixels, D1-all in percent), the evaluated sample count, and
    the commit and GitHub workflow of the run that measured them. With more than
    one dataset, each result is titled by its dataset name. The catalog table
-   and **Compare** use the first dataset.
+   and **Compare** use the first dataset. Under each of the four metrics, both
+   views show its published score and its FP32 baseline when `reference_metrics`
+   records them for the measured dataset.
    In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
    the remaining metrics, each with its published score and its FP32 baseline
    when `reference_metrics` in `model.yaml` records them for the measured
