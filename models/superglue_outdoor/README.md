@@ -24,8 +24,7 @@ Pass three float tensors per image (0 and 1):
 - `scores0`, `scores1`: 512 × 1 keypoint scores.
 - `descriptors0`, `descriptors1`: 512 × 256 SuperPoint descriptors.
 
-**Output.** `couplings` is 1 × 1 × 513 × 513 (1 × 513 × 513 on Neat Core
-0.5.0). As a 513 × 513 matrix, entry (i, j) scores image-0 keypoint i against
+**Output.** `couplings` is 1 × 1 × 513 × 513. As a 513 × 513 matrix, entry (i, j) scores image-0 keypoint i against
 image-1 keypoint j; index 512 is each image's unmatched option.
 
 1. Subtract the matrix maximum and take the exponent of every entry.
