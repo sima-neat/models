@@ -1,4 +1,4 @@
-"""Checks of the conversion's interface, its CPU post-processing reference and the 4D rewrite of the matcher."""
+"""Checks of the conversion's interface, its Sinkhorn and match extraction and the 4D rewrite of the matcher."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -15,13 +15,6 @@ ROOT = Path(__file__).resolve().parents[4]
 @pytest.fixture
 def converter(load_script: Callable[[str], ModuleType]) -> ModuleType:
     return load_script("convert")
-
-
-def test_keypoints_normalize_to_superglue_frame(converter: ModuleType) -> None:
-    # A 640x480 image: the centre maps to 0 and the longer side spans +-1/(2*0.7).
-    normalized = converter.normalize_keypoints([[320, 240], [640, 240], [0, 0]], 640, 480)
-
-    np.testing.assert_allclose(normalized, [[0, 0], [0.5 / 0.7, 0], [-0.5 / 0.7, -0.375 / 0.7]], rtol=1e-6)
 
 
 def test_sinkhorn_and_extraction_find_clear_matches(converter: ModuleType) -> None:

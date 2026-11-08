@@ -2,7 +2,8 @@
 
 The exported graph runs the keypoint encoder, the attentional GNN and the final projection of one image pair and
 returns the Sinkhorn couplings, the descriptor scores bordered by the learned dustbin score. The application runs the
-Sinkhorn iterations and match extraction on the CPU; accuracy.py holds their reference.
+Sinkhorn iterations and match extraction on the CPU; the export check below runs them as SuperGlue's
+log_optimal_transport does.
 """
 
 import argparse
@@ -10,7 +11,6 @@ from pathlib import Path, PurePosixPath
 
 import numpy as np
 import onnx
-from accuracy import extract_matches, log_sinkhorn, normalize_keypoints  # noqa: F401
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
 
@@ -219,6 +219,35 @@ def to_inputs(sample):
 def couplings_matrix(couplings):
     """Return exported [1, N+1, 1, N+1] couplings as the [N+1, N+1] matrix with image-0 keypoints as rows."""
     return np.asarray(couplings).reshape(KEYPOINTS + 1, KEYPOINTS + 1).T
+
+
+def log_sinkhorn(couplings, iterations):
+    """Return the log optimal-transport matrix of [M+1, N+1] couplings, as SuperGlue's log_optimal_transport."""
+    rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
+    normalization = -np.log(rows + columns)
+    log_mu = np.concatenate([np.full(rows, normalization), [np.log(columns) + normalization]])
+    log_nu = np.concatenate([np.full(columns, normalization), [np.log(rows) + normalization]])
+    cost = np.asarray(couplings, dtype=np.float64).reshape(rows + 1, columns + 1)
+    u, v = np.zeros_like(log_mu), np.zeros_like(log_nu)
+    for _ in range(iterations):
+        u = log_mu - _logsumexp(cost + v[None, :], axis=1)
+        v = log_nu - _logsumexp(cost + u[:, None], axis=0)
+    return cost + u[:, None] + v[None, :] - normalization
+
+
+def _logsumexp(values, axis):
+    top = values.max(axis=axis, keepdims=True)
+    return (top + np.log(np.exp(values - top).sum(axis=axis, keepdims=True))).squeeze(axis)
+
+
+def extract_matches(log_transport, threshold=0.0):
+    """Return, for each image-0 keypoint, its mutual nearest image-1 keypoint (-1 when unmatched) and match score."""
+    inner = log_transport[:-1, :-1]
+    best0, best1 = inner.argmax(1), inner.argmax(0)
+    mutual = best1[best0] == np.arange(len(best0))
+    scores = np.where(mutual, np.exp(inner.max(1)), 0.0)
+    valid = mutual & (scores > threshold)
+    return np.where(valid, best0, -1), np.where(valid, scores, 0.0)
 
 
 def compare_matches(expected, actual):
