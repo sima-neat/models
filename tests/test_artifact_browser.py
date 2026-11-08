@@ -313,8 +313,8 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
 
     report = measured["tests"][0]["summary"]
     builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
-    # One report for the whole model, with each component's layers in the order the pipeline runs them.
-    assert list(report["components"]) == ["backbone", "decoder"]
+    # One report for the whole model, its components in the jsonb key order the registry returns.
+    assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
                for component in report["components"].values())
     assert report["workload"] == "Backbone, Top 300 proposals on the CPU, decoder"
@@ -1439,10 +1439,12 @@ def test_benchmark_runs_are_resolved_from_catalog_fingerprints_and_accuracy_is_r
     # Results with more metrics than tiles list the rest in a table; each shows the reference score.
     assert ".slice(0, ACCURACY_SUMMARY_TILES)" in script
     assert ".slice(ACCURACY_SUMMARY_TILES)" in script
-    assert "Published ${published}" in script
-    assert '<th scope="col">Published</th>' in script
-    # Reference scores sit beside a measurement of the same dataset only; the headline is the first dataset's.
-    assert "referenceScores(reference, entry.dataset.id)" in script
+    assert "`${label} ${score}`" in script
+    assert '<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>' in script
+    # Reference scores sit beside a measurement of the same dataset only, each origin apart; the headline is the
+    # first dataset's published score.
+    assert "scoresByOrigin(reference, entry.dataset.id)" in script
+    assert "referenceScores(reference, datasetId, origin)" in script
     assert "const { metrics, dataset } = result.value.datasets[0];" in script
     assert "metric.reference" not in script
     assert "<strong>${escapeHtml(formatAccuracy(name, value))}</strong>" in script

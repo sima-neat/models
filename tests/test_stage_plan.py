@@ -535,6 +535,21 @@ def test_board_stage_tooling_change_measures_both_stages(stage_repository: Path,
     ]
 
 
+def test_metric_vocabulary_change_reruns_nothing(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    metrics = stage_repository / "tools/model_report/metrics.json"
+    metrics.parent.mkdir(parents=True, exist_ok=True)
+    vocabulary = json.loads((ROOT / "tools/model_report/metrics.json").read_text(encoding="utf-8"))
+    vocabulary.pop(next(iter(vocabulary)))
+    metrics.write_text(json.dumps(vocabulary), encoding="utf-8")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert plan["benchmark"]["include"] == []
+
+
 def test_performance_runner_change_measures_performance_only(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))

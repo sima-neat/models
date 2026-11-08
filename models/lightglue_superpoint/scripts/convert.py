@@ -5,11 +5,14 @@ position encoding, which the CPU computes in float64 (calibration.encoding), and
 [1, 512, 256], SuperPoint's descriptors. Output: assignment [1, 512, 512], LightGlue's soft assignment: the probability
 that keypoint i of image 0 matches keypoint j of image 1, the exponential of the log assignment LightGlue extracts its
 matches from. Every layer runs, since early stopping and keypoint pruning are off, so the graph is static. The
-checkpoint also holds SuperPoint, which the export leaves out.
+checkpoint also holds SuperPoint, which the export leaves out. Self attention's rotary encoding, attention scale and
+all-zero mask are folded into its projection weights (SelfAttention), which spares the compiler the data movement of
+transformers' rotate_half without changing a result.
 """
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -105,38 +108,105 @@ def fold_constants(path):
     onnx.save(model, path)
 
 
+def rotation(rotate_half, head_dim):
+    """The matrix R of one head's channels with rotate_half(x) = R x, taken from transformers' rotate_half itself: on
+    the identity's rows e_i it returns R e_i, R's columns. R must be a signed permutation, and unique channel values
+    prove it reproduces rotate_half, since any slip in the pairing or the signs shows up in them."""
+    import torch
+
+    matrix = rotate_half(torch.eye(head_dim, dtype=torch.float64)).T
+    channels = torch.arange(1, head_dim + 1, dtype=torch.float64)
+    ones = torch.ones(head_dim, dtype=torch.float64)
+    if (not torch.equal(matrix.abs().sum(0), ones) or not torch.equal(matrix.abs().sum(1), ones)
+            or not torch.equal(matrix @ channels, rotate_half(channels))):
+        raise ValueError("transformers' rotate_half is not a fixed signed permutation of each head's channels")
+    return matrix.float()
+
+
 def matcher(lightglue):
     """LightGlue's matcher on two images' fixed keypoints, from their rotary encodings and descriptors, returning the
     soft assignment without the dustbins."""
     import torch
     from torch import nn
+    from torch.nn import functional
+    from transformers.models.lightglue import modeling_lightglue
+
+    class RotaryProjection(nn.Module):
+        """A query or key projection with LightGlue's rotary encoding folded into its weights. transformers computes
+        q * cos + rotate_half(q) * sin, and rotate_half permutes and negates each head's channels by a fixed matrix R,
+        so R q = (R W) x + R b is a second projection: the result needs no slices, negations, stacks or reshapes."""
+
+        def __init__(self, linear, rotate, heads, scale):
+            super().__init__()
+            self.heads, self.head_dim = heads, rotate.shape[0]
+            weight, bias = linear.weight.detach() * scale, linear.bias.detach() * scale
+            self.register_buffer("weight", weight)
+            self.register_buffer("bias", bias)
+            self.register_buffer("rotated_weight", self.per_head(rotate, weight))
+            self.register_buffer("rotated_bias", self.per_head(rotate, bias))
+
+        def per_head(self, rotate, tensor):
+            """R applied to each head's channels of a weight [heads * head_dim, in] or a bias [heads * head_dim]."""
+            return (rotate @ tensor.view(self.heads, self.head_dim, -1)).reshape(tensor.shape)
+
+        def split_heads(self, tensor):
+            return tensor.view(*tensor.shape[:2], self.heads, self.head_dim).transpose(1, 2)
+
+        def forward(self, descriptors, cos, sin):
+            """cos and sin are tiled over the heads, so the encoding applies before the heads split off."""
+            plain = functional.linear(descriptors, self.weight, self.bias)
+            rotated = functional.linear(descriptors, self.rotated_weight, self.rotated_bias)
+            return self.split_heads(plain * cos + rotated * sin)
+
+    class SelfAttention(nn.Module):
+        """LightGlueAttention.forward for self attention, with three exact folds that spare the compiler data
+        movement: the rotary encoding is folded into the query and key projections, the attention scale, a power of
+        two, into the query projection, and the mask is dropped, since every keypoint is real and transformers adds
+        zeros."""
+
+        def __init__(self, attention, rotate):
+            super().__init__()
+            if not math.log2(attention.scaling).is_integer():
+                raise ValueError(f"The attention scale {attention.scaling} is no power of two; folding it is inexact")
+            heads = attention.config.num_attention_heads
+            self.query = RotaryProjection(attention.q_proj, rotate, heads, attention.scaling)
+            self.key = RotaryProjection(attention.k_proj, rotate, heads, 1.0)
+            self.value, self.output = attention.v_proj, attention.o_proj
+
+        def forward(self, descriptors, cos, sin):
+            scores = self.query(descriptors, cos, sin) @ self.key(descriptors, cos, sin).transpose(-1, -2)
+            weights = torch.softmax(scores, -1)
+            values = self.key.split_heads(self.value(descriptors))
+            return self.output((weights @ values).transpose(1, 2).reshape(descriptors.shape))
 
     class Matcher(nn.Module):
         def __init__(self):
             super().__init__()
             self.lightglue = lightglue
+            rotate = rotation(modeling_lightglue.rotate_half, lightglue.transformer_layers[0].self_attention.head_dim)
+            self.self_attentions = nn.ModuleList(
+                SelfAttention(layer.self_attention, rotate) for layer in lightglue.transformer_layers)
 
         @staticmethod
-        def layer(layer, descriptors, encoding, mask):
+        def layer(layer, self_attention, descriptors, cos, sin):
             """LightGlueTransformerLayer.forward, with the swap of the two images for cross attention written as a
-            concatenation: the exported flip(1) of the batch does not swap them."""
-            attended, _ = layer.self_attention(descriptors, position_embeddings=encoding, attention_mask=mask)
+            concatenation: the exported flip(1) of the batch does not swap them. Cross attention gets no mask, since
+            every keypoint is real and transformers would add zeros."""
+            attended = self_attention(descriptors, cos, sin)
             descriptors = descriptors + layer.self_mlp(torch.cat([descriptors, attended], -1))
             other = torch.cat([descriptors[1:2], descriptors[0:1]], 0)
-            attended, _ = layer.cross_attention(descriptors, encoder_hidden_states=other,
-                                                encoder_attention_mask=torch.cat([mask[1:2], mask[0:1]], 0))
+            attended, _ = layer.cross_attention(descriptors, encoder_hidden_states=other)
             return descriptors + layer.cross_mlp(torch.cat([descriptors, attended], -1))
 
         def forward(self, encoding0, descriptors0, encoding1, descriptors1):
-            # The positional encoder's (cosines, sines), computed on the CPU from the keypoints.
+            # The positional encoder's (cosines, sines), computed on the CPU from the keypoints, tiled over the heads.
             encodings = torch.cat([encoding0, encoding1], 0)
             half = encodings.shape[-1] // 2
-            rotary = (encodings[..., :half], encodings[..., half:])
+            heads = self.lightglue.config.num_attention_heads
+            cos, sin = torch.cat([encodings[..., :half]] * heads, -1), torch.cat([encodings[..., half:]] * heads, -1)
             descriptors = self.lightglue.input_projection(torch.cat([descriptors0, descriptors1], 0))
-            # Every keypoint is real: an all-zero additive mask lets each attend to all.
-            mask = torch.zeros((2, 1, 1, encodings.shape[1]))
-            for layer in self.lightglue.transformer_layers:
-                descriptors = self.layer(layer, descriptors, rotary, mask)
+            for layer, self_attention in zip(self.lightglue.transformer_layers, self.self_attentions):
+                descriptors = self.layer(layer, self_attention, descriptors, cos, sin)
             assignment = self.lightglue.match_assignment_layers[-1]
             projected = assignment.final_projection(descriptors) / assignment.descriptor_dim**0.25
             similarity = projected[0:1] @ projected[1:2].transpose(-1, -2)
@@ -147,6 +217,25 @@ def matcher(lightglue):
                     * matchability[0:1] * matchability[1:2].transpose(1, 2))
 
     return Matcher().eval()
+
+
+def check_self_attention(lightglue, model, encodings):
+    """Each folded self attention must equal transformers' own on the same descriptors to float32 rounding, with the
+    all-zero mask transformers adds, before the export is compared end to end."""
+    import torch
+
+    descriptors = torch.randn(2, KEYPOINTS, lightglue.config.descriptor_dim, generator=torch.Generator().manual_seed(0))
+    half = encodings.shape[-1] // 2
+    cos, sin = encodings[..., :half], encodings[..., half:]
+    heads = lightglue.config.num_attention_heads
+    mask = torch.zeros((2, 1, 1, KEYPOINTS))
+    with torch.inference_mode():
+        for index, (layer, folded) in enumerate(zip(lightglue.transformer_layers, model.self_attentions)):
+            expected, _ = layer.self_attention(descriptors, position_embeddings=(cos, sin), attention_mask=mask)
+            actual = folded(descriptors, torch.cat([cos] * heads, -1), torch.cat([sin] * heads, -1))
+            if not torch.allclose(actual, expected, rtol=0, atol=1e-5):
+                raise ValueError(f"Layer {index}'s folded self attention differs from transformers' by "
+                                 f"{(actual - expected).abs().max().item():.2e}")
 
 
 def matches(assignment, threshold=MATCH_THRESHOLD):
@@ -221,6 +310,7 @@ def convert(source, output_dir):
     (pixels0, descriptors0), (pixels1, descriptors1) = sample_pair(SEEDS.start)
     example = tuple(torch.from_numpy(value)[None] for value in
                     (encoding(normalized(pixels0)), descriptors0, encoding(normalized(pixels1)), descriptors1))
+    check_self_attention(lightglue, model, torch.cat([example[0], example[2]], 0))
     # The TorchScript exporter records the attention heads' reshape with a fixed, wrong shape; torch.export traces it.
     program = torch.onnx.export(model, example, dynamo=True, opset_version=OPSET, input_names=list(INTERFACE)[:4],
                                 output_names=["assignment"])

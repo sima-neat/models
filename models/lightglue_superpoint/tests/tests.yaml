@@ -12,13 +12,13 @@ accuracy:
         pose_auc_20: 0.6598
     w8a8:
       yfcc100m-keypoints-val:
-        pose_auc_5: 0.2465
-        pose_auc_10: 0.4448
-        pose_auc_20: 0.6362
+        pose_auc_5: 0.2461
+        pose_auc_10: 0.4458
+        pose_auc_20: 0.6396
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 58.9
+      throughput_fps: 72.7
     w8a8:
-      throughput_fps: 100.1
+      throughput_fps: 165.8

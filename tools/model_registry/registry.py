@@ -4,14 +4,17 @@ import base64
 import hashlib
 import json
 import math
+import random
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -864,6 +867,19 @@ def _revision_documentation_receipts(
 
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
                             download: DownloadRequest | None = None) -> None:
+    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
+    for attempt in range(1, 6):
+        try:
+            return _download_registry_file_once(url, destination, artifact, download)
+        except RegistryPublicationError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
+                raise
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+
+
+def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
+                                 download: DownloadRequest | None = None) -> None:
     """Stream into a temporary file and install only after size and checksum verification."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
