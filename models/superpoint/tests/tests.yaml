@@ -7,22 +7,22 @@ accuracy:
   expected:
     w16a16:
       hpatches-val:
-        keypoint_repeatability: 0.612
-        homography_accuracy: 0.821
+        keypoint_repeatability: 0.6119
+        homography_accuracy: 0.8057
     w8a8:
       hpatches-val:
-        keypoint_repeatability: 0.611
-        homography_accuracy: 0.833
+        keypoint_repeatability: 0.6071
+        homography_accuracy: 0.8226
     w8a16:
       hpatches-val:
-        keypoint_repeatability: 0.604
-        homography_accuracy: 0.817
+        keypoint_repeatability: 0.6042
+        homography_accuracy: 0.8189
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 110.1
+      throughput_fps: 103.0
     w8a8:
-      throughput_fps: 232.2
+      throughput_fps: 193.0
     w8a16:
-      throughput_fps: 108.5
+      throughput_fps: 101.4
