@@ -14,19 +14,16 @@ which this package does not include, to find the keypoints first.
 
 ## Inputs and outputs
 
-**Input.** Run SuperPoint on each image stretched to 640×480 with its detection
-threshold (`keypoint_threshold` in transformers) set to 0, and keep its 512
-highest-scoring keypoints. At threshold 0 SuperPoint keeps every local maximum of
-its score map, thousands even on a blank image, so every image gives 512 real
-keypoints. The model has no padding mask, so never fill rows with placeholders:
-they would change the real keypoints' matches. Pass `encoding0` and `encoding1`,
-each 1×512×128: each keypoint's position encoding, computed on the CPU in double
-precision. Normalize the keypoint's pixel coordinates as (x − 320) / 320 and
-(y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection (the
-`positional_encoder.projector.weight` tensor of the ETH-CVG/lightglue_superpoint
-checkpoint) to get 32 phases, repeat each phase twice, and pass the 64 cosines
-followed by the 64 sines. Pass `descriptors0` and `descriptors1`, each
-1×512×256: SuperPoint's unit-length descriptors, in the same order.
+**Input.** Run SuperPoint on each image stretched to 640×480 and keep its 512
+highest-scoring keypoints, with a score threshold of 0.0005, suppression within
+4 pixels and no keypoints within 4 pixels of an edge. Neat's SuperPoint decoder
+uses these settings with its `LightGlueV1` profile. The model has no padding
+mask, so skip an image with fewer than 512 keypoints: placeholder rows would
+change the real keypoints' matches. Pass four inputs, in this order:
+
+1. `encoding0`, 1×512×128: each keypoint's position encoding, computed on the CPU in double precision. Normalize its pixel coordinates as (x − 320) / 320 and (y − 240) / 320, multiply by LightGlue's 32×2 keypoint projection, the checkpoint's `positional_encoder.projector.weight`, to get 32 phases, repeat each phase twice, and pass the 64 cosines followed by the 64 sines.
+2. `descriptors0`, 1×512×256: SuperPoint's unit-length descriptors, in the same order.
+3. `encoding1` and `descriptors1`: the same for the second image.
 
 **Outputs.** `assignment` is 1×512×512: the probability that keypoint i of the
 first image and keypoint j of the second show the same point.
