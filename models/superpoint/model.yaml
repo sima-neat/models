@@ -58,10 +58,13 @@ accuracy:
 
 performance: {}
 
-# No published score is comparable to this package. The paper's HPatches table (Table 4) scores its own training-time
-# models, and neither the pinned Hugging Face model card nor SuperPointPretrainedNetwork's README
-# (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these weights. scripts/fp32_baseline_accuracy.py
-# measures the FP32 baseline on this package's own inputs instead.
+# No published score is comparable to this package. The SuperPoint paper's HPatches table (Table 4) does not
+# reproduce with these released weights: the FP32 ONNX under the paper's protocol, sweeping its unstated choices
+# (RANSAC threshold, plain or mutual matching, NMS radius, score threshold, keypoint count), matches its
+# localization error and matching score but stays 0.09 above its homography accuracy at 3 px (0.774 vs 0.684),
+# so the table most likely scores a different, training-time model. Neither the pinned Hugging Face model card nor
+# SuperPointPretrainedNetwork's README (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these
+# weights. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead.
 reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
