@@ -11,28 +11,24 @@ import os
 import shutil
 import tarfile
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
 import onnx
 from afe.apis.defines import (
-    BiasCorrectionType,
-    InputName,
-    RequantizationMode,
+    QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
-from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
-from sima_utils.data.data_generator import DataGenerator
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "superglue_outdoor"
@@ -67,32 +63,38 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
-def _quantization(precision: str) -> Any:
+def _quantization(precision: str) -> QuantizationParams:
+    """The compiler's activation and weight formats for a precision. BF16 activations need no calibration."""
     if precision == "w16a16":
-        config = (
-            default_quantization.with_activation_quantization(bfloat16_scheme())
-            .with_weight_quantization(bfloat16_scheme())
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
         )
-    elif precision == "w8a16":
-        # BF16 activations need no calibrated ranges, and bias correction would measure the placeholder sample.
-        config = (
-            default_quantization.with_activation_quantization(bfloat16_scheme())
-            .with_weight_quantization(quantization_scheme(asymmetric=False, per_channel=True, bits=8))
-            .with_calibration(SkipCalibration())
-            .with_bias_correction(BiasCorrectionType.NONE)
+    if precision == "w8a16":
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Each token's activations get their own INT8 scale before an INT8-weight operation.
+            per_token_quant=True,
         )
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
-    # with_activation_quantization turns per-token quantization on for BF16; only W8A16 keeps it.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(precision == "w8a16")
+    raise ValueError(f"unsupported precision: {precision}")
 
 
-def representative_pair() -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
-    """One channels-last sample per input, in which half of image 1's keypoints re-observe image-0 keypoints.
+@dataclass(frozen=True)
+class SyntheticPair:
+    """Channels-last matcher inputs and the image-0 and image-1 indices of the keypoints image 1 re-observes."""
+
+    inputs: dict[str, np.ndarray]
+    shared: np.ndarray
+    target: np.ndarray
+
+
+def synthetic_pair() -> SyntheticPair:
+    """One seeded pair in which half of image 1's keypoints re-observe image-0 keypoints.
 
     Keypoints are in SuperGlue's normalized frame and descriptors are unit vectors, as SuperPoint gives them.
-    Returns the inputs and the image-0 and image-1 indices of the re-observed keypoints.
-    BF16 derives nothing from representative data, but quantize() still needs one sample.
     """
     rng = np.random.RandomState(0)
     keypoints = [rng.uniform(-0.7, 0.7, (KEYPOINTS, 2)) for _ in range(2)]
@@ -111,23 +113,20 @@ def representative_pair() -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray
         for kind, values in columns.items()
         for image in range(2)
     }
-    return inputs, shared, target
-
-
-def representative_inputs() -> dict[str, np.ndarray]:
-    return representative_pair()[0]
+    return SyntheticPair(inputs, shared, target)
 
 
 def check_quantized_matches(source: Path, quantized: Any) -> float:
     """Require the quantized matcher's couplings to be finite and to keep FP32's best match for re-observed keypoints.
 
     Runs the quantized model through the Model Compiler's own execution and the source ONNX through ONNX Runtime
-    on the representative pair; returns the share of re-observed image-0 keypoints whose best image-1 keypoint
+    on the synthetic pair; returns the share of re-observed image-0 keypoints whose best image-1 keypoint
     agrees.
     """
     import onnxruntime as ort
 
-    inputs, shared, _ = representative_pair()
+    pair = synthetic_pair()
+    inputs, shared = pair.inputs, pair.shared
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"]).run(
         None, {name: np.ascontiguousarray(value.transpose(0, 3, 1, 2)) for name, value in inputs.items()}
     )[0]
@@ -201,8 +200,6 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
     precision = str(_parameters(profile_id)["precision"])
     quantization = _quantization(precision)
     validate_source(source)
-    # BF16 activations derive nothing from representative data, but quantize() still needs one sample.
-    samples = representative_inputs()
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
@@ -215,17 +212,15 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
             flexible_batch_size=True,
         )
         loaded = load_model(importer, target=gen2_target)
-        logging.info("Quantizing %s with %d sample(s)", precision, len(next(iter(samples.values()))))
         quantized = loaded.quantize(
-            calibration_data=convert_data_generator_to_iterable(
-                DataGenerator({InputName(name): value for name, value in samples.items()})
-            ),
+            calibration_data=None,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
         agreement = check_quantized_matches(source, quantized)
-        logging.info("Quantized best matches agree with FP32 for %.3f of re-observed keypoints", agreement)
+        # The Model Compiler configures logging before this script runs, so the script prints its own lines.
+        print(f"Quantized best matches agree with FP32 for {agreement:.3f} of re-observed keypoints", flush=True)
         quantized.compile(
             output_path=str(build_dir / "mpk"),
             batch_size=1,
@@ -250,7 +245,6 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="unused: no build of this model takes a calibration dataset")
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
@@ -259,9 +253,8 @@ def main() -> int:
         parser.error("--model must be the verified ONNX from the conversion workflow")
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile)
-    logging.info("Compiled MPK: %s", archive)
+    print(f"Compiled MPK: {archive}", flush=True)
     return 0
 
 

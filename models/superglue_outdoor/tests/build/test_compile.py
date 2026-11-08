@@ -90,7 +90,8 @@ def test_quantized_matches_must_follow_fp32(
 ) -> None:
     compile_module = load_script("compile")
     size = compile_module.KEYPOINTS + 1
-    _, shared, target = compile_module.representative_pair()
+    pair = compile_module.synthetic_pair()
+    shared, target = pair.shared, pair.target
     # FP32 couplings [1, j, 1, i] in which each re-observed image-0 keypoint scores highest with its partner.
     reference = np.zeros((size, size), np.float32)
     reference[target, shared] = 5.0
@@ -127,10 +128,39 @@ def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str]
         load_script("compile")._parameters("w8a8")
 
 
-def test_representative_inputs_are_channels_last_per_input(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize(("precision", "per_token"), [("w16a16", False), ("w8a16", True)])
+def test_quantization_skips_calibration_for_bf16_activations(
+    load_script: Callable[[str], ModuleType], precision: str, per_token: bool
+) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization(precision)
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    assert arguments["calibration_method"] is recipe.SkipCalibration.return_value
+    assert arguments["activation_quantization_scheme"] is recipe.bfloat16_scheme.return_value
+    assert arguments.get("per_token_quant", False) is per_token
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a16"])
+def test_compile_quantizes_without_calibration_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
+) -> None:
+    recipe = load_script("compile")
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": precision})
+    monkeypatch.setattr(recipe, "validate_source", lambda source: None)
+    monkeypatch.setattr(recipe, "check_quantized_matches", lambda source, quantized: 1.0)
+
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision)
+
+    assert recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"] is None
+
+
+def test_synthetic_pair_is_channels_last_per_input(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
-    samples = compile_module.representative_inputs()
+    samples = compile_module.synthetic_pair().inputs
 
     for name, shape in compile_module.INPUT_SHAPES.items():
         batch, channels, height, width = shape
