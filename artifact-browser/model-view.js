@@ -1,6 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import {
-  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceOrigin, referenceScores,
+  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceNotes, referenceOrigin,
+  referenceScores,
 } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
 import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
@@ -772,10 +773,7 @@ function scoresByOrigin(reference, datasetId) {
 
 function accuracyMetricTiles(metrics, scores) {
   return orderedAccuracyMetrics(metrics).slice(0, ACCURACY_SUMMARY_TILES).map(([name, value], index) => {
-    const notes = Object.entries(REFERENCE_ORIGINS).map(([origin, { label }]) => {
-      const score = formatAccuracy(name, scores[origin][name], { blank: true });
-      return score ? `<small>${escapeHtml(`${label} ${score}`)}</small>` : "";
-    }).join("");
+    const notes = referenceNotes(name, scores).map((note) => `<small>${escapeHtml(note)}</small>`).join("");
     return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong>${notes || "<small></small>"}</div>`;
   }).join("");
 }

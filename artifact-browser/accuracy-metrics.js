@@ -106,3 +106,12 @@ export function referenceScores(reference, datasetId, origin = "published") {
   }
   return scores;
 }
+
+// The reference notes under one accuracy tile, in REFERENCE_ORIGINS order, such as "FP32 baseline 28.65%". Both
+// views show them, so a customer can compare a build with its baseline.
+export function referenceNotes(name, scoresByOrigin) {
+  return Object.entries(REFERENCE_ORIGINS).flatMap(([origin, { label }]) => {
+    const score = formatAccuracy(name, scoresByOrigin[origin]?.[name], { blank: true });
+    return score ? [`${label} ${score}`] : [];
+  });
+}
