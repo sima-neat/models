@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "superglue_outdoor"
 
 
+@pytest.fixture
+def surgery(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script("surgery")
+
+
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     return {
         "model_sdk_version": compile_module.COMPILER_VERSION,
@@ -148,7 +153,6 @@ def test_compile_quantizes_without_calibration_data(
 ) -> None:
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": precision})
-    monkeypatch.setattr(recipe, "validate_source", lambda source: None)
     monkeypatch.setattr(recipe, "check_quantized_matches", lambda source, quantized: 1.0)
 
     with pytest.raises(RuntimeError, match="expected one MPK"):
@@ -169,38 +173,115 @@ def test_synthetic_pair_is_channels_last_per_input(load_script: Callable[[str], 
     np.testing.assert_allclose(np.linalg.norm(samples["descriptors1"][0, 0], axis=1), 1, rtol=1e-5)
 
 
-@pytest.mark.parametrize("case", ["valid", "shape"])
-def test_compile_requires_the_converted_interface(
-    tmp_path: Path, case: str, load_script: Callable[[str], ModuleType]
-) -> None:
-    compile_module = load_script("compile")
-    helper = onnx.helper
-    inputs = [
-        helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape)
-        for name, shape in compile_module.INPUT_SHAPES.items()
-    ]
-    (name, shape), = compile_module.OUTPUT_SHAPES.items()
-    output_shape = [*shape[:-1], 100] if case == "shape" else shape
-    output = helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, output_shape)
-    node = helper.make_node(
-        "Constant",
-        [],
-        [name],
-        value=helper.make_tensor("value", onnx.TensorProto.FLOAT, output_shape, np.zeros(int(np.prod(output_shape)))),
-    )
-    path = tmp_path / "model.onnx"
-    onnx.save(helper.make_model(helper.make_graph([node], "fixture", inputs, [output])), path)
-
-    if case == "valid":
-        compile_module.validate_source(path)
-    else:
-        with pytest.raises(ValueError, match="Unsupported SuperGlue graph"):
-            compile_module.validate_source(path)
-
-
 def test_model_preserves_compilation_and_licence_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
     assert model["license"]["redistribution"] == "restricted"
     assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
+
+
+def test_sinkhorn_and_extraction_find_clear_matches(surgery: ModuleType) -> None:
+    size = 6
+    couplings = np.full((size + 1, size + 1), -2.0)
+    permutation = np.array([3, 0, 5, 1, 4, 2])
+    couplings[np.arange(size), permutation] = 8.0
+    couplings[4] = -2.0  # keypoint 4 has no partner: its mass goes to the dustbin
+    couplings[:, -1] = couplings[-1] = 1.0
+    log_transport = surgery.log_sinkhorn(couplings[None], surgery.SINKHORN_ITERATIONS)
+
+    matches, scores = surgery.extract_matches(log_transport)
+    # Extraction compares keypoints only, so the two leftovers still pair up, with a near-zero score...
+    assert matches.tolist() == [3, 0, 5, 1, 4, 2]
+    assert scores[4] < 0.1 and (np.delete(scores, 4) > 0.9).all()
+    # ...and a match threshold drops them.
+    assert surgery.extract_matches(log_transport, threshold=0.2)[0].tolist() == [3, 0, 5, 1, -1, 2]
+
+
+def test_extraction_requires_mutual_best_matches(surgery: ModuleType) -> None:
+    log_transport = np.log(np.array([[0.6, 0.3, 0.1], [0.7, 0.2, 0.1], [0.1, 0.1, 0.8]]))
+
+    matches, _ = surgery.extract_matches(log_transport)
+
+    # Keypoint 0 prefers 0, but image-1 keypoint 0 prefers keypoint 1: only 1 -> 0 is mutual.
+    assert matches.tolist() == [-1, 0]
+
+
+def test_exported_layout_round_trips(surgery: ModuleType) -> None:
+    pair = surgery.synthetic_pair(7)
+    inputs = surgery.to_inputs(pair)
+
+    assert {name: list(value.shape) for name, value in inputs.items()} == surgery.INPUTS
+    np.testing.assert_array_equal(inputs["descriptors0"][0, :, 0, :].T, pair["descriptors0"])
+    np.testing.assert_array_equal(inputs["scores1"][0, 0, 0], pair["scores1"])
+    couplings = np.arange((surgery.KEYPOINTS + 1) ** 2, dtype=np.float32).reshape(surgery.OUTPUT["couplings"])
+    matrix = surgery.couplings_matrix(couplings)
+    # couplings[0, j, 0, i] is row i (image 0), column j (image 1).
+    assert matrix[2, 5] == couplings[0, 5, 0, 2]
+
+
+@pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])
+def test_fixed_onnx_interface(tmp_path: Path, case: str, surgery: ModuleType) -> None:
+    helper = onnx.helper
+    values = [
+        helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape)
+        for name, shape in surgery.INTERFACE.items()
+    ]
+    if case == "order":
+        values[0], values[1] = values[1], values[0]
+    elif case == "dtype":
+        values[0].type.tensor_type.elem_type = onnx.TensorProto.DOUBLE
+    elif case == "shape":
+        values[-1].type.tensor_type.shape.dim[1].dim_value = 100
+    inputs, outputs = values[:-1], values[-1:]
+    output_shape = surgery.OUTPUT["couplings"]
+    node = helper.make_node(
+        "Constant",
+        [],
+        [outputs[0].name],
+        value=helper.make_tensor("value", onnx.TensorProto.FLOAT, output_shape, np.zeros(int(np.prod(output_shape)))),
+    )
+    graph = helper.make_graph([node], "fixture", inputs, outputs)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13 if case == "opset" else 17)])
+    path = tmp_path / "model.onnx"
+    onnx.save(model, path)
+    if case == "valid":
+        surgery.validate_export(path)
+    else:
+        with pytest.raises(ValueError):
+            surgery.validate_export(path)
+
+
+def test_initializer_sharing_merges_identical_weights(surgery: ModuleType) -> None:
+    helper = onnx.helper
+    weight = onnx.numpy_helper.from_array(np.ones((2, 2), np.float32), "w0")
+    copy = onnx.numpy_helper.from_array(np.ones((2, 2), np.float32), "w1")
+    nodes = [helper.make_node("MatMul", ["x", "w0"], ["y0"]), helper.make_node("MatMul", ["x", "w1"], ["y1"])]
+    values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [2, 2]) for name in ("x", "y0", "y1")]
+    model = helper.make_model(helper.make_graph(nodes, "fixture", values[:1], values[1:], [weight, copy]))
+
+    shared = surgery.share_initializers(model)
+
+    assert [item.name for item in shared.graph.initializer] == ["w0"]
+    assert [node.input[1] for node in shared.graph.node] == ["w0", "w0"]
+
+
+def test_mla_layout_matcher_equals_the_transformers_layers(surgery: ModuleType) -> None:
+    """The 4D rewrite with random weights must give the transformers layers' couplings."""
+    torch = pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    torch.manual_seed(0)
+    model = transformers.SuperGlueForKeypointMatching(transformers.SuperGlueConfig(**surgery.CONFIG)).eval()
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm1d):
+            module.running_mean.uniform_(-0.2, 0.2)
+            module.running_var.uniform_(0.5, 1.5)
+    pair = surgery.synthetic_pair(11)
+    with torch.inference_mode():
+        reference = surgery.reference_matcher(model)
+        expected = reference(*(torch.from_numpy(pair[name])[None] for name in surgery.INPUTS))
+        actual = surgery.build_matcher(model)(
+            *(torch.from_numpy(value) for value in surgery.to_inputs(pair).values())
+        )
+
+    np.testing.assert_allclose(surgery.couplings_matrix(actual.numpy()), expected[0].numpy(), atol=1e-4)

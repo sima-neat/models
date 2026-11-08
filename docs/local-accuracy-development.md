@@ -166,12 +166,12 @@ When no published score matches the package's setup, such as SuperGlue's 512
 keypoints from a 640x480 image, the model page can show an FP32 baseline instead:
 what the unquantized source model scores on the same inputs and protocol. A
 standalone `scripts/fp32_baseline_accuracy.py` measures it on a host. It runs the
-converted ONNX with ONNX Runtime and scores it with the model's own `accuracy.py`,
+FP32 ONNX the model compiles with ONNX Runtime and scores it with the model's own `accuracy.py`,
 so only the model execution differs from the DevKit stage:
 
 ```bash
 PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.py \
-  --onnx <converted model.onnx> --dataset yfcc100m-keypoints-val=<extracted dataset> \
+  --onnx <model.onnx from surgery.py> --dataset yfcc100m-keypoints-val=<extracted dataset> \
   --output fp32-baseline.json
 ```
 

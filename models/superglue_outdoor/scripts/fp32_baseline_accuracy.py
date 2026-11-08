@@ -1,8 +1,9 @@
 """Measure the FP32 baseline: SuperGlue Outdoor's ONNX on a host, scored exactly as accuracy.py scores the MPK.
 
 The baseline is the accuracy the package would reach without quantization, on the same 512-keypoint inputs and
-YFCC100M pairs. model.yaml publishes it as the reference_metrics entry with origin fp32_baseline. Run it on a host
-with numpy, opencv-python-headless and onnxruntime, and tools/model_report on PYTHONPATH:
+YFCC100M pairs. model.yaml publishes it as the reference_metrics entry with origin fp32_baseline. Export the ONNX
+with surgery.py, then run it on a host with numpy, opencv-python-headless and onnxruntime, and tools/model_report on
+PYTHONPATH:
 
     PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.py \\
         --onnx model.onnx --dataset yfcc100m-keypoints-val=<directory> --output fp32-baseline.json
@@ -32,7 +33,7 @@ def couplings_from_onnx(output: np.ndarray) -> np.ndarray:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--onnx", type=Path, required=True, help="the converted model.onnx")
+    parser.add_argument("--onnx", type=Path, required=True, help="the model.onnx surgery.py exports")
     parser.add_argument("--dataset", required=True, help=f"{accuracy.DATASET}=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="JSON file for the five metrics")
     parser.add_argument("--limit", type=int, help="score the first pairs only, for a quick check")

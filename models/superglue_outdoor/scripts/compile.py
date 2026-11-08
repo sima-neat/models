@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the converted SuperGlue outdoor matcher into one Modalix MPK."""
+"""Build SuperGlue outdoor's matcher from the converted weights with surgery.py and compile it into one Modalix MPK."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-import onnx
 from afe.apis.defines import (
     QuantizationParams,
     SkipCalibration,
@@ -29,6 +28,7 @@ from afe.apis.model import L2CachingMode
 from afe.load.importers.general_importer import onnx_source
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
+from surgery import export_matcher
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "superglue_outdoor"
@@ -36,7 +36,7 @@ COMPONENT_ID = "model"
 COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 KEYPOINTS = 512
 DESCRIPTOR_SIZE = 256
-# The converted graph's [1, C, 1, N] inputs and [1, N+1, 1, N+1] couplings output.
+# The exported graph's [1, C, 1, N] inputs and [1, N+1, 1, N+1] couplings output.
 INPUT_SHAPES = {
     "keypoints0": [1, 2, 1, KEYPOINTS],
     "scores0": [1, 1, 1, KEYPOINTS],
@@ -142,16 +142,6 @@ def check_quantized_matches(source: Path, quantized: Any) -> float:
     return agreement
 
 
-def validate_source(path: Path) -> None:
-    model = onnx.load(path, load_external_data=False)
-    values = {
-        value.name: [dimension.dim_value for dimension in value.type.tensor_type.shape.dim]
-        for value in [*model.graph.input, *model.graph.output]
-    }
-    if values != {**INPUT_SHAPES, **OUTPUT_SHAPES}:
-        raise ValueError(f"Unsupported SuperGlue graph: {values}")
-
-
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
     with tarfile.open(archive, "r:gz") as stream:
         members = stream.getmembers()
@@ -199,7 +189,6 @@ def audit_mpk(archive: Path) -> None:
 def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
     precision = str(_parameters(profile_id)["precision"])
     quantization = _quantization(precision)
-    validate_source(source)
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
@@ -248,12 +237,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the conversion workflow")
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
-    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile)
+    weights = args.model.expanduser().resolve()
+    if weights.suffix != ".pth":
+        parser.error("--model must be the verified weights.pth from the conversion workflow")
+    if not weights.is_file():
+        parser.error(f"model does not exist: {weights}")
+    with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        source = export_matcher(weights, Path(temporary) / "model.onnx")
+        archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile)
     print(f"Compiled MPK: {archive}", flush=True)
     return 0
 
