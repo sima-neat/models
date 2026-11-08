@@ -113,6 +113,13 @@ hold. Each benchmarked profile needs finite `tests.yaml` expectations covering i
 required metrics (performance: `throughput_fps`); optional expectations and
 the shared regression thresholds remain gates.
 
+When no published score matches a package's setup, the model may add a standalone
+`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores the
+FP32 source ONNX on a host with the model's own `accuracy.py` scoring, without
+`model_registry` imports, credentials or YAML. Its output becomes the
+`reference_metrics` entry with `origin: fp32_baseline`. No stage runs it and no
+fingerprint includes it ([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
+
 ## LLiMa models
 
 LLMs and VLMs declare the complete model as one component, with a pinned Hugging
