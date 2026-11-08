@@ -30,9 +30,10 @@ To get keypoints:
 3. Keep pixels scoring above 0.005, at least 4 pixels from every edge, and the best ones if you need fewer.
 4. Scale each cell's descriptor to unit length, interpolate it at each keypoint, and scale the result to unit length.
 
-Neat's SuperPoint decoder runs these steps: set the decode type to SuperPoint,
-choose the `LightGlueV1` profile, and set the score threshold to 0.005 and the
-keypoint limit to the number you need, such as 1000.
+Neat's SuperPoint decoder runs these steps with the `LightGlueV1` profile and a
+score threshold of 0.005. Its `MagicLeapDemoV1` profile runs Magic Leap's demo
+decode instead, which the model page's results use: it keeps pixels scoring at
+least 0.015 before suppression and returns the best 600.
 
 ## Building applications
 

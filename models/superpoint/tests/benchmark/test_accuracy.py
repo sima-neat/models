@@ -93,28 +93,13 @@ def test_image_pair_homography_maps_the_model_inputs(load_script: Callable[[str]
     np.testing.assert_allclose(accuracy.project(centre(image0), matrix), centre(image1), atol=1.5)
 
 
-@pytest.mark.parametrize("shapes", [[(1, 60, 80, 65), (1, 60, 80, 256)], [(60, 80, 256), (60, 80, 65)]])
-def test_heads_are_named_by_their_channels(shapes: list, load_script: Callable[[str], ModuleType]) -> None:
+def test_neat_decodes_with_the_magic_leap_demo_settings(load_script: Callable[[str], ModuleType]) -> None:
     accuracy = load_script("accuracy")
-    outputs = [np.full(shape, shape[-1], np.float32) for shape in shapes]
 
-    logits, descriptors = accuracy.heads(outputs)
+    options = accuracy.tensor_options()
 
-    assert logits.shape == (65, 60, 80) and (logits == 65).all()
-    assert descriptors.shape == (256, 60, 80)
-
-
-@pytest.mark.parametrize("case", ["layout", "nan"])
-def test_heads_must_be_finite_and_channels_last(case: str, load_script: Callable[[str], ModuleType]) -> None:
-    accuracy = load_script("accuracy")
-    outputs = [np.zeros((1, 60, 80, 65), np.float32), np.zeros((1, 60, 80, 256), np.float32)]
-    if case == "layout":
-        outputs[0] = outputs[0].transpose(0, 3, 1, 2)
-    else:
-        outputs[1][0, 1, 2, 3] = np.nan
-
-    with pytest.raises(ValueError):
-        accuracy.heads(outputs)
+    assert options.decode_type is accuracy.pyneat.BoxDecodeType.SuperPoint
+    assert options.superpoint.profile is accuracy.pyneat.SuperPointProfile.MagicLeapDemoV1
 
 
 def test_evaluate_averages_the_pairs(load_script: Callable[[str], ModuleType]) -> None:

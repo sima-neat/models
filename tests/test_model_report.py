@@ -387,14 +387,14 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
-        # and decodes it as transformers does, keeping the keypoints the accuracy stage keeps.
+        # and decodes it with Magic Leap's demo settings, as the accuracy stage does.
         assert_letterboxed_frame(frame)
         color = options.preprocess.color_convert
         assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
             "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
         )
         assert not hasattr(options.preprocess, "preset")
-        assert (options.superpoint.profile, options.score_threshold, options.top_k) == ("LightGlueV1", 0.005, 1000)
+        assert options.superpoint.profile == "MagicLeapDemoV1"
         assert ".jpg" in report["workload"]
     else:
         assert_letterboxed_frame(frame)

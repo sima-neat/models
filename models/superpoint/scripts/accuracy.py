@@ -2,9 +2,9 @@
 board.
 
 Each image of a seeded sample of 1000 COCO val2017 images is paired with its own warp by a homography seeded with the
-image id. The MPK runs on both images, keypoints.py decodes each with transformers' settings and keeps the best
-KEYPOINTS, and the pair is scored against the known homography as in the SuperPoint paper's HPatches evaluation, at
-3 pixels.
+image id. The MPK runs on both images, Neat's SuperPoint decoder decodes each with Magic Leap's demo settings, as
+performance.py does, and the pair is scored against the known homography as in the SuperPoint paper's HPatches
+evaluation, at 3 pixels.
 """
 
 from __future__ import annotations
@@ -22,31 +22,19 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from keypoints import (
-    CELL,
-    DESCRIPTOR_SIZE,
-    HEIGHT,
-    KEYPOINT_CHANNELS,
-    WIDTH,
-    decode,
-    decode_image,
-    preprocess,
-)
+from keypoints import HEIGHT, WIDTH, decode_image, preprocess
 
 IMAGES = "val2017"
 AVAILABLE_IMAGES = 5000
 # A seeded sample keeps the stage near 13 minutes on a DevKit, inside the 45-minute job limit.
 SAMPLED_IMAGES = 1000
 SAMPLE_SEED = 0
-# The SuperPoint paper's HPatches evaluation keeps 1000 keypoints at 480x640.
-KEYPOINTS = 1000
 PIXEL_TOLERANCE = 3.0
 MIN_HOMOGRAPHY_MATCHES = 4
 METRICS = ("keypoint_repeatability", "matching_accuracy", "homography_accuracy")
 # Image pairs decode and warp on worker threads while the MPK runs.
 WORKERS = 4
 PREFETCH = 8
-GRID = (HEIGHT // CELL, WIDTH // CELL)
 
 
 def tensor_options() -> pyneat.ModelOptions:
@@ -56,6 +44,10 @@ def tensor_options() -> pyneat.ModelOptions:
     options.preprocess.resize.enable = pyneat.AutoFlag.Off
     options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
     options.preprocess.normalize.enable = pyneat.AutoFlag.Off
+    options.decode_type = pyneat.BoxDecodeType.SuperPoint
+    # Magic Leap's demo decode, as performance.py measures it: threshold 0.015, NMS radius 4, a 4-pixel border and
+    # the best 600 keypoints.
+    options.superpoint.profile = pyneat.SuperPointProfile.MagicLeapDemoV1
     return options
 
 
@@ -93,22 +85,6 @@ def image_pair(content: bytes, image_id: int) -> tuple[np.ndarray, np.ndarray, n
     warped = cv2.warpPerspective(image, warp, (width, height))
     resize = np.diag([WIDTH / width, HEIGHT / height, 1.0])
     return preprocess(image), preprocess(warped), resize @ warp @ np.linalg.inv(resize)
-
-
-def heads(outputs: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    """Return the MPK's channels-last keypoint logits and descriptors channels-first, named by their channels."""
-    named = {}
-    for output in outputs:
-        array = np.asarray(output, dtype=np.float32)
-        array = array.reshape(*GRID, array.shape[-1]) if array.size == np.prod(GRID) * array.shape[-1] else array
-        if array.shape[:2] != GRID:
-            raise ValueError(f"unexpected MPK output: {np.shape(output)}")
-        named[array.shape[-1]] = array.transpose(2, 0, 1)
-    if sorted(named) != sorted((KEYPOINT_CHANNELS, DESCRIPTOR_SIZE)):
-        raise ValueError(f"unexpected MPK outputs: {[np.shape(output) for output in outputs]}")
-    if not all(np.isfinite(values).all() for values in named.values()):
-        raise ValueError("MPK output contains non-finite values")
-    return named[KEYPOINT_CHANNELS], named[DESCRIPTOR_SIZE]
 
 
 def project(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -225,8 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         tensor = pyneat.Tensor.from_numpy(np.ascontiguousarray(image[:, :, None]), copy=False)
         if runner is None:
             runner = model.build([tensor])
-        logits, descriptors = heads([output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)])
-        return decode(logits, descriptors, limit=KEYPOINTS)
+        features = pyneat.decode_superpoint(runner.run([tensor], timeout_ms=120000))[0]
+        return tuple(part.to_numpy(copy=True) for part in (features.keypoints, features.scores, features.descriptors))
 
     started = time.monotonic()
     pairs = prefetched(lambda path: image_pair(path.read_bytes(), int(path.stem)), selected)

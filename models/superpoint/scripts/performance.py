@@ -60,11 +60,9 @@ options.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
 options.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.GRAY8
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.SuperPoint
-# transformers' decode, as keypoints.py runs it: NMS radius 4, a 4-pixel border, the 0.005 threshold of the
-# pinned SuperPointConfig, and the best 1000 keypoints that the accuracy stage keeps.
-options.superpoint.profile = pyneat.SuperPointProfile.LightGlueV1
-options.score_threshold = 0.005
-options.top_k = 1000
+# Magic Leap's demo decode, as accuracy.py measures it: threshold 0.015, NMS radius 4, a 4-pixel border and the best
+# 600 keypoints.
+options.superpoint.profile = pyneat.SuperPointProfile.MagicLeapDemoV1
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -80,8 +78,8 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-        f"640x480 and kept the red channel as grayscale, SuperPoint decoder (LightGlueV1, score threshold "
-        f"{options.score_threshold}, top {options.top_k}), {postprocess} post-processing"
+        f"640x480 and kept the red channel as grayscale, SuperPoint decoder (MagicLeapDemoV1), "
+        f"{postprocess} post-processing"
     ),
 )
 report.save(args.output)
