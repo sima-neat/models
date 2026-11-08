@@ -1,0 +1,71 @@
+display_name: SuperGlue Outdoor
+description: Matches SuperPoint keypoints between two outdoor images.
+model_type: vision
+tasks: [feature_matching]
+
+modalities:
+  inputs: [keypoints, embeddings]
+  outputs: [keypoint_matches]
+
+architecture: superglue
+
+# Upstream terms are noncommercial research only; this entry is approved for internal use only.
+license:
+  spdx: LicenseRef-SiMa-Internal
+  redistribution: restricted
+  attribution: SuperGlue is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
+
+upstream:
+  repository: https://huggingface.co/magic-leap-community/superglue_outdoor
+  revision: f4041f88aa6789c46558efaafc98316c6b58a382
+  derived_from: https://github.com/magicleap/SuperGluePretrainedNetwork
+
+conversion:
+  source:
+    uri: hf://models/magic-leap-community/superglue_outdoor@f4041f88aa6789c46558efaafc98316c6b58a382/model.safetensors
+    sha256: 9bf0577b46cd76feedbc1e6908f56e10b7d92212d33338086c9156d0287d6e38
+    size_bytes: 53413232
+  outputs: [weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # No w8a8: INT8 activations in the attention layers fail the compile gate (91.4% of FP32's best matches) and
+  # lose 7.5-13.4% of each YFCC metric on 200 test pairs. W8A16 passes the gate (96.9%), but Model Compiler
+  # 3.0.0's simulator check rejects it ("Check FAILED", no MPK) with per-token quantization on, and every push
+  # would retry the failing compile. compile.py keeps its recipe; uncomment the profile once the check passes.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
+accuracy:
+  datasets:
+  - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}
+
+performance: {}
+
+# No published score is comparable to this package. SuperGlue's YFCC100M table scored up to 2048 SuperPoint keypoints
+# per image at a 1600-pixel longer side; this package matches 512 keypoints from a 640x480 image, and no source
+# publishes a score at that setting. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this
+# package's own inputs instead, on the ONNX surgery.py exports from the converted weights.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: yfcc100m-keypoints, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image from the image stretched to 640x480 without keeping its aspect ratio, threshold 0.0005 and NMS radius 4 (match_pairs.py uses 0.005 and 3); 20 Sinkhorn iterations, 0.2 match threshold; 3978 of 4000 pairs
+  metrics: {pose_auc_5: 0.2865, pose_auc_10: 0.4927, pose_auc_20: 0.6806, match_precision: 0.9738, matching_score: 0.2783}
+
+# The published table, kept for reference and not shown:
+# reference_metrics:
+# - source: https://github.com/magicleap/SuperGluePretrainedNetwork/blob/39fb030dab0d976fe25fd2feed55e3ad0d3908dc/README.md
+#   dataset: {id: yfcc100m, split: test}
+#   conditions: FP32, up to 2048 SuperPoint keypoints per image at a 1600-pixel longer side (match_pairs.py --resize 1600 --max_keypoints 2048 --nms_radius 3)
+#   metrics: {pose_auc_5: 0.3902, pose_auc_10: 0.5951, pose_auc_20: 0.7572, match_precision: 0.9872, matching_score: 0.2361}
