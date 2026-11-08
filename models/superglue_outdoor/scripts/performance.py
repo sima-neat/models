@@ -20,6 +20,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import argparse  # noqa: E402
+import collections  # noqa: E402
 import random  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -247,61 +248,49 @@ def measure_throughput(runner: pyneat.ModelRunner, tensors: list) -> ThroughputR
     after WARMUP_PAIRS matched pairs and lasts at least MEASURED_PAIRS pairs and MIN_DURATION_S seconds."""
     monitor = pyneat.TelemetryMonitor()
     measured = threading.Event()
-    # Pairs pulled but not yet matched; a full queue holds back pulls, and with them the runner and the pushes.
-    unmatched = threading.BoundedSemaphore(2 * MATCH_WORKERS)
-    lock = threading.Lock()
-    errors: list[BaseException] = []
-    matched, started = 0, 0.0
-    result: ThroughputResult | None = None
 
     def push_pairs() -> None:
         try:
             while not measured.is_set():
-                if not runner.push(tensors):
+                if not runner.push(tensors) and not measured.is_set():
                     raise RuntimeError("the runner rejected a pair")
-        except BaseException as error:
-            errors.append(error)
         finally:
             runner.close_input()
 
-    def count_match(future: Future) -> None:
-        nonlocal matched, started, result
-        unmatched.release()
-        if error := future.exception():
-            errors.append(error)
-            measured.set()
-            return
-        with lock:
-            matched += 1
-            if matched == WARMUP_PAIRS:
-                monitor.start()
-                started = time.perf_counter()
-            elif matched > WARMUP_PAIRS and result is None:
-                pairs, seconds = matched - WARMUP_PAIRS, time.perf_counter() - started
-                if pairs >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
-                    result = ThroughputResult(pairs, seconds, monitor.stop())
-                    measured.set()
-
-    pusher = threading.Thread(target=push_pairs, name="push_pairs")
-    pusher.start()
-    try:
-        with ThreadPoolExecutor(MATCH_WORKERS) as pool:
+    pending: collections.deque[Future] = collections.deque()
+    matched, started = 0, 0.0
+    result: ThroughputResult | None = None
+    with ThreadPoolExecutor(MATCH_WORKERS + 1) as pool:
+        pusher = pool.submit(push_pairs)
+        try:
             while outputs := runner.pull(TIMEOUT_MS).tensors:
                 couplings = outputs[0].to_numpy(copy=True).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
                 # Return the output buffer to the runner before the next pull.
                 del outputs
-                unmatched.acquire()
-                pool.submit(sinkhorn_matches, couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD).add_done_callback(
-                    count_match
-                )
-    finally:
-        measured.set()
-        pusher.join()
-        # A failure inside the measured span leaves the monitor running.
-        if monitor.running():
-            monitor.stop()
-    if errors:
-        raise errors[0]
+                pending.append(pool.submit(sinkhorn_matches, couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD))
+                # Count each pair once 2 * MATCH_WORKERS later pairs queue behind it, so the workers stay busy.
+                if len(pending) <= 2 * MATCH_WORKERS:
+                    continue
+                pending.popleft().result()
+                matched += 1
+                if matched == WARMUP_PAIRS:
+                    monitor.start()
+                    started = time.perf_counter()
+                elif matched > WARMUP_PAIRS and result is None:
+                    pairs, seconds = matched - WARMUP_PAIRS, time.perf_counter() - started
+                    if pairs >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
+                        result = ThroughputResult(pairs, seconds, monitor.stop())
+                        measured.set()
+        finally:
+            measured.set()
+            # Wakes a push waiting on a full queue, so the pusher ends even when a pull failed.
+            runner.close_input()
+            # A failure inside the measured span leaves the monitor running.
+            if monitor.running():
+                monitor.stop()
+        pusher.result()
+        for match in pending:
+            match.result()
     if result is None:
         raise RuntimeError(f"no pair came out within {TIMEOUT_MS} ms before the measured span ended")
     return result

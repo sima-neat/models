@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 import types
 from collections.abc import Callable
 from pathlib import Path
@@ -112,6 +113,47 @@ def test_throughput_runs_the_runner_async_and_matches_every_pulled_pair(
     assert result.pairs >= 5
     # The pull loop drains the runner after the measured span, and every pair it returns is matched on the CPU.
     assert len(matched) == runner.pushed >= result.pairs + 2
+
+
+@pytest.mark.parametrize("stall", ["pull raises", "pull times out"])
+def test_throughput_wakes_a_blocked_push_when_the_mpk_stops(
+    stall: str, load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    performance = load_script("performance")
+    monkeypatch.setattr(performance, "MATCH_WORKERS", 2)
+
+    class StalledRunner:
+        """A runner whose MPK stops: push blocks on its full queue until close_input, and pull returns nothing."""
+
+        def __init__(self) -> None:
+            self.queued = 0
+            self.blocked = threading.Event()
+            self.closed = threading.Event()
+            self.woken = False
+
+        def push(self, tensors: list) -> bool:
+            if self.queued < 4:
+                self.queued += 1
+                return True
+            self.blocked.set()
+            # Times out instead of hanging the test when nothing wakes the push.
+            self.woken = self.closed.wait(timeout=2)
+            return False
+
+        def close_input(self) -> None:
+            self.closed.set()
+
+        def pull(self, timeout_ms: int) -> types.SimpleNamespace:
+            assert self.blocked.wait(timeout=2)
+            if stall == "pull raises":
+                raise RuntimeError("the MPK failed")
+            return types.SimpleNamespace(tensors=[])
+
+    runner = StalledRunner()
+    error = "the MPK failed" if stall == "pull raises" else "no pair came out"
+    with pytest.raises(RuntimeError, match=error):
+        performance.measure_throughput(runner, [])
+    assert runner.woken
 
 
 @pytest.mark.parametrize("spread", [3.0, 12.0, 400.0])
