@@ -39,11 +39,11 @@ calibrations:
   dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
 
 build_profiles:
+  # BF16 activations need no calibrated ranges, so only the INT8 build calibrates.
   w16a16:
-    calibration_dataset: yfcc100m-keypoints-cal
     components:
       model:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 8}
+        parameters: {precision: w16a16}
 
   w8a8:
     calibration_dataset: yfcc100m-keypoints-cal

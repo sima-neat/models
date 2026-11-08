@@ -118,7 +118,7 @@ def test_calibration_reads_the_archive_and_fidelity_follows_it_in_one_seeded_ord
         calibration.fidelity_inputs(archive, 42, 4, 8)
 
 
-def test_every_build_profile_calibrates_before_the_fidelity_pairs(load_script: Callable[[str], ModuleType]) -> None:
+def test_only_the_int8_build_calibrates_before_the_fidelity_pairs(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe._metadata()
     selection = metadata["numerical_fidelity"]["selection"]
@@ -127,12 +127,43 @@ def test_every_build_profile_calibrates_before_the_fidelity_pairs(load_script: C
         parameters = recipe._parameters(metadata, profile["id"])
         (binding,) = profile["components"]
         assert parameters["precision"] == profile["id"]
-        assert binding["calibration"] == "yfcc100m-keypoints-cal"
-        assert parameters["calibration_samples"] <= selection["offset"]
+        if recipe._calibrates(parameters["precision"]):
+            assert binding["calibration"] == "yfcc100m-keypoints-cal"
+            assert parameters["calibration_samples"] <= selection["offset"]
+        else:
+            assert binding.get("calibration") is None
+            assert "calibration_samples" not in parameters
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
     assert set(recipe.MATCH_OVERLAP_FLOORS) == {profile["id"] for profile in metadata["build_profiles"]}
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters(metadata, "w32a32")
+
+
+def test_bf16_skips_calibration_and_int8_calibrates_with_histogram_mse(
+    monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+    # Each AFE constructor returns its name and arguments, so the test reads the recipe without the Model Compiler.
+    for name in ("QuantizationParams", "SkipCalibration", "HistogramMSEMethod", "bfloat16_scheme",
+                 "quantization_scheme"):
+        monkeypatch.setattr(recipe, name, lambda *args, _name=name, **kwargs: (_name, args, kwargs))
+    metadata = recipe._metadata()
+
+    (_, _, int8), (_, _, bf16) = (recipe._quantization_config(recipe._parameters(metadata, profile))
+                                  for profile in ("w8a8", "w16a16"))
+
+    assert int8 == {
+        "calibration_method": ("HistogramMSEMethod", (2048,), {}),
+        "activation_quantization_scheme": ("quantization_scheme", (), {"asymmetric": True, "per_channel": False,
+                                                                       "bits": 8}),
+        "weight_quantization_scheme": ("quantization_scheme", (), {"asymmetric": False, "per_channel": True,
+                                                                   "bits": 8}),
+    }
+    assert bf16 == {
+        "calibration_method": ("SkipCalibration", (), {}),
+        "activation_quantization_scheme": ("bfloat16_scheme", (), {}),
+        "weight_quantization_scheme": ("bfloat16_scheme", (), {}),
+    }
 
 
 def test_a_build_needs_its_matches_to_overlap_the_onnxs(load_script: Callable[[str], ModuleType]) -> None:
@@ -194,8 +225,8 @@ def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_inputs(
     ("arguments", "message"),
     [
         (["--compile-invocation", "model"], "a build profile compiles in one invocation named after it"),
-        (["--compile-invocation", "w16a16"], "pass --dataset"),
-        (["--compile-invocation", "w16a16", "--dataset", "cal.tgz"], "pass --fidelity-dataset"),
+        (["--build-profile", "w8a8", "--compile-invocation", "w8a8"], "w8a8 calibrates; pass --dataset"),
+        (["--compile-invocation", "w16a16"], "pass --fidelity-dataset"),
     ],
 )
 def test_compile_main_rejects_an_incomplete_invocation(

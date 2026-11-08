@@ -2,9 +2,9 @@
 """Compile LightGlue's matcher from the converted ONNX into a Modalix MPK and measure its numerical fidelity.
 
 The converted ONNX is static: two images' 512 keypoint encodings and descriptors in, their soft assignment out.
-Calibration and numerical fidelity use one seeded order of the yfcc100m-keypoints cal pairs: calibration takes the
-first pairs, and fidelity compares the quantized graph's assignment with the ONNX's on a later span. A build whose
-matches overlap the ONNX's too little stops there, before the MLA compile.
+Calibration and numerical fidelity use one seeded order of the yfcc100m-keypoints cal pairs: the INT8 build
+calibrates on the first pairs, and fidelity compares the quantized graph's assignment with the ONNX's on a later span.
+A build whose matches overlap the ONNX's too little stops there, before the MLA compile.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ import onnxruntime as ort
 from afe.apis.defines import (
     HistogramMSEMethod,
     InputName,
-    RequantizationMode,
+    QuantizationParams,
+    SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
@@ -63,38 +63,43 @@ def _parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
     return binding["parameters"]
 
 
-def _quantization_config(parameters: dict[str, Any]) -> Any:
+def _calibrates(precision: str) -> bool:
+    """Only INT8 activations need calibrated ranges."""
+    return precision == "w8a8"
+
+
+def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
+    """The compiler's activation and weight formats for a build."""
     precision = parameters["precision"]
     if precision == "w8a8":
-        activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    elif precision == "w16a16":
-        activation = weights = bfloat16_scheme()
-    else:
-        raise ValueError(f"this recipe supports only the declared Modalix BF16 and INT8 builds, not {precision!r}")
-    return (
-        default_quantization.with_activation_quantization(activation)
-        .with_weight_quantization(weights)
-        .with_requantization_mode(RequantizationMode.sima)
-        # AFE quantizes the graph with calibrated ranges, even at BF16.
-        .with_calibration(HistogramMSEMethod(int(parameters["calibration_bins"])))
-        .with_channel_equalization(False)
-        .with_smooth_quant(False)
-        # with_activation_quantization turns per-token quantization on for BF16; these builds do not use it.
-        .with_per_token_quant(False)
-    )
+        return QuantizationParams(
+            # Histogram MSE picks each activation range from the calibration pairs.
+            calibration_method=HistogramMSEMethod(int(parameters["calibration_bins"])),
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+        )
+    raise ValueError(f"this recipe supports only the declared Modalix BF16 and INT8 builds, not {precision!r}")
 
 
-def quantize(source: Path, profile_id: str, dataset: Path) -> Any:
+def quantize(source: Path, profile_id: str, dataset: Path | None) -> Any:
     parameters = _parameters(_metadata(), profile_id)
     config = _quantization_config(parameters)
     importer = onnx_source(str(source), shape_dict=INPUT_SHAPES, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
-    samples = calibration_inputs(dataset, int(parameters["calibration_samples"]))
-    LOG.info("Calibrating on %d yfcc100m-keypoints cal pairs", int(parameters["calibration_samples"]))
-    data = {InputName(name): samples[name] for name in INPUT_SHAPES}
+    calibration_data = None
+    if _calibrates(parameters["precision"]):
+        samples = calibration_inputs(dataset, int(parameters["calibration_samples"]))
+        LOG.info("Calibrating on %d yfcc100m-keypoints cal pairs", int(parameters["calibration_samples"]))
+        data = {InputName(name): samples[name] for name in INPUT_SHAPES}
+        calibration_data = convert_data_generator_to_iterable(DataGenerator(data))
     return loaded.quantize(
-        calibration_data=convert_data_generator_to_iterable(DataGenerator(data)),
+        calibration_data=calibration_data,
         quantization_config=config,
         model_name=f"{MODEL_ID}_{profile_id}",
         log_level=logging.INFO,
@@ -277,14 +282,15 @@ def main() -> int:
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    if args.dataset is None:
-        parser.error("every build profile calibrates; pass --dataset")
+    precision = str(_parameters(_metadata(), args.build_profile)["precision"])
+    if _calibrates(precision) and args.dataset is None:
+        parser.error(f"{args.build_profile} calibrates; pass --dataset")
     fidelity = _metadata().get("numerical_fidelity")
     if fidelity is not None and args.fidelity_dataset is None:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
     output_dir = args.output_dir.expanduser().resolve()
-    precision = str(_parameters(_metadata(), args.build_profile)["precision"])
-    quantized = quantize(source, args.build_profile, args.dataset.expanduser().resolve())
+    dataset = args.dataset.expanduser().resolve() if args.dataset else None
+    quantized = quantize(source, args.build_profile, dataset)
     report = None
     if fidelity is not None:
         # Before the MLA compile, so a broken quantization stops the build early.
