@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import types
 from collections.abc import Callable
 from pathlib import Path
@@ -76,6 +77,41 @@ def test_every_timed_pair_runs_the_cpu_matching(load_script: Callable[[str], Mod
             return [types.SimpleNamespace(to_numpy=lambda copy: couplings.reshape(1, 1, 513, 513))]
 
     assert performance.match_pair(Runner(), []).tolist() == list(range(512))
+
+
+def test_throughput_runs_the_runner_async_and_matches_every_pulled_pair(
+    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    performance = load_script("performance")
+    for name, value in {"WARMUP_PAIRS": 2, "MEASURED_PAIRS": 5, "MIN_DURATION_S": 0, "MATCH_WORKERS": 2}.items():
+        monkeypatch.setattr(performance, name, value)
+    matched: list[int] = []
+    monkeypatch.setattr(performance, "sinkhorn_matches", lambda couplings, *_: matched.append(1))
+
+    class Runner:
+        """An async runner holding at most four pairs: push blocks when full, pull ends after close_input."""
+
+        def __init__(self) -> None:
+            self.outputs: queue.Queue = queue.Queue(maxsize=4)
+            self.pushed = 0
+
+        def push(self, tensors: list) -> bool:
+            self.outputs.put([types.SimpleNamespace(to_numpy=lambda copy: np.zeros((1, 1, 513, 513), np.float32))])
+            self.pushed += 1
+            return True
+
+        def close_input(self) -> None:
+            self.outputs.put([])
+
+        def pull(self, timeout_ms: int) -> types.SimpleNamespace:
+            return types.SimpleNamespace(tensors=self.outputs.get(timeout=timeout_ms / 1000))
+
+    runner = Runner()
+    result = performance.measure_throughput(runner, [])
+
+    assert result.pairs >= 5
+    # The pull loop drains the runner after the measured span, and every pair it returns is matched on the CPU.
+    assert len(matched) == runner.pushed >= result.pairs + 2
 
 
 @pytest.mark.parametrize("spread", [3.0, 12.0, 400.0])

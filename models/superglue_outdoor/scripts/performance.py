@@ -5,27 +5,32 @@ repeats one random.Random(0) pair of annotations/pairs_val.txt whose images both
 FP32 keypoints accuracy.py matches. Each measured pair runs the MPK
 and then the application's CPU steps, the 20 Sinkhorn iterations and the mutual-match extraction, as accuracy.py
 does: SuperGlue's own model ends with them, so a pair's matches are its result. Latency runs one pair at a time and
-reports the MPK's and the CPU's share. The CPU steps take longer than the MPK, so the throughput pass matches pairs in
-NEAT_WORKERS processes, each with its own runner and an equal share of the CPU cores, as an application with the
-DevKit's cores would. Core's own benchmark of the MPK supplies only the MLA layer and stage stats.
+reports the MPK's and the CPU's share. The throughput pass runs the runner asynchronously, as RF-DETR's does: one
+thread pushes the pair, one pulls each pair's couplings, and MATCH_WORKERS threads run the CPU matching, so the MPK
+works on one pair while the CPU matches earlier ones. Core's own benchmark of the MPK supplies only the MLA layer and
+stage stats.
 """
 
 from __future__ import annotations
 
-import argparse
-import collections
-import gc
-import multiprocessing
 import os
-import random
-import time
-from dataclasses import dataclass
-from pathlib import Path
 
-import cv2
-import model_report
-import numpy as np
-import pyneat
+# Each matching thread runs its own small matrix-vector products; one BLAS thread per call keeps them from competing.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import argparse  # noqa: E402
+import random  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from concurrent.futures import Future, ThreadPoolExecutor  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import cv2  # noqa: E402
+import model_report  # noqa: E402
+import numpy as np  # noqa: E402
+import pyneat  # noqa: E402
 
 DATASET = "yfcc100m-keypoints-val"
 IMAGES_FILE = "annotations/images.txt"
@@ -42,11 +47,10 @@ WARMUP_PAIRS = 10
 MEASURED_PAIRS = 1000
 MIN_DURATION_S = 60
 TIMEOUT_MS = 10000
-# Throughput-pass processes, each running the MPK and the CPU matching. Neat Core starts at most four accelerator
-# clients at once.
-NEAT_WORKERS = 4
-# Seconds between the workers' starts: runners built at the same moment can find the accelerator busy.
-NEAT_START_STAGGER_S = 2.0
+# Pairs the runner may queue; deeper queues add latency without adding throughput.
+QUEUE_DEPTH = 4
+# Threads matching pairs on the CPU in the throughput pass, one per core.
+MATCH_WORKERS = os.cpu_count() or 1
 
 
 @dataclass(frozen=True)
@@ -214,83 +218,93 @@ def match_pair(runner, tensors: list) -> np.ndarray:
     return matches
 
 
-def measure_latency(model: pyneat.Model, tensors: list) -> LatencyResult:
+def build_runner(model: pyneat.Model, tensors: list) -> pyneat.ModelRunner:
+    run_options = pyneat.RunOptions()
+    run_options.queue_depth = QUEUE_DEPTH
+    run_options.overflow_policy = pyneat.OverflowPolicy.Block
+    return model.build(tensors, run_options=run_options)
+
+
+def measure_latency(runner: pyneat.ModelRunner, tensors: list) -> LatencyResult:
     """Each pair one at a time after the warm-up, timing the whole pair and its MPK run."""
-    runner = model.build(tensors)
-    try:
-        for _ in range(WARMUP_PAIRS):
-            match_pair(runner, tensors)
-        pair_s: list[float] = []
-        model_s: list[float] = []
-        started = time.perf_counter()
-        while len(pair_s) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
-            begun = time.perf_counter()
-            couplings = run_mpk(runner, tensors)
-            model_s.append(time.perf_counter() - begun)
-            sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
-            pair_s.append(time.perf_counter() - begun)
-    finally:
-        runner.close()
+    for _ in range(WARMUP_PAIRS):
+        match_pair(runner, tensors)
+    pair_s: list[float] = []
+    model_s: list[float] = []
+    started = time.perf_counter()
+    while len(pair_s) < MEASURED_PAIRS or time.perf_counter() - started < MIN_DURATION_S:
+        begun = time.perf_counter()
+        couplings = run_mpk(runner, tensors)
+        model_s.append(time.perf_counter() - begun)
+        sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
+        pair_s.append(time.perf_counter() - begun)
     return LatencyResult(pair_s, model_s)
 
 
-def _start_worker(mpk: str, arrays: list[np.ndarray], threads: int, started, ready) -> None:
-    """Pool initializer of a throughput worker: its own model and runner, built one worker at a time."""
-    global _worker_runner, _worker_tensors
-    # The parent's runner set this for Neat's GStreamer runtime; Neat refuses to start with it inherited.
-    os.environ.pop("GST_PLUGIN_SYSTEM_PATH_1_0", None)
-    cv2.setNumThreads(threads)
-    with started.get_lock():
-        order = started.value
-        started.value += 1
-    time.sleep(order * NEAT_START_STAGGER_S)
-    _worker_tensors = [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays]
-    _worker_runner = pyneat.Model(mpk, tensor_options()).build(_worker_tensors)
-    match_pair(_worker_runner, _worker_tensors)
-    with ready.get_lock():
-        ready.value += 1
-
-
-def _match_once(_: int) -> int:
-    return int((match_pair(_worker_runner, _worker_tensors) >= 0).sum())
-
-
-def measure_throughput(mpk: str, arrays: list[np.ndarray]) -> ThroughputResult:
-    """Pairs matched in NEAT_WORKERS processes, each keeping at most two pairs queued. The measured span starts after
-    WARMUP_PAIRS pairs and lasts at least MEASURED_PAIRS pairs and MIN_DURATION_S seconds."""
-    # OpenBLAS, OpenMP and OpenCV start one thread per core in every process by default; each worker takes its share
-    # instead. The spawned workers import numpy after this, so their thread pools read it.
-    threads = max(1, (os.cpu_count() or 1) // NEAT_WORKERS)
-    os.environ["OPENBLAS_NUM_THREADS"] = os.environ["OMP_NUM_THREADS"] = str(threads)
+def measure_throughput(runner: pyneat.ModelRunner, tensors: list) -> ThroughputResult:
+    """Matched pairs per second and board telemetry with the MPK and the CPU busy at once. One thread pushes the pair,
+    this one pulls each pair's couplings and hands them to MATCH_WORKERS matching threads. The measured span starts
+    after WARMUP_PAIRS matched pairs and lasts at least MEASURED_PAIRS pairs and MIN_DURATION_S seconds."""
     monitor = pyneat.TelemetryMonitor()
-    context = multiprocessing.get_context("spawn")
-    ready = context.Value("i", 0)
-    pairs, started = 0, 0.0
-    initargs = (mpk, arrays, threads, context.Value("i", 0), ready)
-    with context.Pool(NEAT_WORKERS, _start_worker, initargs) as pool:
-        # Stream pairs only once every worker has built its runner.
-        deadline = time.monotonic() + 120 + NEAT_WORKERS * NEAT_START_STAGGER_S
-        while ready.value < NEAT_WORKERS:
-            if time.monotonic() > deadline:
-                raise RuntimeError(f"only {ready.value} of {NEAT_WORKERS} workers started")
-            time.sleep(0.5)
-        ahead = collections.deque()
-        submitted = 0
-        while True:
-            ahead.append(pool.apply_async(_match_once, (submitted,)))
-            submitted += 1
-            if len(ahead) <= 2 * NEAT_WORKERS:
-                continue
-            ahead.popleft().get()
-            pairs += 1
-            if pairs == WARMUP_PAIRS:
+    measured = threading.Event()
+    # Pairs pulled but not yet matched; a full queue holds back pulls, and with them the runner and the pushes.
+    unmatched = threading.BoundedSemaphore(2 * MATCH_WORKERS)
+    lock = threading.Lock()
+    errors: list[BaseException] = []
+    matched, started = 0, 0.0
+    result: ThroughputResult | None = None
+
+    def push_pairs() -> None:
+        try:
+            while not measured.is_set():
+                if not runner.push(tensors):
+                    raise RuntimeError("the runner rejected a pair")
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            runner.close_input()
+
+    def count_match(future: Future) -> None:
+        nonlocal matched, started, result
+        unmatched.release()
+        if error := future.exception():
+            errors.append(error)
+            measured.set()
+            return
+        with lock:
+            matched += 1
+            if matched == WARMUP_PAIRS:
                 monitor.start()
                 started = time.perf_counter()
-            elif pairs > WARMUP_PAIRS:
-                measured, seconds = pairs - WARMUP_PAIRS, time.perf_counter() - started
-                if measured >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
-                    pool.terminate()
-                    return ThroughputResult(measured, seconds, monitor.stop())
+            elif matched > WARMUP_PAIRS and result is None:
+                pairs, seconds = matched - WARMUP_PAIRS, time.perf_counter() - started
+                if pairs >= MEASURED_PAIRS and seconds >= MIN_DURATION_S:
+                    result = ThroughputResult(pairs, seconds, monitor.stop())
+                    measured.set()
+
+    pusher = threading.Thread(target=push_pairs, name="push_pairs")
+    pusher.start()
+    try:
+        with ThreadPoolExecutor(MATCH_WORKERS) as pool:
+            while outputs := runner.pull(TIMEOUT_MS).tensors:
+                couplings = outputs[0].to_numpy(copy=True).reshape(KEYPOINTS + 1, KEYPOINTS + 1)
+                # Return the output buffer to the runner before the next pull.
+                del outputs
+                unmatched.acquire()
+                pool.submit(sinkhorn_matches, couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD).add_done_callback(
+                    count_match
+                )
+    finally:
+        measured.set()
+        pusher.join()
+        # A failure inside the measured span leaves the monitor running.
+        if monitor.running():
+            monitor.stop()
+    if errors:
+        raise errors[0]
+    if result is None:
+        raise RuntimeError(f"no pair came out within {TIMEOUT_MS} ms before the measured span ended")
+    return result
 
 
 def main() -> None:
@@ -306,13 +320,15 @@ def main() -> None:
 
     layer_stats, stage_stats = mla_stats(args.mpk)
     arrays = pair_tensors(images)
+    tensors = [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays]
+    cv2.setNumThreads(1)
     model = pyneat.Model(args.mpk, tensor_options())
-    latency = measure_latency(model, [pyneat.Tensor.from_numpy(value, copy=True) for value in arrays])
-    # The throughput workers need every accelerator client Neat allows; reload the model for the report after.
-    del model
-    gc.collect()
-    throughput = measure_throughput(args.mpk, arrays)
-    model = pyneat.Model(args.mpk, tensor_options())
+    runner = build_runner(model, tensors)
+    try:
+        latency = measure_latency(runner, tensors)
+        throughput = measure_throughput(runner, tensors)
+    finally:
+        runner.close()
     benchmark = pyneat.BenchmarkReport()
     benchmark.latency_ms = float(np.mean(latency.pair_s) * 1000)
     benchmark.latency_p50_ms = float(np.percentile(latency.pair_s, 50) * 1000)
@@ -326,8 +342,8 @@ def main() -> None:
         {"model": model},
         workload=(
             f"{workload}, {KEYPOINTS} keypoints each, on the tensor route, then {SINKHORN_ITERATIONS} Sinkhorn "
-            f"iterations and mutual-match extraction on the CPU; latency one pair at a time, throughput with "
-            f"{NEAT_WORKERS} processes each running the MPK and the CPU matching"
+            f"iterations and mutual-match extraction on the CPU; latency one pair at a time, throughput with the "
+            f"runner's async push and pull and {MATCH_WORKERS} CPU matching threads"
         ),
         telemetry=throughput.telemetry,
         mla_layer_stats={"model": layer_stats},
