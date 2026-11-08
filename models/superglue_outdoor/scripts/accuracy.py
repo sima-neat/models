@@ -4,7 +4,9 @@ This is the outdoor evaluation of SuperGlue's README (match_pairs.py --eval) on 
 scenes. yfcc100m-keypoints val holds, for every image of yfcc100m val, the best 512 keypoints, scores and descriptors
 of Magic Leap's SuperPoint FP32 ONNX on the image rotated by its pair's quarter turns and stretched to 640 x 480, and
 yfcc100m's ground-truth intrinsics and relative poses. So the matcher's inputs carry no quantization; only the matcher
-under test is compiled. For each pair the script runs the MPK, extracts mutual matches after the Sinkhorn iterations,
+under test is compiled. The dataset decodes SuperPoint as transformers does, with NMS radius 4, a 4-pixel border and
+keypoint threshold 0.0005, ten times below the 0.005 default of transformers and match_pairs.py (sima-neat/dataset#36).
+For each pair the script runs the MPK, extracts mutual matches after the Sinkhorn iterations,
 estimates the relative pose from them and scores it as match_pairs.py does: the area under the pose-error curve at 5,
 10 and 20 degrees, match precision and matching score. A pair whose image has fewer than 512 keypoints is skipped, as
 the README tells applications to do.
@@ -17,6 +19,7 @@ import json
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import model_report
@@ -31,11 +34,11 @@ DESCRIPTOR_SIZE = 256
 PAIRS = 4000
 # SuperPoint's input, which the stored keypoints' pixel coordinates refer to.
 SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT = 640, 480
+# Mutual matches scoring at or below this are dropped, as in match_pairs.py.
+MATCH_THRESHOLD = 0.2
 # match_pairs.py's evaluation settings: 20 Sinkhorn iterations, a 1-pixel RANSAC threshold on the resized images,
 # and a match counts as correct when its epipolar error is below 5e-4.
 SINKHORN_ITERATIONS = 20
-# Mutual matches scoring at or below this are dropped, as in Magic Leap's demo.
-MATCH_THRESHOLD = 0.2
 POSE_PIXELS = 1.0
 RANSAC_CONFIDENCE = 0.99999
 EPIPOLAR_THRESHOLD = 5e-4
@@ -54,7 +57,7 @@ INPUTS = {
 OUTPUT_SHAPES = ((1, 1, KEYPOINTS + 1, KEYPOINTS + 1), (1, KEYPOINTS + 1, KEYPOINTS + 1))
 
 
-# The application's CPU side of SuperGlue, which conversion and performance.py import from here.
+# The application's CPU side of SuperGlue. performance.py keeps its own copy, which its tests compare with this one.
 
 def normalize_keypoints(keypoints, width, height):
     """Map pixel (x, y) keypoints to SuperGlue's frame: centred on the image, divided by 0.7 times its longer side."""
@@ -63,22 +66,12 @@ def normalize_keypoints(keypoints, width, height):
 
 
 def log_sinkhorn(couplings, iterations):
-    """Return the log optimal-transport matrix of [1, M+1, N+1] couplings, as SuperGlue's log_optimal_transport."""
+    """Return the log optimal-transport matrix of [M+1, N+1] couplings, as SuperGlue's log_optimal_transport."""
     rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
     normalization = -np.log(rows + columns)
     log_mu = np.concatenate([np.full(rows, normalization), [np.log(columns) + normalization]])
     log_nu = np.concatenate([np.full(columns, normalization), [np.log(rows) + normalization]])
     cost = np.asarray(couplings, dtype=np.float64).reshape(rows + 1, columns + 1)
-    # The same iterations in the linear domain: one exponential, then matrix-vector products. Shifting by the
-    # maximum keeps exp() finite; the scalings absorb the shift. Fall back to log space if a row underflows.
-    kernel = np.exp(cost - cost.max())
-    mu, nu = np.exp(log_mu), np.exp(log_nu)
-    u, v = np.ones_like(mu), np.ones_like(nu)
-    for _ in range(iterations):
-        u = mu / (kernel @ v)
-        v = nu / (kernel.T @ u)
-    if np.all(np.isfinite(u)) and np.all(np.isfinite(v)) and np.all(u > 0) and np.all(v > 0):
-        return (cost - cost.max()) + np.log(u)[:, None] + np.log(v)[None, :] - normalization
     u, v = np.zeros_like(log_mu), np.zeros_like(log_nu)
     for _ in range(iterations):
         u = log_mu - _logsumexp(cost + v[None, :], axis=1)
@@ -102,27 +95,29 @@ def extract_matches(log_transport, threshold=0.0):
 
 
 def sinkhorn_matches(couplings, iterations, threshold=0.0):
-    """extract_matches(log_sinkhorn(couplings, iterations), threshold), computed without the log matrix.
+    """extract_matches(log_sinkhorn(couplings, iterations), threshold), computed in float32 without the log matrix.
 
-    Same iterations in the linear domain, with OpenCV's vectorized exponential and a row-major copy of the kernel's
-    transpose for the column update. log is increasing, so each row's best column is the argmax of kernel * v and
-    each column's best row the argmax of kernel * u; the score is exp(log transport) = kernel * u * v * (M + N).
+    The same iterations in the linear domain: one exponential, shifted by the maximum to stay finite, then
+    matrix-vector products, at the float32 precision SuperGlue's PyTorch model runs them in. log is increasing, so
+    each row's best column is the argmax of kernel * v and each column's best row the argmax of kernel * u; the score
+    is exp(log transport) = kernel * u * v * (M + N). A row or column that underflows falls back to log space.
     """
     import cv2
 
     rows, columns = couplings.shape[-2] - 1, couplings.shape[-1] - 1
     scale = rows + columns
-    mu = np.full(rows + 1, 1.0 / scale)
+    mu = np.full(rows + 1, 1.0 / scale, dtype=np.float32)
     mu[-1] = columns / scale
-    nu = np.full(columns + 1, 1.0 / scale)
+    nu = np.full(columns + 1, 1.0 / scale, dtype=np.float32)
     nu[-1] = rows / scale
-    cost = np.asarray(couplings, dtype=np.float64).reshape(rows + 1, columns + 1)
+    cost = np.asarray(couplings, dtype=np.float32).reshape(rows + 1, columns + 1)
     kernel = cv2.exp(cost - cost.max())
     kernel_t = np.ascontiguousarray(kernel.T)
-    u, v = np.ones(rows + 1), np.ones(columns + 1)
-    for _ in range(iterations):
-        u = mu / (kernel @ v)
-        v = nu / (kernel_t @ u)
+    u, v = np.ones(rows + 1, dtype=np.float32), np.ones(columns + 1, dtype=np.float32)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        for _ in range(iterations):
+            u = mu / (kernel @ v)
+            v = nu / (kernel_t @ u)
     if not (np.all(np.isfinite(u)) and np.all(np.isfinite(v)) and np.all(u > 0) and np.all(v > 0)):
         return extract_matches(log_sinkhorn(couplings, iterations), threshold)
     by_row = kernel[:-1, :-1] * v[None, :-1]
@@ -155,17 +150,46 @@ def rotate_pose_inplane(i_T_w: np.ndarray, rotation: int) -> np.ndarray:
     return np.dot(matrices[rotation], i_T_w)
 
 
-def image_intrinsics(K: np.ndarray, data: dict[str, np.ndarray], image: int) -> np.ndarray:
-    """An original image's intrinsics mapped onto the resized, rotated image its keypoints refer to, as
-    match_pairs.py's scale_intrinsics and rotate_intrinsics do. The image is stretched to `resized` before it is
-    rotated, so the scales stay in the original axes; match_pairs.py swaps them, which only its isotropic resize
-    tolerates."""
-    width, height = data["image_sizes"][image]
-    rotation = int(data["rotations"][image])
+def image_intrinsics(
+    K: np.ndarray, original_size: Sequence[int], input_size: Sequence[int], rotation: int
+) -> np.ndarray:
+    """An original image's intrinsics mapped onto the resized, rotated input its keypoints refer to, as
+    match_pairs.py's scale_intrinsics and rotate_intrinsics do. The image is stretched to the input size, with width
+    and height swapped for an odd quarter turn, before it is rotated, so the scales stay in the original axes;
+    match_pairs.py swaps them, which only its isotropic resize tolerates."""
+    width, height = input_size
     resized = (height, width) if rotation % 2 else (width, height)
-    sx, sy = data["original_sizes"][image] / np.array(resized, dtype=np.float64)
+    sx, sy = np.asarray(original_size, dtype=np.float64) / np.array(resized, dtype=np.float64)
     K = np.diag([1 / sx, 1 / sy, 1.0]) @ K
     return rotate_intrinsics(K, width, height, rotation) if rotation else K
+
+
+@dataclass(frozen=True)
+class Images:
+    """Every image's stored SuperPoint output, padded to KEYPOINTS, in pixels of the 640 x 480 input."""
+
+    names: list[str]
+    rotations: np.ndarray  # [images], quarter turns applied before SuperPoint
+    keypoints: np.ndarray  # [images, KEYPOINTS, 2]
+    scores: np.ndarray  # [images, KEYPOINTS]
+    descriptors: np.ndarray  # [images, KEYPOINTS, DESCRIPTOR_SIZE]
+    counts: np.ndarray  # [images], stored keypoints before padding
+
+
+@dataclass(frozen=True)
+class Pairs:
+    """Each pair's images and its ground truth mapped onto the inputs the keypoints refer to."""
+
+    images: np.ndarray  # [pairs, 2] indices into Images
+    intrinsics: np.ndarray  # [pairs, 2, 3, 3]
+    poses: np.ndarray  # [pairs, 4, 4] image 0 to image 1
+    usable: np.ndarray  # [pairs], both images have KEYPOINTS keypoints
+
+
+@dataclass(frozen=True)
+class Dataset:
+    images: Images
+    pairs: Pairs
 
 
 def read_pairs(directory: Path) -> list[list[str]]:
@@ -175,17 +199,10 @@ def read_pairs(directory: Path) -> list[list[str]]:
     return lines
 
 
-def load_dataset(directory: Path) -> dict[str, np.ndarray]:
-    """Every image's stored SuperPoint keypoints, and each pair's intrinsics and pose mapped onto the resized, rotated
-    images the keypoints refer to. data["usable"] marks the pairs whose images both have KEYPOINTS keypoints."""
-    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if (manifest.get("id"), manifest.get("variant"), manifest.get("keypoints")) != ("yfcc100m-keypoints", "val",
-                                                                                    KEYPOINTS):
-        raise SystemExit(f"{directory} is not the {DATASET} dataset with {KEYPOINTS} keypoints per image")
-    lines = read_pairs(directory)
-    columns = {"original_sizes": [], "rotations": [], "image_sizes": [], "keypoints": [], "scores": [],
-               "descriptors": [], "counts": []}
-    names = []
+def read_images(directory: Path) -> tuple[Images, np.ndarray]:
+    """Every image's stored keypoints, scores and descriptors, and each image's original (width, height)."""
+    names, original_sizes, rotations, counts = [], [], [], []
+    keypoints, scores, descriptors = [], [], []
     for row in (directory / IMAGES_FILE).read_text(encoding="utf-8").splitlines():
         name, width, height, rotation, count = row.split()
         stem = directory / SPLIT / str(Path(name).with_suffix(""))
@@ -197,51 +214,66 @@ def load_dataset(directory: Path) -> dict[str, np.ndarray]:
             raise SystemExit(f"{name}'s keypoints do not match {IMAGES_FILE}")
         pad = KEYPOINTS - count
         names.append(name)
-        columns["original_sizes"].append((int(width), int(height)))
-        columns["rotations"].append(int(rotation))
-        columns["image_sizes"].append((SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT))
-        columns["keypoints"].append(np.pad(arrays["keypoints"], ((0, pad), (0, 0))))
-        columns["scores"].append(np.pad(arrays["scores"], (0, pad)))
-        columns["descriptors"].append(np.pad(arrays["descriptors"], ((0, pad), (0, 0))))
-        columns["counts"].append(count)
-    data = {key: np.array(value) for key, value in columns.items()}
-    position = {name: index for index, name in enumerate(names)}
+        original_sizes.append((int(width), int(height)))
+        rotations.append(int(rotation))
+        counts.append(count)
+        keypoints.append(np.pad(arrays["keypoints"], ((0, pad), (0, 0))))
+        scores.append(np.pad(arrays["scores"], (0, pad)))
+        descriptors.append(np.pad(arrays["descriptors"], ((0, pad), (0, 0))))
+    images = Images(
+        names, np.array(rotations), np.array(keypoints), np.array(scores), np.array(descriptors), np.array(counts)
+    )
+    return images, np.array(original_sizes)
+
+
+def load_dataset(directory: Path) -> Dataset:
+    """Every image's stored SuperPoint keypoints, and each pair's intrinsics and pose mapped onto the resized, rotated
+    inputs the keypoints refer to."""
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    if (manifest.get("id"), manifest.get("variant"), manifest.get("keypoints")) != ("yfcc100m-keypoints", "val",
+                                                                                    KEYPOINTS):
+        raise SystemExit(f"{directory} is not the {DATASET} dataset with {KEYPOINTS} keypoints per image")
+    lines = read_pairs(directory)
+    images, original_sizes = read_images(directory)
+    position = {name: index for index, name in enumerate(images.names)}
     pair_images, intrinsics, poses = [], [], []
     for line in lines:
         if line[0] not in position or line[1] not in position:
             raise SystemExit(f"{IMAGES_FILE} has no keypoints for {line[0]} or {line[1]}")
-        images = (position[line[0]], position[line[1]])
-        for image, rotation in zip(images, (int(line[2]), int(line[3]))):
-            if data["rotations"][image] != rotation:
-                detected = data["rotations"][image]
-                raise SystemExit(f"{names[image]} was detected with rotation {detected}, not {rotation}")
+        pair = (position[line[0]], position[line[1]])
+        for image, rotation in zip(pair, (int(line[2]), int(line[3]))):
+            if images.rotations[image] != rotation:
+                raise SystemExit(f"{images.names[image]} was detected with rotation {images.rotations[image]}, "
+                                 f"not {rotation}")
         pose = np.array(line[22:], dtype=np.float64).reshape(4, 4)
         cameras, camera_T_world = [], []
-        for image, values, start in ((images[0], line[4:13], np.eye(4)), (images[1], line[13:22], pose)):
-            cameras.append(image_intrinsics(np.array(values, dtype=np.float64).reshape(3, 3), data, image))
-            rotation = int(data["rotations"][image])
+        for image, values, start in ((pair[0], line[4:13], np.eye(4)), (pair[1], line[13:22], pose)):
+            rotation = int(images.rotations[image])
+            K = np.array(values, dtype=np.float64).reshape(3, 3)
+            cameras.append(image_intrinsics(K, original_sizes[image], (SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT), rotation))
             camera_T_world.append(rotate_pose_inplane(start, rotation) if rotation else start)
-        if data["rotations"][images[0]] or data["rotations"][images[1]]:
+        if images.rotations[pair[0]] or images.rotations[pair[1]]:
             pose = camera_T_world[1] @ np.linalg.inv(camera_T_world[0])
-        pair_images.append(images)
+        pair_images.append(pair)
         intrinsics.append(cameras)
         poses.append(pose)
-    data["names"] = np.array(names)
-    data["pair_images"] = np.array(pair_images, dtype=np.int32)
-    data["intrinsics"] = np.array(intrinsics, dtype=np.float64)
-    data["poses"] = np.array(poses, dtype=np.float64)
-    data["usable"] = (data["counts"][data["pair_images"]] >= KEYPOINTS).all(1)
-    return data
+    pair_images = np.array(pair_images, dtype=np.int32)
+    pairs = Pairs(
+        pair_images,
+        np.array(intrinsics, dtype=np.float64),
+        np.array(poses, dtype=np.float64),
+        (images.counts[pair_images] >= KEYPOINTS).all(1),
+    )
+    return Dataset(images, pairs)
 
 
-def matcher_inputs(data: dict[str, np.ndarray], pair: int) -> list[np.ndarray]:
-    """One pair's MPK inputs, channels-last in the declared order, each image's keypoints normalized by its size."""
+def matcher_inputs(images: Images, pair_images: Sequence[int]) -> list[np.ndarray]:
+    """One pair's MPK inputs, channels-last in the declared order, with keypoints normalized by the input size."""
     values = {}
-    for side, image in enumerate(data["pair_images"][pair]):
-        width, height = data["image_sizes"][image]
-        values[f"keypoints{side}"] = normalize_keypoints(data["keypoints"][image], width, height)
-        values[f"scores{side}"] = data["scores"][image]
-        values[f"descriptors{side}"] = data["descriptors"][image]
+    for side, image in enumerate(pair_images):
+        values[f"keypoints{side}"] = normalize_keypoints(images.keypoints[image], SUPERPOINT_WIDTH, SUPERPOINT_HEIGHT)
+        values[f"scores{side}"] = images.scores[image]
+        values[f"descriptors{side}"] = images.descriptors[image]
     return [np.ascontiguousarray(values[name], dtype=np.float32).reshape(shape) for name, shape in INPUTS.items()]
 
 
@@ -318,15 +350,15 @@ def pose_auc(errors: Sequence[float], thresholds: Sequence[float] = AUC_DEGREES)
     return aucs
 
 
-def score_pair(couplings: np.ndarray, data: dict[str, np.ndarray], pair: int) -> dict[str, float]:
+def score_pair(couplings: np.ndarray, dataset: Dataset, pair: int) -> dict[str, float]:
     """Match one pair from its [N+1, N+1] couplings and score the matches and the pose as match_pairs.py does."""
     matches, _ = sinkhorn_matches(couplings, SINKHORN_ITERATIONS, MATCH_THRESHOLD)
-    image0, image1 = data["pair_images"][pair]
-    K0, K1 = data["intrinsics"][pair]
-    T_0to1 = data["poses"][pair]
+    image0, image1 = dataset.pairs.images[pair]
+    K0, K1 = dataset.pairs.intrinsics[pair]
+    T_0to1 = dataset.pairs.poses[pair]
     valid = matches >= 0
-    points0 = data["keypoints"][image0][valid].astype(np.float64)
-    points1 = data["keypoints"][image1][matches[valid]].astype(np.float64)
+    points0 = dataset.images.keypoints[image0][valid].astype(np.float64)
+    points1 = dataset.images.keypoints[image1][matches[valid]].astype(np.float64)
     correct = epipolar_errors(points0, points1, T_0to1, K0, K1) < EPIPOLAR_THRESHOLD
     pose = estimate_pose(points0, points1, K0, K1)
     return {
@@ -337,13 +369,14 @@ def score_pair(couplings: np.ndarray, data: dict[str, np.ndarray], pair: int) ->
     }
 
 
-def evaluate(data: dict[str, np.ndarray], pairs: Sequence[int],
+def evaluate(dataset: Dataset, pairs: Sequence[int],
              couplings_of: Callable[[list[np.ndarray]], np.ndarray]) -> tuple[dict[str, float], dict[str, float]]:
     """Score the pairs with couplings_of(inputs), which returns the [N+1, N+1] couplings; return metrics and totals."""
     rows = []
     started = time.monotonic()
     for count, pair in enumerate(pairs, start=1):
-        rows.append(score_pair(couplings_of(matcher_inputs(data, pair)), data, pair))
+        inputs = matcher_inputs(dataset.images, dataset.pairs.images[pair])
+        rows.append(score_pair(couplings_of(inputs), dataset, pair))
         if count == 1 or count % 500 == 0 or count == len(pairs):
             log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
     aucs = pose_auc([row["pose_error"] for row in rows])
@@ -374,8 +407,9 @@ def main(argv: list[str] | None = None) -> int:
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != DATASET:
         raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
-    data = load_dataset(Path(directory))
-    pairs = [pair for pair in range(min(args.limit, PAIRS) if args.limit else PAIRS) if data["usable"][pair]]
+    dataset = load_dataset(Path(directory))
+    usable = dataset.pairs.usable
+    pairs = [pair for pair in range(min(args.limit, PAIRS) if args.limit else PAIRS) if usable[pair]]
 
     import pyneat
 
@@ -397,13 +431,13 @@ def main(argv: list[str] | None = None) -> int:
         return couplings_matrix(output.to_numpy(copy=True))
 
     started = time.monotonic()
-    metrics, totals = evaluate(data, pairs, couplings_of)
+    metrics, totals = evaluate(dataset, pairs, couplings_of)
     result = {
         "metrics": metrics,
         "split": SPLIT, "evaluated_samples": len(pairs), "available_samples": PAIRS,
         "details": {
             "keypoints": f"SuperPoint FP32 at {SUPERPOINT_WIDTH}x{SUPERPOINT_HEIGHT}, best {KEYPOINTS}",
-            "skipped_pairs": int((~data["usable"]).sum()), "matches_per_pair": totals["matches"],
+            "skipped_pairs": int((~usable).sum()), "matches_per_pair": totals["matches"],
             "seconds": round(time.monotonic() - started, 1),
         },
     }
