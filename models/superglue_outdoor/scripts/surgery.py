@@ -16,7 +16,8 @@ from pathlib import Path
 import numpy as np
 import onnx
 
-EXPORTER = "4.57.1"
+# The transformers the pinned Model Compiler environment provides; its SuperGlue layers match 4.57.1's.
+EXPORTER = "5.16.1"
 # transformers' SuperGlueConfig default, which the exported couplings are checked under.
 SINKHORN_ITERATIONS = 100
 KEYPOINTS = 512
