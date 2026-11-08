@@ -65,3 +65,20 @@ def test_the_converted_matcher_has_the_static_interface(converted: Path, convert
     converter.validate_export(converted)
     model = onnx.load(converted, load_external_data=False)
     assert [node.op_type for node in model.graph.node].count("Softmax") >= 2
+
+
+def test_the_rotary_embedding_scale_and_mask_are_folded_into_the_projections(converted: Path) -> None:
+    """The self-attention folds leave no rotate_half (step-2 slices and negations) and no all-zero mask Add."""
+    model = onnx.load(converted, load_external_data=False)
+    initializers = {tensor.name: tensor for tensor in model.graph.initializer}
+    steps = [
+        onnx.numpy_helper.to_array(initializers[node.input[4]]).tolist()
+        for node in model.graph.node
+        if node.op_type == "Slice" and len(node.input) > 4 and node.input[4] in initializers
+    ]
+    zeros = {name for name, tensor in initializers.items() if not onnx.numpy_helper.to_array(tensor).any()}
+    zero_adds = [node for node in model.graph.node if node.op_type == "Add" and zeros.intersection(node.input)]
+
+    assert "Neg" not in {node.op_type for node in model.graph.node}
+    assert all(step == [1] for step in steps)
+    assert zero_adds == []
