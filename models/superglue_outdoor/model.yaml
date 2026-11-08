@@ -53,8 +53,8 @@ performance: {}
 
 # No published score is comparable to this package. SuperGlue's YFCC100M table scored up to 2048 SuperPoint keypoints
 # per image at a 1600-pixel longer side; this package matches 512 keypoints from a 640x480 image, and no source
-# publishes a score at that setting. The same-protocol FP32 run of sima-neat/models#366 (ONNX Runtime on a host)
-# scored pose AUC@5 0.2866. Kept for reference, not published:
+# publishes a score at that setting. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this
+# package's own inputs instead. The published table, kept for reference and not shown:
 # reference_metrics:
 # - source: https://github.com/magicleap/SuperGluePretrainedNetwork/blob/39fb030dab0d976fe25fd2feed55e3ad0d3908dc/README.md
 #   dataset: {id: yfcc100m, split: test}

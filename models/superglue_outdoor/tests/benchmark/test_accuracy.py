@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -277,6 +278,59 @@ def test_sinkhorn_matches_equal_the_log_transport_extraction(spread: float,
     matches, scores = accuracy.sinkhorn_matches(couplings, 20, 0.2)
     np.testing.assert_array_equal(matches, expected[0])
     np.testing.assert_allclose(scores, expected[1], rtol=1e-5, atol=0)
+
+
+def _onnx_layout(couplings: np.ndarray) -> np.ndarray:
+    """The ONNX's [1, j, 1, i] output for an [i, j] couplings matrix."""
+    return np.ascontiguousarray(couplings.T).reshape(1, couplings.shape[1], 1, couplings.shape[0])
+
+
+def test_fp32_baseline_reads_the_onnx_couplings_transposed(load_script: Callable[[str], ModuleType]) -> None:
+    baseline = load_script("fp32_baseline_accuracy")
+    size = baseline.COUPLINGS
+    couplings = np.arange(size * size, dtype=np.float32).reshape(size, size)
+
+    np.testing.assert_array_equal(baseline.couplings_from_onnx(_onnx_layout(couplings)), couplings)
+    with pytest.raises(ValueError, match="unexpected ONNX output"):
+        baseline.couplings_from_onnx(couplings.reshape(1, 1, size, size))
+    couplings[0, 0] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        baseline.couplings_from_onnx(_onnx_layout(couplings))
+
+
+def test_fp32_baseline_scores_the_onnx_as_accuracy_scores_the_mpk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    pytest.importorskip("cv2")
+    baseline = load_script("fp32_baseline_accuracy")
+    accuracy = baseline.accuracy
+    dataset, truth = _scene(accuracy)
+    couplings = _couplings(accuracy, truth)
+    feeds = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def get_inputs(self) -> list[Any]:
+            return [type("Input", (), {"name": name}) for name in accuracy.INPUTS]
+
+        def run(self, outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            feeds.append({name: value.shape for name, value in inputs.items()})
+            return [_onnx_layout(couplings)]
+
+    monkeypatch.setitem(sys.modules, "onnxruntime", type("onnxruntime", (), {"InferenceSession": Session}))
+    monkeypatch.setattr(accuracy, "load_dataset", lambda directory: dataset)
+    output = tmp_path / "fp32-baseline.json"
+
+    baseline.main(["--onnx", "model.onnx", "--dataset", f"{accuracy.DATASET}=data", "--output", str(output),
+                   "--limit", "1"])
+
+    expected, _ = accuracy.evaluate(dataset, [0], lambda inputs: couplings)
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result == {"pairs": 1, "metrics": {name: round(value, 4) for name, value in expected.items()}}
+    assert feeds == [{"keypoints0": (1, 2, 1, 512), "scores0": (1, 1, 1, 512), "descriptors0": (1, 256, 1, 512),
+                      "keypoints1": (1, 2, 1, 512), "scores1": (1, 1, 1, 512), "descriptors1": (1, 256, 1, 512)}]
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
