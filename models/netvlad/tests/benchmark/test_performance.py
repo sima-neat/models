@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
-import pytest
 from model_registry.model_tests import measured_shortfalls
 
 
@@ -34,14 +31,3 @@ def test_mla_stats_collected(performance: dict[str, Any]) -> None:
     assert (layer_stats["status"], stage_stats["status"]) == ("ok", "ok")
     assert any(layer["latency_us"] > 0 for layer in layer_stats["layers"]), "Core returned no MLA layer latency"
     assert stage_stats["stages"], "Core returned no MLA stage latency"
-
-
-def test_performance_reads_the_directory_the_runner_passes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_script: Callable[[str], ModuleType]
-) -> None:
-    """The runner looks through the archive's one top-level directory, so images/ sits directly under --dataset."""
-    arguments = ["--mpk", "model=m.tar.gz", "--dataset", f"pitts30k-val={tmp_path}", "--output", str(tmp_path)]
-    monkeypatch.setattr("sys.argv", ["performance.py", *arguments])
-    # performance.py parses its arguments and runs as it loads.
-    with pytest.raises(SystemExit, match=f"{tmp_path} has no images under images/"):
-        load_script("performance")

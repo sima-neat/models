@@ -157,9 +157,8 @@ def build_netvlad(encoder: Any, pooling: dict[str, np.ndarray]) -> Any:
     import torch.nn.functional as F
 
     def normalize(value: torch.Tensor, dim: int) -> torch.Tensor:
-        # F.normalize without its expand_as: the SDK's onnxsim 0.4 leaves the Shape nodes that exports unfolded, as it
-        # does for flatten, so the network reshapes its batch of one explicitly. AFE lowers ReduceL2, Clip and Div to
-        # its L2Norm operator.
+        # torch exports F.normalize's expand_as, like flatten, as Shape nodes the SDK's onnxsim 0.4 cannot fold, so
+        # the network normalizes and reshapes its batch of one explicitly. AFE lowers ReduceL2, Clip and Div to L2Norm.
         return value / value.norm(p=2, dim=dim, keepdim=True).clamp_min(NORM_EPS)
 
     class NetVLAD(torch.nn.Module):

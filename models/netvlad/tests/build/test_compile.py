@@ -16,7 +16,7 @@ import pytest
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
-PROFILES = ("w16a16", "w8a16", "w8a8_mixed_w8a16")
+PROFILES = ("w16a16", "w8a16", "w8a8_mixed")
 
 
 @pytest.fixture
@@ -111,8 +111,8 @@ def test_calibration_images_precede_the_fidelity_selection(
         recipe.calibration_names(root, {**selection, "offset": 49}, 50)
 
 
-@pytest.mark.parametrize(("precision", "per_token"), [("w8a16", True), ("w16a16", False)])
-def test_every_build_calibrates_and_only_w8a16_quantizes_per_token(
+@pytest.mark.parametrize(("precision", "per_token"), [("w8a8", True), ("w8a16", True), ("w16a16", False)])
+def test_every_build_calibrates_and_only_bf16_weights_skip_per_token_quantization(
     precision: str, per_token: bool, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
@@ -126,31 +126,32 @@ def test_every_build_calibrates_and_only_w8a16_quantizes_per_token(
     assert arguments["activation_quantization_scheme"] is recipe.bfloat16_scheme.return_value
     assert arguments.get("per_token_quant", False) is per_token
     with pytest.raises(ValueError, match="unsupported precision"):
-        recipe.quantization("w8a8", 2048)
+        recipe.quantization("w4a8", 2048)
 
 
 @pytest.mark.parametrize(
     ("profile", "parameters", "message"),
     [
-        ("w8a8_mixed_w8a16", {"precision": "w8a16", "int8_regions": ["pooling"]}, "can only name the encoder"),
-        ("w8a8_mixed_w16a16", {"precision": "w16a16", "int8_regions": ["encoder"]}, "can only name the encoder"),
-        ("w8a8_w8a16", {"precision": "w8a16", "int8_regions": ["encoder"]}, "must have the mixed token"),
+        ("w8a8", {"precision": "w8a8"}, "only a W8A8 build, runs bf16_regions"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["encoder"]}, "only a W8A8 build, runs bf16_regions"),
+        ("w8a16_mixed", {"precision": "w8a16", "bf16_regions": ["pooling"]}, "only a W8A8 build, runs bf16_regions"),
+        ("w8a8_pooling", {"precision": "w8a8", "bf16_regions": ["pooling"]}, "must have the mixed token"),
         ("w8a16_mixed", {"precision": "w8a16"}, "must have the mixed token"),
     ],
 )
-def test_only_a_mixed_w8a16_profile_runs_its_encoder_int8(
+def test_only_a_mixed_w8a8_profile_runs_its_pooling_bf16(
     profile: str, parameters: dict[str, Any], message: str, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
 
-    assert recipe.int8_regions("w8a8_mixed_w8a16", {"precision": "w8a16", "int8_regions": ["encoder"]}) == ["encoder"]
-    assert recipe.int8_regions("w8a16", {"precision": "w8a16"}) == []
+    assert recipe.bf16_regions("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["pooling"]}) == ["pooling"]
+    assert recipe.bf16_regions("w8a16", {"precision": "w8a16"}) == []
     with pytest.raises(ValueError, match=message):
-        recipe.int8_regions(profile, parameters)
+        recipe.bf16_regions(profile, parameters)
 
 
-@pytest.mark.parametrize(("int8_convolutions", "honored"), [(12, True), (0, False)])
-def test_a_mixed_build_fails_when_afe_ignores_the_int8_marks(
+@pytest.mark.parametrize(("int8_convolutions", "honored"), [(12, True), (0, False), (13, False)])
+def test_a_mixed_build_fails_unless_afe_runs_exactly_the_marked_convolutions_int8(
     int8_convolutions: int, honored: bool, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
@@ -169,10 +170,11 @@ def test_a_mixed_build_fails_when_afe_ignores_the_int8_marks(
     quantized._net.iter_nodes_recursive.return_value = [node(int8)] * int8_convolutions + [node(bf16)] * 3
 
     if honored:
-        recipe.require_int8_encoder(quantized)
+        recipe.require_bf16_pooling(quantized)
     else:
-        with pytest.raises(RuntimeError, match="expected the encoder's convolutions before conv5_3 in INT8"):
-            recipe.require_int8_encoder(quantized)
+        # Too few means AFE ignored the marks; too many means INT8 reached conv5_3 or the pooling.
+        with pytest.raises(RuntimeError, match="expected the encoder's 12 convolutions before conv5_3 in INT8"):
+            recipe.require_bf16_pooling(quantized)
 
 
 def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_script: Callable[[str], ModuleType]) -> None:
@@ -182,9 +184,9 @@ def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_scrip
 
     assert recipe.build_parameters(metadata, "w16a16") == {"precision": "w16a16", **calibration}
     assert recipe.build_parameters(metadata, "w8a16") == {"precision": "w8a16", **calibration}
-    assert recipe.build_parameters(metadata, "w8a8_mixed_w8a16") == {
-        "precision": "w8a16",
-        "int8_regions": ["encoder"],
+    assert recipe.build_parameters(metadata, "w8a8_mixed") == {
+        "precision": "w8a8",
+        "bf16_regions": ["pooling"],
         **calibration,
     }
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT]
@@ -378,6 +380,16 @@ def test_encoder_keeps_torchvision_vgg16_layer_indices(builder: ModuleType) -> N
     pools = [index for index, layer in enumerate(encoder) if isinstance(layer, torch.nn.MaxPool2d)]
     assert len(encoder) == 29 and (convolutions[-1], pools) == (28, [4, 9, 16, 23])
     assert len(convolutions) == 13 and encoder[28].out_channels == 512
+
+
+def test_encoder_matches_torchvision_vgg16_features_layer_by_layer(builder: ModuleType) -> None:
+    pytest.importorskip("torch")
+    torchvision = pytest.importorskip("torchvision")
+
+    expected = torchvision.models.vgg16(weights=None).features[:29]
+
+    # repr lists each layer's kernel, stride, padding and channels, so equal reprs mean the same layers.
+    assert [repr(layer) for layer in builder.build_encoder()] == [repr(layer) for layer in expected]
 
 
 def test_int8_marks_cover_the_encoder_up_to_conv5_3_and_leave_its_normalization_unsplit(

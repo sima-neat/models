@@ -69,9 +69,11 @@ def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
 
     Every build calibrates. AFE has no BF16 Sqrt, so even with BF16 activations the VLAD norm's Sqrt runs as an INT8
     lookup table, and without calibration data quantize() fails for missing calibration information. Histogram MSE
-    measures its input range, and a mixed build's INT8 encoder ranges, on the calibration images.
+    measures its input range, and the W8A8 encoder's ranges, on the calibration images.
     """
-    if precision == "w8a16":
+    if precision in ("w8a8", "w8a16"):
+        # The W8A8 build quantizes as W8A16 too, and its INT8 marks make the encoder W8A8 (bf16_regions). A BF16 mark
+        # on the pooling instead would store the WPCA's 134M weights in BF16, twice the bytes the MLA reads per frame.
         return QuantizationParams(
             calibration_method=HistogramMSEMethod(calibration_bins),
             activation_quantization_scheme=bfloat16_scheme(),
@@ -88,18 +90,21 @@ def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
     raise ValueError(f"unsupported precision: {precision}")
 
 
-def int8_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
-    """The regions a W8A16 build runs W8A8, checking that the build profile's ID marks it mixed."""
-    regions = parameters.get("int8_regions", [])
-    if regions not in ([], ["encoder"]) or (regions and parameters["precision"] != "w8a16"):
-        raise ValueError(f"int8_regions can only name the encoder of a W8A16 build: {regions}")
+def bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
+    """The regions a W8A8 build runs above W8A8, checking that the build profile's ID marks it mixed.
+
+    W8A8 needs the pooling in BF16: with INT8 activations from conv5_3 on, the descriptor keeps 0.41 cosine.
+    """
+    regions = parameters.get("bf16_regions", [])
+    if (parameters["precision"] == "w8a8") != (regions == ["pooling"]):
+        raise ValueError(f"a W8A8 build, and only a W8A8 build, runs bf16_regions: [pooling]; found {regions}")
     if bool(regions) != ("mixed" in profile_id.split("_")):
-        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has int8_regions")
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
     return regions
 
 
-def require_int8_encoder(quantized: Any) -> None:
-    """Fail when AFE ignored the INT8 annotations, which would silently build W8A16 throughout."""
+def require_bf16_pooling(quantized: Any) -> None:
+    """Fail unless AFE ran exactly the encoder's convolutions before conv5_3 in INT8, as the marks ask."""
     # The quantized model keeps its network private, and AFE renames every node, so count by operation.
     counts = Counter(
         type(node.ir.operation).__name__
@@ -108,8 +113,11 @@ def require_int8_encoder(quantized: Any) -> None:
         and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.INT_8
     )
     LOG.info("INT8 operations: %s", dict(sorted(counts.items())))
-    if counts["ConvAddActivationOp"] < ENCODER_CONVOLUTIONS - 1:
-        raise RuntimeError(f"expected the encoder's convolutions before conv5_3 in INT8, found {dict(counts)}")
+    if counts["ConvAddActivationOp"] != ENCODER_CONVOLUTIONS - 1:
+        raise RuntimeError(
+            f"expected the encoder's {ENCODER_CONVOLUTIONS - 1} convolutions before conv5_3 in INT8, "
+            f"found {dict(counts)}"
+        )
 
 
 def calibration_names(dataset: Path, selection: dict[str, Any], sample_count: int) -> tuple[str, ...]:
@@ -178,8 +186,8 @@ def compile_model(
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
-        if parameters.get("int8_regions"):
-            require_int8_encoder(quantized)
+        if parameters.get("bf16_regions"):
+            require_bf16_pooling(quantized)
         try:
             quantized.compile(
                 output_path=str(build_dir / "mpk"),
@@ -237,7 +245,7 @@ def measure_fidelity(
         "model_id": MODEL_ID,
         "build_profile_id": profile_id,
         "status": config["status"],
-        "reference": "Patch-NetVLAD forward (PyTorch encoder, float64 pooling)",
+        "reference": "VGG16 encoder (PyTorch) and Patch-NetVLAD pooling in float64",
         "candidate": "Quantized AFE graph (JAX execute)",
         "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
         "selection": selection,
@@ -270,13 +278,16 @@ def main() -> int:
         parser.error("--model must be the verified weights.pth from the conversion workflow")
     if not weights.is_file():
         parser.error(f"model does not exist: {weights}")
-    if args.dataset is None or not args.dataset.exists():
+    if args.dataset is None:
         parser.error("every build calibrates; pass the dataset-registry --dataset")
     if args.fidelity_dataset is None:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
+    for dataset in (args.dataset, args.fidelity_dataset):
+        if not dataset.exists():
+            parser.error(f"dataset does not exist: {dataset}")
     metadata = load_metadata(MODEL_DIR)
     parameters = build_parameters(metadata, args.build_profile)
-    regions = int8_regions(args.build_profile, parameters)
+    regions = bf16_regions(args.build_profile, parameters)
     fidelity = metadata["numerical_fidelity"]
     dataset = args.dataset.expanduser().resolve()
     samples = load_images(
