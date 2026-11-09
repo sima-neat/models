@@ -197,7 +197,6 @@ def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     sizes = compile_module.OUTPUT_BYTES
     return {
-        "model_sdk_version": compile_module.COMPILER_VERSION,
         "input_nodes": [{"name": "images", "size": 1 * 3 * 1024 * 1024 * 4}],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
@@ -220,7 +219,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host"])
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path, case: str, load_script: Callable[[str], ModuleType],
 ) -> None:
@@ -234,8 +233,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
         plugins.insert(2, {"sequence": 1, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 1, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
@@ -273,3 +270,48 @@ def test_model_preserves_compilation_and_quality_settings(load_script: Callable[
         assert set(expected["dota-v1-0-val"]) == set(load_script("accuracy").METRICS)
     assert list(entry["datasets"]) == ["dota-v1-0-val"]
     assert model["calibrations"][0]["dataset"]["variant"] == "cal"
+
+
+@pytest.mark.parametrize(
+    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
+)
+def test_quantization_calibrates_only_int8_activations(
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization(precision, 2048 if calibrates else None)
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    calibration = recipe.HistogramMSEMethod.return_value if calibrates else recipe.SkipCalibration.return_value
+    assert arguments["calibration_method"] is calibration
+    assert arguments.get("per_token_quant", False) is per_token
+    if calibrates:
+        recipe.HistogramMSEMethod.assert_called_once_with(2048)
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a16", "w8a8"])
+def test_only_the_int8_build_quantizes_with_calibration_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+    precision: str,
+) -> None:
+    recipe = load_script("compile")
+    parameters = {"precision": precision}
+    if precision == "w8a8":
+        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(
+        recipe, "calibration_tiles", lambda dataset, count: np.zeros((count, 1024, 1024, 3), np.float32)
+    )
+    monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "cut.onnx")
+
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "dota.tgz")
+
+    data = recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
+    if precision == "w8a8":
+        assert data is recipe.convert_data_generator_to_iterable.return_value
+    else:
+        assert data is None

@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolo26_obb
 
 license:
   spdx: AGPL-3.0-only
@@ -27,10 +27,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26n_obb/26f05078179a99af6191bcf54fea34f9922d60541fcff8e1f6c6a2c87eadb7e7/38327863316-1/model.onnx
-    sha256: 26f05078179a99af6191bcf54fea34f9922d60541fcff8e1f6c6a2c87eadb7e7
-    size_bytes: 10179429
+  source: conversion
 
 calibrations:
 - id: dota-v1-0-cal
@@ -48,15 +45,22 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
-  w8a16:
-    components:
-      model:
-        parameters: {precision: w8a16}
+  # w8a16 is disabled because it has no build: its Model Compiler 3.0.0 compile failed the compiler's
+  # simulator check ("Check FAILED"). Uncomment it once it compiles.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
 
 accuracy:
-  # Ultralytics publishes multiscale test-split scores from the DOTA evaluation server, which the
-  # val split cannot reproduce, so the model records no reference metrics.
   datasets:
   - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
 
 performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
+  dataset: {id: dota-v1-0, split: test}
+  conditions: 1024x1024, single-model multiscale, NMS-free one-to-one head, scored by the DOTA evaluation server
+  note: accuracy.py scores single-scale tiles of the val split, so these test-split scores are not directly comparable.
+  metrics: {dota_obb_map: 0.524, dota_obb_map50: 0.789}

@@ -54,6 +54,9 @@ options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.decode_type = pyneat.BoxDecodeType.YoloV26Obb
 # An application's decoder keeps a few confident detections, not every candidate.
 options.top_k = 10
