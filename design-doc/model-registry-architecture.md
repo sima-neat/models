@@ -83,7 +83,7 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
 | `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
-| `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
+| `promotions.py` | pinned environment/target-specific Develop and production Main requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
 | `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
@@ -169,10 +169,15 @@ Manual **Promote model** takes a model ID and build profile, resolves the newest
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
 create the protected backend request and issue summary → mention model owners and send
-a Slack approval reminder → protected `<VULCAN_ENV>-promote-develop`
+a Slack approval reminder → protected `<VULCAN_ENV>-promote-<target_branch>`
 review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
-reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for
+reject uses the matching target's protected gate. Main is production-only, keeps
+S3 storage, and uses a separate Main-only approver identity. It pins a completed
+Develop approval for the exact candidate and digest before its own review. The target branch,
+environment, endpoints and canonical snapshot are pinned in the immutable plan;
+retries cannot reinterpret a Develop request as Main. Publish the target's own
+metadata before requesting selection. See [promotion operations](../docs/model-promotion.md) for
 configuration, retries, and the staging acceptance boundary.
 
 ```text
@@ -387,16 +392,28 @@ Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
 approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).
 Candidate finalization does not approve or promote a build. Approver roles and
 end-to-end producer acceptance are required before routine approval. Develop is
-the only implemented promotion target; Main/HF release remains follow-up work.
+supported in staging and production. Main is supported only in production through
+its own protected gate and branch-scoped approver role. Both select the same
+immutable production candidate in independently pinned target catalogs. Each
+selection holds its own retention reference, so replacing Develop cannot release
+Main's artifacts or the reverse. Main metadata comes from its chosen source
+revision, not from an implicit copy of Develop.
 
-Develop approval retains S3 storage. The future Develop → Main flow in
-[#315](https://github.com/sima-neat/models/issues/315) and
-[#293](https://github.com/sima-neat/models/issues/293) needs a separate release
-gate and backend. It must transfer the same approved deployment to Hugging Face,
-verify every file at an immutable revision, and only then update Main's selection
-and active download location. S3 cleanup must preserve other references,
-including Develop. Pushes never upload to Hugging Face. The backend resolves
-approved roots; the CLI downloads and verifies files.
+Production Main registry selection retains S3 storage and active S3 downloads.
+The earlier combined Main/Hugging Face plan is split: Hugging Face transfer,
+immutable revision verification and any later download-host switch remain a
+separate release operation under [#293](https://github.com/sima-neat/models/issues/293).
+This promotion workflow never uploads to Hugging Face. The backend resolves
+approved roots; the CLI downloads and verifies their files.
+
+Manual **Publish Main model metadata** executes trusted Develop workflow code,
+checks out Main's exact release revision, installs its matching producer, and
+runs `publish-catalog` against production Main with Main as the only base branch.
+It publishes metadata and documentation without compiling, benchmarking or
+approving artifacts. The job uses publisher credentials and saves the source SHA
+and receipt. Its independent metadata-only path supports Main's older source
+schema without copying newer Develop model definitions or requiring a build.
+Main still needs its own on-demand profile requirements before candidate approval.
 
 ## LLiMa builds
 

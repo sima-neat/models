@@ -317,3 +317,37 @@ def test_outcome_slack_step_runs_even_if_issue_reporting_fails():
     notice = next(s for s in steps if s.get('name') == 'Notify promotion outcome in Slack')
     assert notice['if'] == "always() && steps.report.outputs.completion_ready == 'true'"
     assert notice['with']['payload-file-path'] == '_promotion/slack-completion.json'
+
+
+
+def test_target_is_validated_before_gate_and_propagated_to_every_job():
+    config = workflow()
+    inputs = config.get('on', config.get(True))['workflow_dispatch']['inputs']
+    assert inputs['target_branch']['options'] == ['develop', 'main']
+    assert inputs['target_branch']['default'] == 'develop'
+    jobs = config['jobs']
+    assert jobs['configure']['outputs']['target_branch'] == '${{ steps.config.outputs.target_branch }}'
+    assert jobs['approve']['environment']['name'] == (
+        "${{ format('{0}-promote-{1}', needs.configure.outputs.vulcan_environment, "
+        "needs.configure.outputs.target_branch) }}")
+    for name, job in jobs.items():
+        if name != 'configure':
+            assert job['env']['PROMOTION_TARGET_BRANCH'] == '${{ needs.configure.outputs.target_branch }}'
+
+
+def test_main_configuration_rejected_in_staging_before_credentials(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('PROMOTION_TARGET_BRANCH', 'main')
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'configure'])
+    with pytest.raises(module.p.ValidationError, match='production'):
+        module.main()
+
+
+def test_production_main_configure_emits_pinned_target(monkeypatch, tmp_path):
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('VULCAN_ENV', 'production')
+    monkeypatch.setenv('PROMOTION_TARGET_BRANCH', 'main')
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'configure'])
+    module.main()
+    assert 'target_branch=main' in (tmp_path / 'outputs').read_text()

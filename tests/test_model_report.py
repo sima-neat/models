@@ -386,6 +386,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         "On", "On", "On"
     )
     (frame,) = requests[0].inputs
+    # Neat sizes its input buffers, which the execution plan shows as its input, for the benchmark frame.
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
     report = saved_report(output)
     if first_accuracy_dataset(script) == "scene-flow":
         # A stereo model benchmarks a Scene Flow test pair as its side-by-side frame, stretched to the model input.
@@ -481,6 +484,8 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
         assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
     else:
         assert options.preprocess.preset == "ImageNet"
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
 
 def test_model_code_uses_cores_mla_stats_names():

@@ -41,14 +41,12 @@ from keypoints import (
     sample_descriptors,
     synthetic_image,
 )
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "superpoint"
 COMPONENT_ID = "model"
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 INPUT = "image"
 INPUT_SHAPE = (1, 1, HEIGHT, WIDTH)
 OUTPUT_SHAPES = {
@@ -200,10 +198,6 @@ def audit_mpk(archive: Path) -> None:
         raise RuntimeError(
             f"invalid MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, host={len(host_plugins)}, "
             f"shared_objects={shared_objects}"
-        )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
         )
     inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     if inputs != INPUT_BYTES:

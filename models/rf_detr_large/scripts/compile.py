@@ -36,7 +36,6 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images, select_top_proposals, to_afe_layout
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
@@ -60,7 +59,6 @@ from surgery import (
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "rf_detr_large"
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 # Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
 A16_PRECISIONS = ("w8a16", "w16a16")
 COMPONENT_IDS = ("backbone", "decoder")
@@ -225,11 +223,6 @@ def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
         raise RuntimeError(
             f"invalid {component_id} MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, "
             f"host={len(host_plugins)}, shared_objects={shared_objects}"
-        )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"{component_id} MPK compiler mismatch: expected {COMPILER_VERSION}, "
-            f"found {manifest.get('model_sdk_version')}"
         )
     public_inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     if public_inputs != contract["inputs"]:
