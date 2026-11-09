@@ -227,7 +227,9 @@ in this order:
    dataset. The **Published scores** and **FP32 baseline** rows list each
    origin's entries with their dataset, conditions, and source or script. A
    build with no accuracy result yet shows only the reference scores, each
-   origin under its own explanation.
+   origin under its own explanation. DOTA oriented-box results show mAP50 and,
+   when reported, mAP 50–95. Published DOTA test scores retain their split and
+   evaluation conditions separately from measured validation scores.
 4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
    A single-component package downloads as its MPK. A multi-component package
    downloads as a ZIP of its MPKs and also offers **Download components**.

@@ -7,16 +7,16 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolo11_obb
 
 license:
   spdx: AGPL-3.0-only
   redistribution: restricted
   attribution: YOLO11 is developed by Ultralytics and distributed under AGPL-3.0.
 
-# Ultralytics publishes the YOLO11 OBB checkpoints only as GitHub release assets (ultralytics/assets v8.3.0),
-# which the registry does not accept as sources; conversion.source will point at a byte-identical copy
-# in SiMa's Hugging Face org once it is uploaded.
+# Conversion exports the original Ultralytics .pt checkpoint. Its release asset
+# is not yet available through a registry-approved source; retain the verified
+# upstream file hash and size until that source pin is resolved (#519).
 upstream:
   repository: https://github.com/ultralytics/assets
   revision: 0f20d143ac8f9e01322f85dcb5c10dc9b7ca1153
@@ -24,18 +24,14 @@ upstream:
 
 conversion:
   source:
-    # TODO(#519): pin once the checkpoint is uploaded to huggingface.co/simaai (same bytes as the GitHub asset).
+    # TODO(#519): replace this placeholder with an approved URI for the original checkpoint.
     uri: hf://models/simaai/TODO@TODO/yolo11s-obb.pt
     sha256: 43fa63102922e0701501241b307420d24fc55e080816888b18bf8c6f96b1a45a
     size_bytes: 19934534
 
 compilation:
   format: onnx
-  source:
-    # TODO(#519): pin the source block printed by the Vulcan Model Convert run.
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo11s_obb/TODO/model.onnx
-    sha256: TODO
-    size_bytes: 0
+  source: conversion
 
 calibrations:
 - id: dota-v1-0-cal
