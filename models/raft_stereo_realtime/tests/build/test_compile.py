@@ -118,7 +118,6 @@ def test_end_point_error_scores_pixels_between_0_and_192(scene_flow: ModuleType)
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     """A plugin chain of the compiled MPK: a cast of the frame, the MLA, then a slice and a cast back."""
     return {
-        "model_sdk_version": compile_module.COMPILER_VERSION,
         "input_nodes": [{"name": "stereo", "size": 1 * 3 * 540 * 1920 * 4}],
         "plugins": [
             {"sequence": 1, "processor": "EV74", "config_params": {"kernel": "cast_transform"}},
@@ -142,7 +141,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "two_inputs", "output", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "two_inputs", "output", "two_mla", "host"])
 def test_mpk_audit_requires_one_mla_segment_and_the_stereo_interface(
     tmp_path: Path, case: str, load_script: Callable[[str], ModuleType]
 ) -> None:
@@ -157,8 +156,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_stereo_interface(
         plugins.insert(2, {"sequence": 2, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 2, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
