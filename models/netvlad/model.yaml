@@ -50,6 +50,19 @@ build_profiles:
       model:
         parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 50}
 
+  w8a8_mixed_w8a16:
+    calibration_dataset: pitts30k-cal
+    components:
+      model:
+        # A W8A16 build whose VGG16 encoder runs W8A8 up to conv5_3. Measured on 10 COCO images with the VM's Model
+        # Compiler: INT8 activations from conv5_3 on drop the descriptor to 0.41 cosine with float, while this build
+        # keeps 0.979 (W8A16: 0.962) and runs at 122.6/s on a DevKit (W8A16: 90.2/s).
+        parameters:
+          precision: w8a16
+          int8_regions: [encoder]
+          calibration_bins: 2048
+          calibration_samples: 50
+
 numerical_fidelity:
   # Calibration takes the first images of this seed's shuffle, so the comparison starts after them.
   status: diagnostic

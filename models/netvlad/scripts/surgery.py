@@ -28,6 +28,8 @@ OPSET = 17
 INTERFACE = {"image": [1, 3, IMAGE_HEIGHT, IMAGE_WIDTH], "descriptor": [1, DESCRIPTOR_DIM]}
 # torchvision's VGG16 configuration up to conv5_3: output channels of each 3x3 convolution, "M" for a 2x2 max pool.
 ENCODER_CONFIG = (64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512)
+# torch.onnx.export names each encoder operation after its module, encoder.<index>.
+ENCODER_SCOPE = "/encoder/"
 # torch.nn.functional.normalize's default epsilon.
 NORM_EPS = 1e-12
 SEEDS = range(123, 128)
@@ -186,6 +188,44 @@ def build_netvlad(encoder: Any, pooling: dict[str, np.ndarray]) -> Any:
             return normalize(projected, dim=1)
 
     return NetVLAD().eval()
+
+
+def annotate_int8_encoder(path: Path) -> dict[str, int]:
+    """Mark the VGG16 encoder's operations int8, except conv5_3, which returns to bfloat16.
+
+    AFE gives an AnnotatePrecision's precision to the operation producing its input, and each later operation takes
+    the precision its inputs share. So the per-cell normalization that reads conv5_3 inherits BF16 unmarked: a mark
+    on its ReduceL2 would split the ReduceL2, Clip and Div that AFE fuses into one L2Norm, and leave a Clip the MLA
+    compiler rejects. Returns the number of operations marked with each precision.
+    """
+    from onnx import helper
+
+    model = onnx.load(path)
+    encoder = [node for node in model.graph.node if node.name.startswith(ENCODER_SCOPE)]
+    marks = {node.name: "int8" for node in encoder[:-1]}
+    marks[encoder[-1].name] = "bfloat16"
+    nodes = []
+    for node in model.graph.node:
+        nodes.append(node)
+        if node.name in marks:
+            value = node.output[0]
+            node.output[0] = f"{value}/unannotated"
+            nodes.append(
+                helper.make_node(
+                    "AnnotatePrecision",
+                    [node.output[0]],
+                    [value],
+                    name=f"{node.name}/AnnotatePrecision",
+                    domain="ai.sima",
+                    precision=marks[node.name],
+                )
+            )
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
+    model.opset_import.append(helper.make_opsetid("ai.sima", 1))
+    onnx.checker.check_model(model)
+    onnx.save(model, path)
+    return {precision: list(marks.values()).count(precision) for precision in ("int8", "bfloat16")}
 
 
 def export_netvlad(weights: Path, output: Path) -> Path:

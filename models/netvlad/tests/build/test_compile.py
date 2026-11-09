@@ -16,7 +16,7 @@ import pytest
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
-PROFILES = ("w16a16", "w8a16")
+PROFILES = ("w16a16", "w8a16", "w8a8_mixed_w8a16")
 
 
 @pytest.fixture
@@ -129,6 +129,52 @@ def test_every_build_calibrates_and_only_w8a16_quantizes_per_token(
         recipe.quantization("w8a8", 2048)
 
 
+@pytest.mark.parametrize(
+    ("profile", "parameters", "message"),
+    [
+        ("w8a8_mixed_w8a16", {"precision": "w8a16", "int8_regions": ["pooling"]}, "can only name the encoder"),
+        ("w8a8_mixed_w16a16", {"precision": "w16a16", "int8_regions": ["encoder"]}, "can only name the encoder"),
+        ("w8a8_w8a16", {"precision": "w8a16", "int8_regions": ["encoder"]}, "must have the mixed token"),
+        ("w8a16_mixed", {"precision": "w8a16"}, "must have the mixed token"),
+    ],
+)
+def test_only_a_mixed_w8a16_profile_runs_its_encoder_int8(
+    profile: str, parameters: dict[str, Any], message: str, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+
+    assert recipe.int8_regions("w8a8_mixed_w8a16", {"precision": "w8a16", "int8_regions": ["encoder"]}) == ["encoder"]
+    assert recipe.int8_regions("w8a16", {"precision": "w8a16"}) == []
+    with pytest.raises(ValueError, match=message):
+        recipe.int8_regions(profile, parameters)
+
+
+@pytest.mark.parametrize(("int8_convolutions", "honored"), [(12, True), (0, False)])
+def test_a_mixed_build_fails_when_afe_ignores_the_int8_marks(
+    int8_convolutions: int, honored: bool, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+
+    class ConvAddActivationOp:
+        pass
+
+    def node(precision: Any) -> MagicMock:
+        item = MagicMock()
+        item.ir.operation = ConvAddActivationOp()
+        item.ir.quant_config.quantization_precision.value = precision
+        return item
+
+    quantized = MagicMock()
+    int8, bf16 = recipe.QuantizationPrecision.INT_8, recipe.QuantizationPrecision.BFLOAT_16_INT8_WEIGHTS
+    quantized._net.iter_nodes_recursive.return_value = [node(int8)] * int8_convolutions + [node(bf16)] * 3
+
+    if honored:
+        recipe.require_int8_encoder(quantized)
+    else:
+        with pytest.raises(RuntimeError, match="expected the encoder's convolutions before conv5_3 in INT8"):
+            recipe.require_int8_encoder(quantized)
+
+
 def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = load_metadata(model_dir)
@@ -136,6 +182,11 @@ def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_scrip
 
     assert recipe.build_parameters(metadata, "w16a16") == {"precision": "w16a16", **calibration}
     assert recipe.build_parameters(metadata, "w8a16") == {"precision": "w8a16", **calibration}
+    assert recipe.build_parameters(metadata, "w8a8_mixed_w8a16") == {
+        "precision": "w8a16",
+        "int8_regions": ["encoder"],
+        **calibration,
+    }
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT]
     with pytest.raises(ValueError, match="no build profile 'w32a32'"):
         recipe.build_parameters(metadata, "w32a32")
@@ -327,6 +378,36 @@ def test_encoder_keeps_torchvision_vgg16_layer_indices(builder: ModuleType) -> N
     pools = [index for index, layer in enumerate(encoder) if isinstance(layer, torch.nn.MaxPool2d)]
     assert len(encoder) == 29 and (convolutions[-1], pools) == (28, [4, 9, 16, 23])
     assert len(convolutions) == 13 and encoder[28].out_channels == 512
+
+
+def test_int8_marks_cover_the_encoder_up_to_conv5_3_and_leave_its_normalization_unsplit(
+    tmp_path: Path, builder: ModuleType
+) -> None:
+    helper = onnx.helper
+    conv5_3 = "/encoder/encoder.28/Conv_output_0"
+    # A stand-in for the export: two encoder operations, then the per-cell normalization reading conv5_3.
+    nodes = [
+        helper.make_node("Relu", ["image"], ["/encoder/encoder.0/Relu_output_0"], name="/encoder/encoder.0/Relu"),
+        helper.make_node("Relu", ["/encoder/encoder.0/Relu_output_0"], [conv5_3], name="/encoder/encoder.28/Conv"),
+        helper.make_node("ReduceL2", [conv5_3], ["norm"], name="/ReduceL2", axes=[1], keepdims=1),
+        helper.make_node("Clip", ["norm", "eps"], ["clipped"], name="/Clip"),
+        helper.make_node("Div", [conv5_3, "clipped"], ["descriptor"], name="/Div"),
+    ]
+    values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 2]) for name in ("image", "descriptor")]
+    eps = onnx.numpy_helper.from_array(np.asarray(1e-12, np.float32), "eps")
+    graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [eps])
+    path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+
+    assert builder.annotate_int8_encoder(path) == {"int8": 1, "bfloat16": 1}
+
+    marks = {
+        node.name.removesuffix("/AnnotatePrecision"): node.attribute[0].s.decode()
+        for node in onnx.load(path).graph.node
+        if node.op_type == "AnnotatePrecision"
+    }
+    # No mark splits the normalization, so AFE can fuse it into one L2Norm that inherits conv5_3's BF16.
+    assert marks == {"/encoder/encoder.0/Relu": "int8", "/encoder/encoder.28/Conv": "bfloat16"}
 
 
 def test_compiled_mpk_has_one_mla_segment_and_the_descriptor_interface(

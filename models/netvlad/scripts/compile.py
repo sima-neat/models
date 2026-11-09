@@ -11,6 +11,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -26,12 +27,21 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
-from surgery import DESCRIPTOR_DIM, INTERFACE, export_netvlad, load_netvlad, reference_netvlad
+from surgery import (
+    DESCRIPTOR_DIM,
+    ENCODER_CONFIG,
+    INTERFACE,
+    annotate_int8_encoder,
+    export_netvlad,
+    load_netvlad,
+    reference_netvlad,
+)
 
 # Importing afe installs a root handler at WARNING, so the recipe logs through its own INFO logger.
 LOG = logging.getLogger("netvlad.compile")
@@ -44,6 +54,7 @@ INPUT_SHAPE = INTERFACE[INPUT]
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [DESCRIPTOR_DIM * 4]
+ENCODER_CONVOLUTIONS = sum(item != "M" for item in ENCODER_CONFIG)
 
 
 def build_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
@@ -58,7 +69,7 @@ def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
 
     Every build calibrates. AFE has no BF16 Sqrt, so even with BF16 activations the VLAD norm's Sqrt runs as an INT8
     lookup table, and without calibration data quantize() fails for missing calibration information. Histogram MSE
-    measures its input range on the calibration images.
+    measures its input range, and a mixed build's INT8 encoder ranges, on the calibration images.
     """
     if precision == "w8a16":
         return QuantizationParams(
@@ -75,6 +86,30 @@ def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
             weight_quantization_scheme=bfloat16_scheme(),
         )
     raise ValueError(f"unsupported precision: {precision}")
+
+
+def int8_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
+    """The regions a W8A16 build runs W8A8, checking that the build profile's ID marks it mixed."""
+    regions = parameters.get("int8_regions", [])
+    if regions not in ([], ["encoder"]) or (regions and parameters["precision"] != "w8a16"):
+        raise ValueError(f"int8_regions can only name the encoder of a W8A16 build: {regions}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has int8_regions")
+    return regions
+
+
+def require_int8_encoder(quantized: Any) -> None:
+    """Fail when AFE ignored the INT8 annotations, which would silently build W8A16 throughout."""
+    # The quantized model keeps its network private, and AFE renames every node, so count by operation.
+    counts = Counter(
+        type(node.ir.operation).__name__
+        for node in quantized._net.iter_nodes_recursive()
+        if getattr(node.ir, "quant_config", None) is not None
+        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.INT_8
+    )
+    LOG.info("INT8 operations: %s", dict(sorted(counts.items())))
+    if counts["ConvAddActivationOp"] < ENCODER_CONVOLUTIONS - 1:
+        raise RuntimeError(f"expected the encoder's convolutions before conv5_3 in INT8, found {dict(counts)}")
 
 
 def calibration_names(dataset: Path, selection: dict[str, Any], sample_count: int) -> tuple[str, ...]:
@@ -143,6 +178,8 @@ def compile_model(
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
+        if parameters.get("int8_regions"):
+            require_int8_encoder(quantized)
         try:
             quantized.compile(
                 output_path=str(build_dir / "mpk"),
@@ -239,6 +276,7 @@ def main() -> int:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
     metadata = load_metadata(MODEL_DIR)
     parameters = build_parameters(metadata, args.build_profile)
+    regions = int8_regions(args.build_profile, parameters)
     fidelity = metadata["numerical_fidelity"]
     dataset = args.dataset.expanduser().resolve()
     samples = load_images(
@@ -248,6 +286,13 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         source = export_netvlad(weights, Path(temporary) / "model.onnx")
+        if regions:
+            marks = annotate_int8_encoder(source)
+            LOG.info(
+                "Marked %d encoder operations INT8 and conv5_3 BF16 (%d)",
+                marks["int8"],
+                marks["bfloat16"],
+            )
         archive, quantized = compile_model(source, output_dir, args.build_profile, parameters, samples)
     LOG.info("Compiled MPK: %s", archive)
     reference = reference_netvlad(*load_netvlad(weights))
