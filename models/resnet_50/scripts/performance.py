@@ -9,14 +9,14 @@ import model_report
 import numpy as np
 import pyneat
 
-VALIDATION_SPLIT = "val"
+VALIDATION_SPLIT = "val2012"
 # The benchmark input is a 720p camera frame, letterboxed with grey padding.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
 def sample_image(dataset: Path) -> Path:
-    """One validation image, chosen with a fixed seed so every run measures the same input."""
-    images = sorted((dataset / VALIDATION_SPLIT).glob("*/*.webp"))
+    """One val2012 image, chosen with a fixed seed so every run measures the same input."""
+    images = sorted((dataset / VALIDATION_SPLIT).glob("*.JPEG"))
     if not images:
         raise SystemExit(f"{dataset} has no images under {VALIDATION_SPLIT}/")
     return random.Random(0).choice(images)
@@ -41,7 +41,7 @@ def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--mpk", required=True, help="compiled model archive")
-parser.add_argument("--dataset", required=True, help="imagenet-2012-mini=<extracted directory>")
+parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
 parser.add_argument("--output", required=True, help="directory for model-report.json")
 args = parser.parse_args()
 dataset_id, dataset_dir = args.dataset.split("=", 1)
@@ -50,6 +50,9 @@ image = sample_image(Path(dataset_dir))
 options = pyneat.ModelOptions()
 # Neat resizes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
