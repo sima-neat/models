@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -55,7 +56,7 @@ def script(load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyP
     return script
 
 
-def test_inputs_go_to_neat_as_one_row_of_512_keypoints_in_ev74_memory(script: ModuleType) -> None:
+def test_inputs_go_to_neat_channels_last_in_ev74_memory(script: ModuleType) -> None:
     inputs = {name: np.zeros(shape, np.float32) for name, shape in script.INPUT_SHAPES.items()}
 
     tensors = script.input_tensors(inputs)
@@ -114,7 +115,7 @@ def test_every_timed_pair_encodes_the_keypoints_and_extracts_the_matches(
     # Each run gets the pair's encodings, computed again for it.
     for tensors in runs:
         for (array, _), name in zip(tensors, script.INPUT_SHAPES):
-            np.testing.assert_array_equal(array.reshape(expected[name].shape), expected[name])
+            np.testing.assert_array_equal(array, expected[name])
     assert len(runs) == 1 + 1 + 3
     assert len(latency.pair_s) == len(latency.model_s) == 3
     assert all(model <= pair for model, pair in zip(latency.model_s, latency.pair_s))
@@ -155,6 +156,47 @@ def test_throughput_runs_the_runner_async_and_matches_every_pulled_pair(
     assert result.pairs >= 5
     # Every pushed pair was encoded first, and every pair the pull loop drains is matched on the CPU.
     assert len(encoded) == runner.pushed == len(matched) >= result.pairs + 2
+
+
+@pytest.mark.parametrize("stall", ["pull raises", "pull times out"])
+def test_throughput_wakes_a_blocked_push_when_the_mpk_stops(
+    stall: str, script: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(script, "MATCH_WORKERS", 2)
+    monkeypatch.setattr(script, "pair_tensors", lambda images: ["tensor"])
+
+    class StalledRunner:
+        """A runner whose MPK stops: push blocks on its full queue until close_input, and pull returns nothing."""
+
+        def __init__(self) -> None:
+            self.queued = 0
+            self.blocked = threading.Event()
+            self.closed = threading.Event()
+            self.woken = False
+
+        def push(self, tensors: list) -> bool:
+            if self.queued < 4:
+                self.queued += 1
+                return True
+            self.blocked.set()
+            # Times out instead of hanging the test when nothing wakes the push.
+            self.woken = self.closed.wait(timeout=2)
+            return False
+
+        def close_input(self) -> None:
+            self.closed.set()
+
+        def pull(self, timeout_ms: int) -> SimpleNamespace:
+            assert self.blocked.wait(timeout=2)
+            if stall == "pull raises":
+                raise RuntimeError("the MPK failed")
+            return SimpleNamespace(tensors=[])
+
+    runner = StalledRunner()
+    error = "the MPK failed" if stall == "pull raises" else "no pair came out"
+    with pytest.raises(RuntimeError, match=error):
+        script.measure_throughput(runner, _images())
+    assert runner.woken
 
 
 def test_the_report_holds_the_whole_pairs_timing_and_names_its_cpu_steps(

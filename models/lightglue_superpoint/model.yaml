@@ -29,6 +29,7 @@ conversion:
     files:
       model.safetensors: {sha256: 320864fabf972cd00ce314e889cf89039e44c238e08d74d2b42d9cf2e80fc867, size_bytes: 55016112}
       config.json: {sha256: adea6db482a567b4f01c342b5771f18a0cdcdef047a44974f22e3bf490714471, size_bytes: 898}
+  outputs: [weights.pth]
 
 compilation:
   format: onnx
@@ -39,7 +40,7 @@ calibrations:
   dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
 
 build_profiles:
-  # BF16 activations need no calibrated ranges, so only the INT8 build calibrates.
+  # BF16 activations need no calibrated ranges, so only the INT8-activation build calibrates.
   w16a16:
     components:
       model:
@@ -50,6 +51,11 @@ build_profiles:
     components:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
 
 numerical_fidelity:
   status: diagnostic
@@ -66,17 +72,20 @@ accuracy:
 
 performance: {}
 
+# No published score is comparable to this package: the authors evaluate up to 2048 SuperPoint keypoints at a
+# 1600-pixel longer side on MegaDepth-1500, and this package matches 512 keypoints from a 640x480 image. The builds
+# compare with the FP32 baseline instead, which scripts/fp32_baseline_accuracy.py measures on this package's own
+# inputs, on the ONNX surgery.py exports from the converted weights.
 reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: yfcc100m-keypoints, split: val}
   conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image from the image stretched to 640x480, threshold 0.0005 and NMS radius 4; mutual matches above 0.1; RANSAC at 1 px of the 640x480 input; 3978 of 4000 pairs
-  metrics: {pose_auc_5: 0.2697, pose_auc_10: 0.469, pose_auc_20: 0.6583}
-- source: https://github.com/cvg/glue-factory/blob/2d17e3b3bd7d30f0c828d4c4d3eac4ecefbf283d/README.md
-  dataset: {id: megadepth-1500, split: test}
-  conditions: 1600 px long side, 2048 SuperPoint keypoints, match threshold 0.1, OpenCV RANSAC at 0.5 px
-  note: >-
-    The authors' evaluation of SuperPoint + LightGlue: glue-factory's superpoint+lightglue-official configuration, which
-    loads the cvg/LightGlue weights. It measures another dataset and keypoint budget than the registry's 512 keypoints
-    at 640x480 on yfcc100m-keypoints.
-  metrics: {pose_auc_5: 0.5102, pose_auc_10: 0.681, pose_auc_20: 0.8065}
+  metrics: {pose_auc_5: 0.2696, pose_auc_10: 0.469, pose_auc_20: 0.6583}
+
+# The published table, kept for reference and not shown:
+# reference_metrics:
+# - source: https://github.com/cvg/glue-factory/blob/2d17e3b3bd7d30f0c828d4c4d3eac4ecefbf283d/README.md
+#   dataset: {id: megadepth-1500, split: test}
+#   conditions: 1600 px long side, 2048 SuperPoint keypoints, match threshold 0.1, OpenCV RANSAC at 0.5 px
+#   metrics: {pose_auc_5: 0.5102, pose_auc_10: 0.681, pose_auc_20: 0.8065}

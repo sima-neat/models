@@ -40,6 +40,21 @@ def _diagonal() -> np.ndarray:
     return values
 
 
+def test_ground_truth_and_images_read_every_value(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    script = load_script("accuracy")
+    root = _write_val(tmp_path / "yfcc100m-keypoints-val", 2)
+    pairs_file = root / "annotations" / "pairs_val.txt"
+
+    ((pair, truth),) = script.read_ground_truth(root).items()
+    assert (pair.name0, pair.name1) == ("s/0.jpg", "s/1.jpg")
+    np.testing.assert_array_equal(truth.intrinsics0, np.eye(3))
+    np.testing.assert_array_equal(truth.pose, np.eye(4))
+    assert script.read_images(root)["s/0.jpg"] == script.Image(1280, 960, 0)
+    pairs_file.write_text(pairs_file.read_text(encoding="utf-8").strip() + " 7", encoding="utf-8")
+    with pytest.raises(ValueError, match="39 fields"):
+        script.read_ground_truth(root)
+
+
 def test_mpk_argument_names_exactly_the_model_component(load_script: Callable[[str], ModuleType]) -> None:
     script = load_script("accuracy")
 
@@ -66,7 +81,9 @@ def _rotation_x(degrees: float) -> np.ndarray:
     return np.asarray([[1, 0, 0], [0, np.cos(angle), -np.sin(angle)], [0, np.sin(angle), np.cos(angle)]])
 
 
-def test_pose_error_takes_the_larger_angle_and_either_translation_sign(load_script: Callable[[str], ModuleType]) -> None:
+def test_pose_error_takes_the_larger_angle_and_either_translation_sign(
+    load_script: Callable[[str], ModuleType],
+) -> None:
     script = load_script("accuracy")
     truth = np.eye(4)
     truth[:3, 3] = [2.0, 0.0, 0.0]
@@ -98,13 +115,13 @@ def test_the_pose_estimate_recovers_a_known_relative_pose(load_script: Callable[
 def test_the_ransac_threshold_is_a_pixel_of_the_stretched_input(load_script: Callable[[str], ModuleType]) -> None:
     script = load_script("accuracy")
     intrinsics = np.asarray([[1000.0, 0, 640], [0, 1000.0, 480], [0, 0, 1]])
-    pair = script.Pair("a.jpg", "b.jpg", intrinsics, intrinsics, np.eye(4))
+    truth = script.GroundTruth(intrinsics, intrinsics, np.eye(4))
     # A 1280x960 image stretches to 640x480 at half its size, so its focal lengths halve; a turned 960x1280 image
     # stretches to 480x640, also at half its size.
-    upright, turned = script.Image(1280, 960, 0, 512), script.Image(960, 1280, 1, 512)
+    upright, turned = script.Image(1280, 960, 0), script.Image(960, 1280, 1)
 
-    assert script.ransac_threshold(pair, upright, upright) == pytest.approx(1 / 500)
-    assert script.ransac_threshold(pair, upright, turned) == pytest.approx(1 / 500)
+    assert script.ransac_threshold(truth, upright, upright) == pytest.approx(1 / 500)
+    assert script.ransac_threshold(truth, upright, turned) == pytest.approx(1 / 500)
 
 
 @pytest.mark.parametrize("rotation", [0, 1, 2, 3])
@@ -117,7 +134,7 @@ def test_keypoints_return_to_the_original_image_pixels(rotation: int, load_scrip
     assert turned.shape[:2] == (480, 640)
     points = np.asarray([[0, 0], [639, 0], [17, 400], [600, 479]])  # (x, y) in SuperPoint's turned input
     stretched = turned[points[:, 1], points[:, 0]]
-    image = script.Image(width=width * 2, height=height * 3, rotation=rotation, keypoints=512)
+    image = script.Image(width=width * 2, height=height * 3, rotation=rotation)
 
     np.testing.assert_allclose(script.original_pixels(points.astype(np.float64), image), stretched * [2, 3])
 
@@ -168,7 +185,7 @@ def test_the_fp32_baseline_scores_the_onnx_with_the_accuracy_scripts_evaluation(
 
         def run(self, outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
             feeds.append(inputs)
-            return [_diagonal()]
+            return [_diagonal().reshape(1, 512, 1, 512)]
 
     monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace(InferenceSession=Session))
     output = tmp_path / "fp32-baseline.json"
@@ -179,13 +196,47 @@ def test_the_fp32_baseline_scores_the_onnx_with_the_accuracy_scripts_evaluation(
     result = json.loads(output.read_text(encoding="utf-8"))
     assert (result["dataset"], result["pairs"], result["mean_matches"]) == ("yfcc100m-keypoints-val", 2, 512)
     assert set(result["metrics"]) == {"pose_auc_5", "pose_auc_10", "pose_auc_20"}
-    # The ONNX gets the matcher's inputs in their ONNX shapes, not Neat's.
+    # The ONNX gets the matcher's inputs channels-first, not channels-last as the MPK does.
     assert [{name: value.shape for name, value in inputs.items()} for inputs in feeds] == [
-        {"encoding0": (1, 512, 128), "descriptors0": (1, 512, 256), "encoding1": (1, 512, 128),
-         "descriptors1": (1, 512, 256)}] * 2
+        {"encoding0": (1, 128, 1, 512), "descriptors0": (1, 256, 1, 512), "encoding1": (1, 128, 1, 512),
+         "descriptors1": (1, 256, 1, 512)}] * 2
     names.reverse()
     with pytest.raises(SystemExit, match="expected"):
         baseline.main(arguments)
+
+
+def test_the_fp32_baseline_reads_the_onnxs_assignment_with_image_0_keypoints_as_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    baseline = load_script("fp32_baseline_accuracy")
+    _write_val(tmp_path / "yfcc100m-keypoints-val", 2)
+    assignment = np.arange(512 * 512, dtype=np.float32).reshape(512, 512)
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def get_inputs(self) -> list[SimpleNamespace]:
+            return [SimpleNamespace(name=name) for name in baseline.INPUT_SHAPES]
+
+        def run(self, outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            # The ONNX writes entry (i, j) at [0, j, 0, i].
+            return [assignment.T[None, :, None]]
+
+    returned: list[np.ndarray] = []
+
+    def evaluate(root: Path, pairs: list, assignment_of: Callable) -> tuple[dict[str, float], float]:
+        returned.append(assignment_of({name: np.zeros(shape, np.float32)
+                                       for name, shape in baseline.INPUT_SHAPES.items()}))
+        return {}, 0.0
+
+    monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace(InferenceSession=Session))
+    monkeypatch.setattr(baseline.accuracy, "evaluate", evaluate)
+    output = tmp_path / "fp32-baseline.json"
+
+    baseline.main(["--onnx", "model.onnx", "--dataset", f"x={tmp_path}", "--output", str(output)])
+
+    np.testing.assert_array_equal(returned, [assignment])
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:

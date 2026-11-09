@@ -1,44 +1,35 @@
-"""Export LightGlue's matcher for SuperPoint keypoints from its Hugging Face checkpoint and check ONNX against PyTorch.
+"""Publish LightGlue's matcher weights from the pinned Hugging Face checkpoint as the weights.pth surgery.py reads.
 
-The ONNX matches two images' 512 keypoints. Inputs: encoding0 and encoding1 [1, 512, 128], each keypoint's rotary
-position encoding, which the CPU computes in float32 (calibration.encoding), and descriptors0 and descriptors1
-[1, 512, 256], SuperPoint's descriptors. Output: assignment [1, 512, 512], LightGlue's soft assignment: the probability
-that keypoint i of image 0 matches keypoint j of image 1, the exponential of the log assignment LightGlue extracts its
-matches from. Every layer runs, since early stopping and keypoint pruning are off, so the graph is static. The
-checkpoint also holds SuperPoint, which the export leaves out. Self attention's rotary encoding, attention scale and
-all-zero mask are folded into its projection weights (SelfAttention), which spares the compiler the data movement of
-transformers' rotate_half without changing a result.
+Conversion only changes the file format: surgery.py rebuilds the matcher for the MLA at compile time. The checkpoint
+also holds SuperPoint, its keypoint detector, which the weights leave out. config.json must declare the architecture
+surgery.py writes out.
 """
 
 import argparse
 import json
-import math
 from pathlib import Path
 
-import numpy as np
-import onnx
-from calibration import ENCODING_DIM, KEYPOINT_PROJECTION, encoding
+from model_registry.conversion import conversion_outputs
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
 SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json"])
-KEYPOINTS = 512
-DESCRIPTOR_DIM = 256
-OPSET = 18
-INTERFACE = {
-    "encoding0": [1, KEYPOINTS, ENCODING_DIM],
-    "descriptors0": [1, KEYPOINTS, DESCRIPTOR_DIM],
-    "encoding1": [1, KEYPOINTS, ENCODING_DIM],
-    "descriptors1": [1, KEYPOINTS, DESCRIPTOR_DIM],
-    "assignment": [1, KEYPOINTS, KEYPOINTS],
+# The config.json values that decide the matcher's architecture; surgery.py builds LightGlue with them.
+ARCHITECTURE = {
+    "model_type": "lightglue",
+    "descriptor_dim": 256,
+    "hidden_size": 256,
+    "intermediate_size": 512,
+    "num_hidden_layers": 9,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 4,
+    "hidden_act": "gelu",
+    "attention_bias": True,
+    "filter_threshold": 0.1,
 }
-# SuperPoint's 640x480 input, in whose pixels the keypoints are found.
-IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
-# LightGlue's filter_threshold: a mutual best pair matches when its assignment exceeds it.
-MATCH_THRESHOLD = 0.1
-SEEDS = range(123, 128)
+DETECTOR_PREFIX = "keypoint_detector."
 
 
 def validate_source(source):
@@ -49,291 +40,22 @@ def validate_source(source):
 
 def validate_config(directory):
     config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-    declared = (config.get("model_type"), config.get("descriptor_dim"))
-    if declared != ("lightglue", DESCRIPTOR_DIM):
-        raise ValueError(f"config.json declares model_type and descriptor_dim {declared}, expected ('lightglue', 256)")
+    declared = {key: config.get(key) for key in ARCHITECTURE}
+    if declared != ARCHITECTURE:
+        raise ValueError(f"config.json declares {declared}, expected {ARCHITECTURE}")
 
 
-def validate_export(path):
-    model = onnx.load(path, load_external_data=False)
-    onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"LightGlue export requires opset {OPSET}")
-    values = [*model.graph.input, *model.graph.output]
-    if [value.name for value in values] != list(INTERFACE):
-        raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
-    for value in values:
-        tensor = value.type.tensor_type
-        shape = [d.dim_value for d in tensor.shape.dim]
-        if tensor.elem_type != onnx.TensorProto.FLOAT or shape != INTERFACE[value.name]:
-            raise ValueError(f"Unexpected dtype or shape for {value.name}")
-    if any(tensor.data_location == onnx.TensorProto.EXTERNAL for tensor in model.graph.initializer):
-        raise ValueError("This conversion workflow requires one self-contained ONNX file")
-    dynamic = sorted({node.op_type for node in model.graph.node if node.op_type in {"Shape", "Size", "If", "Loop"}})
-    if dynamic:
-        raise ValueError(f"The folded export still computes shapes or control flow: {dynamic}")
-
-
-def known_shapes(model):
-    inferred = onnx.shape_inference.infer_shapes(model).graph
-    shapes = {}
-    for value in [*inferred.value_info, *inferred.input, *inferred.output]:
-        dims = value.type.tensor_type.shape.dim
-        if dims and all(dim.HasField("dim_value") for dim in dims):
-            shapes[value.name] = [dim.dim_value for dim in dims]
-    return shapes
-
-
-def fold_constants(path):
-    """Fold the export to a static graph. onnxsim leaves Shape nodes of tensors whose shapes are known; each becomes a
-    constant and the graph is folded again, until none is left."""
-    from onnxsim import simplify
-
-    model, valid = simplify(onnx.load(path), perform_optimization=False)
-    for _ in range(8):
-        if not valid:
-            raise RuntimeError("onnxsim could not validate the folded LightGlue export")
-        shapes = known_shapes(model)
-        replaced = 0
-        for index, node in enumerate(model.graph.node):
-            if node.op_type == "Shape" and node.input[0] in shapes:
-                attributes = {item.name: onnx.helper.get_attribute_value(item) for item in node.attribute}
-                value = shapes[node.input[0]][attributes.get("start", 0) : attributes.get("end")]
-                constant = onnx.numpy_helper.from_array(np.asarray(value, np.int64))
-                model.graph.node[index].CopyFrom(onnx.helper.make_node("Constant", [], list(node.output), value=constant))
-                replaced += 1
-        if not replaced:
-            break
-        model, valid = simplify(model, perform_optimization=False)
-    onnx.save(model, path)
-
-
-def rotation(rotate_half, head_dim):
-    """The matrix R of one head's channels with rotate_half(x) = R x, taken from transformers' rotate_half itself: on
-    the identity's rows e_i it returns R e_i, R's columns. R must be a signed permutation, and unique channel values
-    prove it reproduces rotate_half, since any slip in the pairing or the signs shows up in them."""
+def convert(checkpoint, output_dir):
     import torch
+    from safetensors.torch import load_file
 
-    matrix = rotate_half(torch.eye(head_dim, dtype=torch.float64)).T
-    channels = torch.arange(1, head_dim + 1, dtype=torch.float64)
-    ones = torch.ones(head_dim, dtype=torch.float64)
-    if (not torch.equal(matrix.abs().sum(0), ones) or not torch.equal(matrix.abs().sum(1), ones)
-            or not torch.equal(matrix @ channels, rotate_half(channels))):
-        raise ValueError("transformers' rotate_half is not a fixed signed permutation of each head's channels")
-    return matrix.float()
-
-
-def matcher(lightglue):
-    """LightGlue's matcher on two images' fixed keypoints, from their rotary encodings and descriptors, returning the
-    soft assignment without the dustbins."""
-    import torch
-    from torch import nn
-    from torch.nn import functional
-    from transformers.models.lightglue import modeling_lightglue
-
-    class RotaryProjection(nn.Module):
-        """A query or key projection with LightGlue's rotary encoding folded into its weights. transformers computes
-        q * cos + rotate_half(q) * sin, and rotate_half permutes and negates each head's channels by a fixed matrix R,
-        so R q = (R W) x + R b is a second projection: the result needs no slices, negations, stacks or reshapes."""
-
-        def __init__(self, linear, rotate, heads, scale):
-            super().__init__()
-            self.heads, self.head_dim = heads, rotate.shape[0]
-            weight, bias = linear.weight.detach() * scale, linear.bias.detach() * scale
-            self.register_buffer("weight", weight)
-            self.register_buffer("bias", bias)
-            self.register_buffer("rotated_weight", self.per_head(rotate, weight))
-            self.register_buffer("rotated_bias", self.per_head(rotate, bias))
-
-        def per_head(self, rotate, tensor):
-            """R applied to each head's channels of a weight [heads * head_dim, in] or a bias [heads * head_dim]."""
-            return (rotate @ tensor.view(self.heads, self.head_dim, -1)).reshape(tensor.shape)
-
-        def split_heads(self, tensor):
-            return tensor.view(*tensor.shape[:2], self.heads, self.head_dim).transpose(1, 2)
-
-        def forward(self, descriptors, cos, sin):
-            """cos and sin are tiled over the heads, so the encoding applies before the heads split off."""
-            plain = functional.linear(descriptors, self.weight, self.bias)
-            rotated = functional.linear(descriptors, self.rotated_weight, self.rotated_bias)
-            return self.split_heads(plain * cos + rotated * sin)
-
-    class SelfAttention(nn.Module):
-        """LightGlueAttention.forward for self attention, with three exact folds that spare the compiler data
-        movement: the rotary encoding is folded into the query and key projections, the attention scale, a power of
-        two, into the query projection, and the mask is dropped, since every keypoint is real and transformers adds
-        zeros."""
-
-        def __init__(self, attention, rotate):
-            super().__init__()
-            if not math.log2(attention.scaling).is_integer():
-                raise ValueError(f"The attention scale {attention.scaling} is no power of two; folding it is inexact")
-            heads = attention.config.num_attention_heads
-            self.query = RotaryProjection(attention.q_proj, rotate, heads, attention.scaling)
-            self.key = RotaryProjection(attention.k_proj, rotate, heads, 1.0)
-            self.value, self.output = attention.v_proj, attention.o_proj
-
-        def forward(self, descriptors, cos, sin):
-            scores = self.query(descriptors, cos, sin) @ self.key(descriptors, cos, sin).transpose(-1, -2)
-            weights = torch.softmax(scores, -1)
-            values = self.key.split_heads(self.value(descriptors))
-            return self.output((weights @ values).transpose(1, 2).reshape(descriptors.shape))
-
-    class Matcher(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.lightglue = lightglue
-            rotate = rotation(modeling_lightglue.rotate_half, lightglue.transformer_layers[0].self_attention.head_dim)
-            self.self_attentions = nn.ModuleList(
-                SelfAttention(layer.self_attention, rotate) for layer in lightglue.transformer_layers)
-
-        @staticmethod
-        def layer(layer, self_attention, descriptors, cos, sin):
-            """LightGlueTransformerLayer.forward, with the swap of the two images for cross attention written as a
-            concatenation: the exported flip(1) of the batch does not swap them. Cross attention gets no mask, since
-            every keypoint is real and transformers would add zeros."""
-            attended = self_attention(descriptors, cos, sin)
-            descriptors = descriptors + layer.self_mlp(torch.cat([descriptors, attended], -1))
-            other = torch.cat([descriptors[1:2], descriptors[0:1]], 0)
-            attended, _ = layer.cross_attention(descriptors, encoder_hidden_states=other)
-            return descriptors + layer.cross_mlp(torch.cat([descriptors, attended], -1))
-
-        def forward(self, encoding0, descriptors0, encoding1, descriptors1):
-            # The positional encoder's (cosines, sines), computed on the CPU from the keypoints, tiled over the heads.
-            encodings = torch.cat([encoding0, encoding1], 0)
-            half = encodings.shape[-1] // 2
-            heads = self.lightglue.config.num_attention_heads
-            cos, sin = torch.cat([encodings[..., :half]] * heads, -1), torch.cat([encodings[..., half:]] * heads, -1)
-            descriptors = self.lightglue.input_projection(torch.cat([descriptors0, descriptors1], 0))
-            for layer, self_attention in zip(self.lightglue.transformer_layers, self.self_attentions):
-                descriptors = self.layer(layer, self_attention, descriptors, cos, sin)
-            assignment = self.lightglue.match_assignment_layers[-1]
-            projected = assignment.final_projection(descriptors) / assignment.descriptor_dim**0.25
-            similarity = projected[0:1] @ projected[1:2].transpose(-1, -2)
-            matchability = torch.sigmoid(assignment.matchability(descriptors))
-            # LightGlue's log assignment is log_softmax over j + log_softmax over i + log sigmoid of each keypoint's
-            # matchability; its exponential is this product, which stays in [0, 1].
-            return (torch.softmax(similarity, 2) * torch.softmax(similarity, 1)
-                    * matchability[0:1] * matchability[1:2].transpose(1, 2))
-
-    return Matcher().eval()
-
-
-def check_self_attention(lightglue, model, encodings):
-    """Each folded self attention must equal transformers' own on the same descriptors to float32 rounding, with the
-    all-zero mask transformers adds, before the export is compared end to end."""
-    import torch
-
-    descriptors = torch.randn(2, KEYPOINTS, lightglue.config.descriptor_dim, generator=torch.Generator().manual_seed(0))
-    half = encodings.shape[-1] // 2
-    cos, sin = encodings[..., :half], encodings[..., half:]
-    heads = lightglue.config.num_attention_heads
-    mask = torch.zeros((2, 1, 1, KEYPOINTS))
-    with torch.inference_mode():
-        for index, (layer, folded) in enumerate(zip(lightglue.transformer_layers, model.self_attentions)):
-            expected, _ = layer.self_attention(descriptors, position_embeddings=(cos, sin), attention_mask=mask)
-            actual = folded(descriptors, torch.cat([cos] * heads, -1), torch.cat([sin] * heads, -1))
-            if not torch.allclose(actual, expected, rtol=0, atol=1e-5):
-                raise ValueError(f"Layer {index}'s folded self attention differs from transformers' by "
-                                 f"{(actual - expected).abs().max().item():.2e}")
-
-
-def matches(assignment, threshold=MATCH_THRESHOLD):
-    """LightGlue's match extraction: mutual best pairs whose assignment exceeds the threshold, as (i, j) rows."""
-    best0, best1 = assignment.argmax(1), assignment.argmax(0)
-    rows = np.arange(len(best0))
-    keep = (best1[best0] == rows) & (assignment[rows, best0] > threshold)
-    return np.stack([rows[keep], best0[keep]], 1)
-
-
-def sample_pair(seed):
-    """Two images' keypoints for one seed: image 1 sees most of image 0's keypoints, shifted and with noisy descriptors,
-    in another order, so the pair has many true matches as well as unmatched keypoints."""
-    rng = np.random.default_rng(seed)
-    size = np.asarray([IMAGE_WIDTH, IMAGE_HEIGHT], np.float64)
-    pixels0 = rng.uniform(0, 1, (KEYPOINTS, 2)) * size
-    descriptors0 = rng.normal(0, 1, (KEYPOINTS, DESCRIPTOR_DIM))
-    order = rng.permutation(KEYPOINTS)
-    shared = order[: KEYPOINTS * 3 // 4]
-    pixels1 = rng.uniform(0, 1, (KEYPOINTS, 2)) * size
-    descriptors1 = rng.normal(0, 1, (KEYPOINTS, DESCRIPTOR_DIM))
-    pixels1[: len(shared)] = np.clip(pixels0[shared] + rng.normal(0, 2, (len(shared), 2)) + [12.0, -7.0], 0, size - 1)
-    descriptors1[: len(shared)] = descriptors0[shared] + rng.normal(0, 0.3, (len(shared), DESCRIPTOR_DIM))
-    pair = []
-    for pixels, descriptors in ((pixels0, descriptors0), (pixels1, descriptors1)):
-        descriptors /= np.linalg.norm(descriptors, axis=1, keepdims=True)  # SuperPoint's descriptors are unit length
-        pair.append((pixels.astype(np.float32), descriptors.astype(np.float32)))
-    return pair
-
-
-def normalized(pixels):
-    return ((pixels - [IMAGE_WIDTH / 2, IMAGE_HEIGHT / 2]) / (max(IMAGE_WIDTH, IMAGE_HEIGHT) / 2)).astype(np.float32)
-
-
-def check_projection(lightglue):
-    """The CPU encoding uses calibration's copy of the positional encoder's projection; it must be the checkpoint's."""
-    weight = lightglue.positional_encoder.projector.weight.detach().numpy()
-    if weight.shape != KEYPOINT_PROJECTION.shape or not np.array_equal(weight, KEYPOINT_PROJECTION):
-        raise ValueError("calibration.KEYPOINT_PROJECTION differs from the checkpoint's positional encoder projection")
-
-
-def compare_assignment(expected, actual):
-    """The exported assignment must equal transformers' to float32 rounding and give the same matches; a pair whose
-    assignment sits at the threshold may fall either side, so 1% of the matches may differ."""
-    if actual.shape != expected.shape or not np.isfinite(actual).all():
-        raise ValueError(f"Unexpected or non-finite assignment: {actual.shape} vs {expected.shape}")
-    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-3, err_msg="assignment")
-    reference = {tuple(row) for row in matches(expected).tolist()}
-    exported = {tuple(row) for row in matches(actual).tolist()}
-    if len(reference) < KEYPOINTS // 4:
-        raise ValueError(f"transformers found only {len(reference)} matches in a pair built to have hundreds")
-    if len(reference ^ exported) > len(reference) // 100:
-        raise ValueError(f"The export matches {len(exported)} pairs and transformers {len(reference)}; "
-                         f"{len(reference ^ exported)} differ")
-
-
-def convert(source, output_dir):
+    validate_config(checkpoint.parent)
     output_dir.mkdir(parents=True, exist_ok=False)
-    output = output_dir / "model.onnx"
-    validate_config(source.parent)
-    import onnxruntime as ort
-    import torch
-    from transformers import LightGlueForKeypointMatching
-
-    torch.set_num_threads(4)
-    # Early stopping and keypoint pruning off, as floats: config validation rejects the integer -1.
-    lightglue = LightGlueForKeypointMatching.from_pretrained(source.parent, local_files_only=True,
-                                                            depth_confidence=-1.0, width_confidence=-1.0,
-                                                            attn_implementation="eager").eval()
-    check_projection(lightglue)
-    model = matcher(lightglue)
-    (pixels0, descriptors0), (pixels1, descriptors1) = sample_pair(SEEDS.start)
-    example = tuple(torch.from_numpy(value)[None] for value in
-                    (encoding(normalized(pixels0)), descriptors0, encoding(normalized(pixels1)), descriptors1))
-    check_self_attention(lightglue, model, torch.cat([example[0], example[2]], 0))
-    # The TorchScript exporter records the attention heads' reshape with a fixed, wrong shape; torch.export traces it.
-    program = torch.onnx.export(model, example, dynamo=True, opset_version=OPSET, input_names=list(INTERFACE)[:4],
-                                output_names=["assignment"])
-    program.save(str(output), external_data=False)
-    fold_constants(output)
-    validate_export(output)
-
-    # transformers' own matcher keeps its log assignment in the last match assignment layer's output.
-    captured = {}
-    lightglue.match_assignment_layers[-1].register_forward_hook(lambda module, inputs, scores: captured.update(scores=scores))
-    session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
-    for seed in SEEDS:
-        (pixels0, descriptors0), (pixels1, descriptors1) = sample_pair(seed)
-        with torch.inference_mode():
-            lightglue._match_image_pair(torch.from_numpy(np.stack([pixels0, pixels1]))[None],
-                                        torch.from_numpy(np.stack([descriptors0, descriptors1]))[None],
-                                        IMAGE_HEIGHT, IMAGE_WIDTH, mask=torch.ones((1, 2, KEYPOINTS)))
-        expected = captured["scores"][0, :-1, :-1].exp().numpy()
-        feeds = dict(zip(list(INTERFACE)[:4], (encoding(normalized(pixels0))[None], descriptors0[None],
-                                               encoding(normalized(pixels1))[None], descriptors1[None])))
-        compare_assignment(expected, session.run(None, feeds)[0][0])
-    print(f"Seeded-pair transformers/ONNX assignment and match check passed with seeds {SEEDS.start}-{SEEDS.stop - 1}: "
-          f"{output}")
+    (weights,) = conversion_outputs(MODEL_DIR)
+    output = output_dir / weights
+    tensors = load_file(str(checkpoint))
+    torch.save({name: value for name, value in tensors.items() if not name.startswith(DETECTOR_PREFIX)}, output)
+    print(f"Wrote {output}")
     return output
 
 

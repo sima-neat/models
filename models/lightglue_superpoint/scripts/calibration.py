@@ -1,4 +1,4 @@
-"""LightGlue's inputs from the yfcc100m-keypoints dataset, for compile.py, performance.py and accuracy.py.
+"""LightGlue's inputs from the yfcc100m-keypoints dataset, for surgery.py, compile.py, performance.py and accuracy.py.
 
 The dataset holds each image's SuperPoint keypoints, best first, in pixels of SuperPoint's 640x480 input, which is the
 image stretched to that size, and their unit-length 256-d descriptors. The matcher takes exactly 512 real keypoints per
@@ -27,7 +27,7 @@ KEYPOINTS = 512
 DESCRIPTOR_DIM = 256
 IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
 # LightGlue's learned keypoint projection (positional_encoder.projector.weight, [32, 2]) in the pinned checkpoint;
-# convert.py checks it against the checkpoint. Each row turns a normalized (x, y) into one phase.
+# surgery.py checks it against the checkpoint. Each row turns a normalized (x, y) into one phase.
 KEYPOINT_PROJECTION = np.asarray([
     (0.07869736105203629, 0.6576962471008301),
     (0.30121079087257385, -1.3067657947540283),
@@ -64,38 +64,22 @@ KEYPOINT_PROJECTION = np.asarray([
 ], np.float32)
 # Cosines then sines of the 32 phases, each repeated twice: the rotary encoding of 64-wide attention heads.
 ENCODING_DIM = 4 * len(KEYPOINT_PROJECTION)
+# The matcher's inputs as the MPK and the compiler take them, channels-last: each image's 512 keypoints as the width of
+# a one-row image. surgery.py's ONNX takes them channels-first.
 INPUT_SHAPES = {
-    "encoding0": (1, KEYPOINTS, ENCODING_DIM),
-    "descriptors0": (1, KEYPOINTS, DESCRIPTOR_DIM),
-    "encoding1": (1, KEYPOINTS, ENCODING_DIM),
-    "descriptors1": (1, KEYPOINTS, DESCRIPTOR_DIM),
+    "encoding0": (1, 1, KEYPOINTS, ENCODING_DIM),
+    "descriptors0": (1, 1, KEYPOINTS, DESCRIPTOR_DIM),
+    "encoding1": (1, 1, KEYPOINTS, ENCODING_DIM),
+    "descriptors1": (1, 1, KEYPOINTS, DESCRIPTOR_DIM),
 }
-OUTPUT_SHAPE = (1, KEYPOINTS, KEYPOINTS)
 # LightGlue's filter_threshold: a mutual best pair matches when its assignment exceeds it.
 MATCH_THRESHOLD = 0.1
-# A pairs line: both image names, both rotations, both 3x3 intrinsics and the 4x4 pose from image 0 to image 1.
-PAIR_FIELDS = 38
 
 
 @dataclass(frozen=True)
 class Pair:
-    """Two images and their ground truth: each image's intrinsics, at its original size, and the relative pose."""
-
     name0: str
     name1: str
-    intrinsics0: np.ndarray
-    intrinsics1: np.ndarray
-    pose: np.ndarray
-
-
-@dataclass(frozen=True)
-class Image:
-    """An image's original size, the quarter turns its SuperPoint input was rotated by, and its keypoint count."""
-
-    width: int
-    height: int
-    rotation: int
-    keypoints: int
 
 
 @contextmanager
@@ -128,30 +112,19 @@ def split_of(root: Path) -> str:
     return splits[0]
 
 
-def read_images(root: Path) -> dict[str, Image]:
-    images = {}
-    for line in (root / "annotations" / "images.txt").read_text(encoding="utf-8").splitlines():
-        name, width, height, rotation, keypoints = line.split()
-        images[name] = Image(int(width), int(height), int(rotation) % 4, int(keypoints))
-    return images
+def pairs_file(root: Path) -> Path:
+    return root / "annotations" / f"pairs_{split_of(root)}.txt"
 
 
 def read_pairs(root: Path) -> list[Pair]:
-    pairs = []
-    for line in (root / "annotations" / f"pairs_{split_of(root)}.txt").read_text(encoding="utf-8").splitlines():
-        fields = line.split()
-        if len(fields) != PAIR_FIELDS:
-            raise ValueError(f"a pairs line has {len(fields)} fields, expected {PAIR_FIELDS}: {line[:80]}")
-        # images.txt holds each image's rotation; the ground truth is the unrotated images'.
-        values = np.asarray(fields[4:], np.float64)
-        pairs.append(Pair(fields[0], fields[1], values[:9].reshape(3, 3), values[9:18].reshape(3, 3),
-                          values[18:].reshape(4, 4)))
-    return pairs
+    """Every pair's image names, the first two fields of its pairs line."""
+    return [Pair(*line.split()[:2]) for line in pairs_file(root).read_text(encoding="utf-8").splitlines()]
 
 
 def usable_pairs(root: Path) -> list[Pair]:
-    """The pairs whose images both have the 512 keypoints the matcher takes."""
-    counts = {name: image.keypoints for name, image in read_images(root).items()}
+    """The pairs whose images both have the 512 keypoints the matcher takes, the last field of images.txt."""
+    lines = (root / "annotations" / "images.txt").read_text(encoding="utf-8").splitlines()
+    counts = {fields[0]: int(fields[-1]) for fields in map(str.split, lines)}
     return [pair for pair in read_pairs(root) if counts[pair.name0] == counts[pair.name1] == KEYPOINTS]
 
 
@@ -188,13 +161,13 @@ def encoding(normalized_keypoints: np.ndarray) -> np.ndarray:
 
 
 def image_inputs(keypoints: np.ndarray, descriptors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """One image's matcher inputs [1, 512, 128] and [1, 512, 256] from its 512 keypoints and descriptors."""
+    """One image's matcher inputs [1, 1, 512, 128] and [1, 1, 512, 256] from its 512 keypoints and descriptors."""
     if keypoints.shape != (KEYPOINTS, 2) or descriptors.shape != (KEYPOINTS, DESCRIPTOR_DIM):
         raise ValueError(
             f"the matcher takes {KEYPOINTS} keypoints and descriptors per image, not {keypoints.shape} and "
             f"{descriptors.shape}"
         )
-    return encoding(normalized(keypoints))[None], np.asarray(descriptors, np.float32)[None]
+    return encoding(normalized(keypoints))[None, None], np.asarray(descriptors, np.float32)[None, None]
 
 
 def matcher_inputs(
@@ -213,13 +186,15 @@ def matches(assignment: np.ndarray, threshold: float = MATCH_THRESHOLD) -> np.nd
     """LightGlue's match extraction: mutual best pairs whose assignment exceeds the threshold, as rows (i, j) of
     keypoint indices in image 0 and image 1."""
     assignment = np.asarray(assignment, np.float32).reshape(KEYPOINTS, KEYPOINTS)
-    best0, best1 = assignment.argmax(1), assignment.argmax(0)
+    # Each column's best row, from the rows of a transposed copy: argmax(0) gives the same indices but strides down
+    # the columns, which is slower on the board's CPU.
+    best0, best1 = assignment.argmax(1), np.ascontiguousarray(assignment.T).argmax(1)
     rows = np.arange(len(best0))
     keep = (best1[best0] == rows) & (assignment[rows, best0] > threshold)
     return np.stack([rows[keep], best0[keep]], 1)
 
 
-def calibration_inputs(dataset: Path, samples: int, seed: int = 42) -> dict[str, np.ndarray]:
+def calibration_inputs(dataset: Path, seed: int, samples: int) -> dict[str, np.ndarray]:
     """The first pairs of the seeded order, each input stacked along the batch axis."""
     with opened(dataset) as root:
         pairs = seeded_pairs(root, seed)

@@ -16,6 +16,7 @@ import json
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -25,13 +26,12 @@ from calibration import (
     IMAGE_HEIGHT,
     IMAGE_WIDTH,
     INPUT_SHAPES,
-    Image,
     Pair,
     dataset_root,
     features,
     matcher_inputs,
     matches,
-    read_images,
+    pairs_file,
     read_pairs,
     split_of,
     usable_pairs,
@@ -43,8 +43,50 @@ RANSAC_CONFIDENCE = 0.99999
 # The fewest matches an essential matrix is estimated from.
 MIN_MATCHES = 5
 
-# The matcher's [1, 512, 512] assignment for a pair's inputs, from the MPK or the FP32 ONNX.
+# A pairs line: both image names, both rotations, both 3x3 intrinsics and the 4x4 pose from image 0 to image 1.
+PAIR_FIELDS = 38
+
+# The matcher's assignment [i, j] for a pair's channels-last inputs, from the MPK or the FP32 ONNX.
 AssignmentOf = Callable[[dict[str, np.ndarray]], np.ndarray]
+
+
+@dataclass(frozen=True)
+class Image:
+    """An image's original size and the quarter turns its SuperPoint input was rotated by."""
+
+    width: int
+    height: int
+    rotation: int
+
+
+@dataclass(frozen=True)
+class GroundTruth:
+    """A pair's ground truth: each image's intrinsics, at its original size, and the pose from image 0 to image 1."""
+
+    intrinsics0: np.ndarray
+    intrinsics1: np.ndarray
+    pose: np.ndarray
+
+
+def read_images(root: Path) -> dict[str, Image]:
+    images = {}
+    for line in (root / "annotations" / "images.txt").read_text(encoding="utf-8").splitlines():
+        name, width, height, rotation, _ = line.split()
+        images[name] = Image(int(width), int(height), int(rotation) % 4)
+    return images
+
+
+def read_ground_truth(root: Path) -> dict[Pair, GroundTruth]:
+    truths = {}
+    for line in pairs_file(root).read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) != PAIR_FIELDS:
+            raise ValueError(f"a pairs line has {len(fields)} fields, expected {PAIR_FIELDS}: {line[:80]}")
+        # images.txt holds each image's rotation; the ground truth is the unrotated images'.
+        values = np.asarray(fields[4:], np.float64)
+        truths[Pair(fields[0], fields[1])] = GroundTruth(
+            values[:9].reshape(3, 3), values[9:18].reshape(3, 3), values[18:].reshape(4, 4))
+    return truths
 
 
 def original_pixels(keypoints: np.ndarray, image: Image) -> np.ndarray:
@@ -62,11 +104,11 @@ def original_pixels(keypoints: np.ndarray, image: Image) -> np.ndarray:
     return np.stack([x * image.width / width, y * image.height / height], 1)
 
 
-def ransac_threshold(pair: Pair, image0: Image, image1: Image) -> float:
+def ransac_threshold(truth: GroundTruth, image0: Image, image1: Image) -> float:
     """RANSAC_PIXELS pixels of SuperPoint's input, in normalized image coordinates: the pixel over the focal lengths
     of both images' intrinsics, scaled as the images were stretched to the input."""
     focals = []
-    for intrinsics, image in ((pair.intrinsics0, image0), (pair.intrinsics1, image1)):
+    for intrinsics, image in ((truth.intrinsics0, image0), (truth.intrinsics1, image1)):
         width, height = (IMAGE_HEIGHT, IMAGE_WIDTH) if image.rotation % 2 else (IMAGE_WIDTH, IMAGE_HEIGHT)
         focals += [intrinsics[0, 0] * width / image.width, intrinsics[1, 1] * height / image.height]
     return RANSAC_PIXELS / float(np.mean(focals))
@@ -122,24 +164,25 @@ def pose_auc(errors: list[float], thresholds: tuple[int, ...] = THRESHOLDS) -> l
     return areas
 
 
-def pair_error(root: Path, images: dict[str, Image], pair: Pair, assignment_of: AssignmentOf) -> tuple[float, int]:
+def pair_error(root: Path, images: dict[str, Image], pair: Pair, truth: GroundTruth,
+               assignment_of: AssignmentOf) -> tuple[float, int]:
     """One pair's pose error and match count."""
     image0, image1 = features(root, pair.name0), features(root, pair.name1)
     matched = matches(assignment_of(matcher_inputs(image0, image1)))
     first, second = images[pair.name0], images[pair.name1]
     points0 = original_pixels(image0[0][matched[:, 0]], first)
     points1 = original_pixels(image1[0][matched[:, 1]], second)
-    pose = estimate_pose(points0, points1, pair.intrinsics0, pair.intrinsics1, ransac_threshold(pair, first, second))
-    return (np.inf if pose is None else pose_error(pair.pose, *pose)), len(matched)
+    pose = estimate_pose(points0, points1, truth.intrinsics0, truth.intrinsics1, ransac_threshold(truth, first, second))
+    return (np.inf if pose is None else pose_error(truth.pose, *pose)), len(matched)
 
 
 def evaluate(root: Path, pairs: Sequence[Pair], assignment_of: AssignmentOf) -> tuple[dict[str, float], float]:
     """The pairs' pose AUC metrics and mean match count, with the assignments assignment_of returns."""
-    images = read_images(root)
+    images, truths = read_images(root), read_ground_truth(root)
     errors, match_counts = [], []
     started = time.monotonic()
     for count, pair in enumerate(pairs, start=1):
-        error, matched = pair_error(root, images, pair, assignment_of)
+        error, matched = pair_error(root, images, pair, truths[pair], assignment_of)
         errors.append(error)
         match_counts.append(matched)
         if count == 1 or count % 500 == 0 or count == len(pairs):
@@ -184,13 +227,10 @@ def main(argv: list[str] | None = None) -> int:
     runner = None
 
     def assignment_of(inputs: dict[str, np.ndarray]) -> np.ndarray:
-        """The MPK's assignment, building the runner on the first pair. Neat reads a [1, 512, C] input as height 1,
-        width 512 and C channels, so each array goes in as [1, 1, 512, C], in EV74 memory."""
+        """The MPK's assignment, building the runner on the first pair, with the inputs in EV74 memory."""
         nonlocal runner
         tensors = [
-            pyneat.Tensor.from_numpy(inputs[name].reshape(1, 1, *shape[1:]), copy=True,
-                                     memory=pyneat.TensorMemory.EV74)
-            for name, shape in INPUT_SHAPES.items()
+            pyneat.Tensor.from_numpy(inputs[name], copy=True, memory=pyneat.TensorMemory.EV74) for name in INPUT_SHAPES
         ]
         if runner is None:
             runner = model.build(tensors)
