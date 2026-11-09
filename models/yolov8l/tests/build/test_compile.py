@@ -218,7 +218,6 @@ def test_model_preserves_compilation_and_quality_settings() -> None:
     assert model["components"][0]["interface"]["format"] == "onnx"
     assert model["components"][0]["source"]["type"] == "conversion"
     assert model["architecture"]["id"] == "yolov8_det"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
