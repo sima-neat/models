@@ -17,6 +17,7 @@ import posixpath
 import re
 import sys
 import uuid
+from contextlib import contextmanager
 from functools import cache
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,12 +30,14 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from model_registry.benchmark_declarations import benchmarked_profiles, reference_metrics_by_model  # noqa: E402
 from model_registry.compile_matrix import build_matrix  # noqa: E402
+from model_registry.conversion import apply_selection, conversion_fingerprint  # noqa: E402
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
 from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
 from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
+from model_report import METRICS  # noqa: E402
 
 UI_MODE = os.environ.get("MODEL_BROWSER_UI_MODE", "developer")
 BRANCH = "main" if UI_MODE == "customer" else "develop"
@@ -64,20 +67,43 @@ def _timestamp(day: str, position: int) -> str:
     return f"{day}T{8 + position // 60:02d}:{position % 60:02d}:00+00:00"
 
 
+@contextmanager
+def _preview_conversions(models: dict):
+    """Synthetic content identities for the local preview, never registry credentials or writes."""
+    selected = {}
+    for model_id, model in models.items():
+        if model["components"][0]["source"]["type"] != "conversion":
+            continue
+        selected[model_id] = {
+            "sha256": _sha256("preview-conversion", model_id), "size_bytes": 1000,
+            "conversion_fingerprint": conversion_fingerprint(ROOT, model),
+        }
+        apply_selection(model, selected, root=ROOT)
+    previous = os.environ.get("MODEL_REGISTRY_CONVERSIONS")
+    os.environ["MODEL_REGISTRY_CONVERSIONS"] = json.dumps(selected)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("MODEL_REGISTRY_CONVERSIONS", None)
+        else:
+            os.environ["MODEL_REGISTRY_CONVERSIONS"] = previous
+
+
 @cache
 def _repository() -> dict[str, Any]:
     models = load_models(ROOT)
     compiler = resolve_model_compiler(ROOT)
-    matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
-    documentation = {
-        model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
-        for model_id, model in models.items()
-    }
-    revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
-    runs = sorted((run for revision in revisions for run in revision["runs"]), key=lambda run: run["created_at"])
-    runs = _old_layout_runs(runs[0]) + runs
-    return {"models": models, "compiler": compiler, "revisions": revisions, "runs": runs[::-1]}
-
+    with _preview_conversions(models):
+        matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
+        documentation = {
+            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
+            for model_id, model in models.items()
+        }
+        revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
+        runs = sorted((run for revision in revisions for run in revision["runs"]), key=lambda run: run["created_at"])
+        runs = _old_layout_runs(runs[0]) + runs
+        return {"models": models, "compiler": compiler, "revisions": revisions, "runs": runs[::-1]}
 
 # Compile runs older Models revisions wrote, keyed by the field they lack; build history hides them.
 OLD_LAYOUT_RUN_IDS = {
@@ -349,6 +375,8 @@ _PREVIEW_LAYER_NAMES = (
     "MLA_{stage}/conv2d_add_22_output",
     "MLA_{stage}/copy_23",
 )
+# Nonconsecutive, as when an A65 stage runs between two MLA stages.
+_PREVIEW_MLA_STAGES = (0, 2)
 
 
 def _components_in_order(model: dict) -> list[str]:
@@ -386,14 +414,27 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
     plan = report["components"]["model"]["execution_plan"]
     # Illustrative compiled layers exercise filtering, no-ops and nonconsecutive MLA stage indices.
     # Preview timings are generated, not published measurements of these model definitions.
-    report["components"] = {component: {"execution_plan": plan, "layer_stats": [
-        {"name": name.format(stage=stage),
-         "stage_index": stage,
-         "total_execution_time_us": 0.0 if index in (21, 23) else round(
-             latency / len(components) * 1000 * (0.065 / (1 + index / 4))
-             * (0.8 + _fraction("layer", *key, component, str(index))), 2)}
-        for stage in (0, 2) for index, name in enumerate(_PREVIEW_LAYER_NAMES)
-    ]} for component in components}
+    report["components"] = {}
+    for component in components:
+        layers = [
+            {"stage_index": stage,
+             "name": name.format(stage=stage),
+             "latency_us": 0.0 if index in (21, 23) else round(
+                 latency / len(components) * 1000 * (0.065 / (1 + index / 4))
+                 * (0.8 + _fraction("layer", *key, component, str(index))), 2)}
+            for stage in _PREVIEW_MLA_STAGES for index, name in enumerate(_PREVIEW_LAYER_NAMES)
+        ]
+        # A stage's measured latency also holds the time between its layers.
+        stages = [{"stage_index": stage, "latency_us": round(1.05 * sum(
+            layer["latency_us"] for layer in layers if layer["stage_index"] == stage), 2)}
+            for stage in _PREVIEW_MLA_STAGES]
+        report["components"][component] = {
+            "execution_plan": plan,
+            "mla_layer_stats": {"status": "ok", "layers": layers},
+            "mla_stage_stats": {"status": "ok", "stages": stages},
+        }
+    # The registry stores the report as PostgreSQL jsonb, which orders keys shorter first, then bytewise.
+    report["components"] = dict(sorted(report["components"].items(), key=lambda item: (len(item[0]), item[0])))
     # The rest of the board telemetry keeps the template's DevKit readings.
     return report
 
@@ -402,8 +443,9 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
     """A whole-model accuracy report on each dataset the model declares, for the metrics its tests expect there,
     else the ones the dataset requires.
 
-    Each metric lands a little below the source model's reference score on that dataset, when there is one.
-    One profile in two evaluates a sampled subset of each split, so both coverages appear.
+    Each metric lands a little worse than the source model's reference score on that dataset, when there is one:
+    below it, or above it for an error metric such as EPE. One profile in two evaluates a sampled subset of each
+    split, so both coverages appear.
     """
     template = _report_template("accuracy")
     sample = next(iter(template["datasets"].values()))
@@ -412,12 +454,11 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
     expected = tests.get("accuracy", {}).get("expected", {}).get(profile_id, {})
     datasets = {}
     for name, dataset in model["accuracy"]["datasets"].items():
-        reference = {
-            metric: value
-            for entry in model.get("reference_metrics", [])
-            if entry["dataset"]["id"] == dataset["id"]
-            for metric, value in entry["metrics"].items()
-        }
+        # The FP32 baseline, measured on the package's own inputs, is the closer reference: it wins over a
+        # published score of the same metric.
+        entries = [entry for entry in model.get("reference_metrics", []) if entry["dataset"]["id"] == dataset["id"]]
+        entries.sort(key=lambda entry: entry.get("origin") == "fp32_baseline")
+        reference = {metric: value for entry in entries for metric, value in entry["metrics"].items()}
         available = 500 + int(_fraction("samples", *key, name) * 4500)
         datasets[name] = {
             **copy.deepcopy(sample),
@@ -425,11 +466,17 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
             "available_samples": available,
             "metrics": {
                 metric: round(reference.get(metric, 0.3 + _fraction("reference", *key, metric) * 0.6)
-                              * (0.9 + _fraction("accuracy", *key, name, metric) * 0.08), 4)
+                              * _worse(metric, _fraction("accuracy", *key, name, metric)), 4)
                 for metric in expected.get(name) or dataset["required_metrics"]
             },
         }
     return {**copy.deepcopy(template), "datasets": datasets}
+
+
+def _worse(metric: str, fraction: float) -> float:
+    """The factor that makes a measured score 2-10% worse than its reference, in the metric's direction."""
+    shortfall = 0.02 + (1 - fraction) * 0.08
+    return 1 + shortfall if METRICS[metric]["direction"] == "lower" else 1 - shortfall
 
 
 def _benchmark_parameters(model: dict, benchmark: dict) -> dict[str, Any]:
@@ -440,6 +487,37 @@ def _benchmark_parameters(model: dict, benchmark: dict) -> dict[str, Any]:
         "builds": {build["component_id"]: {"run_id": build["run_id"], "artifact_sha256": build["artifact_sha256"]}
                    for build in benchmark["builds"]},
         "runtime": resolve_benchmark_runtime(ROOT),
+    }
+
+
+def _mla_stage_simulation_test(model: dict, package: dict) -> dict[str, Any] | None:
+    """The MLA stage simulation a package run carries: each preview stage at a fraction of its measured latency.
+    A LLiMa build has no MPK to simulate."""
+    if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
+        return None
+    profile_id = package["build_profile_id"]
+    report = _performance_report(model, profile_id)
+    components = {}
+    for component, stats in report["components"].items():
+        stages = []
+        for stage in stats["mla_stage_stats"]["stages"]:
+            key = (model["id"], profile_id, component, str(stage["stage_index"]))
+            effective_tops = 4.0 + _fraction("tops", *key) * 20.0
+            effective_ops = round(stage["latency_us"] * 1e-6 * effective_tops * 1e12)
+            stages.append({
+                "stage_index": stage["stage_index"],
+                "effective_ops": effective_ops,
+                "total_ops": round(effective_ops / (0.7 + _fraction("packing", *key) * 0.25)),
+                "simulated_latency_us": round(stage["latency_us"] * (0.8 + _fraction("simulated", *key) * 0.18), 3),
+            })
+        components[component] = {"status": "ok", "stages": stages}
+    return {
+        "suite": "performance",
+        "name": "mla-stage-simulation",
+        "status": "passed",
+        "version": "1",
+        "summary": {"schema_version": 1, "model_id": model["id"], "build_profile_id": profile_id,
+                    "components": components},
     }
 
 
@@ -683,7 +761,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json({"run": index["runs"][run_id], "artifacts": artifacts})
         elif run_id in index["packages"] and rest == ["test-results"]:
             fidelity = _fidelity_test(*index["packages"][run_id])
-            self._json({"run_id": run_id, "test_results": [fidelity] if fidelity else []})
+            simulation = _mla_stage_simulation_test(*index["packages"][run_id])
+            self._json({"run_id": run_id, "test_results": [test for test in (fidelity, simulation) if test]})
         elif run_id in index["packages"] and len(rest) == 2 and rest[0] == "artifacts":
             model, package = index["packages"][run_id]
             filename, _ = _package_file(model, package)

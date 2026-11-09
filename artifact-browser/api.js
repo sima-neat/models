@@ -1,7 +1,8 @@
+import { heroImageSources } from "./hero-images.js";
 // Registry API requests, local caches, and catalog build selection.
 import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
 import { BENCHMARK_RUN_TYPES } from "./model-report.js";
-import { DEFAULT_BRANCH, state, elements, categoryFilters } from "./state.js";
+import { config, DEFAULT_BRANCH, branchSelectionEnabled, state, elements, categoryFilters } from "./state.js";
 
 // The registry answers 429 while all of its readers are busy, so those requests wait and try again.
 const BUSY_RETRY_DELAYS_MS = [500, 1000, 2000];
@@ -79,9 +80,11 @@ export async function apiText(path) {
 
 // The catalog card and the model card show the hero image published with the model README.
 export function documentationHeroUrl(documentation) {
-  const hero = documentation?.hero;
-  if (!hero?.artifact_name || !hero?.artifact_sha256 || !documentation?.run_id) return null;
-  return `${state.apiBase}/v1/runs/${encodeURIComponent(documentation.run_id)}/artifacts/${encodeURIComponent(hero.artifact_name)}/content`;
+  return heroImageSources(documentation, state.apiBase, config.heroCdnBaseUrl)?.src || null;
+}
+
+export function documentationHeroFallbackUrl(documentation) {
+  return heroImageSources(documentation, state.apiBase)?.fallback || "";
 }
 
 function catalogCacheKey() {
@@ -116,6 +119,7 @@ export function readBranchPreference() {
 }
 
 export function writeBranchPreference(branch) {
+  if (!branchSelectionEnabled) return;
   try {
     localStorage.setItem(branchPreferenceKey(), branch);
   } catch {

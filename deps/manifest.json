@@ -5,9 +5,7 @@
     "os_type": "elxr"
   },
   "model-compiler": {
-    "channel": "develop",
-    "revision": "937b22f7301e",
-    "version": "3.0.0"
+    "version": "3.0.0.1"
   },
   "neat-core": {
     "install_target": "core@develop"

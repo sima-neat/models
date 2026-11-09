@@ -1,0 +1,52 @@
+{
+  "purpose": "Models #574 scoped production MPK acceptance using genuine, unchanged compiled artifacts",
+  "repository": "sima-neat/models",
+  "target_git_ref": "refs/heads/develop",
+  "model_id": "yolo26x_pose",
+  "profile_id": "w8a16",
+  "deployment_id": "0dcd86c6-222d-4dca-a67f-939f87348d87",
+  "manifest_digest": "41986555db358d3e9a76a9fa631307c245eced9e00f3432853e088c6cee26678",
+  "source_commit": "90041582c675145e17fce41f3c43d38e978cc50f",
+  "temporary_target_patch": {
+    "build_on_demand": true,
+    "build_requirements": {
+      "w8a16": {
+        "version": 1,
+        "packages": [
+          {
+            "id": "default",
+            "format": "zip",
+            "layout": "archive",
+            "component_ids": [
+              "model"
+            ]
+          }
+        ],
+        "invocations": [
+          {
+            "id": "w8a16",
+            "component_ids": [
+              "model"
+            ],
+            "compile_fingerprint": "a0a69e15920d8c175fd2833ab1b8f38bc1bbd6618d330f4a378316581cff997b"
+          }
+        ],
+        "compiler_version": "3.0.0"
+      }
+    }
+  },
+  "guards": [
+    "Capture the latest complete production Develop document and canonical snapshot before mutation.",
+    "Require no pre-existing approved selection for this model/profile.",
+    "Preserve every existing build, package, other profile and other model.",
+    "Model metadata changes require a separate reviewed Git revision and documentation provenance for that revision; the current revision progress API deliberately rejects this patch.",
+    "Publish through the snapshot API with compare-and-swap; stop on conflicts.",
+    "Run the existing protected workflow from develop; do not bypass review.",
+    "Verify promoted receipt and exact MPK checksum and size before cleanup.",
+    "Under the repository row lock, withdraw only the fixture approval matching its promotion UUID and candidate, release only its approved_selection hold, and audit the operator cleanup.",
+    "Restore only the captured model policy/requirements using the current snapshot API, preserving unrelated concurrent catalog progress.",
+    "Never delete compile/package runs, candidate records, source objects, or approval history."
+  ],
+  "cleanup_constraint": "There is no withdrawal API. Successful fixture cleanup requires a guarded operator database transaction before ordinary catalog restoration; a source-only policy revert is insufficient.",
+  "activation_status": "prepared, not activated: same-revision CAS rejected with catalog_plan_conflict; no production metadata change"
+}

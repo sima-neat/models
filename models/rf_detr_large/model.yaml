@@ -30,19 +30,20 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_large/b618b08491b7a85ef3d6afc0d55e0bc85458fbfa5acb2446d80f8ca0d74308ef/37903234520-1/model.onnx
-    sha256: b618b08491b7a85ef3d6afc0d55e0bc85458fbfa5acb2446d80f8ca0d74308ef
-    size_bytes: 121813393
+  source: conversion
   components: [backbone, decoder]
 
 calibrations:
 - id: coco-2017-cal
   dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
 
+# Both profiles request on-demand because Spot runners repeatedly lost these
+# compiles mid-run (sima-neat/vulcan#298), at the default size because a larger
+# runner did not shorten RF-DETR compiles (#118).
 build_profiles:
   w8a8_w16a16:
     calibration_dataset: coco-2017-cal
+    runner_market: on-demand
     components:
       backbone:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
@@ -53,9 +54,25 @@ build_profiles:
   w8a16_w16a16:
     # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
     calibration_dataset: coco-2017-cal
+    runner_market: on-demand
     components:
       backbone:
         parameters: {precision: w8a16, per_token: true}
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
+      decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a8_mixed_w16a16:
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      backbone:
+        # A W8A8 backbone whose residual stream, global attention, projector, proposal head and outputs run BF16.
+        parameters:
+          precision: w8a8
+          calibration_bins: 2048
+          calibration_samples: 50
+          bf16_regions: [residual, attention_global, projector, head, outputs]
       # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       decoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}

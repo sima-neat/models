@@ -38,16 +38,23 @@
       }
     },
     "conversion": {
-      "description": "The source scripts/convert.py turns into compilation.source.",
+      "description": "The source scripts/convert.py turns into compilation.source, and the files it writes.",
       "type": "object", "additionalProperties": false, "required": ["source"],
-      "properties": {"source": {"$ref": "#/$defs/source"}}
+      "properties": {
+        "source": {"$ref": "#/$defs/source"},
+        "outputs": {
+          "description": "File names scripts/convert.py writes, default [model.onnx]. compile.py receives the first as --model.",
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*\\.(onnx|pt|pth)$"}
+        }
+      }
     },
     "compilation": {
       "description": "The source scripts/compile.py (ONNX) or scripts/compile.sh (Hugging Face) compiles, and the components it must produce. One component is named model.",
       "type": "object", "additionalProperties": false, "required": ["format", "source"],
       "properties": {
         "format": {"enum": ["onnx", "huggingface"]},
-        "source": {"$ref": "#/$defs/source"},
+        "source": {"oneOf": [{"$ref": "#/$defs/source"}, {"const": "conversion"}]},
         "components": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
         "entrypoint": {"description": "The package's public entrypoint when it is not default, such as generate.", "$ref": "#/$defs/id"}
       }
@@ -65,14 +72,20 @@
       "additionalProperties": {
         "type": "object", "additionalProperties": false, "required": ["components"],
         "properties": {
-          "runner_class": {"$ref": "#/$defs/runnerClass"},
+          "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]},
+          "benchmark_baseline": {
+            "type": "object", "additionalProperties": false, "required": ["model_id", "build_profile"],
+            "properties": {
+              "model_id": {"$ref": "#/$defs/id"}, "build_profile": {"$ref": "#/$defs/id"}
+            }
+          },
           "calibration_dataset": {"description": "A calibrations entry.", "$ref": "#/$defs/datasetId"},
           "components": {
             "description": "Each component's build parameters, keyed like compilation.components.",
             "type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"},
             "additionalProperties": {
               "type": "object", "additionalProperties": false, "required": ["parameters"],
-              "properties": {"parameters": {"type": "object"}, "runner_class": {"$ref": "#/$defs/runnerClass"}}
+              "properties": {"parameters": {"type": "object"}, "runner_class": {"$ref": "#/$defs/runnerClass"}, "runner_market": {"enum": ["spot", "on-demand"]}}
             }
           }
         }
@@ -119,12 +132,17 @@
       }
     },
     "reference_metrics": {
-      "description": "Scores the source model's authors published for these weights, copied from a pinned page.",
+      "description": "Reference scores beside the measured accuracy: what the source model's authors published (origin published, the default), copied from a pinned page, or what the FP32 source model scores on the package's own inputs (origin fp32_baseline), measured by the model's baseline script.",
       "type": "array",
       "items": {
-        "type": "object", "additionalProperties": false, "required": ["source", "dataset", "conditions", "metrics"],
+        "type": "object", "additionalProperties": false, "required": ["dataset", "conditions", "metrics"],
+        "if": {"required": ["origin"], "properties": {"origin": {"const": "fp32_baseline"}}},
+        "then": {"required": ["script"], "not": {"required": ["source"]}},
+        "else": {"required": ["source"], "not": {"required": ["script"]}},
         "properties": {
+          "origin": {"enum": ["published", "fp32_baseline"], "default": "published"},
           "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "script": {"const": "scripts/fp32_baseline_accuracy.py"},
           "dataset": {
             "type": "object", "additionalProperties": false, "required": ["id", "split"],
             "properties": {"id": {"$ref": "#/$defs/datasetId"}, "split": {"$ref": "#/$defs/datasetId"}}
@@ -140,7 +158,7 @@
     "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
     "idSet": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "profileIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-    "runnerClass": {"enum": ["default", "expensive", "most-expensive"]},
+    "runnerClass": {"enum": ["default", "moderate", "expensive", "most-expensive"]},
     "datasetId": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "relativePath": {

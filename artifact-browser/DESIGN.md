@@ -25,9 +25,11 @@ Standalone previews keep a local header when the shared shell is unavailable.
 
 The build selects the audience: Main uses a customer view of its catalog;
 Develop and feature branches keep the developer view, with branch/compiler filters,
-build history and contributor navigation. Both currently use the staging registry
-and publish to the same staging site. Selecting a catalog branch changes data,
-never the audience of the built site.
+build history and contributor navigation. Both default to the staging registry
+and publish to the same staging site; `?env=prod` explicitly previews production
+data with the same staged UI and a Production registry label. Selecting a catalog branch changes data,
+never the audience of the built site. `?branches=0` hides only the branch selector
+and keeps the selected catalog on Main without changing the audience.
 
 Refined minimalism with generous space and progressive disclosure. Light and
 dark themes remain supported. Search is the dominant action; Task and Model family

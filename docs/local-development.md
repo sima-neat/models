@@ -283,18 +283,23 @@ access to it before continuing; validation alone is not enough to submit.
 
 The performance stage runs the model's standalone `scripts/performance.py`
 once per benchmarked build profile, with every component's MPK, and measures
-the whole model. Scripts of single-component models use Neat Core's default
-synthetic workload;
-the stage does not measure accuracy or application preprocessing.
+the whole model. Its input is one image from the model's accuracy dataset in
+a 1280x720 frame, which Neat preprocesses inside the measurement, or one sample
+as tensors for a model whose inputs are not images (see
+[Benchmark input](benchmarking.md#benchmark-input)); the stage does not
+measure accuracy.
 
 Complete the DevKit setup in [DevKit performance](benchmarking.md#set-up-a-devkit)
 once. Then copy the exact compiled MPKs, the model folder, and
-`tools/model_report` to the DevKit and run the script:
+`tools/model_report` to the DevKit, extract the model's accuracy dataset as
+for [accuracy](local-accuracy-development.md#run-it-on-a-devkit), and run the
+script:
 
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
-  --mpk /workspace/resnet_50_mpk.tar.gz --output /workspace/performance \
-  2>&1 | tee /workspace/performance.log
+  --mpk /workspace/resnet_50_mpk.tar.gz \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
+  --output /workspace/performance 2>&1 | tee /workspace/performance.log
 ```
 
 A multi-component model takes one `--mpk <component>=<path>` per component;
@@ -307,9 +312,10 @@ Keep the report and log outside Git.
 
 `scripts/run_model_performance.sh <model-dir> <profile-id> <output-root>
 <result-directory>` runs the stage the way CI does against a local compile
-output: it also sets the MLA and CPU clocks and runs `model-registry
-check-report`. It needs a full Model Registry install from this checkout
-(`python -m pip install .`), named by `REGISTRY_PYTHON`, and passwordless
+output: it also resolves and extracts the dataset, sets the MLA and CPU
+clocks, and runs `model-registry check-report`. It needs a full Model Registry
+install from this checkout (`python -m pip install .`) with Dataset Registry,
+named by `REGISTRY_PYTHON`, a mounted NVMe at `/media/nvme`, and passwordless
 `sudo` for the clocks.
 
 ## Measure declared accuracy locally

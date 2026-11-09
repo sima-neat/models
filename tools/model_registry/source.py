@@ -26,7 +26,7 @@ DEFAULT_HTTPS_HOSTS = {
 
 def source_identity(source: dict[str, Any]) -> str:
     """Return the canonical content identity of a single file or file set."""
-    if source["type"] == "file":
+    if source["type"] in {"file", "conversion"}:
         return str(source["sha256"])
     members = [
         {

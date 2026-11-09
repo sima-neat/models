@@ -174,3 +174,35 @@ def test_package_rejects_components_whose_mpks_share_a_path(
             build_profile_id="w16a16",
             package_id="default",
         )
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_package_preserves_runner_audit(tmp_path, monkeypatch, grouped):
+    compiled = (_two_component_model(monkeypatch, tmp_path, "head.tar.gz")
+                if grouped else _compiled_component(tmp_path))
+    runner = {
+        "requested_runner_class": "expensive", "runner_class": "expensive",
+        "requested_runner_market": "on-demand", "runner_market": "on-demand",
+        "runner_actual_market": "on-demand", "runner_name": "runner-test",
+        "runner_instance_id": "i-test", "runner_instance_type": "c8gd.16xlarge",
+        "runner_approval_id": "sima-neat/models:resnet_50", "runner_approval_spec_revision": "a" * 64,
+    }
+    for path in compiled.rglob("compile-result.json"):
+        result = json.loads(path.read_text())
+        result["provenance"].update(runner)
+        path.write_text(json.dumps(result))
+    result = assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+    )
+    assert {field: result["manifest"]["provenance"][field] for field in runner} == runner
+    if grouped:
+        path = compiled / "resnet_50/w16a16/head/compile-result.json"
+        data = json.loads(path.read_text())
+        data["provenance"]["runner_instance_id"] = "i-other"
+        path.write_text(json.dumps(data))
+        with pytest.raises(ValidationError, match="incompatible"):
+            assemble_package(
+                repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+                model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+            )

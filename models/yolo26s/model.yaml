@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolo26_det
 
 license:
   spdx: AGPL-3.0-only
@@ -27,10 +27,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26s/bfd336e39c165a5cfccb0dcf26003ef24a8a0bc216bf5065ce19d5eb48016f22/38124022538-1/model.onnx
-    sha256: bfd336e39c165a5cfccb0dcf26003ef24a8a0bc216bf5065ce19d5eb48016f22
-    size_bytes: 38266103
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal
@@ -47,6 +44,11 @@ build_profiles:
     components:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
 
 accuracy:
   # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.

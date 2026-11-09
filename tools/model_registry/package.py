@@ -14,11 +14,15 @@ from jsonschema import Draft202012Validator
 from .artifact import deployment_files, verify_artifact
 from .errors import ValidationError
 from .fetch import sha256_file
+from .mla_stage_simulation import SIMULATION_FILE
 from .model import load_and_validate_model
+from .runner_approval import runner_provenance
 from .source import source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.
 FIDELITY_FILE = "fidelity.json"
+# What the compile writes about the whole profile beside its components; each package carries them to publication.
+PROFILE_RESULT_FILES = (FIDELITY_FILE, SIMULATION_FILE)
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
     try:
@@ -67,6 +71,9 @@ def assemble_package(
     output_root = Path(output_dir).expanduser().resolve()
     model_dir = root / "models" / model_id
     model = load_and_validate_model(model_dir, root / "schemas" / "model.schema.json")
+    from .conversion import apply_selection
+
+    apply_selection(model, root=root)
     profiles = {item["id"]: item for item in model["build_profiles"]}
     packages = {item["id"]: item for item in model["packages"]}
     components = {item["id"]: item for item in model["components"]}
@@ -104,6 +111,7 @@ def assemble_package(
             field: str(provenance.get(field) or "")
             for field in ("git_sha", "environment", "compiler_version", "compiler_label", "target")
         }
+        current_identity.update(runner_provenance(provenance))
         if provenance.get("llima_version"):
             current_identity["llima_version"] = str(provenance["llima_version"])
         if provenance_identity is None:
@@ -198,9 +206,10 @@ def assemble_package(
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
     package_dir = output_root / model_id / build_profile_id / "packages" / package_id
     package_dir.mkdir(parents=True, exist_ok=True)
-    fidelity = compiled / model_id / build_profile_id / FIDELITY_FILE
-    if fidelity.is_file():
-        shutil.copyfile(fidelity, package_dir / FIDELITY_FILE)
+    for name in PROFILE_RESULT_FILES:
+        result_file = compiled / model_id / build_profile_id / name
+        if result_file.is_file():
+            shutil.copyfile(result_file, package_dir / name)
     if native_deployment is not None:
         deployment = package_dir / "deployment"
         if deployment.resolve().is_relative_to(native_deployment.resolve()):
