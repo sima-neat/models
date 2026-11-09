@@ -97,7 +97,10 @@ A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
 first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
-the model's folder at the commit the README comes from. LLM and VLM pages show
+the model's folder at the commit the README comes from. The original-model link
+beside it opens the page `upstream.model_card` names. It shows the Hugging Face
+logo for a Hugging Face page and an external-link icon for any other host, such
+as a GitHub release page. LLM and VLM pages show
 the selected build's maximum context length (input plus output tokens) and image
 input resolution directly below the variant selector. Native deployments supply
 their verified settings, including fixed image resolutions without compiler

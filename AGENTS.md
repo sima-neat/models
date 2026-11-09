@@ -40,9 +40,12 @@ when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
 A tooling change reruns a stage only when the changed file is in that stage's
-tooling list in `fingerprints.py`. A file in `CONVERSION_TOOLING` in
-`conversion.py` also invalidates every conversion, and planning then fails
-until Vulcan Model Convert reruns.
+tooling list in `fingerprints.py`. No shared file is a conversion input: a
+conversion reruns only when the model's checkpoint, `convert.py` and the
+modules it imports, `requirements-convert.txt`, or `conversion.outputs`
+change. Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that
+makes shared tooling convert the same inputs to a different model. Planning
+then fails until Vulcan Model Convert reruns for every conversion-backed model.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
@@ -238,6 +241,7 @@ in the same commit.
 | When you change | Also change |
 |---|---|
 | what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
+| an approved source host | its entry in `HTTPS_HOST_CHECKS` in `source.py`, accept and reject cases in `tests/test_source.py`, and the host table in [pin every input](docs/adding-a-model.md#3-pin-every-input). This reruns no stage |
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |

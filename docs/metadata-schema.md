@@ -47,6 +47,17 @@ See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 `upstream` records human-reviewable provenance. It defaults to the checkpoint's
 Hugging Face repository and revision; `model_card` defaults to its repository
 URL. Keep an explicit `upstream` when it identifies a different original model.
+A model whose source is not on Hugging Face has no default and declares
+`upstream` itself. Its `model_card` is the page the model browser links as the
+original model:
+
+```yaml
+upstream:
+  repository: https://github.com/owner/repo
+  revision: 0123456789abcdef0123456789abcdef01234567
+  model_card: https://github.com/owner/repo/releases/tag/v1.0.0
+```
+
 Downloadable inputs belong in a `conversion` or `compilation` `source`, where
 exact bytes are pinned.
 
@@ -69,6 +80,10 @@ conversion:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     size_bytes: 123456
 ```
+
+The checkpoint is a pinned Hugging Face file or a release file of a public
+GitHub repository. [Pin every input](adding-a-model.md#3-pin-every-input) lists
+the approved forms.
 
 A model that declares `conversion` must also provide `scripts/convert.py` and
 `scripts/requirements-convert.txt`, which the **Vulcan Model Convert** workflow
