@@ -13,6 +13,7 @@ import io
 import json
 import ssl
 import sys
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -73,12 +74,17 @@ def main() -> None:
             size += len(chunk)
             sink.write(chunk)
     assert (digest.hexdigest(), size) == (artifact['sha256'], artifact['size_bytes'])
+    with tarfile.open(output, 'r:gz') as archive:
+        members = archive.getmembers()
+        assert members
+        assert all(not Path(m.name).is_absolute() and '..' not in Path(m.name).parts for m in members)
     result = {
         'mode': 'local replay of verified deployed Python source against real production objects',
         'deployment_id': candidate['deployment_id'], 'manifest_digest': candidate['manifest_digest'],
         'deployed_code_sha256_base64': code_hash, 'selection': selected,
         'download': {'run_id': package['run_id'], 'artifact_name': 'package', 'sha256': digest.hexdigest(),
-                     'size_bytes': size, 'via': 'production run-artifact API and exact-version presigned URL'},
+                     'size_bytes': size, 'tar_members': len(members),
+                     'via': 'production run-artifact API and exact-version presigned URL'},
         'catalog_changed': False, 'live_protected_promotion': False,
     }
     (args.output_dir / 'verification.json').write_text(json.dumps(result, indent=2) + '\n')
