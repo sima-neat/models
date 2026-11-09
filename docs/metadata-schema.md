@@ -61,13 +61,13 @@ license:
   attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
 ```
 
-- `spdx` is an ID listed in [`licenses.json`](../licenses.json): an SPDX
+- `spdx` is an ID listed in [`artifact-browser/licenses.json`](../artifact-browser/licenses.json): an SPDX
   identifier, or a `LicenseRef-` ID for a license SPDX does not list.
 - `redistribution` is `allowed`, `restricted`, `prohibited`, or `unknown`.
   Publication refuses a package marked `prohibited` or `unknown`.
 - `attribution` is the credit line the model page shows.
 
-Each `licenses.json` entry holds the license's `name`, a `summary` of what it
+Each entry there holds the license's `name`, a `summary` of what it
 asks from someone who redistributes the model, and `downloadable`. The model
 page shows the name and summary in its License section and offers the model's
 downloads only when `downloadable` is `true`. A model whose license forbids
@@ -75,10 +75,10 @@ redistribution still compiles and benchmarks in CI, and its page shows **Not
 available for download**.
 
 Read the license at the source model's repository before declaring it. When it
-is not in `licenses.json`, add an entry there, validated by
+is not listed, add an entry, validated by
 `schemas/licenses.schema.json`. `python -m pytest tests/test_licenses.py` fails
 when a model declares an unlisted license. No fingerprint includes the license
-or `licenses.json`, so a correction reruns nothing.
+or the license list, so a correction reruns nothing.
 
 Optional top-level `build-on-demand` is a boolean, default `false`, for any
 model requiring explicit build selection. When `true`, pushes validate the

@@ -283,8 +283,8 @@ function loadReferenceMetrics(modelId) {
   return referenceMetrics.then((reference) => reference[modelId] || []);
 }
 
-// The licenses a model may declare, shipped from licenses.json when the portal is built. Without the
-// list the page cannot tell whether a license permits redistribution, so it offers no download.
+// The licenses a model may declare, from licenses.json beside this module. Without the list the page
+// cannot tell whether a license permits redistribution, so it offers no download.
 let licenseList = null;
 function loadLicenses() {
   licenseList ||= fetch(new URL("./licenses.json", import.meta.url))

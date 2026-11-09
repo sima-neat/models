@@ -61,7 +61,7 @@ writeFileSync(join(output, 'index.html'), browserHtml);
 
 // Repository data the page reads beside the registry API. api.js fetches each file by its unfingerprinted
 // name: the order each multi-component model runs in and the scores each source model's authors published,
-// both built from model.yaml by the registry tooling, and licenses.json, shipped as authored.
+// both built from model.yaml by the registry tooling, and the browser's licenses.json, shipped as authored.
 const apiModule = join(output, `api.${revision}.js`);
 let apiSource = readFileSync(apiModule, 'utf8');
 function shipModelData(name, write) {
@@ -78,7 +78,7 @@ for (const name of ['component-pipelines', 'reference-metrics']) {
     '-m', 'model_registry', name, '--repository', repository, '--output', file,
   ], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'}));
 }
-shipModelData('licenses', (file) => cpSync(join(repository, 'licenses.json'), file));
+shipModelData('licenses', (file) => cpSync(join(browser, 'licenses.json'), file));
 writeFileSync(apiModule, apiSource);
 
 const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');

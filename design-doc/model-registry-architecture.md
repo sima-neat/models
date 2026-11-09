@@ -33,11 +33,10 @@ byte size, and SHA-256.
 
 ```text
 .github/workflows/         Compile, build, DevKit-stage, conversion, tool, and branch workflows
-artifact-browser/          Model browser and its local preview server (preview.py)
+artifact-browser/          Model browser, its local preview server (preview.py), and licenses.json
 deps/                      Repository-wide toolchain and DevKit runtime pins
 design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
-licenses.json              The licenses a model may declare, and whether each permits downloads
 models/<model-id>/         model.yaml, README.md, hero.png, model code in scripts/, and its tests in tests/
 packaging/model-registry/  Build and installer for the author-safe sima-cli package
 schemas/                   Model, tests, package, model report, and fidelity JSON Schemas

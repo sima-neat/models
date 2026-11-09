@@ -278,8 +278,9 @@ It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, and `reference-metrics.<revision>.json` from each
 `reference_metrics`; `preview.py` serves the same data from `models/`.
-It copies the repository's `licenses.json` to `licenses.<revision>.json`, which
-names each license and decides whether a model page offers downloads.
+It copies `licenses.json` to `licenses.<revision>.json`. That file names each
+license and decides whether a model page offers downloads, and it sits in this
+directory so that a static file server serves it with the page.
 `metrics.js` and `accuracy-metrics.js` keep the labels, units, and directions
 of `tools/model_report/metrics.json`, and tests keep them in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for

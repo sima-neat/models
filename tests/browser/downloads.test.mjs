@@ -252,7 +252,7 @@ test('CLI commands preserve branch, variant and staging and quote shell argument
 
 test('a download is offered only under a listed license that permits redistribution', async () => {
   const {readFile} = await import('node:fs/promises');
-  const licenses = JSON.parse(await readFile(new URL('../../licenses.json', import.meta.url), 'utf8'));
+  const licenses = JSON.parse(await readFile(new URL('../../artifact-browser/licenses.json', import.meta.url), 'utf8'));
   assert.equal(downloadOffered('Apache-2.0', licenses), true);
   assert.equal(downloadOffered('LicenseRef-MagicLeap-Noncommercial-Research', licenses), false);
   assert.equal(downloadOffered('LicenseRef-Unlisted', licenses), false);

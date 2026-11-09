@@ -27,7 +27,7 @@ Before creating files, identify:
 Do not add a product whose source, ownership, or license is ambiguous. Record
 ownership in `CODEOWNERS`; do not add owner or maturity boilerplate to YAML.
 Declare the source model's [license](metadata-schema.md#license) with an ID
-from `licenses.json`, which also decides whether the model page offers a
+from `artifact-browser/licenses.json`, which also decides whether the model page offers a
 download.
 
 ## 2. Create the directory
@@ -287,7 +287,7 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `license`, `licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, or the shared export code | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |

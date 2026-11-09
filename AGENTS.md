@@ -246,7 +246,7 @@ in the same commit.
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |
 | a field of the model report | `schemas/model-report.schema.json`, `tools/model_report/__init__.py`, the checks in `report_publication.py`, and the browser code that reads the report |
 | a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`; when none fits, add the entry there and follow [Model categorization taxonomy](docs/model-taxonomy.md) |
-| a model's `license` | set `spdx` to an ID in `licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution. No fingerprint includes the license, so the change reruns nothing ([license](docs/metadata-schema.md#license)) |
+| a model's `license` | set `spdx` to an ID in `artifact-browser/licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution. No fingerprint includes the license, so the change reruns nothing ([license](docs/metadata-schema.md#license)) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a model script | the model's test of that behavior under `tests/build/` or `tests/benchmark/` |
 | what a model converts, compiles, or measures on a DevKit | its `tests/tests.yaml` entries, their `expected` values, and the stage test files they run |
@@ -361,10 +361,12 @@ change.
   `website/scripts/assemble-portal.mjs`. Assembly also writes
   `component-pipelines.<revision>.json` and `reference-metrics.<revision>.json`
   from each `model.yaml`, so `build:portal` needs the same Python as
-  `preview.py`. It copies `licenses.json` to `licenses.<revision>.json`.
+  `preview.py`. It copies the browser's `licenses.json` to
+  `licenses.<revision>.json`.
 - Offer a model's downloads only when `downloadOffered` in `downloads.js`
   allows them. It reads the license from the branch catalog and
-  `licenses.json`, and an unlisted license offers none.
+  `licenses.json`, and an unlisted license offers none. Keep the list in
+  `artifact-browser/`, so a plain static server serves it with the page.
 - A new metric goes into `tools/model_report/metrics.json` and the browser's
   `metrics.js` or `accuracy-metrics.js`; a test keeps their labels, units and
   directions in step.

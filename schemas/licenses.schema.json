@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.neat.sima.ai/model-registry/licenses.schema.json",
   "title": "SiMa Neat Model Registry licenses",
-  "description": "licenses.json: every license a model.yaml may declare in license.spdx, by SPDX ID. A license without an SPDX ID uses LicenseRef-<Name>.",
+  "description": "artifact-browser/licenses.json: every license a model.yaml may declare in license.spdx, by SPDX ID. A license without an SPDX ID uses LicenseRef-<Name>.",
   "type": "object",
   "minProperties": 1,
   "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$"},

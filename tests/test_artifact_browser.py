@@ -399,7 +399,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
     shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
-    for source in ("models", "schemas", "tools", "licenses.json"):
+    for source in ("models", "schemas", "tools"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
@@ -459,7 +459,7 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     reference = json.loads((portal / "reference-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert reference["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
     licenses = json.loads((portal / "licenses.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
-    assert licenses == json.loads((ROOT / "licenses.json").read_text(encoding="utf-8"))
+    assert licenses == json.loads((BROWSER / "licenses.json").read_text(encoding="utf-8"))
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
     for name in ("component-pipelines", "reference-metrics", "licenses"):
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api

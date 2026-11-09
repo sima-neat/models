@@ -7,7 +7,8 @@ import yaml
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
-LICENSES = json.loads((ROOT / "licenses.json").read_text(encoding="utf-8"))
+LICENSES_FILE = "artifact-browser/licenses.json"
+LICENSES = json.loads((ROOT / LICENSES_FILE).read_text(encoding="utf-8"))
 
 
 def test_licenses_match_their_schema() -> None:
@@ -23,4 +24,4 @@ def test_every_model_declares_a_listed_license() -> None:
         if license_id not in LICENSES:
             unlisted[manifest.parent.name] = license_id
 
-    assert not unlisted, f"add these licenses to licenses.json: {unlisted}"
+    assert not unlisted, f"add these licenses to {LICENSES_FILE}: {unlisted}"
