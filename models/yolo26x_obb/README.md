@@ -29,7 +29,7 @@ Neat's resize, color conversion, and normalization turned off.
 2. Apply a sigmoid to the logits, then keep the 300 cells with the highest class score and their 300 best cell-class pairs.
 3. The box is left plus right wide and top plus bottom high. Its center is the cell center plus half of (right − left, bottom − top), rotated by the angle. Multiply by the stride.
 4. Remove the letterbox padding and scale, and add the window's offset.
-5. Per class, drop boxes that overlap a higher-scoring box from another window by 0.3 or more.
+5. Per class, drop boxes that overlap a higher-scoring box from any window by 0.3 or more.
 
 Class index i is, in order: plane, ship, storage-tank, baseball-diamond,
 tennis-court, basketball-court, ground-track-field, harbor, bridge,
