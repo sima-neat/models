@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import numpy as np
 import pytest
+from model_registry.model_tests import measured_shortfalls
 
 
 @pytest.fixture
@@ -19,11 +21,12 @@ def test_listing_splits_database_and_queries_in_official_order(tmp_path: Path, s
         "database\t000/a.jpg\t10.0\t20.0\ndatabase\t001/b.jpg\t30.0\t40.0\nquery\tqueries_real/000/q.jpg\t11.0\t21.0\n"
     )
 
-    database, database_utm, queries, query_utm = scorer.read_listing(tmp_path)
+    # The runners look through the archive's one top-level directory, so the listing sits directly under --dataset.
+    listing = scorer.read_listing(tmp_path)
 
-    assert (database, queries) == (["000/a.jpg", "001/b.jpg"], ["queries_real/000/q.jpg"])
-    np.testing.assert_array_equal(database_utm, [[10.0, 20.0], [30.0, 40.0]])
-    np.testing.assert_array_equal(query_utm, [[11.0, 21.0]])
+    assert (listing.database, listing.queries) == (["000/a.jpg", "001/b.jpg"], ["queries_real/000/q.jpg"])
+    np.testing.assert_array_equal(listing.database_utm, [[10.0, 20.0], [30.0, 40.0]])
+    np.testing.assert_array_equal(listing.query_utm, [[11.0, 21.0]])
 
 
 def test_positives_include_database_images_exactly_25_m_away(scorer: ModuleType) -> None:
@@ -55,3 +58,7 @@ def test_recall_counts_a_query_once_from_its_first_true_match(scorer: ModuleType
 
     # Matches first appear at ranks 1, 4 and 8; the fourth query has none in its top 100.
     assert recalls == {1: 0.25, 5: 0.5, 10: 0.75, 20: 0.75, 50: 0.75, 100: 0.75}
+
+
+def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
+    assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []

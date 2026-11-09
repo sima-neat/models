@@ -26,13 +26,11 @@ conversion:
     uri: hf://models/TobiasRobotics/Patch-NetVLAD@fdb01d151cb91509adcfc7020ab7fb2d492077b5/pitts_WPCA4096.pth.tar
     sha256: 2c3cf17de91974156cb6aee40a6f7a229825095273d7de87c0792084ae1bf4aa
     size_bytes: 1132901186
+  outputs: [weights.pth]
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/netvlad/48cc5517c6ce43d4079190960041986353710486c66dc3b16fd6bb7d945243fb/39914565894-1/model.onnx
-    sha256: 48cc5517c6ce43d4079190960041986353710486c66dc3b16fd6bb7d945243fb
-    size_bytes: 596020767
+  source: conversion
 
 # Pitts30k-train database images, the training set of these weights; none is in Pitts30k test.
 calibrations:
@@ -41,12 +39,11 @@ calibrations:
 
 build_profiles:
   w16a16:
+    calibration_dataset: pitts30k-cal
     components:
       model:
-        parameters: {precision: w16a16}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
 
-  # No W8A8: per-tensor INT8 activations erase the small residuals of weakly assigned clusters, which
-  # intra-normalization then scales up to full weight; a W8A8 build kept 0.40 descriptor cosine on a DevKit.
   w8a16:
     calibration_dataset: pitts30k-cal
     components:

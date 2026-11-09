@@ -51,6 +51,9 @@ image = sample_image(Path(dataset_dir))
 options = pyneat.ModelOptions()
 # Neat resizes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 # Patch-NetVLAD resizes every image to 640x480 without keeping its aspect ratio.

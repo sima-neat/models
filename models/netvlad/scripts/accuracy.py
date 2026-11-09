@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple, TypeVar
 
 import model_report
 import numpy as np
@@ -42,7 +43,20 @@ def tensor_options() -> pyneat.ModelOptions:
     return options
 
 
-def prefetched(load: Callable, items: Sequence) -> Iterator:
+Item = TypeVar("Item")
+Loaded = TypeVar("Loaded")
+
+
+class Listing(NamedTuple):
+    """The test split's database and query image paths with their UTM positions, in the official order."""
+
+    database: list[str]
+    database_utm: np.ndarray
+    queries: list[str]
+    query_utm: np.ndarray
+
+
+def prefetched(load: Callable[[Item], Loaded], items: Sequence[Item]) -> Iterator[Loaded]:
     """Yield load(item) in order, keeping at most PREFETCH items in flight."""
     with ThreadPoolExecutor(WORKERS) as pool:
         pending = deque(pool.submit(load, item) for item in items[:PREFETCH])
@@ -64,18 +78,17 @@ def log(*values: object) -> None:
     print(*values, file=sys.stderr, flush=True)
 
 
-def read_listing(dataset: Path) -> tuple[list[str], np.ndarray, list[str], np.ndarray]:
-    """Return the database and query image paths with their UTM positions, in the official order."""
+def read_listing(dataset: Path) -> Listing:
     rows = [line.split("\t") for line in (dataset / LISTING).read_text(encoding="utf-8").splitlines()]
     split = {role: [row for row in rows if row[0] == role] for role in ("database", "query")}
     if not split["database"] or not split["query"] or len(rows) != len(split["database"]) + len(split["query"]):
         raise ValueError(f"{LISTING} must list database and query rows only")
     positions = {role: np.asarray([row[2:4] for row in items], dtype=np.float64) for role, items in split.items()}
-    return (
-        [row[1] for row in split["database"]],
-        positions["database"],
-        [row[1] for row in split["query"]],
-        positions["query"],
+    return Listing(
+        database=[row[1] for row in split["database"]],
+        database_utm=positions["database"],
+        queries=[row[1] for row in split["query"]],
+        query_utm=positions["query"],
     )
 
 
@@ -134,14 +147,14 @@ def main(argv: list[str] | None = None) -> int:
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)
 
-    database, database_utm, queries, query_utm = read_listing(dataset)
+    listing = read_listing(dataset)
     measured = slice(0, args.limit)
     model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
     started = time.monotonic()
-    database_descriptors = describe(model, dataset, database, "database")
-    query_descriptors = describe(model, dataset, queries[measured], "queries")
+    database_descriptors = describe(model, dataset, listing.database, "database")
+    query_descriptors = describe(model, dataset, listing.queries[measured], "queries")
     predictions = nearest(database_descriptors, query_descriptors, max(RECALL_AT))
-    recalls = recall_at(predictions, positives(database_utm, query_utm[measured]))
+    recalls = recall_at(predictions, positives(listing.database_utm, listing.query_utm[measured]))
 
     report = model_report.from_accuracy(
         {
@@ -149,9 +162,9 @@ def main(argv: list[str] | None = None) -> int:
                 "metrics": {f"recall_at_{n}": recalls[n] for n in PUBLISHED},
                 "split": SPLIT,
                 "evaluated_samples": len(predictions),
-                "available_samples": len(queries),
+                "available_samples": len(listing.queries),
                 "details": {
-                    "database_images": len(database),
+                    "database_images": len(listing.database),
                     "recall_at": {str(n): round(value, 4) for n, value in recalls.items()},
                     "inference_seconds": round(time.monotonic() - started, 1),
                 },

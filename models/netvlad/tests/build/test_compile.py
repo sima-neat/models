@@ -11,8 +11,17 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
+import onnx
 import pytest
+from model_registry.model import load_model as load_metadata
 from PIL import Image
+
+PROFILES = ("w16a16", "w8a16")
+
+
+@pytest.fixture
+def builder(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script("surgery")
 
 
 def _png(width: int, height: int, colour: tuple[int, int, int]) -> bytes:
@@ -81,58 +90,59 @@ def test_selection_is_a_seeded_shuffle_of_the_pittsburgh_images_only(
 
 
 def test_calibration_images_precede_the_fidelity_selection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    load_script: Callable[[str], ModuleType],
+    tmp_path: Path, model_dir: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
     root = tmp_path / "cal"
+    (root / "pitts30k" / "images" / "000").mkdir(parents=True)
     for index in range(80):
-        (root / "pitts30k" / "images" / "000").mkdir(parents=True, exist_ok=True)
         (root / "pitts30k" / "images" / "000" / f"{index:06d}_pitch1_yaw1.jpg").write_bytes(b"")
-    selection = recipe._metadata()["numerical_fidelity"]["selection"]
+    metadata = load_metadata(model_dir)
+    selection = metadata["numerical_fidelity"]["selection"]
     fidelity = recipe.select_images(root, selection["seed"], selection["offset"], selection["samples"])
 
-    calibration = recipe.calibration_names(root, recipe._parameters("w8a16")["calibration_samples"])
-
-    # model.yaml calibrates on 50 images and compares 10 more, starting at offset 50.
-    assert (len(calibration), len(fidelity)) == (50, 10)
-    assert not set(calibration) & set(fidelity)
-    metadata = recipe._metadata()
-    metadata["numerical_fidelity"]["selection"]["offset"] = 49
-    monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
+    for profile in PROFILES:
+        count = recipe.build_parameters(metadata, profile)["calibration_samples"]
+        calibration = recipe.calibration_names(root, selection, count)
+        # model.yaml calibrates every build on 50 images and compares 10 more, starting at offset 50.
+        assert (len(calibration), len(fidelity)) == (50, 10)
+        assert not set(calibration) & set(fidelity)
     with pytest.raises(ValueError, match="must begin after the calibration images"):
-        recipe.calibration_names(root, 50)
+        recipe.calibration_names(root, {**selection, "offset": 49}, 50)
 
 
 @pytest.mark.parametrize(("precision", "per_token"), [("w8a16", True), ("w16a16", False)])
-def test_only_w8a16_quantizes_activations_per_token(
-    precision: str, per_token: bool, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+def test_every_build_calibrates_and_only_w8a16_quantizes_per_token(
+    precision: str, per_token: bool, load_script: Callable[[str], ModuleType]
 ) -> None:
-    compile_module = load_script("compile")
-    builder = MagicMock()
-    monkeypatch.setattr(compile_module, "default_quantization", builder)
-
-    compile_module._quantization(precision, 2048)
-
-    # The recipe ends every configuration with with_per_token_quant, which the YOLO26 W8A16 recipes also set.
-    (last,) = [item for item in builder.mock_calls if str(item).endswith(f".with_per_token_quant({per_token})")]
-    assert last.args == (per_token,)
-
-
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    assert recipe._parameters("w16a16") == {"precision": "w16a16"}
-    assert recipe._parameters("w8a16") == {"precision": "w8a16", "calibration_bins": 2048, "calibration_samples": 50}
-    assert recipe._metadata()["numerical_fidelity"]["outputs"] == [recipe.OUTPUT]
+    recipe.quantization(precision, 2048)
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    # The VLAD norm's Sqrt is an INT8 lookup table even in the BF16 builds, so every build calibrates its range.
+    recipe.HistogramMSEMethod.assert_called_once_with(2048)
+    assert arguments["calibration_method"] is recipe.HistogramMSEMethod.return_value
+    assert arguments["activation_quantization_scheme"] is recipe.bfloat16_scheme.return_value
+    assert arguments.get("per_token_quant", False) is per_token
+    with pytest.raises(ValueError, match="unsupported precision"):
+        recipe.quantization("w8a8", 2048)
+
+
+def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+    metadata = load_metadata(model_dir)
+    calibration = {"calibration_bins": 2048, "calibration_samples": 50}
+
+    assert recipe.build_parameters(metadata, "w16a16") == {"precision": "w16a16", **calibration}
+    assert recipe.build_parameters(metadata, "w8a16") == {"precision": "w8a16", **calibration}
+    assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT]
     with pytest.raises(ValueError, match="no build profile 'w32a32'"):
-        recipe._parameters("w32a32")
+        recipe.build_parameters(metadata, "w32a32")
 
 
-def _mpk_manifest(recipe: ModuleType) -> dict[str, Any]:
+def _mpk_manifest() -> dict[str, Any]:
     return {
-        "model_sdk_version": recipe.COMPILER_VERSION,
         # One float32 480x640 RGB image in, one float32 4096-value descriptor out.
         "input_nodes": [{"name": "image", "size": 3 * 480 * 640 * 4}],
         "plugins": [
@@ -152,21 +162,19 @@ def _write_mpk(path: Path, manifest: dict[str, Any]) -> None:
     _write_archive(path, {"model.elf": b"elf", "netvlad_mpk.json": json.dumps(manifest).encode()})
 
 
-@pytest.mark.parametrize("case", ["valid", "two_mla", "host", "compiler", "input", "output", "mla_output"])
+@pytest.mark.parametrize("case", ["valid", "two_mla", "host", "input", "output", "mla_output"])
 def test_mpk_audit_requires_one_mla_segment_and_the_descriptor_interface(
     tmp_path: Path,
     case: str,
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    manifest = _mpk_manifest(recipe)
+    manifest = _mpk_manifest()
     plugins = manifest["plugins"]
     if case == "two_mla":
         plugins.insert(2, {"sequence": 1, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 1, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     elif case == "input":
         manifest["input_nodes"][0]["size"] = 3 * 224 * 224 * 4
     elif case == "output":
@@ -194,52 +202,52 @@ def test_compile_reports_the_compilers_silent_exit_as_an_error(
     # AFE raised a bare SystemExit when it could not segment NetVLAD's 32768-wide L2 normalization at INT8.
     loaded.quantize.return_value.compile.side_effect = SystemExit()
     monkeypatch.setattr(recipe, "load_model", lambda *args, **kwargs: loaded)
+    parameters = {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 1}
 
     with pytest.raises(RuntimeError, match="failed to compile"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", "w16a16", None)
-
-
-def test_the_benchmarks_read_the_directory_the_runners_pass(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_script: Callable[[str], ModuleType]
-) -> None:
-    """The runners look through the archive's one top-level directory, so its files sit directly under --dataset."""
-    (tmp_path / "pitts30k_test.tsv").write_text(
-        "database\t000/d.jpg\t1\t2\nquery\tqueries_real/q.jpg\t3\t4\n", encoding="utf-8"
-    )
-
-    database, _, queries, _ = load_script("accuracy").read_listing(tmp_path)
-
-    assert list(database) == ["000/d.jpg"] and list(queries) == ["queries_real/q.jpg"]
-    # performance.py parses its arguments and runs as it loads.
-    arguments = ["--mpk", "model=m.tar.gz", "--dataset", f"pitts30k-val={tmp_path}", "--output", str(tmp_path)]
-    monkeypatch.setattr("sys.argv", ["performance.py", *arguments])
-    with pytest.raises(SystemExit, match=f"{tmp_path} has no images under images/"):
-        load_script("performance")
+        recipe.compile_model(
+            tmp_path / "model.onnx", tmp_path / "out", "w16a16", parameters, np.zeros((1, 480, 640, 3))
+        )
 
 
 @pytest.mark.parametrize(
-    ("arguments", "message"),
+    ("model", "arguments", "message"),
     [
-        (["--compile-invocation", "model"], "a build profile compiles in one invocation named after it"),
-        (["--compile-invocation", "w16a16"], "pass --fidelity-dataset"),
+        ("weights.pth", ["--compile-invocation", "model"], "a build profile compiles in one invocation named after it"),
+        ("model.onnx", ["--compile-invocation", "w16a16"], "--model must be the verified weights.pth"),
+        (
+            "weights.pth",
+            ["--compile-invocation", "w16a16"],
+            "every build calibrates; pass the dataset-registry --dataset",
+        ),
+        ("weights.pth", ["--compile-invocation", "w16a16", "--dataset", "{cal}"], "pass --fidelity-dataset"),
     ],
 )
-def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
+def test_compile_main_rejects_a_wrong_invocation_model_or_missing_dataset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     load_script: Callable[[str], ModuleType],
+    model: str,
     arguments: list[str],
     message: str,
 ) -> None:
     recipe = load_script("compile")
-    source = tmp_path / "model.onnx"
-    source.touch()
+    (tmp_path / model).touch()
+    (tmp_path / "cal").mkdir()
     monkeypatch.setattr(
         sys,
         "argv",
-        ["compile.py", "--model", str(source), "--output-dir", str(tmp_path / "out"), "--build-profile", "w16a16"]
-        + arguments,
+        [
+            "compile.py",
+            "--model",
+            str(tmp_path / model),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--build-profile",
+            "w16a16",
+        ]
+        + [argument.format(cal=tmp_path / "cal") for argument in arguments],
     )
 
     with pytest.raises(SystemExit) as stopped:
@@ -247,6 +255,78 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
 
     assert stopped.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_reference_aggregates_soft_assigned_residuals_per_cluster(builder: ModuleType) -> None:
+    # Two clusters over three-channel features with an identity WPCA, so the descriptor is the normalized VLAD.
+    centroids = np.asarray([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    assignment = np.zeros((2, 3, 1, 1))
+    identity, no_bias = np.eye(6), np.zeros(6)
+    # One cell holding 3 * e_0 normalizes to e_0; equal logits split it evenly, leaving residual e_0 - c_k per cluster.
+    one_cell = np.asarray([3.0, 0.0, 0.0]).reshape(3, 1, 1)
+    expected = np.asarray([[1.0, -1.0, 0.0], [1.0, 0.0, -1.0]]) / np.sqrt(2) / np.sqrt(2)
+
+    descriptor = builder.reference_descriptor(one_cell, centroids, assignment, identity, no_bias)
+
+    np.testing.assert_allclose(descriptor, expected.ravel())
+    # A strong assignment to cluster 0 moves the cell's weight there; cluster 1's residual shrinks to zero.
+    assignment[0, 0] = 100.0
+    descriptor = builder.reference_descriptor(one_cell, centroids, assignment, identity, no_bias)
+    np.testing.assert_allclose(descriptor, np.asarray([1.0, -1.0, 0.0, 0.0, 0.0, 0.0]) / np.sqrt(2), atol=1e-12)
+
+
+def test_descriptor_comparison_rejects_shape_nan_and_drift(builder: ModuleType) -> None:
+    expected = builder._l2_normalize(np.random.RandomState(1).normal(0, 1, builder.DESCRIPTOR_DIM), 0)
+    actual = expected[None].astype(np.float32)
+
+    assert builder.compare_descriptors(expected, actual) == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="Unexpected or non-finite"):
+        builder.compare_descriptors(expected, actual[:, :512])
+    with pytest.raises(ValueError, match="Unexpected or non-finite"):
+        builder.compare_descriptors(expected, np.where(np.arange(actual.size) == 7, np.nan, actual))
+    drifted = actual.copy()
+    drifted[0, 0] += 1e-3
+    with pytest.raises(AssertionError, match="descriptor"):
+        builder.compare_descriptors(expected, drifted)
+
+
+@pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape", "unfolded"])
+def test_fixed_onnx_interface(tmp_path: Path, case: str, builder: ModuleType) -> None:
+    helper = onnx.helper
+    values = [
+        helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape) for name, shape in builder.INTERFACE.items()
+    ]
+    if case == "order":
+        values.reverse()
+    elif case == "dtype":
+        values[0].type.tensor_type.elem_type = onnx.TensorProto.DOUBLE
+    elif case == "shape":
+        values[1].type.tensor_type.shape.dim[1].dim_value = 512
+    zeros = onnx.numpy_helper.from_array(np.zeros((1, 4096), np.float32), "zeros")
+    if case == "unfolded":
+        node = helper.make_node("Constant", [], [values[1].name], value=zeros)
+    else:
+        node = helper.make_node("Identity", ["zeros"], [values[1].name])
+    graph = helper.make_graph([node], "fixture", values[:1], values[1:], [zeros])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12 if case == "opset" else 17)])
+    path = tmp_path / "model.onnx"
+    onnx.save(model, path)
+    if case == "valid":
+        builder.validate_export(path)
+    else:
+        with pytest.raises(ValueError):
+            builder.validate_export(path)
+
+
+def test_encoder_keeps_torchvision_vgg16_layer_indices(builder: ModuleType) -> None:
+    torch = pytest.importorskip("torch")
+    encoder = builder.build_encoder()
+
+    # torchvision's vgg16().features[:29]: 13 convolutions, 4 max pools, a ReLU after every convolution but conv5_3.
+    convolutions = [index for index, layer in enumerate(encoder) if isinstance(layer, torch.nn.Conv2d)]
+    pools = [index for index, layer in enumerate(encoder) if isinstance(layer, torch.nn.MaxPool2d)]
+    assert len(encoder) == 29 and (convolutions[-1], pools) == (28, [4, 9, 16, 23])
+    assert len(convolutions) == 13 and encoder[28].out_channels == 512
 
 
 def test_compiled_mpk_has_one_mla_segment_and_the_descriptor_interface(
